@@ -106,7 +106,9 @@ public sealed class JobTests
     /// </summary>
     private static readonly Dictionary<string, string> LiftedHeapLimit = WithEnvironment("DOTNET_GCHeapHardLimit", "C0000000");
 
-    [Fact(Timeout = 120_000)]
+    // The workload and its exit bound are memory- and timing-sensitive on the host.
+    [Fact(Timeout = 120_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public void AnAttemptNeverCommitsBeyondItsCommitLimit()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
@@ -118,7 +120,12 @@ public sealed class JobTests
         var handle = harness.Launch([TestPrograms.TestLoad, "mem-ramp", "--target-mb", "1024", "--step-mb", "32"],
             new ContainerLimits { CommitLimitBytes = Limit, CommitNotificationBytes = Limit * 2 / 3 }, environment: LiftedHeapLimit);
         using var sampler = new CommitSampler(handle.Job);
-        var exit = harness.WaitExit(handle, Bound);
+        var watch = Stopwatch.StartNew();
+        var holder = handle.Holder;
+        TestContext.Current.TestOutputHelper?.WriteLine(
+            $"test-owned holder pid={holder?.ProcessId}, creation_filetime={holder?.CreationFileTime}");
+        var exit = WaitCommitExit(harness, handle, sampler, watch, "attempt");
+        TestContext.Current.TestOutputHelper?.WriteLine(DescribeCommitAttempt(handle, sampler, watch, "attempt"));
         TestContext.Current.TestOutputHelper?.WriteLine(
             $"exit {exit.ExitStatus}, sampled commit max {sampler.Max} and peak {exit.MemPeakBytes} of {Limit}, violations [{string.Join(",", exit.LimitViolations)}], limit event {handle.MemoryLimitHit}");
 
@@ -136,7 +143,9 @@ public sealed class JobTests
         Assert.Contains("job_memory", exit.LimitViolations);
     }
 
-    [Fact(Timeout = 120_000)]
+    // Both real workloads share a host-sensitive memory budget and bounded timing window.
+    [Fact(Timeout = 120_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public void TheRootCommitLimitBoundsAllAttemptsTogether()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
@@ -150,14 +159,25 @@ public sealed class JobTests
         // committed its ramp: both are committed together whatever the start delay of a below-normal process under load.
         var release = Path.Combine(harness.Root, "release.flag");
         using var sampler = new CommitSampler(harness.Platform.RootJob!);
+        var watch = Stopwatch.StartNew();
         var first = harness.Launch([TestPrograms.TestLoad, "mem-ramp", "--target-mb", "300", "--step-mb", "20", "--hold-ms", "60000", "--until-file", release],
             new ContainerLimits { CommitLimitBytes = 512L << 20 }, environment: LiftedHeapLimit);
-        PlatformHarness.WaitFor(() => harness.Platform.RootJob!.Accounting().PeakJobMemory >= 280L << 20, Bound, "the first attempt's ramp");
+        try
+        {
+            PlatformHarness.WaitFor(() => harness.Platform.RootJob!.Accounting().PeakJobMemory >= 280L << 20, Bound, "the first attempt's ramp");
+        }
+        catch (TimeoutException exception)
+        {
+            var diagnostic = DescribeCommitAttempt(first, sampler, watch, "root");
+            TestContext.Current.TestOutputHelper?.WriteLine(diagnostic);
+            throw new TimeoutException(exception.Message + " " + diagnostic, exception);
+        }
+
         var second = harness.Launch([TestPrograms.TestLoad, "mem-ramp", "--target-mb", "300", "--step-mb", "20", "--step-ms", "50", "--hold-ms", "4000"],
             new ContainerLimits { CommitLimitBytes = 512L << 20 }, environment: LiftedHeapLimit);
-        var secondExit = harness.WaitExit(second, Bound);
+        var secondExit = WaitCommitExit(harness, second, sampler, watch, "root");
         File.WriteAllText(release, "release");
-        var exits = new[] { harness.WaitExit(first, Bound), secondExit };
+        var exits = new[] { WaitCommitExit(harness, first, sampler, watch, "root"), secondExit };
         var rootPeak = harness.Platform.RootJob!.Accounting().PeakJobMemory;
         TestContext.Current.TestOutputHelper?.WriteLine(
             $"exits {exits[0].ExitStatus}/{exits[1].ExitStatus}; root commit sampled max {sampler.Max}, peak {rootPeak} of {RootLimit} ({sampler.Samples} samples)");
@@ -221,6 +241,44 @@ public sealed class JobTests
     }
 
     private static TimeSpan Cpu(JobAccounting accounting) => accounting.UserTime + accounting.KernelTime;
+
+    private static ExitRecord WaitCommitExit(PlatformHarness harness, WindowsAttemptHandle handle, CommitSampler sampler, Stopwatch watch, string sampleScope)
+    {
+        try
+        {
+            return harness.WaitExit(handle, Bound);
+        }
+        catch (TimeoutException exception)
+        {
+            // Preserve only bounded state of this fixture's own attempt; never read or print command arguments or environment values.
+            var diagnostic = DescribeCommitAttempt(handle, sampler, watch, sampleScope);
+            TestContext.Current.TestOutputHelper?.WriteLine(diagnostic);
+            throw new TimeoutException(exception.Message + " " + diagnostic, exception);
+        }
+    }
+
+    /// <summary>Non-secret state of this test's own attempt, retained even if the exit record is unavailable.</summary>
+    private static string DescribeCommitAttempt(WindowsAttemptHandle handle, CommitSampler sampler, Stopwatch watch, string sampleScope)
+    {
+        try
+        {
+            var root = handle.Root;
+            var holder = handle.Holder;
+            var holderExited = holder?.WaitForExit(TimeSpan.Zero);
+            var accounting = handle.Job.Accounting();
+            return $"commit diagnostic: elapsed_ms={watch.ElapsedMilliseconds}, started_status={handle.Started.Status}, " +
+                $"root_pid={root?.Pid}, root_start={root?.StartTime:O}, root_running={handle.RootRunning}, " +
+                $"holder_pid={holder?.ProcessId}, holder_creation_filetime={holder?.CreationFileTime}, holder_exited={holderExited}, " +
+                $"holder_exit={(holderExited == true ? holder!.ExitCode : null)}, started_record={File.Exists(handle.Files.StartedPath)}, " +
+                $"launch_record={File.Exists(handle.Files.LaunchPath)}, exit_record={File.Exists(handle.Files.ExitPath)}, " +
+                $"job_active={accounting.ActiveProcesses}, current_commit={handle.Job.CurrentCommit()}, peak_commit={accounting.PeakJobMemory}, " +
+                $"sample_scope={sampleScope}, sample_max={sampler.Max}, samples={sampler.Samples}, limit_event={handle.MemoryLimitHit}";
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            return "commit diagnostic unavailable: " + exception.GetType().Name;
+        }
+    }
 
     private static Dictionary<string, string> WithEnvironment(string name, string value)
     {

@@ -52,24 +52,67 @@ internal static partial class RoutedRefusals
     /// <summary>The expiry re-check immediately before the effect failed (decision 4).</summary>
     public static ArcError ExpiredBeforeEffect(Id correlation) => Build(ErrorCategory.State, Expired, VerificationState, "expired_before_effect", correlation);
 
-    /// <summary>The matrix operation of a routed method (Plan CTR5-NODE-09), the <c>state.state</c> of its policy refusals.</summary>
+    /// <summary>
+    /// The matrix operation of a routed method before its task is known (Plan CTR5-NODE-09), the <c>state.state</c> of its caller-level
+    /// refusals. A cancel names <c>task.cancel_others</c> until the task's owner is read (verifier N-15: a matrix operation, never
+    /// <c>task.cancel</c>); after the lookup its refusal names <c>task.cancel_own</c>, <c>task.cancel_others</c> or <c>process.terminate</c>.
+    /// </summary>
     public static string Operation(RoutedMethod method) => method switch
     {
         RoutedMethod.SubmitNodeTask => "task.submit",
         RoutedMethod.ReadNodeTaskOutput => "task.read_output",
-        RoutedMethod.CancelNodeTask => "task.cancel",
+        RoutedMethod.CancelNodeTask => "task.cancel_others",
         _ => "task.read",
     };
+
+    /// <summary>The catalogue's reconciliation of <c>AUTHORIZATION/approval_required</c>, the one a routed refusal may carry.</summary>
+    public const string ApprovalReconciliation = "arcforges.node.v1.ApprovalService/GetApproval";
+
+    /// <summary>
+    /// <c>AUTHORIZATION/approval_required</c> for a routed caller (Design 11 section 1, "Approvals"): the approval ID that a local HUMAN decides
+    /// in <c>state.resource</c> and the RECONCILE advice through <c>ApprovalService/GetApproval</c>, the one exception the contract's rule
+    /// routedRefusal allows.
+    /// </summary>
+    public static ArcError ApprovalRequired(string operation, Id approvalId, Id correlation)
+    {
+        ArgumentNullException.ThrowIfNull(approvalId);
+        var error = new ArcError
+        {
+            Category = ErrorCategory.Authorization,
+            Code = "approval_required",
+            MessageKey = "error.authorization.approval_required",
+            Retry = new RetryAdvice { Mode = RetryMode.Reconcile, ReconciliationOperation = ApprovalReconciliation },
+            Effect = EffectCertainty.DidNotHappen,
+            CorrelationId = correlation,
+            Details = new ErrorDetails
+            {
+                State = new StateFailure { State = operation, Reason = "approval_required", Resource = new AggregateRef { Kind = "approval", Id = approvalId } },
+            },
+        };
+        return Closed(error) ? error : throw new InvalidOperationException("A routed refusal holds closed identifier fields only.");
+    }
+
+    /// <summary>A refusal by the permission matrix under another catalogued AUTHORIZATION code (<c>command_pattern_denied</c>).</summary>
+    public static ArcError Authorization(string code, string operation, string reason, Id correlation) =>
+        Build(ErrorCategory.Authorization, code, operation, reason, correlation);
 
     /// <summary>True when <paramref name="error"/> holds closed fields only (the node's own check before it signs; the validator agrees).</summary>
     public static bool Closed(ArcError error)
     {
         ArgumentNullException.ThrowIfNull(error);
+        // relay.proto rule routedRefusal: a resource and a reconciliation only for AUTHORIZATION/approval_required, and then exactly
+        // {kind "approval", id} and ApprovalService/GetApproval (decisions Q11; the center's rule is the same, hub/shape.go).
+        var approval = error.Category == ErrorCategory.Authorization && error.Code == "approval_required";
         return CodeShape().IsMatch(error.Code) && error.MessageKey == "error." + error.Category.ToString().ToLowerInvariant() + "." + error.Code
-            && error.Retry is { HasReconciliationOperation: false }
+            && error.Retry is { } retry
+            && (retry.HasReconciliationOperation
+                ? approval && retry.Mode == RetryMode.Reconcile && retry.ReconciliationOperation == ApprovalReconciliation
+                : !approval)
             && (error.Details is null || (error.Details.State is { } state && error.Details.Revision is null && error.Details.Limit is null
                 && error.Details.Upgrade is null && TokenShape().IsMatch(state.State) && TokenShape().IsMatch(state.Reason) && state.Native is null
-                && state.Resource is null))
+                && (state.Resource is null
+                    ? !approval
+                    : approval && state.Resource is { Kind: "approval", Id.Value.Length: 16 })))
             && error.CalculateSize() <= 512;
     }
 
@@ -204,7 +247,21 @@ internal sealed class ResultSigner(INodeKey key, ReadOnlyMemory<byte> nodeId, Ti
 /// <param name="Error">The closed refusal of REFUSED_BY_POLICY or EXPIRED.</param>
 /// <param name="TaskId">The task the call named or created (16 bytes), for <c>routed_call_log.task_id</c>.</param>
 /// <param name="Risk">The risk class (1..3), for <c>routed_call_log.risk</c>.</param>
-internal sealed record RoutedAnswer(RoutedOutcome Outcome, ByteString? Response, ArcError? Error, byte[]? TaskId = null, int? Risk = null);
+/// <param name="HandlerCode">For EXECUTED, the handler's own error as <c>CATEGORY/code</c> when the response is one, for <c>routed_call_log.refusal_code</c>.</param>
+internal sealed record RoutedAnswer(RoutedOutcome Outcome, ByteString? Response, ArcError? Error, byte[]? TaskId = null, int? Risk = null, string? HandlerCode = null);
+
+/// <summary>
+/// The link a verified call arrived on, as the dispatcher re-reads it (AF-CTR-05 decisions B-3; N1 review A C-N1, B N-12): whether the call
+/// may still be dispatched (the link is on, signed in, and the session is not ending), and whether the node's stop began.
+/// </summary>
+internal interface IRoutedLink
+{
+    /// <summary>False once the cloud link is off, signed out or stranded, or the call's channel session is ending: the call is dropped.</summary>
+    bool Usable { get; }
+
+    /// <summary>True once the node's stop began (<see cref="CloudLinkService.BeginStop"/>).</summary>
+    bool Stopping { get; }
+}
 
 /// <summary>
 /// The routed dispatch seam that part N2 implements (Plan CTR5-NODE-08): it receives only verified calls, parses the payload, applies the
@@ -212,8 +269,12 @@ internal sealed record RoutedAnswer(RoutedOutcome Outcome, ByteString? Response,
 /// </summary>
 internal interface IRoutedDispatcher
 {
-    /// <summary>Answers a verified call.</summary>
-    Task<RoutedAnswer> DispatchAsync(VerifiedCall call, CancellationToken cancellationToken);
+    /// <summary>
+    /// Answers a verified call, or <see langword="null"/> when the link ended under it before any effect (<paramref name="link"/> is no longer
+    /// <see cref="IRoutedLink.Usable"/>): the call is then dropped, with no answer and no further row (the center answers UNKNOWN after its
+    /// deadline, and its resend converges through the command deduplication).
+    /// </summary>
+    Task<RoutedAnswer?> DispatchAsync(VerifiedCall call, IRoutedLink link, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -223,11 +284,11 @@ internal interface IRoutedDispatcher
 internal sealed class RefusingDispatcher(TimeProvider clock) : IRoutedDispatcher
 {
     /// <inheritdoc />
-    public Task<RoutedAnswer> DispatchAsync(VerifiedCall call, CancellationToken cancellationToken)
+    public Task<RoutedAnswer?> DispatchAsync(VerifiedCall call, IRoutedLink link, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(call);
         var correlation = CommandIds.New(clock);
-        return Task.FromResult(new RoutedAnswer(RoutedOutcome.RefusedByPolicy, null,
+        return Task.FromResult<RoutedAnswer?>(new RoutedAnswer(RoutedOutcome.RefusedByPolicy, null,
             RoutedRefusals.Policy(RoutedRefusals.Operation(call.Header.Method), RoutedRefusals.DispatchUnavailable, correlation)));
     }
 }

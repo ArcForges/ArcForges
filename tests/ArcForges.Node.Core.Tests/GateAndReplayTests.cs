@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Diagnostics;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
@@ -171,8 +172,26 @@ public sealed class GateAndReplayTests
         await node.StartAsync();
 
         await using var human = await node.ChannelAsync(helloAsHuman: true);
-        await Tasks.WaitForAsync(() => node.Runtime.Store.Read(reader => Approvals.Get(reader, id.Value.Span))?.View.State == ApprovalState.Executed,
-            TimeSpan.FromSeconds(30), "the approval to execute after the restart");
+
+        // AF-CTR-05 N2b (the routed GateAndReplay investigation): a timeout names what the approval became and the node's approval events
+        // (resume_failed, record_deferred, execute_failed, command.failed), the three paths that leave it APPROVED or FAILED.
+        var watch = Stopwatch.StartNew();
+        while (node.Runtime.Store.Read(reader => Approvals.Get(reader, id.Value.Span)) is not { State: ApprovalState.Executed })
+        {
+            if (watch.Elapsed > TimeSpan.FromSeconds(30))
+            {
+                var now = node.Runtime.Store.Read(reader => Approvals.Get(reader, id.Value.Span));
+                var events = Directory.EnumerateFiles(Path.Combine(node.DataRoot, "logs", "node"))
+                    .SelectMany(file => File.ReadLines(file))
+                    .Where(line => line.Contains("approval", StringComparison.Ordinal) || line.Contains("api.command.failed", StringComparison.Ordinal))
+                    .TakeLast(20);
+                Assert.Fail($"The approval did not execute after the restart: {now?.View.State} outcome error {Approvals.OutcomeError(now?.Outcome ?? [])?.Code}; "
+                    + string.Join(" | ", events));
+            }
+
+            await Task.Delay(25, Ct);
+        }
+
         await using (var script = await node.ChannelAsync())
         {
             var retried = await script.Queue.SetParallelismAsync(request, cancellationToken: Ct);
@@ -238,7 +257,15 @@ public sealed class GateAndReplayTests
         Assert.True(node.Runtime.Execution!.Settings.AgentCommandAllowed("anything at all\nover two lines"), "The default allows every command.");
         var hold = Tasks.Argv(node.Root, Tasks.TestLoad, "hold", "--hold-ms", "100");
         var other = Tasks.Argv(node.Root, Tasks.TestLoad, "signal", "--hold-ms", "100");
-        Assert.Null((await Tasks.SubmitRawAsync(agent, other)).Error);
+
+        // A local AGENT submits nothing (AD-0021 section 5): the agent's submissions arrive relayed through the center from this node, where
+        // the patterns narrow it (AF-CTR-05 decisions B-4, SEC-10).
+        Assert.Equal("local_submission_human_only", (await Tasks.SubmitRawAsync(agent, other)).Error?.Details.State.Reason);
+        var routed = new RoutedCalls(node);
+        var relayedAgent = routed.Relay(Origin.Agent);
+        async Task<(ArcForges.Node.CloudLink.RoutedAnswer? Answer, TaskServiceSubmitTaskResponse? Response)> AgentSubmitAsync(TaskSpec spec) =>
+            await routed.SubmitAsync(relayedAgent, new TaskServiceSubmitTaskRequest { Meta = Tasks.Meta(), Spec = spec });
+        Assert.Null((await AgentSubmitAsync(other)).Response?.Error);
 
         Assert.Null((await Sched.ChangePolicyAsync(human, policy =>
         {
@@ -246,14 +273,17 @@ public sealed class GateAndReplayTests
             policy.Agents.AllowedCommandPatterns.Add(".*arcforges-testload(\\.exe)? hold .*");
         })).Error);
         await Tasks.WaitForAsync(() => node.Runtime.Execution.Settings.AgentCommandPatterns is not null, TimeSpan.FromSeconds(30), "the policy to take effect");
-        var denied = await Tasks.SubmitRawAsync(agent, other);
-        Assert.Equal(("command_pattern_denied", ErrorCategory.Authorization, "agents.allowed_command_patterns"),
-            (denied.Error?.Code, denied.Error?.Category ?? ErrorCategory.Unspecified, denied.Error?.Details.State.Reason));
-        Assert.Null((await Tasks.SubmitRawAsync(agent, hold)).Error);
+        var denied = (await AgentSubmitAsync(other)).Answer!;
+        Assert.Equal(ArcForges.Contracts.Relay.V1.RoutedOutcome.RefusedByPolicy, denied.Outcome);
+        Assert.Equal(("command_pattern_denied", ErrorCategory.Authorization, "agents.allowed_command_patterns", PermissionMatrix.TaskSubmit),
+            (denied.Error?.Code, denied.Error?.Category ?? ErrorCategory.Unspecified, denied.Error?.Details.State.Reason, denied.Error?.Details.State.State));
+        Assert.Null((await AgentSubmitAsync(hold)).Response?.Error);
         Assert.Null((await Tasks.SubmitRawAsync(script, other)).Error);
         Assert.Null((await Tasks.SubmitRawAsync(human, other)).Error);
+        // The audited actor is the routed caller: REMOTE, with the center caller whose local origin is AGENT (N2a review N-3: the whole actor).
         Assert.Contains(node.Runtime.Store.Read(reader => AuditLog.Recent(reader)), entry => entry.Operation == PermissionMatrix.TaskSubmit + " TaskService.SubmitTask"
-            && entry.Decision == D && entry.Actor.Origin == Origin.Agent);
+            && entry.Decision == D && entry.Actor.Origin == Origin.Remote && entry.Actor.ClientKind == ClientKind.Unspecified
+            && entry.Actor.CenterCaller is { LocalOrigin: Origin.Agent } center && center.Equals(relayedAgent));
     }
 
     /// <summary>
@@ -278,7 +308,7 @@ public sealed class GateAndReplayTests
     }
 
     /// <summary>A recorded ADOPTED task and attempt (the rows <c>Adoptions.Record</c> writes) whose container no longer exists.</summary>
-    private static byte[] SeedAdopted(CommandContext context, byte[] nodeId)
+    internal static byte[] SeedAdopted(CommandContext context, byte[] nodeId)
     {
         var transaction = context.Transaction;
         var taskId = StoreIds.NewUuid7(transaction.Clock);

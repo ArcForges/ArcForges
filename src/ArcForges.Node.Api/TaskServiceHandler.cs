@@ -5,6 +5,7 @@ using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.LocalRpc;
+using ArcForges.Node.CloudLink;
 using ArcForges.Node.Core;
 using ArcForges.Node.Core.Execution;
 using ArcForges.Node.Core.Scheduling;
@@ -30,6 +31,9 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
     private const int FollowBudget = 8 * OutputReader.ChunkBytes;
 
     private const string ServiceName = "arcforges.node.v1.TaskService";
+
+    /// <summary>The largest <c>max_bytes</c> of a center-routed ReadTaskOutput (Plan Q17).</summary>
+    internal const int RoutedOutputCap = 262_144;
     private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(15);
     private readonly NodeRuntime _node;
     private readonly ApiCommands _api;
@@ -60,6 +64,9 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
     }
 
     private ExecutionSupervisor Execution => _node.Execution ?? throw new InvalidOperationException("The node has no execution supervisor.");
+
+    /// <summary>The service's shared plumbing (the routed dispatcher decides and audits through it).</summary>
+    internal ApiCommands Api => _api;
 
     // ------------------------------------------------------------------------------------------------------------------- the gRPC wrappers
     // Each unary gRPC method is a thin wrapper (AF-CTR-05 N2a, CTR5-NODE-08): it builds the connection's caller with CallerOf, the one place
@@ -146,7 +153,7 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
         var origin = caller.Origin;
         var execution = Execution;
         var settings = execution.Settings;
-        var refused = Stopping() ?? Validation.CommandId(request.Meta)
+        var refused = Stopping() ?? Validation.CommandId(request.Meta) ?? LocalBound(caller)
             ?? TaskValidation.Submit(request, origin, settings, _node.NodeId.Span, _node.Capabilities);
         if (refused is null && execution.Platform is null)
         {
@@ -198,10 +205,12 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
             });
         }
 
-        if (refused is null && origin == Origin.Agent && !settings.AgentCommandAllowed(CommandLine(spec.Command)))
+        if (refused is null && caller.CellsOrigin == Origin.Agent && !settings.AgentCommandAllowed(CommandLine(spec.Command)))
         {
-            // 11 section 1, "Submit task (own)": AGENT A subject to agents.allowed_command_patterns (default all); a guardrail over the argv.
+            // 11 section 1, "Submit task (own)": AGENT A subject to agents.allowed_command_patterns (default all); a guardrail over the argv. A
+            // center-routed caller relayed for a local AGENT is narrowed the same way (decisions B-4, SEC-10).
             refused = NodeErrors.CommandPatternDenied("agents.allowed_command_patterns");
+            caller.Routed?.Refused(PermissionMatrix.TaskSubmit, "agents.allowed_command_patterns");
             await _api.AuditAsync(caller, new GateRequest(PermissionMatrix.TaskSubmit, "TaskService.SubmitTask",
                 "submit " + CommandText.Summary(spec.Command, settings.SecretNames), "task"), PermissionDecision.Deny,
                 "denied: the command matches no agents.allowed_command_patterns").ConfigureAwait(false);
@@ -224,9 +233,13 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
         var warnings = new List<string>();
         var sideEffect = spec.HasSideEffect ? spec.SideEffect : SideEffectClass.Unknown;
         var source = spec.HasSideEffect && sideEffect != SideEffectClass.Unknown ? SideEffectSource.Caller : SideEffectSource.Default;
-        if (origin == Origin.Agent && !settings.AcceptAgentAssertions && sideEffect is SideEffectClass.Pure or SideEffectClass.Idempotent)
+        if (caller.CellsOrigin == Origin.Agent && (caller.CenterCaller is not null || !settings.AcceptAgentAssertions)
+            && sideEffect is SideEffectClass.Pure or SideEffectClass.Idempotent)
         {
-            warnings.Add($"The agent's side-effect class {sideEffect.ToString().ToUpperInvariant()} is not accepted (retry_safety.accept_agent_assertions is false); the task is UNKNOWN.");
+            var reason = caller.CenterCaller is not null
+                ? "retry_safety.accept_agent_assertions is treated as false for a center-routed AGENT"
+                : "retry_safety.accept_agent_assertions is false";
+            warnings.Add($"The agent's side-effect class {sideEffect.ToString().ToUpperInvariant()} is not accepted ({reason}); the task is UNKNOWN.");
             sideEffect = SideEffectClass.Unknown;
             source = SideEffectSource.Default;
         }
@@ -252,6 +265,12 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
                 + "); the task runs unenforced (03 section 8).");
         }
 
+        if (caller.CenterCaller is not null && request.CancelWhenCallerGone)
+        {
+            // AF-CTR-05 Q19: a center-routed caller has no process on this node to bind the task to.
+            warnings.Add("cancel_when_caller_gone has no effect for a center-routed caller: no local process is bound to the task.");
+        }
+
         if (request.JoinExisting)
         {
             warnings.Add("join_existing joins only tasks of the same session; sessions arrive with AF-AI-01, so the task was queued as a new task.");
@@ -261,7 +280,11 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
         var plan = new SubmitPlan
         {
             Parts = parts,
-            Owner = new ActorRef { Origin = origin, ClientKind = session?.Kind ?? ClientKind.Unspecified },
+
+            // The caller's ActorRef: a center-routed owner carries its center_caller and the routed command ID (CTR5-NODE-10).
+            Owner = caller.Actor,
+            LocalDiagnostic = caller.CenterCaller is null,
+            RemoteCommandId = caller.CenterCaller is null ? null : request.Meta.CommandId.Value.ToByteArray(),
             Title = spec.HasTitle && spec.Title.Length > 0 ? spec.Title : summary,
             Summary = summary,
             Fingerprint = CommandText.Fingerprint(spec.Command),
@@ -314,7 +337,7 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
         }
         else
         {
-            response.Value = new TaskServiceGetTaskValue { Task = task };
+            response.Value = new TaskServiceGetTaskValue { Task = RoutedView(caller, task) };
         }
 
         return Task.FromResult(response);
@@ -348,15 +371,51 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
 
         var (tasks, next) = _node.Store.Read(reader => TaskRecords.ListTasks(reader, request.Filter, cursor, limit));
         var value = new TaskServiceListTasksValue { Page = new PageState { HasMore = next is not null } };
-        value.Tasks.Add(tasks);
-        if (next is not null)
+        response.Value = value;
+        for (var index = 0; index < tasks.Count; index++)
+        {
+            var task = RoutedView(caller, tasks[index]);
+            value.Tasks.Add(task);
+            if (caller.CenterCaller is not null)
+            {
+                // Include the complete page envelope and the cursor in each size check. The cursor always names the last item delivered.
+                var more = index < tasks.Count - 1 || next is not null;
+                value.Page.HasMore = more;
+                if (more)
+                {
+                    value.Page.NextCursor = CursorOf(task);
+                }
+                else
+                {
+                    value.Page.ClearNextCursor();
+                }
+
+                if (response.CalculateSize() > ResultSigner.MaxPayloadBytes)
+                {
+                    value.Tasks.RemoveAt(value.Tasks.Count - 1);
+                    if (value.Tasks.Count == 0)
+                    {
+                        response.Error = NodeErrors.Internal(_node.Clock.GetUtcNow());
+                        return Task.FromResult(response);
+                    }
+
+                    value.Page.HasMore = true;
+                    value.Page.NextCursor = CursorOf(value.Tasks[^1]);
+                    break;
+                }
+            }
+        }
+
+        if (caller.CenterCaller is null && next is not null)
         {
             value.Page.NextCursor = next;
         }
 
-        response.Value = value;
         return Task.FromResult(response);
     }
+
+    private static string CursorOf(ManagedTask task) =>
+        new PageCursor(StoreTime.ToMicroseconds(ProtoTime.ToDateTimeOffset(task.CreatedAt)!.Value), task.TaskId.Value.ToByteArray()).ToString();
 
     /// <summary><c>WaitTask</c> for <paramref name="caller"/>.</summary>
     internal async Task<TaskServiceWaitTaskResponse> WaitTask(Caller caller, TaskServiceWaitTaskRequest request, CancellationToken cancellationToken)
@@ -391,6 +450,12 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
         var pulse = Execution.TaskPulse(id);
         var started = _node.Clock.GetTimestamp();
         var budget = TimeSpan.FromMilliseconds(request.HasWaitMs ? request.WaitMs : 0);
+        if (caller.Routed is { } routedWait && routedWait.Remaining() < budget)
+        {
+            // Plan CTR5-NODE-12 (verifier N-9): a routed wait answers before the call's deadline, measured on the local monotonic clock.
+            budget = routedWait.Remaining();
+        }
+
         ManagedTask? task;
         bool reached;
         while (true)
@@ -419,8 +484,9 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
             cancellationToken.ThrowIfCancellationRequested();
         }
 
-        var value = new TaskServiceWaitTaskValue { Task = task, Reached = reached };
-        if (request.TailBytes > 0 && task.CurrentAttempt is { } attempt)
+        var value = new TaskServiceWaitTaskValue { Task = RoutedView(caller, task), Reached = reached };
+        if (request.TailBytes > 0 && task.CurrentAttempt is { } attempt && RoutedOutputAllowed(caller, task.Owner)
+            && (caller.CenterCaller is null || _api.Allowed(caller, PermissionMatrix.TaskReadOutput)))
         {
             var (tail, truncated) = OutputReader.Tail(new AttemptFiles(_node.DataRoot, IdText.Format(attempt.AttemptId)), (int)request.TailBytes);
             value.Tail = ByteString.CopyFrom(tail);
@@ -734,7 +800,9 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
 
         // Review round 1: cancelling a task that already ended (or does not exist) changes nothing and is answered without an approval.
         var settled = allowSettled && refused is null && Settled(request.TaskId);
-        var gate = refused is null && !settled ? TaskGate(request.TaskId, "TaskService.CancelTask", "cancel task") : null;
+        var gate = refused is null && !settled
+            ? caller.CenterCaller is null ? TaskGate(request.TaskId, "TaskService.CancelTask", "cancel task") : RoutedCancelGate(request.TaskId, caller)
+            : null;
         if (refused is null && gate is not null)
         {
             refused = await _api.GateAsync(caller, gate, request, request.Meta).ConfigureAwait(false);
@@ -947,6 +1015,86 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
             throw new GateStaleException("the task changed after the gate's check");
         }
     }
+
+    /// <summary>
+    /// The gate of a center-routed cancel (11 section 1, "Center-routed operations"): <c>process.terminate</c> for an ADOPTED task (D, fixed
+    /// for REMOTE: MR-08; also when an approved routed cancel executes after the task became ADOPTED, verifier N-7), <c>task.cancel_own</c>
+    /// for a task whose owner is the same center caller, and <c>task.cancel_others</c> (P: a local HUMAN decides) for every other task.
+    /// </summary>
+    private GateRequest RoutedCancelGate(Id taskId, Caller caller)
+    {
+        var id = taskId.Value.ToByteArray();
+        var row = _node.Store.Read(reader => TaskRecords.GetRow(reader, id));
+        var text = "cancel task " + IdText.Format(id);
+        const string method = "TaskService.CancelTask";
+        if (row?.Kind == TaskKind.Adopted)
+        {
+            return new GateRequest(PermissionMatrix.ProcessTerminate, method, text + " (an adopted process: ending it terminates the process)", "task", id);
+        }
+
+        return CenterRouting.Same(row?.Owner.CenterCaller, caller.CenterCaller)
+            ? new GateRequest(PermissionMatrix.TaskCancelOwn, method, text, "task", id)
+            : new GateRequest(PermissionMatrix.TaskCancelOthers, method, text + " (another owner's task)", "task", id);
+    }
+
+    /// <summary>True when <paramref name="owner"/> is the center-routed <paramref name="caller"/> itself (Design 11 section 1, "Command lines").</summary>
+    private static bool RoutedOwn(Caller caller, ActorRef? owner) => CenterRouting.Same(owner?.CenterCaller, caller.CenterCaller);
+
+    /// <summary>
+    /// What a center-routed caller sees of <paramref name="task"/> (Plan PN-8; Design 11 section 1, "Command lines"): its own tasks as stored
+    /// (secret-shaped values are already presence only); another owner's task without its specification, command summary or a title that is
+    /// the summary, unless the privacy policy <c>remote_command_lines</c> adds argv and the working directory with environment names only.
+    /// </summary>
+    private ManagedTask RoutedView(Caller caller, ManagedTask task)
+    {
+        if (caller.CenterCaller is null || RoutedOwn(caller, task.Owner))
+        {
+            return task;
+        }
+
+        var lines = _node.Store.Read(PolicyRules.Current).Document.Privacy?.RemoteCommandLines == true;
+        var view = task.Clone();
+        var spec = view.Spec;
+        view.Spec = null;
+        if (lines)
+        {
+            if (spec is not null)
+            {
+                var shown = new TaskSpec { Command = spec.Command };
+                if (spec.HasWorkingDirectory)
+                {
+                    shown.WorkingDirectory = spec.WorkingDirectory;
+                }
+
+                if (spec.Environment is { } environment)
+                {
+                    shown.Environment = new EnvironmentSpec();
+                    foreach (var name in environment.Set.Keys)
+                    {
+                        shown.Environment.Set[name] = string.Empty;
+                    }
+
+                    shown.Environment.Unset.Add(environment.Unset);
+                }
+
+                view.Spec = shown;
+            }
+
+            return view;
+        }
+
+        if (view.HasTitle && view.HasCommandSummary && view.Title == view.CommandSummary)
+        {
+            view.ClearTitle();
+        }
+
+        view.ClearCommandSummary();
+        return view;
+    }
+
+    /// <summary>True when the routed <paramref name="caller"/> may read the output of a task owned by <paramref name="owner"/> (privacy <c>remote_output_tail</c>).</summary>
+    private bool RoutedOutputAllowed(Caller caller, ActorRef? owner) =>
+        caller.CenterCaller is null || RoutedOwn(caller, owner) || _node.Store.Read(PolicyRules.Current).Document.Privacy?.RemoteOutputTail == true;
 
     private GateRequest? TaskGate(Id taskId, string method, string summary)
     {
@@ -1175,7 +1323,7 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
     }
 
     /// <summary><c>ReadTaskOutput</c> for <paramref name="caller"/>.</summary>
-    internal Task<TaskServiceReadTaskOutputResponse> ReadTaskOutput(Caller caller, TaskServiceReadTaskOutputRequest request, CancellationToken cancellationToken)
+    internal async Task<TaskServiceReadTaskOutputResponse> ReadTaskOutput(Caller caller, TaskServiceReadTaskOutputRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(caller);
         ArgumentNullException.ThrowIfNull(request);
@@ -1186,6 +1334,17 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
             refused = NodeErrors.InvalidArgument("max_bytes: 1..4 MiB");
         }
 
+        if (refused is null && caller.CenterCaller is not null && request.HasMaxBytes && request.MaxBytes > RoutedOutputCap)
+        {
+            // Plan Q17: a center-routed read returns at most 256 KiB (the center caps it too).
+            refused = NodeErrors.InvalidArgument("max_bytes: 1..262,144 for a center-routed caller");
+        }
+
+        if (refused is null && request.HasWaitMs && request.WaitMs > 20_000)
+        {
+            refused = NodeErrors.InvalidArgument("wait_ms: 0..20,000");
+        }
+
         if (refused is null && request.HasStream && (request.Stream == OutputStream.Unspecified || !Enum.IsDefined(request.Stream)))
         {
             refused = NodeErrors.InvalidArgument("stream: STDOUT, STDERR or MERGED");
@@ -1194,7 +1353,7 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
         if (refused is not null)
         {
             response.Error = refused;
-            return Task.FromResult(response);
+            return response;
         }
 
         var id = request.AttemptId.Value.ToByteArray();
@@ -1202,18 +1361,103 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
         if (attempt is null)
         {
             response.Error = NodeErrors.NotFound("attempt", id);
-            return Task.FromResult(response);
+            return response;
+        }
+
+        if (caller.CenterCaller is not null
+            && !RoutedOutputAllowed(caller, _node.Store.Read(reader => TaskRecords.GetRow(reader, attempt.TaskId.Value.Span))?.Owner))
+        {
+            // Design 11 section 1: another owner's output only with the privacy policy remote_output_tail (default off).
+            caller.Routed?.Refused(PermissionMatrix.TaskReadOutput, "remote_output_tail_off");
+            response.Error = NodeErrors.PermissionDenied(PermissionMatrix.TaskReadOutput);
+            return response;
+        }
+
+        // tasks.proto wait_ms (0..20 s): with no new bytes yet and the attempt still running, wait for some (bounded by a routed call's deadline).
+        var budget = TimeSpan.FromMilliseconds(request.HasWaitMs ? request.WaitMs : 0);
+        if (caller.Routed is { } routed && routed.Remaining() < budget)
+        {
+            budget = routed.Remaining();
         }
 
         var name = IdText.Format(id);
-        var finished = attempt.State == AttemptState.Finished && Execution.Running(name) is null;
+        var stream = request.HasStream ? request.Stream : OutputStream.Merged;
+
         // A response must fit the 4 MiB message bound with its index records, so a read returns at most 4 MiB - 256 KiB of data.
         var maxBytes = Math.Min(request.HasMaxBytes ? (int)request.MaxBytes : 256 * 1024, (4 * 1024 * 1024) - (256 * 1024));
-        var value = OutputReader.Read(new AttemptFiles(_node.DataRoot, name), request.HasStream ? request.Stream : OutputStream.Merged, request.FromOffset,
-            maxBytes, finished);
+        var started = _node.Clock.GetTimestamp();
+        var pulse = Execution.TaskPulse(attempt.TaskId.Value.Span);
+        TaskServiceReadTaskOutputValue value;
+        while (true)
+        {
+            var next = pulse.Next;
+            var finished = _node.Store.Read(reader => TaskRecords.GetAttempt(reader, id))?.State == AttemptState.Finished && Execution.Running(name) is null;
+            value = OutputReader.Read(new AttemptFiles(_node.DataRoot, name), stream, request.FromOffset, maxBytes, finished);
+            var remaining = budget - _node.Clock.GetElapsedTime(started);
+            if (value.Data.Length > 0 || value.Eof || finished || remaining <= TimeSpan.Zero)
+            {
+                break;
+            }
+
+            await Task.WhenAny(next, Task.Delay(remaining < TimeSpan.FromMilliseconds(250) ? remaining : TimeSpan.FromMilliseconds(250), cancellationToken))
+                .ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+
         value.TruncatedByRetention = _node.Store.Read(reader => reader.Scalar("SELECT output_purged FROM attempt WHERE attempt_id = $id;", ("$id", id)) is 1L);
         response.Value = value;
-        return Task.FromResult(response);
+        if (caller.CenterCaller is not null && response.CalculateSize() > ResultSigner.MaxPayloadBytes
+            && (!BoundRoutedOutput(response, stream) || response.CalculateSize() > ResultSigner.MaxPayloadBytes))
+        {
+            response.Error = NodeErrors.Internal(_node.Clock.GetUtcNow());
+        }
+
+        return response;
+    }
+
+    /// <summary>Keep the longest indexed prefix whose complete serialized response fits; the next read resumes at its exact byte offset.</summary>
+    private static bool BoundRoutedOutput(TaskServiceReadTaskOutputResponse response, OutputStream stream)
+    {
+        var value = response.Value;
+        var records = value.Index.ToArray();
+        var data = value.Data;
+        var start = value.NextOffset - (ulong)data.Length;
+        value.Index.Clear();
+        value.ClearData();
+        value.Eof = false;
+        var indexBytes = 0;
+        var keptRecords = 0;
+        var keptBytes = 0;
+        long mergedBytes = 0;
+        foreach (var record in records)
+        {
+            var recordSize = record.CalculateSize();
+            indexBytes += CodedOutputStream.ComputeTagSize(TaskServiceReadTaskOutputValue.IndexFieldNumber)
+                + CodedOutputStream.ComputeLengthSize(recordSize) + recordSize;
+            mergedBytes += record.Length;
+            var end = stream is OutputStream.Stdout or OutputStream.Stderr
+                ? Math.Min((ulong)data.Length, record.Offset + record.Length - start)
+                : (ulong)Math.Min(data.Length, mergedBytes);
+            var bytes = checked((int)end);
+            value.NextOffset = start + (ulong)bytes;
+            var skeleton = value.CalculateSize();
+            var dataSize = CodedOutputStream.ComputeTagSize(TaskServiceReadTaskOutputValue.DataFieldNumber)
+                + CodedOutputStream.ComputeLengthSize(bytes) + bytes;
+            var fullValue = skeleton + dataSize + indexBytes;
+            var outer = response.CalculateSize() - skeleton - CodedOutputStream.ComputeLengthSize(skeleton);
+            if (outer + fullValue + CodedOutputStream.ComputeLengthSize(fullValue) > ResultSigner.MaxPayloadBytes)
+            {
+                break;
+            }
+
+            keptRecords++;
+            keptBytes = bytes;
+        }
+
+        value.Data = ByteString.CopyFrom(data.Span[..keptBytes]);
+        value.Index.Add(records.Take(keptRecords));
+        value.NextOffset = start + (ulong)keptBytes;
+        return keptBytes > 0 || data.Length == 0;
     }
 
     /// <inheritdoc />
@@ -1459,6 +1703,15 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
         return meta;
     }
 
+    /// <summary>
+    /// AD-0021 section 5 (Plan decision Q8): a local submission comes from a HUMAN caller, or from a SCRIPT caller of a test node that allows
+    /// it (<see cref="NodeRuntime.LocalScriptSubmit"/>), never from an AGENT; a center-routed caller is not local.
+    /// </summary>
+    private ArcError? LocalBound(Caller caller) =>
+        caller.CenterCaller is not null || caller.Origin == Origin.Human || (caller.Origin == Origin.Script && _node.LocalScriptSubmit)
+            ? null
+            : NodeErrors.LocalSubmissionHumanOnly();
+
     private ArcError? Stopping()
     {
         _node.CountCall();
@@ -1475,7 +1728,7 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
         {
             return (default!, NodeErrors.Overloaded(_node.Clock.GetUtcNow()));
         }
-        catch (Exception exception) when (exception is not OperationCanceledException)
+        catch (Exception exception) when (exception is not OperationCanceledException and not RoutedAbortException)
         {
             _node.Log.Error("api.command.failed", exception);
             return (default!, NodeErrors.Internal(_node.Clock.GetUtcNow()));
@@ -1486,10 +1739,22 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
         MessageParser<TResponse> parser, Func<ArcError, TResponse> fail, Func<CommandContext, TResponse> execute)
         where TResponse : class, IMessage<TResponse>
     {
-        var digest = PayloadDigest.Compute(request);
+        var digest = ApiCommands.Digest(caller, request);
         var origin = caller.Origin;
         var (outcome, error) = await Run(() => _node.Processor.ExecuteIdempotentAsync(meta.CommandId.Value.Memory, ServiceName + "/" + method, digest, origin,
-            command => execute(command).ToByteArray())).ConfigureAwait(false);
+            command =>
+            {
+                // Decisions B-3 and PN-15: the link, the stop and the expiry of a routed call, immediately before its effect.
+                caller.Routed?.BeforeEffect();
+                return execute(command).ToByteArray();
+            },
+            beforeDedup: command =>
+            {
+                caller.Routed?.BeforeReplay();
+                return RoutedCommandOwnership.MayExecute(command.Transaction, meta.CommandId.Value.Span, caller.CenterCaller,
+                    "TaskService." + method, digest) ? null : StoreErrors.CommandIdReused();
+            },
+            afterComplete: command => RoutedCommandOwnership.Record(command.Transaction, meta.CommandId.Value.Span, caller.Actor))).ConfigureAwait(false);
         if ((error ?? outcome.Error) is { } failure)
         {
             return (fail(failure), false);

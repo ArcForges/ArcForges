@@ -71,8 +71,9 @@ public static class OutputReader
         else
         {
             long merged = 0;
+            var total = records.Sum(record => (long)record.Length);
             position = 0;
-            var target = (long)from;
+            var target = (long)Math.Min(from, (ulong)total);
             foreach (var record in records)
             {
                 if (data.Length >= maxBytes)
@@ -93,8 +94,8 @@ public static class OutputReader
                 merged = recordEnd;
             }
 
-            position = Math.Max(position, Math.Min(target, merged));
-            more = position < merged;
+            position = Math.Max(position, target);
+            more = position < total;
         }
 
         value.Data = Google.Protobuf.ByteString.CopyFrom(data.ToArray());

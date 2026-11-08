@@ -54,6 +54,7 @@ public sealed class PermissionTests
         { PermissionMatrix.NotificationsMarkRead, A, D, D, null },
         { PermissionMatrix.PolicyRetrySafety, A, D, D, null },
         { PermissionMatrix.PolicyPermissions, A, D, D, null },
+        { PermissionMatrix.PolicyCenterRouted, A, D, D, null },
     };
 
     [Theory]
@@ -288,7 +289,8 @@ public sealed class PermissionTests
     /// <summary>
     /// AD-0006 section 4 and 11 section 1: <c>retry_safety</c> and <c>permissions</c> are edited only by HUMAN callers (a change from SCRIPT or
     /// AGENT is refused outright, never turned into an approval); an AGENT's PURE or IDEMPOTENT assertion is accepted only when
-    /// <c>accept_agent_assertions</c> is true, otherwise the task is UNKNOWN with a warning; the source is recorded (R-EXE-010).
+    /// <c>accept_agent_assertions</c> is true, otherwise the task is UNKNOWN with a warning; a relayed AGENT never gains that allowance
+    /// (AF-CTR-05 decisions B-4). The source is recorded (R-EXE-010).
     /// </summary>
     [Fact(Timeout = 120_000)]
     public async Task RetrySafetyIsHumanEditedAndAgentAssertionsFollowThePolicy()
@@ -329,7 +331,14 @@ public sealed class PermissionTests
             return spec;
         }
 
-        var refused = await Tasks.SubmitRawAsync(agent, Pure());
+        // A local AGENT submits nothing (AD-0021 section 5); its assertions are those of an AGENT relayed through the center from this node
+        // (decisions B-4): never accepted for a routed AGENT, regardless of the local policy setting.
+        var routed = new RoutedCalls(node);
+        var relayedAgent = routed.Relay(Origin.Agent);
+        async Task<TaskServiceSubmitTaskResponse> AgentSubmitAsync(TaskSpec spec) =>
+            (await routed.SubmitAsync(relayedAgent, new TaskServiceSubmitTaskRequest { Meta = Tasks.Meta(), Spec = spec })).Response!;
+        Assert.Equal("local_submission_human_only", (await Tasks.SubmitRawAsync(agent, Pure())).Error?.Details.State.Reason);
+        var refused = await AgentSubmitAsync(Pure());
         Assert.Contains(refused.Value.Warnings, warning => warning.Contains("accept_agent_assertions", StringComparison.Ordinal));
         var unknown = await Tasks.GetAsync(human, refused.Value.TaskId);
         Assert.Equal((SideEffectClass.Unknown, SideEffectSource.Default), (unknown.SideEffect, unknown.SideEffectSource));
@@ -338,8 +347,19 @@ public sealed class PermissionTests
 
         Assert.Null((await Sched.ChangePolicyAsync(human, policy => policy.RetrySafety.AcceptAgentAssertions = true)).Error);
         await Tasks.WaitForAsync(() => node.Runtime.Execution!.Settings.AcceptAgentAssertions, TimeSpan.FromSeconds(30), "the policy to take effect");
-        var accepted = await Tasks.GetAsync(human, (await Tasks.SubmitRawAsync(agent, Pure())).Value.TaskId);
-        Assert.Equal((SideEffectClass.Pure, SideEffectSource.Caller), (accepted.SideEffect, accepted.SideEffectSource));
+        foreach (var claim in (SideEffectClass[])[SideEffectClass.Pure, SideEffectClass.Idempotent])
+        {
+            var spec = Pure();
+            spec.SideEffect = claim;
+            var outcome = await AgentSubmitAsync(spec);
+            Assert.Contains(outcome.Value.Warnings, warning => warning.Contains("accept_agent_assertions", StringComparison.Ordinal));
+            var stillUnknown = await Tasks.GetAsync(human, outcome.Value.TaskId);
+            Assert.Equal((SideEffectClass.Unknown, SideEffectSource.Default), (stillUnknown.SideEffect, stillUnknown.SideEffectSource));
+        }
+
+        Assert.Equal("local_submission_human_only", (await Tasks.SubmitRawAsync(agent, Pure())).Error?.Details.State.Reason);
+        var stillScript = await Tasks.GetAsync(human, (await Tasks.SubmitRawAsync(script, Pure())).Value.TaskId);
+        Assert.Equal((SideEffectClass.Pure, SideEffectSource.Caller), (stillScript.SideEffect, stillScript.SideEffectSource));
 
         // The refusals of the HUMAN-only sections are audited.
         var audit = node.Runtime.Store.Read(reader => AuditLog.Recent(reader));

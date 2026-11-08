@@ -127,7 +127,7 @@ public static class TaskRecords
     private const string TaskColumns =
         "task_id, state, state_reason, kind, title, command_summary, spec, env_digest, owner, owner_origin, owner_session_id, workspace_id, pool, " +
         "priority, effective_priority, side_effect, side_effect_source, created_at, queued_at, started_at, finished_at, caller_released_at, " +
-        "current_attempt_id, attempt_count, ready, pinned, labels_json, purged_at, rev";
+        "current_attempt_id, attempt_count, ready, pinned, labels_json, purged_at, rev, local_diagnostic";
 
     /// <summary>True for the terminal task states.</summary>
     public static bool IsTerminal(TaskState state) =>
@@ -422,6 +422,12 @@ public static class TaskRecords
             Pinned = rows.GetInt32(25) == 1,
             Revision = new Revision { Value = rows.GetInt64(28) },
         };
+        if (rows.GetInt32(29) == 1)
+        {
+            // tasks.proto ManagedTask.local_diagnostic: a diagnostic local submission (AD-0021 section 5); absent for every other task.
+            task.LocalDiagnostic = true;
+        }
+
         if (!rows.IsDBNull(2))
         {
             task.StateReason = rows.GetString(2);

@@ -19,5 +19,7 @@
     <PackageReference Include="ArcForges.LocalRpc" />
     <InternalsVisibleTo Include="ArcForges.Node.Core.Tests" />
     <InternalsVisibleTo Include="ArcForges.Node.CloudLink.Tests" />
+    <!-- Q8: the real-center closed loop injects only in-process node test seams. -->
+    <InternalsVisibleTo Include="ArcForges.ClosedLoop.Tests" />
   </ItemGroup>
 </Project>

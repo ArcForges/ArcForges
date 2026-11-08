@@ -96,8 +96,11 @@ internal sealed record CloudLinkOptions
     /// </summary>
     public IRoutedCallStore? RoutedCalls { get; init; }
 
-    /// <summary>The routed dispatch (part N2); part N1 refuses every verified call (<see cref="RefusingDispatcher"/>).</summary>
+    /// <summary>The routed dispatch (part N2b, the host's <c>RoutedDispatcher</c>); without one every verified call is refused (<see cref="RefusingDispatcher"/>).</summary>
     public IRoutedDispatcher? Dispatcher { get; init; }
+
+    /// <summary>The test hook of <see cref="ChannelLoop.StepHook"/> (AF-CTR-05 decisions B-3); never set by the host.</summary>
+    internal Func<string, Task>? ChannelStepHook { get; init; }
 
     /// <summary>The node's version as its hello states it.</summary>
     public string Version { get; init; } = "0.1.0-dev";
@@ -223,7 +226,10 @@ internal sealed class CloudLinkService : ICloudLinkView, IChannelHost, IAsyncDis
         if (options.RoutedCalls is { } routed)
         {
             _channel = new ChannelLoop(this, new RoutedCallLog(routed, options.Clock), options.Dispatcher ?? new RefusingDispatcher(options.Clock), options.Log,
-                options.Clock, options.ConnectLog, options.Version, options.ContractVersion, options.ChannelRandom);
+                options.Clock, options.ConnectLog, options.Version, options.ContractVersion, options.ChannelRandom)
+            {
+                StepHook = options.ChannelStepHook,
+            };
             Features = [SignInFeature, ChannelFeature];
         }
         else
@@ -1107,8 +1113,17 @@ internal sealed class CloudLinkService : ICloudLinkView, IChannelHost, IAsyncDis
     }
 
     /// <inheritdoc />
+    bool IChannelHost.Stopping => Stopping;
+
+    /// <inheritdoc />
     CallBinding? IChannelHost.Binding()
     {
+        // N1 review A C-N1 (AF-CTR-05 N2b): no binding while the link gives the channel no credential, the cloud link switched off included.
+        if (((IChannelHost)this).Ticket().Ticket is null)
+        {
+            return null;
+        }
+
         CloudCredentialRecord? record;
         lock (_stateLock)
         {

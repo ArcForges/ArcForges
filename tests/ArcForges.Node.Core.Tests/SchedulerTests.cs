@@ -979,11 +979,16 @@ public sealed class SchedulerTests
         Assert.Equal(1u, (await EndedAsync(channel, Failing("unknown", null, 5))).AttemptCount);
         Assert.Equal(1u, (await EndedAsync(channel, Failing("side-effecting", SideEffectClass.SideEffecting, 5))).AttemptCount);
 
-        // An agent's assertion is not accepted by default.
-        var submitted = await Tasks.SubmitRawAsync(agent, Failing("agent", SideEffectClass.Pure));
+        // An agent's assertion is not accepted by default. A local AGENT submits nothing (AD-0021 section 5), so the agent is relayed through the
+        // center from this node, where its AGENT rules apply (AF-CTR-05 decisions B-4).
+        var routed = new RoutedCalls(node);
+        var relayedAgent = routed.Relay(Origin.Agent);
+        async Task<TaskServiceSubmitTaskResponse> AgentSubmitAsync(TaskSpec spec) =>
+            (await routed.SubmitAsync(relayedAgent, new TaskServiceSubmitTaskRequest { Meta = Tasks.Meta(), Spec = spec })).Response!;
+        var submitted = await AgentSubmitAsync(Failing("agent", SideEffectClass.Pure));
         Assert.Null(submitted.Error);
         Assert.Contains(submitted.Value.Warnings, warning => warning.Contains("accept_agent_assertions", StringComparison.Ordinal));
-        var agentTask = await Tasks.WaitAsync(agent, submitted.Value.TaskId);
+        var agentTask = await Tasks.WaitAsync(channel, submitted.Value.TaskId);
         Assert.Equal(SideEffectClass.Unknown, agentTask.SideEffect);
         Assert.Equal(1u, agentTask.AttemptCount);
 
@@ -998,9 +1003,14 @@ public sealed class SchedulerTests
         });
         Assert.True(accepted.Error is null, $"UpdatePolicy: {accepted.Error?.Code} {accepted.Error?.Details}");
 
-        var asserted = await EndedAsync(agent, Failing("agent-accepted", SideEffectClass.Pure));
-        Assert.Equal(SideEffectClass.Pure, asserted.SideEffect);
-        Assert.Equal(3u, asserted.AttemptCount);
+        // B-4: even when the local setting is true, a relayed AGENT's PURE claim stays UNKNOWN and is not retried.
+        var relayed = await AgentSubmitAsync(Failing("agent-assertion", SideEffectClass.Pure));
+        Assert.Null(relayed.Error);
+        Assert.Contains(relayed.Value.Warnings, warning => warning.Contains("treated as false for a center-routed AGENT", StringComparison.Ordinal));
+        var asserted = await Tasks.WaitAsync(channel, relayed.Value.TaskId);
+        Assert.Equal(TaskState.Failed, asserted.State);
+        Assert.Equal(SideEffectClass.Unknown, asserted.SideEffect);
+        Assert.Equal(1u, asserted.AttemptCount);
 
         var ruled = await EndedAsync(channel, Failing("ruled-marker", null));
         Assert.Equal(SideEffectClass.Idempotent, ruled.SideEffect);

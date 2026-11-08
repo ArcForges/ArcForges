@@ -90,9 +90,15 @@ public sealed class CallerTests
             Assert.Throws<ArgumentException>(() => new Caller(origin, ClientKind.Cli, null, centerCaller: center));
         }
 
-        // Nor does a routed caller take a local session or a local origin afterwards.
-        Assert.Throws<ArgumentException>(() => routed with { Session = session });
-        Assert.Throws<ArgumentException>(() => routed with { Origin = Origin.Human });
+        // Nor does a routed caller take a local session or a local origin afterwards; the refusal names the assignment that failed (N2a N-4).
+        Assert.Equal(nameof(Caller.Session), Assert.Throws<ArgumentException>(() => routed with { Session = session }).ParamName);
+        Assert.Equal(nameof(Caller.Origin), Assert.Throws<ArgumentException>(() => routed with { Origin = Origin.Human }).ParamName);
+        Assert.Equal(nameof(Caller.CenterCaller), Assert.Throws<ArgumentException>(() => Caller.OfConnection(session) with { CenterCaller = center }).ParamName);
+
+        // A routed caller's actor names its center caller and its command ID (CTR5-NODE-10).
+        var command = CommandIds.New();
+        Assert.Equal(new ActorRef { Origin = Origin.Remote, ClientKind = ClientKind.Unspecified, CenterCaller = center, RemoteCommandId = command },
+            (routed with { RemoteCommandId = command }).Actor);
     }
 
     /// <summary>
@@ -123,14 +129,32 @@ public sealed class CallerTests
             var label = $"{origin}/{kind}";
 
             // SubmitTask: the owner is the caller's origin and kind; the binding is to the session's process (none without a session).
+            // AF-CTR-05 N2b (AD-0021 section 5): a local AGENT submits nothing, and records nothing under its command ID.
             var submit = new TaskServiceSubmitTaskRequest { Meta = Tasks.Meta(), Spec = Tasks.Argv(node.Root, Tasks.TestLoad, "hold", "--hold-ms", "100"), CancelWhenCallerGone = true };
             var submitted = await channel.Tasks.SubmitTaskAsync(submit, deadline: DateTime.UtcNow.AddSeconds(15), cancellationToken: Ct);
-            Assert.True(submitted.Error is null, $"{label}: SubmitTask failed: {submitted.Error?.Category}/{submitted.Error?.Code}");
-            var task = await Tasks.GetAsync(channel, submitted.Value.TaskId);
-            Assert.Equal(new ActorRef { Origin = origin, ClientKind = kind }, task.Owner);
-            Assert.Equal(origin, DedupOrigin(submit.Meta));
-            var binding = node.Runtime.Execution!.BindingOf(submitted.Value.TaskId.Value.Span);
-            Assert.Equal(session ? (int?)Environment.ProcessId : null, binding?.ProcessId);
+            if (origin == Origin.Agent)
+            {
+                Assert.Equal(("permission_denied", "task.submit", "local_submission_human_only"),
+                    (submitted.Error?.Code, submitted.Error?.Details.State.State, submitted.Error?.Details.State.Reason));
+                Assert.Null(node.Runtime.Store.Read(reader => reader.Scalar("SELECT 1 FROM command_dedup WHERE command_id = $id;", ("$id", submit.Meta.CommandId.Value.ToByteArray()))));
+            }
+            else
+            {
+                Assert.True(submitted.Error is null, $"{label}: SubmitTask failed: {submitted.Error?.Category}/{submitted.Error?.Code}");
+                var task = await Tasks.GetAsync(channel, submitted.Value.TaskId);
+                Assert.Equal(new ActorRef { Origin = origin, ClientKind = kind }, task.Owner);
+                Assert.True(task.LocalDiagnostic, $"{label}: a local submission is a diagnostic one");
+                Assert.Equal(origin, DedupOrigin(submit.Meta));
+
+                // N2a review N-2: the whole binding key, the process's start time included.
+                var binding = node.Runtime.Execution!.BindingOf(submitted.Value.TaskId.Value.Span);
+                Assert.Equal(session ? (int?)Environment.ProcessId : null, binding?.ProcessId);
+                if (binding is { } key)
+                {
+                    var started = System.Diagnostics.Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks;
+                    Assert.True(Math.Abs(key.StartTicks - started) < ArcForges.Node.Core.Execution.ExecutionSupervisor.CallerStartTolerance.Ticks, $"{label}: the binding names this process's start ({key.StartTicks} vs {started}, {(key.StartTicks - started) / TimeSpan.TicksPerMillisecond} ms)");
+                }
+            }
 
             // The idempotent mutations record the caller's origin with their command ID.
             var missing = CommandIds.New();

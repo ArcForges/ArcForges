@@ -59,6 +59,10 @@ internal sealed class TestNode : IAsyncDisposable
         // the HUMAN approver (HumanChannelAsync); its CLI processes stay SCRIPT callers (no terminal).
         Environment["ARCFORGES_TEST_CLIENT_IMAGES"] = System.Environment.ProcessPath;
 
+        // AD-0021 section 5 (Plan decision Q8, CTR5-NODE-14; N2-23): the closed-loop suites submit through local SCRIPT CLIs and connections,
+        // which a --test-mode node admits only with this allowance; tests of the local bound clear it.
+        Environment[ArcForges.Node.Core.LocalSubmission.Variable] = "1";
+
         // The --test-mode machine isolation (MachineIsolation): the node's budgets and pressure see only itself and its attempts, never the
         // other tests' load (LiveMachine).
         LiveMachine = false;
@@ -551,11 +555,33 @@ internal sealed class TestNode : IAsyncDisposable
                 process.Dispose();
             }
 
+            List<string> uninspectable;
             lock (_uninspectable)
             {
-                // Not killed: it may be another test's.
-                leftovers.AddRange(_uninspectable);
+                uninspectable = [.. _uninspectable];
             }
+
+            // AF-CTR-05 N1 review B: a process may be uninspectable only while it starts or exits (another test's, with the parallel
+            // suites), so scan again before reporting it. The exact identity includes the start time, not just a recyclable PID.
+            uninspectable = await PersistentlyUninspectableAsync(uninspectable, async () =>
+            {
+                await Task.Delay(TimeSpan.FromSeconds(2));
+                foreach (var process in LiveProcesses())
+                {
+                    leftovers.Add($"{process.ProcessName} (pid {process.Id})");
+                    process.Kill(entireProcessTree: true);
+                    process.WaitForExit(TimeSpan.FromSeconds(10));
+                    process.Dispose();
+                }
+
+                lock (_uninspectable)
+                {
+                    return [.. _uninspectable];
+                }
+            });
+
+            // Not killed: it may be another test's.
+            leftovers.AddRange(uninspectable);
         }
         finally
         {
@@ -587,6 +613,18 @@ internal sealed class TestNode : IAsyncDisposable
         }
 
         ArcForges.Tests.Leftovers.Report(leftovers);
+    }
+
+    /// <summary>Reports only identities that remain uninspectable on a second scan; no rescan is needed if the first was empty.</summary>
+    internal static async Task<List<string>> PersistentlyUninspectableAsync(List<string> first, Func<Task<List<string>>> rescan)
+    {
+        if (first.Count == 0)
+        {
+            return first;
+        }
+
+        var second = await rescan();
+        return [.. first.Intersect(second, StringComparer.Ordinal)];
     }
 
     /// <summary>The attempts of this node's store.</summary>

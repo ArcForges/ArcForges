@@ -34,6 +34,13 @@ public sealed record NodeHostOptions
     /// <summary>Honour the <c>ARCFORGES_*</c> test hooks (endpoint, configuration directory).</summary>
     public bool TestMode { get; init; }
 
+    /// <summary>
+    /// Whether a local SCRIPT caller may submit a task (AD-0021 section 5): <see langword="null"/> (the host) derives it from
+    /// <see cref="TestMode"/> and <see cref="LocalSubmission.Variable"/> (<see cref="LocalSubmission.ScriptAllowed"/>); in-process
+    /// test nodes set it.
+    /// </summary>
+    internal bool? AllowLocalScriptSubmit { get; init; }
+
     /// <summary>Started by the systemd user unit (<c>--systemd</c>); readiness and watchdog go to <c>NOTIFY_SOCKET</c> either way.</summary>
     public bool Systemd { get; init; }
 
@@ -84,6 +91,12 @@ public sealed record NodeHostOptions
 
     /// <summary>The sign-in flows' browser opener (tests give the allowed ScriptedBrowser); by default the system browser, none under test mode.</summary>
     internal IBrowserOpener? Opener { get; init; }
+
+    /// <summary>
+    /// Test seam, set only by in-process tests: wraps routed dispatch to hold a result after the real effect, before the channel sends it.
+    /// The executable never sets it.
+    /// </summary>
+    internal Func<IRoutedDispatcher, IRoutedDispatcher>? WrapRoutedDispatcher { get; init; }
 
     /// <summary>
     /// The <c>arcforges</c> executable whose helper roles (<c>node exec-wrap</c>, <c>node signal</c>) the node starts: by default the
@@ -347,7 +360,15 @@ public static class NodeHost
         using var node = new NodeRuntime(store, journal, hub, processor, log, settings, dataRoot, endpoint.Address, clock, recovery, capabilities)
         {
             Execution = execution,
+
+            // AD-0021 section 5 (Plan decision Q8): a local SCRIPT submission only on a --test-mode node with the allowance; never in production.
+            LocalScriptSubmit = options.AllowLocalScriptSubmit
+                ?? LocalSubmission.ScriptAllowed(options.TestMode, Environment.GetEnvironmentVariable(LocalSubmission.Variable)),
         };
+
+        // AF-CTR-05 N2b: the center-routed dispatcher, bound to the TaskService once the local server builds it.
+        var routed = new RoutedDispatcher(node);
+        node.RoutedDispatcher = routed;
         var versionDirectory = options.VersionDirectory
             ?? (options.HelperExecutable is { } helperPath ? Path.GetDirectoryName(Path.GetFullPath(helperPath)) : null)
             ?? AppContext.BaseDirectory;
@@ -382,6 +403,7 @@ public static class NodeHost
 
             // AF-CTR-05 N1: the node channel logs every received call in routed_call_log through the single writer.
             RoutedCalls = new ProcessorRoutedCallStore(processor),
+            Dispatcher = options.WrapRoutedDispatcher?.Invoke(routed) ?? routed,
             Version = NodeContract.ProductVersion,
         });
         await using var cloudScope = cloud.ConfigureAwait(false);

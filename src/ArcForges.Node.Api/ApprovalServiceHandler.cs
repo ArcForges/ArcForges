@@ -268,7 +268,8 @@ public sealed class ApprovalServiceHandler : ApprovalService.ApprovalServiceBase
             operation = executor.Operation;
             try
             {
-                outcome = await executor.Run(approval.Request, Caller.OfApproval(approval.View.Requester, approval.Id)).ConfigureAwait(false);
+                outcome = await executor.Run(approval.Request,
+                    Caller.OfApproval(approval.View.Requester, approval.Id, _node.NodeId.Span, approval.Request)).ConfigureAwait(false);
             }
             catch (Exception exception) when (exception is not OutOfMemoryException)
             {

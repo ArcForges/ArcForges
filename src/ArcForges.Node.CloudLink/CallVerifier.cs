@@ -32,7 +32,8 @@ internal sealed record CallBinding
 /// <param name="Header">The verified call header (decoded from the bytes whose signature verified).</param>
 /// <param name="Payload">The exact node.v1 request bytes (never re-encoded).</param>
 /// <param name="LogId">The pending row of <c>routed_call_log</c>.</param>
-internal sealed record VerifiedCall(CallHeader Header, ByteString Payload, long LogId);
+/// <param name="ReceivedAt">The channel's monotonic receipt timestamp, assigned before queueing; absent only in direct in-process dispatch.</param>
+internal sealed record VerifiedCall(CallHeader Header, ByteString Payload, long LogId, long? ReceivedAt = null);
 
 /// <summary>A refused frame: the failed step (closed vocabulary) and its catalogue code; <paramref name="CallId"/> is the frame's call ID when well-formed.</summary>
 internal sealed record CallRefusal(string Step, string Code, Id? CallId)

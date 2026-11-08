@@ -96,6 +96,49 @@ public sealed class RoutedResultTests
         }
     }
 
+    /// <summary>
+    /// AF-CTR-05 N2b decisions Q11 (relay.proto routedRefusal): <c>AUTHORIZATION/approval_required</c> alone carries a resource, exactly
+    /// <c>{kind "approval", id}</c>, and the RECONCILE advice through <c>ApprovalService/GetApproval</c>; its signed result passes the contract.
+    /// </summary>
+    [Fact]
+    public void OnlyAnApprovalRequiredRefusalCarriesItsApprovalAndItsReconciliation()
+    {
+        var correlation = CommandIds.New();
+        var approval = RoutedRefusals.ApprovalRequired("task.cancel_others", CommandIds.New(), correlation);
+        Assert.True(RoutedRefusals.Closed(approval));
+        Assert.Equal((RetryMode.Reconcile, RoutedRefusals.ApprovalReconciliation, "approval"),
+            (approval.Retry.Mode, approval.Retry.ReconciliationOperation, approval.Details.State.Resource.Kind));
+        Assert.False(RoutedRefusals.Closed(Change(approval, error => error.Details.State.Resource.Kind = "task")));
+        Assert.False(RoutedRefusals.Closed(Change(approval, error => error.Details.State.Resource.Id = null)));
+        Assert.False(RoutedRefusals.Closed(Change(approval, error => error.Retry.ReconciliationOperation = "arcforges.node.v1.TaskService/GetTask")));
+        Assert.False(RoutedRefusals.Closed(Change(approval, error => error.Retry.Mode = RetryMode.Never)));
+        Assert.False(RoutedRefusals.Closed(Change(approval, error => error.Retry.ClearReconciliationOperation())));
+        Assert.False(RoutedRefusals.Closed(Change(approval, error => error.Details.State.Resource = null)));
+
+        // Another code never carries either.
+        var policy = RoutedRefusals.Policy("task.submit", "denied", correlation);
+        Assert.False(RoutedRefusals.Closed(Change(policy, error => error.Details.State.Resource = new AggregateRef { Kind = "approval", Id = correlation })));
+        Assert.False(RoutedRefusals.Closed(Change(policy, error =>
+        {
+            error.Retry.Mode = RetryMode.Reconcile;
+            error.Retry.ReconciliationOperation = RoutedRefusals.ApprovalReconciliation;
+        })));
+        Assert.True(RoutedRefusals.Closed(RoutedRefusals.Authorization("command_pattern_denied", "task.submit", "agents.allowed_command_patterns", correlation)));
+        Assert.Equal("task.cancel_others", RoutedRefusals.Operation(RoutedMethod.CancelNodeTask));
+
+        var root = Directory.CreateTempSubdirectory("arcforges-refusal-").FullName;
+        try
+        {
+            using var key = NodeKeyStores.ForTestDataRoot(root).Create(RandomNumberGenerator.GetBytes(16), "https://center.example.test", Clock);
+            var signer = new ResultSigner(key, RandomNumberGenerator.GetBytes(16), Clock);
+            Assert.True(RelayShapes.IsValid(signer.Refused(CallHeader(), RoutedOutcome.RefusedByPolicy, approval)));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     [Fact]
     public async Task TheRoutedCallLogKeepsReadsSevenDaysAndAtMostTenThousandRefusals()
     {

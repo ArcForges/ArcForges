@@ -55,15 +55,18 @@ public sealed class CloudChannelTests
             Assert.Contains(CloudLinkService.ChannelFeature, (await human.Node.GetNodeInfoAsync(new NodeServiceGetNodeInfoRequest(), cancellationToken: ct)).Value.Node.Features);
         }
 
-        // A call whose payload carries a marker: verified, refused by part N1's dispatcher, signed; the payload is never parsed or stored.
+        // A call whose payload carries a marker: verified, rejected by the N2 dispatcher as an invalid task, and signed; the payload is not stored.
         var marker = "N1MARKER" + Convert.ToHexString(RandomNumberGenerator.GetBytes(8));
         var submit = new TaskServiceSubmitTaskRequest { Meta = new RequestMeta { CommandId = CommandIds.New(), CorrelationId = CommandIds.New() } };
         submit.Spec = new TaskSpec { WorkingDirectory = "/srv/" + marker };
-        var (call, _) = center.Channel.BuildCall(connection, new FakeCallSpec { Method = RoutedMethod.SubmitNodeTask, Payload = submit.ToByteArray() });
+        var (call, _) = center.Channel.BuildCall(connection, new FakeCallSpec { Method = RoutedMethod.SubmitNodeTask, CommandId = submit.Meta.CommandId, Payload = submit.ToByteArray() });
         await connection.SendCallAsync(call);
         await TestNode.WaitAsync(() => !connection.VerifiedResults.IsEmpty, TimeSpan.FromSeconds(15), "the signed result");
         Assert.Empty(connection.UnverifiedResults);
-        Assert.Equal(RoutedOutcome.RefusedByPolicy, connection.VerifiedResults.Single().Header.Outcome);
+        var result = Assert.Single(connection.VerifiedResults);
+        Assert.Equal(RoutedOutcome.Executed, result.Header.Outcome);
+        var error = TaskServiceSubmitTaskResponse.Parser.ParseFrom(result.Frame.Payload).Error;
+        Assert.Equal((ErrorCategory.Validation, "invalid_argument", EffectCertainty.DidNotHappen), (error.Category, error.Code, error.Effect));
 
         // The node's refreshes on the hook's cadence each send TokenRefresh on the open channel.
         await TestNode.WaitAsync(() => connection.TokenRefreshes.Count >= 1, TimeSpan.FromSeconds(60), "TokenRefresh after a refresh");

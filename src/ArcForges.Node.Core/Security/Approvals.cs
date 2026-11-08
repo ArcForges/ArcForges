@@ -91,7 +91,10 @@ public static class Approvals
         var transaction = context.Transaction;
         if (ByCommand(transaction, capture.CommandId) is { } existing)
         {
+            var previous = existing.View.Requester?.CenterCaller;
+            var requester = capture.Requester.CenterCaller;
             return existing.View.Operation == capture.Operation && existing.RequestDigest.AsSpan().SequenceEqual(capture.RequestDigest)
+                && ((previous is null && requester is null) || CenterRouting.SameClass(previous, requester))
                 ? (existing, false, null)
                 : (null, false, StoreErrors.CommandIdReused());
         }
@@ -108,8 +111,9 @@ public static class Approvals
             ("$requester", capture.Requester.ToByteArray()), ("$command", capture.CommandId), ("$request", capture.Request), ("$digest", capture.RequestDigest),
             ("$now", now), ("$expires", now + (long)ttl.TotalMicroseconds));
         var created = Get(transaction, id)!;
+        var auditSummary = capture.Requester.CenterCaller is null ? "approval requested: " + created.View.Summary : "denied: approval_required";
         AuditLog.Append(transaction, capture.Requester, capture.MatrixOperation + " " + capture.Operation, capture.TargetKind, capture.TargetId ?? [],
-            PermissionDecision.Approval, id, "approval requested: " + created.View.Summary);
+            PermissionDecision.Approval, id, auditSummary);
         context.Emit(EventTopic.Approvals, new NodeEvent { Approval = created.View });
         return (created, true, null);
     }

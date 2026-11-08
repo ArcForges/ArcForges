@@ -4,7 +4,9 @@ using System.Globalization;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
+using ArcForges.Contracts.Relay.V1;
 using ArcForges.Node.Core.Execution;
+using ArcForges.Node.Core.Security;
 using ArcForges.Tests;
 
 namespace ArcForges.Node.Core.Tests;
@@ -54,6 +56,111 @@ public sealed class AdoptionLifecycleTests
         finally
         {
             Kill(pid);
+        }
+    }
+
+    /// <summary>N2-2/MR-08: a center-routed cancel never terminates a real process adopted into the OS scope or job.</summary>
+    [Fact(Timeout = 180_000)]
+    [Trait("env", "linux-real")]
+    public async Task TheRoutedCancelOfAnAdoptedProcessIsDeniedOnLinux()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "the real Linux adoption scope");
+        await RoutedCancelOfAdoptedProcessAsync();
+    }
+
+    /// <summary>N2-2/MR-08: the same check against a real Windows adoption job.</summary>
+    [Fact(Timeout = 180_000)]
+    [Trait("env", "windows-real")]
+    public async Task TheRoutedCancelOfAnAdoptedProcessIsDeniedOnWindows()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "the real Windows adoption job");
+        await RoutedCancelOfAdoptedProcessAsync();
+    }
+
+    private static async Task RoutedCancelOfAdoptedProcessAsync()
+    {
+        RequirePlatform();
+        await using var node = await InProcessNode.Create().StartAsync();
+        await using var human = await node.ChannelAsync(helloAsHuman: true);
+        var pid = StartOutsideAnyContainer();
+        var identity = ArcForges.Tests.ProcessIdentity.Capture(pid);
+        Assert.True(identity.HasValue, "the test process must have a readable PID and creation identity");
+        var owned = identity.Value;
+        TestContext.Current.TestOutputHelper?.WriteLine("owned adoption " + owned);
+        try
+        {
+            var taskId = await AdoptAsync(human, pid, owned);
+            var adopted = await Tasks.GetAsync(human, taskId, full: true);
+            Assert.Equal((TaskState.Running, TaskKind.Adopted, AttemptKind.Adopted), (adopted.State, adopted.Spec.Kind, adopted.CurrentAttempt.Kind));
+            var routed = new RoutedCalls(node);
+            var caller = routed.Relay(Origin.Script);
+            var denied = (await routed.CancelAsync(caller, taskId)).Answer!;
+            Assert.Equal((RoutedOutcome.RefusedByPolicy, "permission_denied", PermissionMatrix.ProcessTerminate, EffectCertainty.DidNotHappen),
+                (denied.Outcome, denied.Error?.Code, denied.Error?.Details.State.State, denied.Error?.Effect));
+            Assert.True(owned.IsRunning(), "the routed denial must leave the recorded adopted OS process alive");
+            Assert.Equal(TaskState.Running, (await Tasks.GetAsync(human, taskId)).State);
+            Assert.Empty((await human.Approvals.ListApprovalsAsync(new ApprovalServiceListApprovalsRequest { Meta = Tasks.Meta() }, cancellationToken: Ct)).Value.Approvals);
+            Assert.Contains(node.Runtime.Store.Read(reader => AuditLog.Recent(reader)), entry =>
+                entry.Operation == PermissionMatrix.ProcessTerminate + " TaskService.CancelTask" && entry.Decision == PermissionDecision.Deny
+                && entry.Actor.Origin == Origin.Remote && caller.Equals(entry.Actor.CenterCaller));
+        }
+        finally
+        {
+            owned.Kill();
+        }
+    }
+
+    /// <summary>Verifier N-7: the fixed deny is re-evaluated at approval execution after an actual Linux node restart.</summary>
+    [Fact(Timeout = 180_000)]
+    [Trait("env", "linux-real")]
+    public async Task AnApprovedRoutedCancelCannotReachARealLinuxAdoptedProcessAfterRestart()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "the real Linux adoption scope");
+        RequirePlatform();
+        await using var node = await InProcessNode.Create().StartAsync();
+        await using var human = await node.ChannelAsync(helloAsHuman: true);
+        var pid = StartOutsideAnyContainer();
+        var identity = ArcForges.Tests.ProcessIdentity.Capture(pid);
+        Assert.True(identity.HasValue, "the test process must have a readable PID and creation identity");
+        var owned = identity.Value;
+        TestContext.Current.TestOutputHelper?.WriteLine("owned adoption " + owned);
+        try
+        {
+            var taskId = await AdoptAsync(human, pid, owned);
+            Assert.True(owned.IsRunning());
+            // Construct the otherwise unreachable approval race on the real adopted task: temporarily mark its row as a
+            // command to raise the other-owner approval, then restore ADOPTED before restarting the real test node.
+            await node.Runtime.Processor.ExecuteAsync(context => context.Transaction.Execute("UPDATE task SET kind = $kind WHERE task_id = $id;",
+                ("$kind", (int)TaskKind.Command), ("$id", taskId.Value.ToByteArray())));
+            var routed = new RoutedCalls(node);
+            var raised = (await routed.CancelAsync(RoutedCalls.Session(), taskId)).Answer!;
+            Assert.Equal("approval_required", raised.Error?.Code);
+            var approval = raised.Error!.Details.State.Resource.Id;
+            await node.Runtime.Processor.ExecuteAsync(context => context.Transaction.Execute("UPDATE task SET kind = $kind WHERE task_id = $id;",
+                ("$kind", (int)TaskKind.Adopted), ("$id", taskId.Value.ToByteArray())));
+            Assert.Equal(0, await node.StopAsync());
+            Assert.True(owned.IsRunning(), "the test-owned adopted process must survive the node restart");
+            await node.StartAsync();
+            await using var restartedHuman = await node.ChannelAsync(helloAsHuman: true);
+            var before = await Tasks.GetAsync(restartedHuman, taskId, full: true);
+            Assert.Equal((TaskState.Running, TaskKind.Adopted), (before.State, before.Spec.Kind));
+            var decided = await restartedHuman.Approvals.DecideApprovalAsync(new ApprovalServiceDecideApprovalRequest
+            {
+                Meta = Tasks.Meta(),
+                ApprovalId = approval,
+                Decision = ApprovalDecisionKind.Approve,
+            }, cancellationToken: Ct);
+            Assert.Null(decided.Error);
+            Assert.Equal(ApprovalState.Failed, decided.Value.Approval.State);
+            Assert.True(owned.IsRunning(), "the denied approval must not terminate the recorded adopted process");
+            Assert.Equal(TaskState.Running, (await Tasks.GetAsync(restartedHuman, taskId)).State);
+        }
+        finally
+        {
+            owned.Kill();
         }
     }
 
@@ -227,7 +334,7 @@ public sealed class AdoptionLifecycleTests
     private static void RequirePlatform() =>
         Assert.SkipWhen(!OperatingSystem.IsWindows() && SystemdTestEnvironment.SkipReason is not null, SystemdTestEnvironment.SkipReason ?? string.Empty);
 
-    private static async Task<Id> AdoptAsync(NodeChannel human, int pid)
+    private static async Task<Id> AdoptAsync(NodeChannel human, int pid, ArcForges.Tests.ProcessIdentity? owned = null)
     {
         var identity = ClientProcess.Identity(pid);
         Assert.NotNull(identity);
@@ -237,7 +344,15 @@ public sealed class AdoptionLifecycleTests
             && adopted.Error.Details?.State?.Reason?.Contains("already in a job", StringComparison.Ordinal) == true)
         {
             // 04 section 10 refuses a process in any job; on some machines every process of the session is in one (WMI-created ones too).
-            Kill(pid);
+            if (owned is { } recorded)
+            {
+                recorded.Kill();
+            }
+            else
+            {
+                Kill(pid);
+            }
+
             Assert.Skip($"The process this test created through WMI (Win32_Process.Create) is in a job, and 04 section 10 refuses a process in any job: "
                 + $"AdoptProcess answered adopt_not_permitted ({adopted.Error.Details.State.Reason}).");
         }

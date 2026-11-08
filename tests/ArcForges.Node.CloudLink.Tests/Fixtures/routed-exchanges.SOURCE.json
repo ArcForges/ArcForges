@@ -1,0 +1,187 @@
+{
+  "source": "https://github.com/ArcForges/Cloud",
+  "sourceCommit": "b7743b931aba21465aceb12861502c5fe27699e4",
+  "sourcePath": "center/internal/hub/testdata/routed",
+  "producer": "center/internal/hub/routed_capture_integration_test.go (REAL PostgreSQL, the REAL composed center and hub of Cloud E2b #147; the nodes are center/internal/nodetest; normalized placeholders; a committed file that differs fails the Cloud test)",
+  "contractsCohort": "1.0.0-ci.437.1",
+  "schemaVersion": 2,
+  "licence": "AGPL-3.0-only (Cloud and ArcForges alike); data files copied byte for byte, no Cloud source is built or referenced",
+  "listingSha256": "e96a343db5fa07e1a39204f6e4e23bb00146156a23869df22e6be95bd39b62de",
+  "files": [
+    {
+      "file": "CancelNodeTask-gated.json",
+      "gitBlob": "22b605dbe185df8baabb79364755fa62da392617",
+      "sha256": "4b927f7e4313c4f7ef36248a63216ce0b51bddca1bbeabb3af3de43bbebddc23"
+    },
+    {
+      "file": "CancelNodeTask-offline.json",
+      "gitBlob": "92846c93b30718a1a1cbcbcbb5df8452028614a1",
+      "sha256": "6eeb783801294d9b3089794143b5c9429625d4a84f54667694914c56a3a15606"
+    },
+    {
+      "file": "CancelNodeTask-ok.json",
+      "gitBlob": "45b8067735d795bbe664546984960d65e1140a32",
+      "sha256": "f7a0afd7f44c48a7fb9ce334560a2b74f636b64e4b7f47bba9b0d3e41a7c5ccf"
+    },
+    {
+      "file": "CancelNodeTask-quota.json",
+      "gitBlob": "01303897638f0872261ce35483be1f37a2537931",
+      "sha256": "cacd841d85091d1dbf72cd160a6d0b69b7933da73efa65a17cc4842fef1b24d7"
+    },
+    {
+      "file": "CancelNodeTask-unknown.json",
+      "gitBlob": "c52df47857ae84dffed9e6b612c959e61395296f",
+      "sha256": "a04b93ccfdb178e2921d7d348017dd323849bba398317974b75254786026d57f"
+    },
+    {
+      "file": "GetNodeTask-gated.json",
+      "gitBlob": "deca910ec0d957497358d63173a0e24d9ec423ee",
+      "sha256": "802af3d662e662f7470f3799364a911a00badde3768bc67c759e9771f4e1846d"
+    },
+    {
+      "file": "GetNodeTask-offline.json",
+      "gitBlob": "9aacb639ca67b1aef3cb02083969d3720619dc4e",
+      "sha256": "429b3ececc9c33aca440c9c427d86c8ae4d7b6e5ba7e14e70895af84ecf99d36"
+    },
+    {
+      "file": "GetNodeTask-ok.json",
+      "gitBlob": "5c80ad27724b4c59e3864dc77a216651058c41aa",
+      "sha256": "42ce1de25560b214a53b523f32a61214df848f818bef3e4f6ee1b23a9471136c"
+    },
+    {
+      "file": "GetNodeTask-quota.json",
+      "gitBlob": "ef86b2f573cf37d31fe753f94cbcdb33966176d1",
+      "sha256": "7a8b94296cc797a2251f84627b21e7f74cf65efef088756c482e70b75e068047"
+    },
+    {
+      "file": "GetNodeTask-unreachable.json",
+      "gitBlob": "9cff8f1fee0e997ccaf7d88b770870db60922323",
+      "sha256": "342772b8bdaab8d6b777f6980662cc54864fe920788595ca302b13f62d6b5deb"
+    },
+    {
+      "file": "ListNodeTasks-gated.json",
+      "gitBlob": "14942dc2c266d3aebba16968aa3faf2aa0e7cef3",
+      "sha256": "294c6d61ccfddca21b77dcabceffa042418562393549120460a1ecd5f3d03b88"
+    },
+    {
+      "file": "ListNodeTasks-offline.json",
+      "gitBlob": "4b488ba8418e758960499cf6f36d1371917a2e5b",
+      "sha256": "1104ab85e168afe7bfd655e7eb891d608903c07f447706dc7a454eb85c544631"
+    },
+    {
+      "file": "ListNodeTasks-ok.json",
+      "gitBlob": "af923a6a293d23d8bdb8e488e4ebd3243ece4615",
+      "sha256": "a4295d4e8080ef3e1919ed36a444863e7effac176205f834a8a1cc0ed1a96898"
+    },
+    {
+      "file": "ListNodeTasks-quota.json",
+      "gitBlob": "3e2fdd78166f80b908a88eac31b03cb235ec7fec",
+      "sha256": "06a8fbc46398efae0026ded56716f67dd259e133f07052c514944702091d57b4"
+    },
+    {
+      "file": "ListNodeTasks-unreachable.json",
+      "gitBlob": "5ea864edd41312f4aaa3e0cb4cab1eed8b940f04",
+      "sha256": "70be57ee3aca2609fa65f65659a9c413af81439356aadcd69c472804f7f1d6d7"
+    },
+    {
+      "file": "ReadNodeTaskOutput-gated.json",
+      "gitBlob": "c693364b4cec0185849927cf8d51b5b1ee58a70b",
+      "sha256": "9262191bcc7abb5fa0a87777cecde9a9c1d036f07e8281fce54f65df46fb5364"
+    },
+    {
+      "file": "ReadNodeTaskOutput-offline.json",
+      "gitBlob": "9c73766e5682e608651ee8ebdc318f400014982d",
+      "sha256": "7d0a2c448eed871f89e94842ea98186c92aa5a4383aada1134eddc0e965278b8"
+    },
+    {
+      "file": "ReadNodeTaskOutput-ok.json",
+      "gitBlob": "3a3bd03428cea8ffa2430dd99cebcc3a9ad974c4",
+      "sha256": "e4d48c02587dda295f26e150a188f763643f7ea5559b45ac774290f99b8da8e4"
+    },
+    {
+      "file": "ReadNodeTaskOutput-quota.json",
+      "gitBlob": "620e96155ea86cd0086da269fcf32f6fc96cd029",
+      "sha256": "01340fa92f76bd479f4a3501ca9cf61fb9950b20c2afe0bb450761cd3ed7b579"
+    },
+    {
+      "file": "ReadNodeTaskOutput-unreachable.json",
+      "gitBlob": "a526628d24b44fbe7a48d244bd9bc3eb382b7026",
+      "sha256": "350360cae91d1cbdbc59668ff4bc7393cff8357d7dc9b3814945256e7d995e17"
+    },
+    {
+      "file": "SubmitNodeTask-command-id-reused.json",
+      "gitBlob": "08495df383af9e388307161ef1f38e55960068e2",
+      "sha256": "982d40041ccc16a6d2c7be40c1e7307cb91ae26cf53183f52400eb3916c33a81"
+    },
+    {
+      "file": "SubmitNodeTask-gated.json",
+      "gitBlob": "739abfe979e1ac3c1727400546d1f1307449030c",
+      "sha256": "a927cfd7adbab081734c6fc7596acf28b33e71649b456e84487a85b42108745b"
+    },
+    {
+      "file": "SubmitNodeTask-offline.json",
+      "gitBlob": "4924a120d54bbe743e87bd2b90ffd45ea6342af9",
+      "sha256": "fd4d82365d2c32ea95c1219d61bf917ac9e1be240a90f18473b15fc5d2d8d5b6"
+    },
+    {
+      "file": "SubmitNodeTask-ok.json",
+      "gitBlob": "765511ff49a9c098bf26c7b79ab73dd5f5b9c3f0",
+      "sha256": "c58245b369ef0d76aceea6847ef4c1ccfceeac341fa17a2f1230369898ddd17c"
+    },
+    {
+      "file": "SubmitNodeTask-quota.json",
+      "gitBlob": "7ca885b6296c917d318824de799fb07320f59171",
+      "sha256": "752739e9b8fbd8206b735682db839d3c161811143c942a593065f508275376c6"
+    },
+    {
+      "file": "SubmitNodeTask-replay-digest-differs.json",
+      "gitBlob": "5d3d724ab46d49485c3a99bcebe706c0eaeea121",
+      "sha256": "eb9ff6df2825fbdc95acbd18e2744e6e1584ebed1b486a51841be2ee10bdd1ba"
+    },
+    {
+      "file": "SubmitNodeTask-replay-window-passed.json",
+      "gitBlob": "82ef1119aae510ef39b4db4ce4dfe066da8dfd28",
+      "sha256": "fbde249b6e2ec53a35a79257689a2fce6ed1b2736f6148fca88bc2b5d6a6f5d9"
+    },
+    {
+      "file": "SubmitNodeTask-replayed.json",
+      "gitBlob": "dc93bddf99b7e2e9cc6c6d94a2e6d9b248a7c285",
+      "sha256": "19a3a740b0b1fe1ebc77d8ce724f8dfacd3fbf2965707eb6becbd37be03164e8"
+    },
+    {
+      "file": "SubmitNodeTask-step-up-required.json",
+      "gitBlob": "d45d02b83f1ac0ada8cb7ec7f9b5352ffffeccad",
+      "sha256": "0d19b5200c4100fce57cb30152b12621ce7a7993879c7f168628aab4a692e3ac"
+    },
+    {
+      "file": "SubmitNodeTask-unknown.json",
+      "gitBlob": "cd5856c1652c5f34fbea836a98533790fbbae3f4",
+      "sha256": "9d83d43522e310077f0cd749c0c9b723e335f57fc4b6be529768f353a544a576"
+    },
+    {
+      "file": "WaitNodeTask-gated.json",
+      "gitBlob": "1f1ba4a682ec23b8ac1fecd5eb8fac1cfcbd7497",
+      "sha256": "a4c7fe4a23c9f12821f80a6be2093275ee9d03071a1abac69278725119000028"
+    },
+    {
+      "file": "WaitNodeTask-offline.json",
+      "gitBlob": "447ef4b296c0e6b288ec518c5cdd4a969ce63eb2",
+      "sha256": "8b7bba7c622b0d560a4a6ee2dbd8d3c8afda8e7aa6b6f7631caf78bd92b317c1"
+    },
+    {
+      "file": "WaitNodeTask-ok.json",
+      "gitBlob": "1b021a886e4a992f837eb94942476bdfca3a2fd4",
+      "sha256": "e673446c2a89ec0b2330a0a54824de4f84b0d205fddc648e8ab8525d84cc3428"
+    },
+    {
+      "file": "WaitNodeTask-quota.json",
+      "gitBlob": "292218cdaf264eae794295e3a1b5576fce5e226e",
+      "sha256": "0cb2cc1832175b6cfd5b342645bf3660a70b21dad396ec93f8ea15e5c1a7b567"
+    },
+    {
+      "file": "WaitNodeTask-unreachable.json",
+      "gitBlob": "840f87402a5c013c9c78e5a435a39dfe18a37631",
+      "sha256": "6cdc3db59ae3771d393dd696d8bf4832eab29e834b08acbab55f28c767ab3bc0"
+    }
+  ]
+}

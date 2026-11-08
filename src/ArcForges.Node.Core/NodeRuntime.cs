@@ -98,6 +98,18 @@ public sealed class NodeRuntime : IDisposable
     /// <summary>Executes the approvals a node stop left APPROVED (set by the API layer; run once the execution supervisor runs).</summary>
     public Func<Task>? ResumeApprovals { get; set; }
 
+    /// <summary>
+    /// The node's center-routed dispatcher (AF-CTR-05 N2b; <c>ArcForges.Node.Api.RoutedDispatcher</c>, set by the host before the cloud link
+    /// starts). Typed as <see cref="object"/> because the dispatch seam lives in the cloud link; tests use it to hand a call to the dispatcher.
+    /// </summary>
+    public object? RoutedDispatcher { get; set; }
+
+    /// <summary>
+    /// True when a local SCRIPT caller may submit a task (AD-0021 section 5, Plan decision Q8): only a <c>--test-mode</c> node with
+    /// the test allowance (<see cref="LocalSubmission.Variable"/> and <see cref="LocalSubmission.ScriptAllowed"/>), and in-process test nodes; never an AGENT.
+    /// </summary>
+    public bool LocalScriptSubmit { get; init; }
+
     /// <summary>Counts one API call.</summary>
     public void CountCall() => Interlocked.Increment(ref _rpcCalls);
 
