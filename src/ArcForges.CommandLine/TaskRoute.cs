@@ -372,7 +372,11 @@ internal sealed class TaskRoute(Cli cli, NodeSession session, Id nodeId, bool lo
 
                             var read = new TaskServiceReadTaskOutputRequest
                             {
-                                Meta = Cli.Meta(), AttemptId = attempt, Stream = OutputStream.Merged, FromOffset = offset, MaxBytes = 262_144,
+                                Meta = Cli.Meta(),
+                                AttemptId = attempt,
+                                Stream = OutputStream.Merged,
+                                FromOffset = offset,
+                                MaxBytes = 262_144,
                                 WaitMs = TaskText.IsTerminal(task.State) ? 0U : (uint)pause.TotalMilliseconds,
                             };
                             var (output, readExit) = await AwaitOperationAsync(ReadAsync(read, stopped.Token)).ConfigureAwait(false);
@@ -606,14 +610,20 @@ internal sealed class TaskRoute(Cli cli, NodeSession session, Id nodeId, bool lo
 
     private static ArcError Internal() => new()
     {
-        Category = ErrorCategory.Internal, Code = "internal", MessageKey = "error.internal.internal",
-        Effect = EffectCertainty.Unknown, Retry = new RetryAdvice { Mode = RetryMode.Never },
+        Category = ErrorCategory.Internal,
+        Code = "internal",
+        MessageKey = "error.internal.internal",
+        Effect = EffectCertainty.Unknown,
+        Retry = new RetryAdvice { Mode = RetryMode.Never },
     };
 
     private ArcError Uncertain() => new()
     {
-        Category = ErrorCategory.State, Code = "node_unreachable", MessageKey = "error.state.node_unreachable",
-        Effect = EffectCertainty.Unknown, Retry = new RetryAdvice { Mode = RetryMode.SameCommand },
+        Category = ErrorCategory.State,
+        Code = "node_unreachable",
+        MessageKey = "error.state.node_unreachable",
+        Effect = EffectCertainty.Unknown,
+        Retry = new RetryAdvice { Mode = RetryMode.SameCommand },
         Details = new ErrorDetails { State = new StateFailure { State = "node", Reason = "channel_closed", Resource = new AggregateRef { Kind = "node", Id = NodeId.Clone() } } },
     };
 }

@@ -277,8 +277,12 @@ internal static class TaskCommands
                 lastAttempt = attempt.Clone();
                 var read = new TaskServiceReadTaskOutputRequest
                 {
-                    Meta = Cli.Meta(), AttemptId = attempt, Stream = selected, FromOffset = offset,
-                    MaxBytes = route.Local ? 1024U * 1024 : 262_144U, WaitMs = follows && !TaskText.IsTerminal(task.Value.Task.State) ? 1000U : 0U,
+                    Meta = Cli.Meta(),
+                    AttemptId = attempt,
+                    Stream = selected,
+                    FromOffset = offset,
+                    MaxBytes = route.Local ? 1024U * 1024 : 262_144U,
+                    WaitMs = follows && !TaskText.IsTerminal(task.Value.Task.State) ? 1000U : 0U,
                 };
                 var output = await route.ReadAsync(read, cancellationToken).ConfigureAwait(false);
                 if (output.Error is { } outputError)
@@ -971,7 +975,10 @@ internal static class TaskCommands
         {
             var read = new TaskServiceReadTaskOutputRequest
             {
-                Meta = Cli.Meta(), AttemptId = attempt.AttemptId, Stream = OutputStream.Merged, FromOffset = offset,
+                Meta = Cli.Meta(),
+                AttemptId = attempt.AttemptId,
+                Stream = OutputStream.Merged,
+                FromOffset = offset,
                 MaxBytes = route is { Local: false } ? 262_144U : 1024U * 1024,
             };
             var response = route is null || route.Local

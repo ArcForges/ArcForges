@@ -29,6 +29,47 @@ public sealed class RoutedCliTests
     }
 
     [Fact(Timeout = 60000)]
+    public async Task ADisconnectedOwnChannelDoesNotFallBackToLocalExecution()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var fixture = await Fixture.StartAsync();
+        await using var human = await fixture.Node.ChannelAsync(Origin.Human);
+        var disabled = await human.Account.SetCloudLinkAsync(new AccountServiceSetCloudLinkRequest { Meta = CloudNode.Command(), Enabled = false },
+            cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Null(disabled.Error);
+        var result = await fixture.CliAsync("run", "--detach", "--env-inherit", "none", "--", CloudNode.TestLoad, "hold", "--hold-ms", "1");
+        Assert.Equal(4, result.ExitCode);
+        Assert.Empty(result.Stdout);
+        Assert.Contains("unavailable", result.Stderr, StringComparison.Ordinal);
+        Assert.Contains("run --local", result.Stderr, StringComparison.Ordinal);
+        Assert.Empty(fixture.Center.CallsOf("SubmitNodeTask"));
+    }
+
+    [Fact(Timeout = 60000)]
+    public async Task ATargetOfflineWithoutAnEarlierUncertainResultExitsSeventyFive()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var fixture = await Fixture.StartAsync();
+        fixture.Center.Script("SubmitNodeTask", Reply(new FleetServiceSubmitNodeTaskResponse
+        {
+            Meta = new ResponseMeta(),
+            Error = new ArcError
+            {
+                Category = ErrorCategory.State,
+                Code = "node_offline",
+                MessageKey = "error.state.node_offline",
+                Effect = EffectCertainty.DidNotHappen,
+                Retry = new RetryAdvice { Mode = RetryMode.Never },
+            },
+        }));
+        var result = await fixture.CliAsync("run", "--detach", "--env-inherit", "none", "--", CloudNode.TestLoad, "hold", "--hold-ms", "1");
+        Assert.Equal(75, result.ExitCode);
+        Assert.Empty(result.Stdout);
+        Assert.DoesNotContain("may have run", result.Stderr, StringComparison.Ordinal);
+        Assert.Single(fixture.Center.CallsOf("SubmitNodeTask"));
+    }
+
+    [Fact(Timeout = 60000)]
     public async Task ExplicitWaitWithoutDurationIsAttachedAndConflictsWithDetach()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
@@ -49,10 +90,14 @@ public sealed class RoutedCliTests
         fixture.Center.Script("SubmitNodeTask", new FakeFault.Transport(14, "dependency.unavailable"));
         fixture.Center.Script("SubmitNodeTask", Reply(new FleetServiceSubmitNodeTaskResponse
         {
-            Meta = new ResponseMeta(), Error = new ArcError
+            Meta = new ResponseMeta(),
+            Error = new ArcError
             {
-                Category = ErrorCategory.State, Code = "node_offline", MessageKey = "error.state.node_offline",
-                Effect = EffectCertainty.DidNotHappen, Retry = new RetryAdvice { Mode = RetryMode.Never },
+                Category = ErrorCategory.State,
+                Code = "node_offline",
+                MessageKey = "error.state.node_offline",
+                Effect = EffectCertainty.DidNotHappen,
+                Retry = new RetryAdvice { Mode = RetryMode.Never },
             },
         }));
         var result = await fixture.CliAsync("run", "--detach", "--env-inherit", "none", "--", CloudNode.TestLoad, "hold", "--hold-ms", "1");
@@ -93,10 +138,14 @@ public sealed class RoutedCliTests
         fixture.Center.Script("SubmitNodeTask", new FakeFault.Transport(14, "dependency.unavailable"));
         fixture.Center.Script("SubmitNodeTask", Reply(new FleetServiceSubmitNodeTaskResponse
         {
-            Meta = new ResponseMeta(), Error = new ArcError
+            Meta = new ResponseMeta(),
+            Error = new ArcError
             {
-                Category = ErrorCategory.State, Code = "invalid_state", MessageKey = "error.state.invalid_state",
-                Effect = EffectCertainty.DidNotHappen, Retry = new RetryAdvice { Mode = RetryMode.Never },
+                Category = ErrorCategory.State,
+                Code = "invalid_state",
+                MessageKey = "error.state.invalid_state",
+                Effect = EffectCertainty.DidNotHappen,
+                Retry = new RetryAdvice { Mode = RetryMode.Never },
                 Details = new ErrorDetails { State = new StateFailure { State = "task", Reason = "replay_window_passed", Resource = new AggregateRef { Kind = "task", Id = taskId } } },
             },
         }));
@@ -122,7 +171,8 @@ public sealed class RoutedCliTests
         fixture.Center.Script("GetNodeTask", Reply(GetResult(fixture.NodeId, taskId, attemptId, TaskState.Running)));
         fixture.Center.Script("ReadNodeTaskOutput", Reply(ReadResult(fixture.NodeId, new TaskServiceReadTaskOutputValue
         {
-            Data = ByteString.CopyFromUtf8("abXY"), NextOffset = 4,
+            Data = ByteString.CopyFromUtf8("abXY"),
+            NextOffset = 4,
             Index = { new OutputIndexRecord { Stream = OutputStream.Stdout, Length = 2 }, new OutputIndexRecord { Stream = OutputStream.Stderr, Length = 2 } },
         })));
         fixture.Center.Script("GetNodeTask", Reply(GetResult(fixture.NodeId, taskId, attemptId, TaskState.Succeeded)));
@@ -150,7 +200,8 @@ public sealed class RoutedCliTests
         var other = CommandIds.New();
         fixture.Center.Script("ListNodes", Reply(new FleetServiceListNodesResponse
         {
-            Meta = new ResponseMeta(), Value = new FleetServiceListNodesValue
+            Meta = new ResponseMeta(),
+            Value = new FleetServiceListNodesValue
             {
                 Nodes = { new FleetNode { NodeId = selected, Name = "build-box" }, new FleetNode { NodeId = other, Name = "build-box" } },
             },
@@ -163,11 +214,14 @@ public sealed class RoutedCliTests
         var uuid = new Guid(selected.Value.Span, bigEndian: true).ToString("D");
         fixture.Center.Script("ListNodeTasks", Reply(new FleetServiceListNodeTasksResponse
         {
-            Meta = new ResponseMeta(), Value = new FleetServiceListNodeTasksValue
+            Meta = new ResponseMeta(),
+            Value = new FleetServiceListNodeTasksValue
             {
-                NodeId = selected, Response = new TaskServiceListTasksResponse
+                NodeId = selected,
+                Response = new TaskServiceListTasksResponse
                 {
-                    Meta = new ResponseMeta(), Value = new TaskServiceListTasksValue { Page = new PageState { HasMore = false } },
+                    Meta = new ResponseMeta(),
+                    Value = new TaskServiceListTasksValue { Page = new PageState { HasMore = false } },
                 }.ToByteString(),
             },
         }));
@@ -228,14 +282,18 @@ public sealed class RoutedCliTests
         var attemptId = CommandIds.New();
         var task = new ManagedTask
         {
-            TaskId = taskId, State = TaskState.Succeeded, Title = "safe\u001b[2Jtitle",
+            TaskId = taskId,
+            State = TaskState.Succeeded,
+            Title = "safe\u001b[2Jtitle",
             CurrentAttempt = new Attempt { AttemptId = attemptId, Result = new AttemptResult { TerminationReason = TerminationReason.Exited, ExitCode = 0 } },
         };
         fixture.Center.Script("GetNodeTask", Reply(new FleetServiceGetNodeTaskResponse
         {
-            Meta = new ResponseMeta(), Value = new FleetServiceGetNodeTaskValue
+            Meta = new ResponseMeta(),
+            Value = new FleetServiceGetNodeTaskValue
             {
-                NodeId = fixture.NodeId, Response = new TaskServiceGetTaskResponse { Meta = new ResponseMeta(), Value = new TaskServiceGetTaskValue { Task = task } }.ToByteString(),
+                NodeId = fixture.NodeId,
+                Response = new TaskServiceGetTaskResponse { Meta = new ResponseMeta(), Value = new TaskServiceGetTaskValue { Task = task } }.ToByteString(),
             },
         }));
         var shown = await fixture.CliAsync("tasks", "show", IdText.Format(taskId));
@@ -245,9 +303,11 @@ public sealed class RoutedCliTests
 
         fixture.Center.Script("WaitNodeTask", Reply(new FleetServiceWaitNodeTaskResponse
         {
-            Meta = new ResponseMeta(), Value = new FleetServiceWaitNodeTaskValue
+            Meta = new ResponseMeta(),
+            Value = new FleetServiceWaitNodeTaskValue
             {
-                NodeId = fixture.NodeId, Response = new TaskServiceWaitTaskResponse { Meta = new ResponseMeta(), Value = new TaskServiceWaitTaskValue { Task = task, Reached = true } }.ToByteString(),
+                NodeId = fixture.NodeId,
+                Response = new TaskServiceWaitTaskResponse { Meta = new ResponseMeta(), Value = new TaskServiceWaitTaskValue { Task = task, Reached = true } }.ToByteString(),
             },
         }));
         var waited = await fixture.CliAsync("tasks", "wait", IdText.Format(taskId), "--output", "none");
@@ -257,9 +317,11 @@ public sealed class RoutedCliTests
 
         fixture.Center.Script("CancelNodeTask", Reply(new FleetServiceCancelNodeTaskResponse
         {
-            Meta = new ResponseMeta(), Value = new FleetServiceCancelNodeTaskValue
+            Meta = new ResponseMeta(),
+            Value = new FleetServiceCancelNodeTaskValue
             {
-                NodeId = fixture.NodeId, Response = new TaskServiceCancelTaskResponse { Meta = new ResponseMeta(), Value = new TaskServiceCancelTaskValue { State = TaskState.Cancelled } }.ToByteString(),
+                NodeId = fixture.NodeId,
+                Response = new TaskServiceCancelTaskResponse { Meta = new ResponseMeta(), Value = new TaskServiceCancelTaskValue { State = TaskState.Cancelled } }.ToByteString(),
             },
         }));
         var cancelled = await fixture.CliAsync("tasks", "cancel", IdText.Format(taskId), "--reason", "test");
@@ -276,10 +338,14 @@ public sealed class RoutedCliTests
         var taskId = CommandIds.New();
         fixture.Center.Script("GetNodeTask", Reply(new FleetServiceGetNodeTaskResponse
         {
-            Meta = new ResponseMeta(), Error = new ArcError
+            Meta = new ResponseMeta(),
+            Error = new ArcError
             {
-                Category = ErrorCategory.Internal, Code = "internal", MessageKey = "error.internal.internal",
-                Effect = EffectCertainty.Unknown, Retry = new RetryAdvice { Mode = RetryMode.Never },
+                Category = ErrorCategory.Internal,
+                Code = "internal",
+                MessageKey = "error.internal.internal",
+                Effect = EffectCertainty.Unknown,
+                Retry = new RetryAdvice { Mode = RetryMode.Never },
             },
         }));
         var get = await fixture.CliAsync("tasks", "show", IdText.Format(taskId), "--full");
@@ -289,10 +355,14 @@ public sealed class RoutedCliTests
 
         fixture.Center.Script("SubmitNodeTask", Reply(new FleetServiceSubmitNodeTaskResponse
         {
-            Meta = new ResponseMeta(), Error = new ArcError
+            Meta = new ResponseMeta(),
+            Error = new ArcError
             {
-                Category = ErrorCategory.State, Code = "node_unreachable", MessageKey = "error.state.node_unreachable",
-                Effect = EffectCertainty.Unknown, Retry = new RetryAdvice { Mode = RetryMode.Never },
+                Category = ErrorCategory.State,
+                Code = "node_unreachable",
+                MessageKey = "error.state.node_unreachable",
+                Effect = EffectCertainty.Unknown,
+                Retry = new RetryAdvice { Mode = RetryMode.Never },
                 Details = new ErrorDetails { State = new StateFailure { State = "node", Reason = "replay_digest_differs" } },
             },
         }));
@@ -327,23 +397,29 @@ public sealed class RoutedCliTests
 
     private static FleetServiceSubmitNodeTaskResponse SubmitResult(Id node, Id task) => new()
     {
-        Meta = new ResponseMeta(), Value = new FleetServiceSubmitNodeTaskValue
+        Meta = new ResponseMeta(),
+        Value = new FleetServiceSubmitNodeTaskValue
         {
-            NodeId = node, Response = new TaskServiceSubmitTaskResponse { Meta = new ResponseMeta(), Value = new TaskServiceSubmitTaskValue { TaskId = task, State = TaskState.Queued } }.ToByteString(),
+            NodeId = node,
+            Response = new TaskServiceSubmitTaskResponse { Meta = new ResponseMeta(), Value = new TaskServiceSubmitTaskValue { TaskId = task, State = TaskState.Queued } }.ToByteString(),
         },
     };
 
     private static FleetServiceGetNodeTaskResponse GetResult(Id node, Id task, Id attempt, TaskState state) => new()
     {
-        Meta = new ResponseMeta(), Value = new FleetServiceGetNodeTaskValue
+        Meta = new ResponseMeta(),
+        Value = new FleetServiceGetNodeTaskValue
         {
-            NodeId = node, Response = new TaskServiceGetTaskResponse
+            NodeId = node,
+            Response = new TaskServiceGetTaskResponse
             {
-                Meta = new ResponseMeta(), Value = new TaskServiceGetTaskValue
+                Meta = new ResponseMeta(),
+                Value = new TaskServiceGetTaskValue
                 {
                     Task = new ManagedTask
                     {
-                        TaskId = task, State = state,
+                        TaskId = task,
+                        State = state,
                         CurrentAttempt = new Attempt { AttemptId = attempt, Result = new AttemptResult { TerminationReason = TerminationReason.Exited, ExitCode = 7 } },
                     },
                 },
@@ -353,9 +429,11 @@ public sealed class RoutedCliTests
 
     private static FleetServiceReadNodeTaskOutputResponse ReadResult(Id node, TaskServiceReadTaskOutputValue value) => new()
     {
-        Meta = new ResponseMeta(), Value = new FleetServiceReadNodeTaskOutputValue
+        Meta = new ResponseMeta(),
+        Value = new FleetServiceReadNodeTaskOutputValue
         {
-            NodeId = node, Response = new TaskServiceReadTaskOutputResponse { Meta = new ResponseMeta(), Value = value }.ToByteString(),
+            NodeId = node,
+            Response = new TaskServiceReadTaskOutputResponse { Meta = new ResponseMeta(), Value = value }.ToByteString(),
         },
     };
 
@@ -395,7 +473,11 @@ public sealed class RoutedCliTests
         {
             var start = new ProcessStartInfo(CloudNode.HelperExecutable)
             {
-                UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = true, CreateNoWindow = true,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                RedirectStandardInput = true,
+                CreateNoWindow = true,
             };
             start.ArgumentList.Add(NodeLocations.TestModeOption);
             foreach (var arg in args)

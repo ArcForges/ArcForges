@@ -429,7 +429,11 @@ public sealed class RealCenterRoutedTests
         static string ShellQuote(string value) => "'" + value.Replace("'", "'\"'\"'", StringComparison.Ordinal) + "'";
         var start = new ProcessStartInfo(pty ? "/usr/bin/script" : CloudNode.HelperExecutable)
         {
-            UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = true, CreateNoWindow = true,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            RedirectStandardInput = true,
+            CreateNoWindow = true,
         };
         if (pty)
         {

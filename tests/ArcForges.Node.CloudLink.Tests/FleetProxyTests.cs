@@ -78,15 +78,37 @@ public sealed class FleetProxyTests
         Assert.False(sentToDifferentCenter);
 
         var target = new Id { Value = ByteString.CopyFrom(nodeId) };
+        center.Script("GetNode", Reply(new FleetServiceGetNodeResponse
+        {
+            Meta = new ResponseMeta(),
+            Value = new FleetServiceGetNodeValue { Node = new FleetNode { NodeId = target, Name = "own-node" } },
+        }));
+        var found = await fleet.GetNodeAsync(new FleetServiceGetNodeRequest { Meta = CloudNode.Command(), NodeId = target, Caller = forged },
+            deadline: DateTime.UtcNow.AddSeconds(30), cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(target, found.Value.Node.NodeId);
+        var getNode = FleetServiceGetNodeRequest.Parser.ParseFrom(FakeCenter.Payload(Assert.Single(center.CallsOf("GetNode")).Body));
+        var getAssertion = RelayAssertion.Parser.ParseFrom(getNode.RelayAssertion);
+        Assert.Equal(Origin.Script, getNode.Caller.LocalOrigin);
+        Assert.Equal(RoutedMethod.GetNode, getAssertion.Method);
+        Assert.Equal(target, getAssertion.TargetNodeId);
+        Assert.Null(getAssertion.CommandId);
+        getNode.ClearRelayAssertion();
+        Assert.Equal(SHA256.HashData(getNode.ToByteArray()), getAssertion.RequestSha256.ToByteArray());
+        Assert.True(FakeChannelPeer.Verify(publicKey, RelaySignatures.AssertionInput(getAssertion, center.Endpoint)!, getAssertion.Signature.ToByteArray()));
+
         var inner = new TaskServiceGetTaskRequest { Meta = CloudNode.Command(), TaskId = CommandIds.New() }.ToByteString();
         var nested = new TaskServiceGetTaskResponse { Meta = new ResponseMeta(), Value = new TaskServiceGetTaskValue() }.ToByteString();
         center.Script("GetNodeTask", Reply(new FleetServiceGetNodeTaskResponse
         {
-            Meta = new ResponseMeta(), Value = new FleetServiceGetNodeTaskValue { NodeId = target, Response = nested },
+            Meta = new ResponseMeta(),
+            Value = new FleetServiceGetNodeTaskValue { NodeId = target, Response = nested },
         }));
         var result = await fleet.GetNodeTaskAsync(new FleetServiceGetNodeTaskRequest
         {
-            Meta = CloudNode.Command(), NodeId = target, Caller = forged, Request = inner,
+            Meta = CloudNode.Command(),
+            NodeId = target,
+            Caller = forged,
+            Request = inner,
         }, deadline: DateTime.UtcNow.AddSeconds(30), cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(nested, result.Value.Response);
         var sent = FleetServiceGetNodeTaskRequest.Parser.ParseFrom(FakeCenter.Payload(Assert.Single(center.CallsOf("GetNodeTask")).Body));
@@ -137,14 +159,18 @@ public sealed class FleetProxyTests
         var inner = new TaskServiceCancelTaskRequest { Meta = meta.Clone(), TaskId = CommandIds.New() }.ToByteString();
         var expired = new ArcError
         {
-            Category = ErrorCategory.Authentication, Code = "unauthenticated", MessageKey = "error.authentication.unauthenticated",
-            Effect = EffectCertainty.DidNotHappen, Retry = new RetryAdvice { Mode = RetryMode.SameCommand },
+            Category = ErrorCategory.Authentication,
+            Code = "unauthenticated",
+            MessageKey = "error.authentication.unauthenticated",
+            Effect = EffectCertainty.DidNotHappen,
+            Retry = new RetryAdvice { Mode = RetryMode.SameCommand },
             Details = new ErrorDetails { State = new StateFailure { State = "relay_assertion", Reason = "expired" } },
         };
         center.Script("CancelNodeTask", Reply(new FleetServiceCancelNodeTaskResponse { Meta = new ResponseMeta(), Error = expired }));
         center.Script("CancelNodeTask", Reply(new FleetServiceCancelNodeTaskResponse
         {
-            Meta = new ResponseMeta(), Value = new FleetServiceCancelNodeTaskValue { NodeId = target, Response = ByteString.CopyFrom([1]) },
+            Meta = new ResponseMeta(),
+            Value = new FleetServiceCancelNodeTaskValue { NodeId = target, Response = ByteString.CopyFrom([1]) },
         }));
         var answer = await fleet.CancelNodeTaskAsync(new FleetServiceCancelNodeTaskRequest { Meta = meta, NodeId = target, Request = inner },
             deadline: DateTime.UtcNow.AddSeconds(30), cancellationToken: TestContext.Current.CancellationToken);

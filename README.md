@@ -4,11 +4,11 @@
 
 ArcForges puts AI-driven and heavy local work under your control: a local node that runs, schedules
 and records commands, a CLI and MCP adapter for people and AI agents, and an optional desktop.
-C# · Native AOT · Avalonia. Local and LAN use need no account.
+C# · Native AOT · Avalonia. Node management and local diagnostic access need no account.
 
 The `arcforges` executable runs the node (`arcforges node run`) and the CLI: the node host with its
 per-user endpoint, lifecycle, event journal and streams, the Windows supervisor, the shared client library
-the CLI (`status`, `node`, `config`, `events`, `jobs`, `run`, `tasks`, `version`, `completion`), Windows
+the CLI (`status`, `node`, `config`, `events`, `jobs`, `run`, `tasks`, `output`, `version`, `completion`), Windows
 execution (managed commands in nested job objects with exec-wrap holders that survive a node restart) and Linux execution
 (transient systemd user units in `arcforges.slice` with durable exit records, a disk guard unit and the systemd watchdog).
 Scheduling and the other node subsystems arrive with their delivery tasks, and
@@ -70,13 +70,26 @@ arcforges node info | health | capabilities [--reevaluate] | rename <name> | wai
 arcforges config list | get <key> | set logLevel debug
 arcforges events --topic node --since <cursor>    # JSON Lines; resumes after the cursor
 arcforges jobs list | show <id> | cancel <id>
-arcforges run -- dotnet build    # a managed task: output mirrored byte for byte, the task's exit code (125/126/127 when not started)
-arcforges run --detach -- cmake --build out          # prints the task ID
+arcforges run -- dotnet build    # routed through the center; output and the task's exit code are returned
+arcforges run --node build-box --detach -- cmake --build out  # target by exact name; print the task ID
 arcforges run --client-timeout 10m -- cargo test    # hands off with exit 124 before the caller's own timeout
-arcforges tasks list | show | wait [--output tail|all|none] | attach | logs | cancel | retry | pin | unpin | purge | attempts
+arcforges run --local -- dotnet build                # HUMAN-only local diagnostic submission
+arcforges tasks [list] | show <id> | wait <id> [--output tail|all|none] | cancel <id>
+arcforges output <id> --from-offset 0 --follow       # resume captured output by byte offset
+arcforges tasks attach | logs | retry | pin | unpin | purge | attempts
 arcforges version
 eval "$(arcforges completion bash)"                # also zsh, fish, pwsh
 ```
+
+`run`, `tasks [list]`, `tasks show`, `tasks wait`, `tasks cancel`, and `output` use the signed-in node's center connection by
+default, including for this node. Add `--node <name-or-id>` to select an enrolled node by exact, case-sensitive name or canonical UUID;
+ambiguous names require the UUID. Add `--local` to these commands for the local diagnostic path. Local submissions require a HUMAN
+caller; local task reads remain available for management and recovery. Routed `run --stdin stream` is not supported; use the local
+diagnostic path when a streamed stdin is needed.
+
+A node that is signed out, cannot reach the center or has no channel exits 4 with diagnostic guidance. A target reported offline exits
+75. An uncertain routed mutation retains its command ID and request bytes for bounded retries; if its outcome remains uncertain, the
+CLI prints the command ID so the existing operation can be investigated rather than submitted again.
 
 On Windows the auto-start launches `arcforges-supervisor.exe` beside `arcforges.exe`; on Linux it runs
 `systemctl --user start arcforges-node.service` (see `eng/systemd/arcforges-node.service` for a development unit),
