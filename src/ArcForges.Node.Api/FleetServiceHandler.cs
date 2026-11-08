@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Security.Cryptography;
+using ArcForges.Client;
 using ArcForges.Contracts.Fleet.V1;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
@@ -24,7 +25,7 @@ internal sealed class FleetServiceHandler(NodeRuntime node, ClientSessions sessi
     {
         ArgumentNullException.ThrowIfNull(request);
         var forwarded = request.Clone();
-        return ForwardAsync(context, RoutedMethod.ListNodes, null, null,
+        return ForwardAsync(context, request.Meta?.CorrelationId, RoutedMethod.ListNodes, null, null,
             caller =>
             {
                 forwarded.Caller = caller;
@@ -49,7 +50,7 @@ internal sealed class FleetServiceHandler(NodeRuntime node, ClientSessions sessi
             return Task.FromResult(new FleetServiceGetNodeResponse { Meta = ApiCommands.Meta(request.Meta), Error = invalid });
         }
 
-        return ForwardAsync(context, RoutedMethod.GetNode, forwarded.NodeId, null,
+        return ForwardAsync(context, request.Meta?.CorrelationId, RoutedMethod.GetNode, forwarded.NodeId, null,
             caller =>
             {
                 forwarded.Caller = caller;
@@ -93,7 +94,7 @@ internal sealed class FleetServiceHandler(NodeRuntime node, ClientSessions sessi
             return Task.FromResult(new FleetServiceSubmitNodeTaskResponse { Meta = ApiCommands.Meta(request.Meta), Error = invalid });
         }
 
-        return ForwardAsync(context, RoutedMethod.SubmitNodeTask, forwarded.NodeId, command,
+        return ForwardAsync(context, request.Meta?.CorrelationId, RoutedMethod.SubmitNodeTask, forwarded.NodeId, command,
             _ => SHA256.HashData(forwarded.Request.Span),
             (caller, assertion, client, options) =>
             {
@@ -116,7 +117,7 @@ internal sealed class FleetServiceHandler(NodeRuntime node, ClientSessions sessi
             return Task.FromResult(new FleetServiceGetNodeTaskResponse { Meta = ApiCommands.Meta(request.Meta), Error = invalid });
         }
 
-        return ForwardAsync(context, RoutedMethod.GetNodeTask, forwarded.NodeId, command,
+        return ForwardAsync(context, request.Meta?.CorrelationId, RoutedMethod.GetNodeTask, forwarded.NodeId, command,
             _ => SHA256.HashData(forwarded.Request.Span),
             (caller, assertion, client, options) =>
             {
@@ -139,7 +140,7 @@ internal sealed class FleetServiceHandler(NodeRuntime node, ClientSessions sessi
             return Task.FromResult(new FleetServiceListNodeTasksResponse { Meta = ApiCommands.Meta(request.Meta), Error = invalid });
         }
 
-        return ForwardAsync(context, RoutedMethod.ListNodeTasks, forwarded.NodeId, command,
+        return ForwardAsync(context, request.Meta?.CorrelationId, RoutedMethod.ListNodeTasks, forwarded.NodeId, command,
             _ => SHA256.HashData(forwarded.Request.Span),
             (caller, assertion, client, options) =>
             {
@@ -162,7 +163,7 @@ internal sealed class FleetServiceHandler(NodeRuntime node, ClientSessions sessi
             return Task.FromResult(new FleetServiceWaitNodeTaskResponse { Meta = ApiCommands.Meta(request.Meta), Error = invalid });
         }
 
-        return ForwardAsync(context, RoutedMethod.WaitNodeTask, forwarded.NodeId, command,
+        return ForwardAsync(context, request.Meta?.CorrelationId, RoutedMethod.WaitNodeTask, forwarded.NodeId, command,
             _ => SHA256.HashData(forwarded.Request.Span),
             (caller, assertion, client, options) =>
             {
@@ -185,7 +186,7 @@ internal sealed class FleetServiceHandler(NodeRuntime node, ClientSessions sessi
             return Task.FromResult(new FleetServiceReadNodeTaskOutputResponse { Meta = ApiCommands.Meta(request.Meta), Error = invalid });
         }
 
-        return ForwardAsync(context, RoutedMethod.ReadNodeTaskOutput, forwarded.NodeId, command,
+        return ForwardAsync(context, request.Meta?.CorrelationId, RoutedMethod.ReadNodeTaskOutput, forwarded.NodeId, command,
             _ => SHA256.HashData(forwarded.Request.Span),
             (caller, assertion, client, options) =>
             {
@@ -224,7 +225,7 @@ internal sealed class FleetServiceHandler(NodeRuntime node, ClientSessions sessi
             return Task.FromResult(new FleetServiceCancelNodeTaskResponse { Meta = ApiCommands.Meta(request.Meta), Error = invalid });
         }
 
-        return ForwardAsync(context, RoutedMethod.CancelNodeTask, forwarded.NodeId, command,
+        return ForwardAsync(context, request.Meta?.CorrelationId, RoutedMethod.CancelNodeTask, forwarded.NodeId, command,
             _ => SHA256.HashData(forwarded.Request.Span),
             (caller, assertion, client, options) =>
             {
@@ -238,7 +239,7 @@ internal sealed class FleetServiceHandler(NodeRuntime node, ClientSessions sessi
     private static ArcError? Payload(bool present, ByteString bytes, int maximum) =>
         !present || bytes.Length == 0 || bytes.Length > maximum ? NodeErrors.InvalidArgument("request: required within the routed size limit") : null;
 
-    private async Task<T> ForwardAsync<T>(ServerCallContext context, RoutedMethod method, Id? target, Id? command,
+    private async Task<T> ForwardAsync<T>(ServerCallContext context, Id? correlation, RoutedMethod method, Id? target, Id? command,
         Func<RoutedCaller, byte[]> digest, Func<RoutedCaller, ByteString, FleetService.FleetServiceClient, CallOptions, Task<T>> send,
         Func<T, ArcError?> errorOf, Func<T, bool> hasValue, Func<ArcError, T> fail)
         where T : class
@@ -274,7 +275,7 @@ internal sealed class FleetServiceHandler(NodeRuntime node, ClientSessions sessi
                 .ConfigureAwait(false);
             if (signed is null)
             {
-                return fail(Unavailable(cloud.AccountLinked ? "channel_not_connected" : "signed_out"));
+                return fail(Unavailable(cloud.AccountLinked ? "channel_not_connected" : "signed_out", correlation));
             }
 
             var left = context.Deadline - DateTime.UtcNow;
@@ -336,16 +337,21 @@ internal sealed class FleetServiceHandler(NodeRuntime node, ClientSessions sessi
                 return fail(internalError);
             }
 
-            return fail(Unavailable("center_unreachable"));
+            return fail(Unavailable("center_unreachable", correlation));
         }
 
-        return fail(Unavailable("channel_not_connected"));
+        return fail(Unavailable("channel_not_connected", correlation));
     }
 
-    private static ArcError Unavailable(string reason)
+    private ArcError Unavailable(string reason, Id? correlation)
     {
+        // This path has not sent a mutation (or has a definite pre-handler refusal). Keep the catalogue's complete retry/effect pair,
+        // state details and correlation; a potentially applied mutation is returned above as an uncertain transport failure instead.
         var error = NodeErrors.CloudUnreachable(reason);
+        error.CorrelationId = Validation.RequiredId(correlation, "correlation_id") is null ? correlation!.Clone() : CommandIds.New(node.Clock);
+        error.Details.State.State = "cloud_link";
         error.Retry.Mode = RetryMode.AfterTime;
+        error.Retry.RetryAt = ProtoTime.ToInstant(node.Clock.GetUtcNow().AddSeconds(2));
         return error;
     }
 }

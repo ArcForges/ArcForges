@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Diagnostics;
+using System.Security.Cryptography;
 using System.Text;
 using ArcForges.Client;
+using ArcForges.Contracts.Fleet.V1;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
+using ArcForges.Contracts.Relay.V1;
 using ArcForges.Node.CloudLink;
 using ArcForges.Node.CloudLink.Tests;
+using ArcForges.Node.Core;
+using Google.Protobuf;
 
 namespace ArcForges.ClosedLoop.Tests;
 
@@ -114,6 +119,62 @@ public sealed class CloudSignInHostTests
         var log = TestNode.ReadShared(node.NodeLog);
         Assert.DoesNotContain(center.LatestUserCode!, log, StringComparison.Ordinal);
         Assert.DoesNotContain("afr1.", log, StringComparison.Ordinal);
+    }
+
+    /// <summary>The actual selected host binary serves the fleet proxy in a separate node process; the center is MOCKED.</summary>
+    [Fact(Timeout = 90000)]
+    public async Task SelectedHostNodeAndCliRouteThroughTheFleetProxy()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var center = await FakeCenter.StartAsync();
+        center.ScriptedFleet = true;
+        center.CommandKeys.Add(center.Channel.CommandPublicKey);
+        await using var node = TestNode.Create();
+        node.UseLocalDiagnosticCli = false;
+        node.Environment[CloudLinkTestHooks.CenterUrl] = center.Endpoint.Url;
+        using var host = await node.StartNodeAsync();
+        var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        Assert.Equal(Path.GetFullPath(TestNode.Host), Path.GetFullPath(host.MainModule!.FileName), comparer);
+        await using var human = await node.HumanChannelAsync();
+        var info = await human.Node.GetNodeInfoAsync(new NodeServiceGetNodeInfoRequest(), cancellationToken: Ct);
+        var nodeId = info.Value.Node.Node.NodeId;
+        var begun = await human.Account.BeginSignInAsync(new AccountServiceBeginSignInRequest { Meta = Command(), Method = SignInMethod.DeviceCode }, cancellationToken: Ct);
+        Assert.Null(begun.Error);
+        center.ApproveDevice();
+        await TestNode.WaitAsync(async () => (await human.Account.GetAccountStatusAsync(new AccountServiceGetAccountStatusRequest(), cancellationToken: Ct))
+            .Value.Status.Relay == RelayState.Connected, TimeSpan.FromSeconds(30), "mock center channel connected");
+        var connection = await center.Channel.ProvedAsync();
+        var publicKey = Assert.IsType<byte[]>(center.Channel.NodeKeyOf(connection.Installation));
+        var response = new FleetServiceListNodeTasksResponse
+        {
+            Meta = new ResponseMeta(),
+            Value = new FleetServiceListNodeTasksValue
+            {
+                NodeId = nodeId,
+                Response = new TaskServiceListTasksResponse
+                {
+                    Meta = new ResponseMeta(),
+                    Value = new TaskServiceListTasksValue { Page = new PageState { HasMore = false } },
+                }.ToByteString(),
+            },
+        };
+        center.Script("ListNodeTasks", new FakeFault.Raw([.. FakeCenter.DataFrame(response), .. FakeCenter.TrailerFrame(0, null)]));
+        using var cli = node.Start(TestNode.Host, [NodeLocations.TestModeOption, "tasks", "list"]);
+        Assert.Equal(Path.GetFullPath(TestNode.Host), Path.GetFullPath(cli.StartInfo.FileName), comparer);
+        var result = await TestNode.CompleteAsync(cli, TimeSpan.FromSeconds(30));
+        Assert.True(result.ExitCode == 0, result.ToString());
+        Assert.Equal("No tasks.", result.Output.Trim());
+        var request = FleetServiceListNodeTasksRequest.Parser.ParseFrom(FakeCenter.Payload(Assert.Single(center.CallsOf("ListNodeTasks")).Body));
+        Assert.Equal(nodeId, request.NodeId);
+        Assert.Equal(Origin.Script, request.Caller.LocalOrigin);
+        var assertion = RelayAssertion.Parser.ParseFrom(request.RelayAssertion);
+        Assert.Equal(RoutedMethod.ListNodeTasks, assertion.Method);
+        Assert.Equal(nodeId, assertion.TargetNodeId);
+        Assert.Equal(Origin.Script, assertion.LocalOrigin);
+        Assert.Equal(SHA256.HashData(request.Request.Span), assertion.RequestSha256.ToByteArray());
+        Assert.True(FakeChannelPeer.Verify(publicKey, RelaySignatures.AssertionInput(assertion, center.Endpoint)!, assertion.Signature.ToByteArray()));
+        Assert.Null((await human.Account.SignOutAsync(new AccountServiceSignOutRequest { Meta = Command() }, cancellationToken: Ct)).Error);
+        await node.StopNodeAsync();
     }
 
     [Fact]

@@ -83,9 +83,14 @@ eval "$(arcforges completion bash)"                # also zsh, fish, pwsh
 
 `run`, `tasks [list]`, `tasks show`, `tasks wait`, `tasks cancel`, and `output` use the signed-in node's center connection by
 default, including for this node. Add `--node <name-or-id>` to select an enrolled node by exact, case-sensitive name or canonical UUID;
-ambiguous names require the UUID. Add `--local` to these commands for the local diagnostic path. Local submissions require a HUMAN
-caller; local task reads remain available for management and recovery. Routed `run --stdin stream` is not supported; use the local
-diagnostic path when a streamed stdin is needed.
+ambiguous names require the UUID. When `run --node` selects another node, `--cwd` is required and must be an absolute path on the target;
+`--stdin file:` and `--ready-file` also require target-absolute paths. Windows drive/UNC and POSIX paths are passed unchanged for the
+target to validate. For this node, including an explicit `--node` that resolves to it, relative paths and the default current directory
+retain their local behavior. `output --json` writes one protobuf `TaskServiceReadTaskOutputValue` per JSON line, with binary data encoded
+as base64 and stream index, next offset, retention and EOF metadata. For routed commands `--timeout` sets the unary RPC deadline;
+`tasks wait` also bounds its target wait, while `run --timeout` sets the task's execution limit. Add `--local` for the local diagnostic
+path. Local submissions require a HUMAN caller; local task reads remain available for management and recovery. Routed `run --stdin stream`
+is not supported; use the local diagnostic path when a streamed stdin is needed.
 
 A node that is signed out, cannot reach the center or has no channel exits 4 with diagnostic guidance. A target reported offline exits
 75. An uncertain routed mutation retains its command ID and request bytes for bounded retries; if its outcome remains uncertain, the

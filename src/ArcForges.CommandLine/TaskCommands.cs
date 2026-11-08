@@ -5,6 +5,7 @@ using System.Text;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
+using Grpc.Core;
 
 namespace ArcForges.CommandLine;
 
@@ -67,12 +68,34 @@ internal static class TaskCommands
         while (true)
         {
             var remaining = budget - TimeProvider.System.GetElapsedTime(started);
+            if (remaining <= TimeSpan.Zero)
+            {
+                cli.Output.Error.WriteLine($"arcforges: the wait for task {IdText.Format(taskId)} ended before it reached {target.ToString().ToUpperInvariant()}");
+                return TaskText.WaitNotReached;
+            }
+
             var waitMs = (ulong)Math.Clamp(remaining.TotalMilliseconds, 0, route is { Local: false } ? 50_000 : 55_000);
             var request = new TaskServiceWaitTaskRequest { Meta = Cli.Meta(), TaskId = taskId, Target = target, WaitMs = waitMs };
-            var response = route is null || route.Local
-                ? await cli.CallAsync("WaitTask", request.Meta, () => session.Channel.Tasks.WaitTaskAsync(request,
-                    deadline: DateTime.UtcNow.AddMilliseconds(waitMs + 5_000), cancellationToken: cancellationToken)).ConfigureAwait(false)
-                : await route.WaitAsync(request, cancellationToken).ConfigureAwait(false);
+            TaskServiceWaitTaskResponse response;
+            try
+            {
+                var callBudget = TimeSpan.FromMilliseconds(waitMs + 5_000);
+                if (remaining < callBudget)
+                {
+                    callBudget = remaining;
+                }
+
+                response = route is null || route.Local
+                    ? await cli.CallAsync("WaitTask", request.Meta, () => session.Channel.Tasks.WaitTaskAsync(request,
+                        deadline: DateTime.UtcNow + callBudget, cancellationToken: cancellationToken)).ConfigureAwait(false)
+                    : await route.WaitAsync(request, cancellationToken, remaining).ConfigureAwait(false);
+            }
+            catch (RpcException exception) when (exception.StatusCode == StatusCode.DeadlineExceeded && !cancellationToken.IsCancellationRequested
+                && TimeProvider.System.GetElapsedTime(started) >= budget - TimeSpan.FromMilliseconds(100))
+            {
+                cli.Output.Error.WriteLine($"arcforges: the wait for task {IdText.Format(taskId)} ended before it reached {target.ToString().ToUpperInvariant()}");
+                return TaskText.WaitNotReached;
+            }
             if (response.Error is { } error)
             {
                 return route is null || route.Local ? cli.Output.Fail(error, request.Meta.CorrelationId) : TaskRoute.Fail(cli, error, request.Meta.CorrelationId);
@@ -226,7 +249,7 @@ internal static class TaskCommands
         stream.AcceptOnlyFromAmong("stdout", "stderr", "merged");
         var offsetOption = new Option<ulong?>("--from-offset") { Description = "Resume from this byte offset", HelpName = "offset" };
         var follow = new Option<bool>("--follow") { Description = "Follow output until the task ends" };
-        var command = new Command("output", "Print a task's captured output") { id, stream, offsetOption, follow };
+        var command = new Command("output", "Print captured output; --json emits protobuf output values as JSON Lines") { id, stream, offsetOption, follow };
         var (nodeOption, localOption) = AddRouteOptions(command);
         Actions.Set(command, factory, async (cli, result, cancellationToken) =>
         {
@@ -248,7 +271,7 @@ internal static class TaskCommands
             var offset = result.GetValue(offsetOption) ?? 0;
             Id? lastAttempt = null;
             var follows = result.GetValue(follow);
-            using var mirror = new TaskText.Mirror();
+            using var mirror = cli.Output.Json ? null : new TaskText.Mirror();
             while (true)
             {
                 var get = new TaskServiceGetTaskRequest { Meta = Cli.Meta(), TaskId = taskId, Detail = TaskDetail.Summary };
@@ -262,6 +285,12 @@ internal static class TaskCommands
                 {
                     if (!follows || task.Value?.Task is { } emptyTask && TaskText.IsTerminal(emptyTask.State))
                     {
+                        if (cli.Output.Json)
+                        {
+                            // No attempt has an output record yet: an empty contract value carries no invented EOF or offset.
+                            cli.Output.JsonLine(new TaskServiceReadTaskOutputValue());
+                        }
+
                         return ExitCodes.Success;
                     }
 
@@ -303,6 +332,11 @@ internal static class TaskCommands
                 {
                     if (!follows || value.Eof || TaskText.IsTerminal(task.Value.Task.State))
                     {
+                        if (cli.Output.Json)
+                        {
+                            cli.Output.JsonLine(value);
+                        }
+
                         return ExitCodes.Success;
                     }
 
@@ -315,7 +349,16 @@ internal static class TaskCommands
                     cli.Output.Error.WriteLine("arcforges: earlier output was removed by retention");
                 }
 
-                Mirror(mirror, value);
+                if (cli.Output.Json)
+                {
+                    // The existing protobuf JSON mapping preserves binary data, stream/index metadata, offsets, retention and EOF.
+                    cli.Output.JsonLine(value);
+                }
+                else
+                {
+                    Mirror(mirror!, value);
+                }
+
                 offset = value.NextOffset;
                 if (value.Eof)
                 {

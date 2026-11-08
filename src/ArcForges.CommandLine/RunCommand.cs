@@ -52,7 +52,7 @@ internal static class RunCommand
     public static Command Build(Func<ParseResult, Cli> factory)
     {
         var program = new Argument<string[]>("command") { Arity = ArgumentArity.OneOrMore, Description = "The program and its arguments (after --), or the script with --shell" };
-        var cwd = new Option<string?>("--cwd") { Description = "Working directory (default: the current directory)", HelpName = "dir" };
+        var cwd = new Option<string?>("--cwd") { Description = "Working directory (this node: current directory; another node: required absolute target path)", HelpName = "dir" };
         var pool = new Option<string?>("--pool") { Description = "Pool (default 'default')", HelpName = "p" };
         var priority = new Option<string?>("--priority") { Description = "interactive, high, normal, low or background", HelpName = "class" };
         priority.AcceptOnlyFromAmong("interactive", "high", "normal", "low", "background");
@@ -61,7 +61,7 @@ internal static class RunCommand
         var inherit = new Option<string?>("--env-inherit") { Description = "caller (default), node or none", HelpName = "mode" };
         inherit.AcceptOnlyFromAmong("caller", "node", "none");
         var unset = new Option<string[]>("--unset") { Description = "Remove an inherited variable (repeatable)", HelpName = "K" };
-        var stdin = new Option<string?>("--stdin") { Description = "none (default), file:<path> or stream", HelpName = "mode" };
+        var stdin = new Option<string?>("--stdin") { Description = "none (default), file:<target path> or stream", HelpName = "mode" };
         var label = new Option<string[]>("--label") { Description = "A label (repeatable)", HelpName = "k=v" };
         var title = new Option<string?>("--title") { Description = "Title shown in UIs" };
         var kind = new Option<string?>("--kind") { Description = "command (default) or service", HelpName = "kind" };
@@ -94,7 +94,7 @@ internal static class RunCommand
         };
         var readyRegex = new Option<string?>("--ready-regex") { Description = "Service: ready when a line of output matches", HelpName = "regex" };
         var readyPort = new Option<int?>("--ready-port") { Description = "Service: ready when it listens on this localhost TCP port", HelpName = "port" };
-        var readyFile = new Option<string?>("--ready-file") { Description = "Service: ready when this file exists", HelpName = "path" };
+        var readyFile = new Option<string?>("--ready-file") { Description = "Service: ready when this target file exists", HelpName = "path" };
         var readyTimeout = new Option<string?>("--ready-timeout") { Description = "Service: how long to wait for readiness (default 120s)", HelpName = "dur" };
         var command = new Command("run", "Run a command under the node and mirror its output")
         {
@@ -106,7 +106,6 @@ internal static class RunCommand
         {
             var spec = new TaskSpec
             {
-                WorkingDirectory = Path.GetFullPath(result.GetValue(cwd) ?? Directory.GetCurrentDirectory()),
                 Environment = Environment(result.GetValue(inherit), result.GetValue(env) ?? [], result.GetValue(unset) ?? []),
             };
             var tokens = result.GetValue(program) ?? [];
@@ -126,7 +125,7 @@ internal static class RunCommand
             {
                 "none" => new StdinSpec { Mode = StdinMode.None },
                 "stream" => new StdinSpec { Mode = StdinMode.Stream },
-                _ when stdinMode.StartsWith("file:", StringComparison.Ordinal) => new StdinSpec { Mode = StdinMode.File, FilePath = Path.GetFullPath(stdinMode[5..]) },
+                _ when stdinMode.StartsWith("file:", StringComparison.Ordinal) => new StdinSpec { Mode = StdinMode.File, FilePath = stdinMode[5..] },
                 _ => throw new UsageException("--stdin: none, file:<path> or stream."),
             };
             if (cli.Timeout is { } timeout)
@@ -178,7 +177,7 @@ internal static class RunCommand
 
             if (result.GetValue(readyFile) is { } readyPath)
             {
-                readiness.FileExists = Path.GetFullPath(readyPath);
+                readiness.FileExists = readyPath;
             }
 
             if ((result.GetValue(readyRegex) is not null ? 1 : 0) + (result.GetValue(readyPort) is not null ? 1 : 0) + (result.GetValue(readyFile) is not null ? 1 : 0) > 1)
@@ -260,11 +259,25 @@ internal static class RunCommand
             }
 
             await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
-            var (route, routeExit) = await TaskRoute.ResolveAsync(cli, session, result.GetValue(nodeOption), result.GetValue(localOption), cancellationToken)
+            var (route, routeExit) = await TaskRoute.ResolveAsync(cli, session, result.GetValue(nodeOption), result.GetValue(localOption), cancellationToken, timeoutIsTaskLimit: true)
                 .ConfigureAwait(false);
             if (route is null)
             {
                 return routeExit;
+            }
+
+            // Paths describe the executor's filesystem. An explicit --node that resolves to this node keeps local path behavior;
+            // another node requires an explicit, fully qualified target path and validates it on that node's own OS.
+            var foreign = !route.NodeId.Equals(session.Hello.Node.Node.NodeId);
+            spec.WorkingDirectory = TargetPath(result.GetValue(cwd), "--cwd", foreign);
+            if (spec.Stdin.Mode == StdinMode.File)
+            {
+                spec.Stdin.FilePath = TargetPath(spec.Stdin.FilePath, "--stdin file:", foreign);
+            }
+
+            if (readiness.ConditionCase == ReadinessCondition.ConditionOneofCase.FileExists)
+            {
+                readiness.FileExists = TargetPath(readiness.FileExists, "--ready-file", foreign);
             }
 
             if (route.Local)
@@ -341,6 +354,25 @@ internal static class RunCommand
                 : await route.FollowAsync(taskId, handoff, cancellationToken).ConfigureAwait(false);
         });
         return command;
+    }
+
+    private static string TargetPath(string? value, string option, bool foreign)
+    {
+        if (!foreign)
+        {
+            return Path.GetFullPath(value ?? Directory.GetCurrentDirectory());
+        }
+
+        if (string.IsNullOrEmpty(value))
+        {
+            throw new UsageException($"{option} is required for another node; give an absolute path on the target node.");
+        }
+
+        // Accept POSIX absolute, Windows drive-absolute and UNC forms without rewriting them on the caller's OS. The target applies its
+        // own filesystem validation; drive-relative, rooted-without-drive and other relative paths are never guessed here.
+        var absolute = value[0] == '/' || value.Length >= 3 && char.IsAsciiLetter(value[0]) && value[1] == ':' && value[2] is '/' or '\\'
+            || value.StartsWith(@"\\", StringComparison.Ordinal);
+        return absolute ? value : throw new UsageException($"{option} must be an absolute path on the target node.");
     }
 
     /// <summary>

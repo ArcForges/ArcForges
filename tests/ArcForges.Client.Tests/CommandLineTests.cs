@@ -153,6 +153,15 @@ public sealed class CommandLineTests
         }
     }
 
+    [Fact]
+    public void RoutedMutationAttemptsAreCappedByTheRemainingTwoMinuteBudget()
+    {
+        Assert.Equal(TimeSpan.FromSeconds(25), TaskRoute.MutationAttemptBudget(TimeSpan.Zero, TimeSpan.FromSeconds(25)));
+        Assert.Equal(TimeSpan.FromSeconds(1), TaskRoute.MutationAttemptBudget(TimeSpan.FromSeconds(119), TimeSpan.FromSeconds(25)));
+        Assert.Equal(TimeSpan.FromMilliseconds(500), TaskRoute.MutationAttemptBudget(TimeSpan.FromMilliseconds(119_500), TimeSpan.FromSeconds(1)));
+        Assert.Equal(TimeSpan.Zero, TaskRoute.MutationAttemptBudget(TimeSpan.FromMinutes(2), TimeSpan.FromSeconds(25)));
+    }
+
     [Theory]
     [InlineData("90s", 90)]
     [InlineData("5m", 300)]

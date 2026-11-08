@@ -1087,6 +1087,9 @@ internal sealed class CloudLinkService : ICloudLinkView, IChannelHost, IAsyncDis
             ? channel.SignRelayAssertionAsync(localOrigin, localSessionId, method, requestSha256, targetNodeId, commandId, cancellationToken)
             : Task.FromResult<BoundRelayAssertion?>(null);
 
+    /// <summary>In-process test hook after the ticket is captured and before the relay HTTP send; never set by the host.</summary>
+    internal Func<CancellationToken, Task>? BeforeRelayForward { get; set; }
+
     /// <summary>
     /// Sends one already-signed fleet request through the guarded center transport using this link's bound credential. The operation owns
     /// its channel so a concurrent sign-out or center change cannot dispose an in-flight request's transport. The node never exposes the
@@ -1103,6 +1106,11 @@ internal sealed class CloudLinkService : ICloudLinkView, IChannelHost, IAsyncDis
             || !assertion.RelayingInstallationId.Value.Span.SequenceEqual(ticket.InstallationId.Span))
         {
             return new CenterReply<T>(CenterOutcome.Unreachable, null, null, null, false, reason);
+        }
+
+        if (BeforeRelayForward is { } beforeForward)
+        {
+            await beforeForward(cancellationToken).ConfigureAwait(false);
         }
 
         using var transport = new CenterHttpClient(ticket.Center, _options.ConnectLog);

@@ -330,6 +330,9 @@ internal sealed class FakeCenter : IAsyncDisposable
     /// <summary>The calls of one method.</summary>
     public List<FakeCall> CallsOf(string method) => [.. _calls.Where(call => call.Method == method)];
 
+    /// <summary>Stops only this fixture's loopback listener, to exercise a pre-send connection failure.</summary>
+    public Task StopAsync(CancellationToken cancellationToken) => _app.StopAsync(cancellationToken);
+
     /// <inheritdoc />
     public async ValueTask DisposeAsync()
     {

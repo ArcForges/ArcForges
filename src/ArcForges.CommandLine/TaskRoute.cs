@@ -10,7 +10,7 @@ using Grpc.Core;
 namespace ArcForges.CommandLine;
 
 /// <summary>One command's local diagnostic or center-routed task destination.</summary>
-internal sealed class TaskRoute(Cli cli, NodeSession session, Id nodeId, bool local)
+internal sealed class TaskRoute(Cli cli, NodeSession session, Id nodeId, bool local, TimeSpan? unaryTimeout)
 {
     private static readonly TimeSpan RetryBudget = TimeSpan.FromMinutes(2);
     private const int MaximumRetries = 5;
@@ -22,8 +22,9 @@ internal sealed class TaskRoute(Cli cli, NodeSession session, Id nodeId, bool lo
 
     /// <summary>Resolves a canonical UUID directly, an exact node name through the center, or this node by default.</summary>
     public static async Task<(TaskRoute? Route, int Exit)> ResolveAsync(Cli cli, NodeSession session, string? selection, bool local,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, bool timeoutIsTaskLimit = false)
     {
+        var unaryTimeout = timeoutIsTaskLimit ? null : cli.Timeout;
         if (local && selection is not null)
         {
             return (null, cli.Output.Usage("--local cannot be combined with --node."));
@@ -38,7 +39,7 @@ internal sealed class TaskRoute(Cli cli, NodeSession session, Id nodeId, bool lo
 
         if (local || selection is null)
         {
-            return (new TaskRoute(cli, session, own.Clone(), local), ExitCodes.Success);
+            return (new TaskRoute(cli, session, own.Clone(), local, unaryTimeout), ExitCodes.Success);
         }
 
         if (Guid.TryParseExact(selection, "D", out var uuid))
@@ -48,12 +49,12 @@ internal sealed class TaskRoute(Cli cli, NodeSession session, Id nodeId, bool lo
                 return (null, cli.Output.Usage("--node: the all-zero node ID is invalid."));
             }
 
-            return (new TaskRoute(cli, session, new Id { Value = ByteString.CopyFrom(uuid.ToByteArray(bigEndian: true)) }, false), ExitCodes.Success);
+            return (new TaskRoute(cli, session, new Id { Value = ByteString.CopyFrom(uuid.ToByteArray(bigEndian: true)) }, false, unaryTimeout), ExitCodes.Success);
         }
 
         var fleet = new FleetService.FleetServiceClient(session.Channel.CallInvoker);
         var request = new FleetServiceListNodesRequest { Meta = Cli.Meta() };
-        var response = await fleet.ListNodesAsync(request, deadline: DateTime.UtcNow.AddSeconds(20), cancellationToken: cancellationToken).ConfigureAwait(false);
+        var response = await fleet.ListNodesAsync(request, deadline: DateTime.UtcNow + (unaryTimeout ?? TimeSpan.FromSeconds(20)), cancellationToken: cancellationToken).ConfigureAwait(false);
         if (response.Error is { } error)
         {
             return (null, Fail(cli, error, request.Meta.CorrelationId));
@@ -67,7 +68,7 @@ internal sealed class TaskRoute(Cli cli, NodeSession session, Id nodeId, bool lo
         var matches = response.Value.Nodes.Where(node => string.Equals(node.Name, selection, StringComparison.Ordinal)).ToList();
         if (matches.Count == 1 && matches[0].NodeId?.Value.Length == 16)
         {
-            return (new TaskRoute(cli, session, matches[0].NodeId.Clone(), false), ExitCodes.Success);
+            return (new TaskRoute(cli, session, matches[0].NodeId.Clone(), false, unaryTimeout), ExitCodes.Success);
         }
 
         var names = response.Value.Nodes.Take(20).Select(node => Messages.Plain(node.Name) + " (" + FormatNode(node.NodeId) + ")");
@@ -176,7 +177,7 @@ internal sealed class TaskRoute(Cli cli, NodeSession session, Id nodeId, bool lo
             .ConfigureAwait(false);
     }
 
-    public async Task<TaskServiceWaitTaskResponse> WaitAsync(TaskServiceWaitTaskRequest request, CancellationToken cancellationToken)
+    public async Task<TaskServiceWaitTaskResponse> WaitAsync(TaskServiceWaitTaskRequest request, CancellationToken cancellationToken, TimeSpan? remainingBudget = null)
     {
         ArgumentNullException.ThrowIfNull(request);
         if (Local)
@@ -191,7 +192,7 @@ internal sealed class TaskRoute(Cli cli, NodeSession session, Id nodeId, bool lo
             (deadline, token) => _fleet.WaitNodeTaskAsync(routed, deadline: deadline, cancellationToken: token).ResponseAsync,
             answer => answer.Error, answer => answer.Value?.Response, TaskServiceWaitTaskResponse.Parser,
             answer => answer.Error is not null || answer.Value is not null,
-            error => new TaskServiceWaitTaskResponse { Meta = Meta(request.Meta), Error = error }, TimeSpan.FromSeconds(60), cancellationToken)
+            error => new TaskServiceWaitTaskResponse { Meta = Meta(request.Meta), Error = error }, TimeSpan.FromMilliseconds(request.WaitMs + 5_000), cancellationToken, remainingBudget)
             .ConfigureAwait(false);
     }
 
@@ -475,12 +476,13 @@ internal sealed class TaskRoute(Cli cli, NodeSession session, Id nodeId, bool lo
 
     private static bool TransientRead(ArcError error) => error.Code is "cloud_unreachable" or "node_unreachable" or "node_offline";
 
-    private static async Task<TInner> ReadAsync<TOuter, TInner>(Func<DateTime, CancellationToken, Task<TOuter>> send,
+    private async Task<TInner> ReadAsync<TOuter, TInner>(Func<DateTime, CancellationToken, Task<TOuter>> send,
         Func<TOuter, ArcError?> errorOf, Func<TOuter, ByteString?> payloadOf, MessageParser<TInner> parser, Func<TInner, bool> hasOutcome,
-        Func<ArcError, TInner> fail, TimeSpan deadline, CancellationToken cancellationToken)
+        Func<ArcError, TInner> fail, TimeSpan deadline, CancellationToken cancellationToken, TimeSpan? remainingBudget = null)
         where TInner : class, IMessage<TInner>
     {
-        var answer = await send(DateTime.UtcNow + deadline, cancellationToken).ConfigureAwait(false);
+        var budget = remainingBudget is { } remaining ? (remaining < deadline ? remaining : deadline) : unaryTimeout ?? deadline;
+        var answer = await send(DateTime.UtcNow + budget, cancellationToken).ConfigureAwait(false);
         return Decode(answer, errorOf, payloadOf, parser, hasOutcome, fail);
     }
 
@@ -504,7 +506,14 @@ internal sealed class TaskRoute(Cli cli, NodeSession session, Id nodeId, bool lo
             ArcError? error;
             try
             {
-                var answer = await send(DateTime.UtcNow + (remaining < deadline ? remaining : deadline), cancellationToken).ConfigureAwait(false);
+                var unary = unaryTimeout ?? deadline;
+                var attemptBudget = MutationAttemptBudget(Stopwatch.GetElapsedTime(started), unary);
+                if (attemptBudget <= TimeSpan.Zero)
+                {
+                    return fail(Uncertain());
+                }
+
+                var answer = await send(DateTime.UtcNow + attemptBudget, cancellationToken).ConfigureAwait(false);
                 error = errorOf(answer);
                 if (error is null)
                 {
@@ -569,6 +578,13 @@ internal sealed class TaskRoute(Cli cli, NodeSession session, Id nodeId, bool lo
             cli.Output.Trace("retrying the same routed command " + IdText.Format(command));
             await Task.Delay(wait, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>Caps a blocked mutation attempt by both its unary deadline and what remains of the two-minute retry budget.</summary>
+    internal static TimeSpan MutationAttemptBudget(TimeSpan elapsed, TimeSpan unary)
+    {
+        var remaining = RetryBudget - elapsed;
+        return remaining <= TimeSpan.Zero ? TimeSpan.Zero : remaining < unary ? remaining : unary;
     }
 
     private static TInner Decode<TOuter, TInner>(TOuter answer, Func<TOuter, ArcError?> errorOf, Func<TOuter, ByteString?> payloadOf,
