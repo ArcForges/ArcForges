@@ -652,12 +652,14 @@ internal sealed class ChannelLoop : IAsyncDisposable
                         }, session.Token).ConfigureAwait(false);
                         break;
                     case RelayFrame.FrameOneofCase.Call:
+                        // The monotonic wait budget starts at receipt, including queueing and key refresh.
+                        var receivedAt = session.Heard;
                         await calls.WaitAsync(session.Token).ConfigureAwait(false);
                         _ = session.Calls.Add(Task.Run(async () =>
                         {
                             try
                             {
-                                await AnswerAsync(session, bytes!, frame.Call).ConfigureAwait(false);
+                                await AnswerAsync(session, bytes!, frame.Call, receivedAt).ConfigureAwait(false);
                             }
                             finally
                             {
@@ -711,7 +713,7 @@ internal sealed class ChannelLoop : IAsyncDisposable
     }
 
     /// <summary>Verifies a call, dispatches a verified one, and answers with a signed result.</summary>
-    private async Task AnswerAsync(Session session, byte[] frame, ChannelCall call)
+    private async Task AnswerAsync(Session session, byte[] frame, ChannelCall call, long receivedAt)
     {
         try
         {
@@ -746,6 +748,8 @@ internal sealed class ChannelLoop : IAsyncDisposable
 
                 return;
             }
+
+            verified = verified! with { ReceivedAt = receivedAt };
 
             // Decisions B-3 (N1 review A C-N1, B N-12): the verification may have waited on a key refresh, so the link's state is read again
             // after it and immediately before the dispatch; a link switched off, signed out or ending drops the call (its row stays pending:

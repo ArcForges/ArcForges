@@ -534,9 +534,9 @@ public sealed class RoutedDispatchTests
         var other = (await routed.SubmitAsync(caller, correlated)).Answer!;
         Assert.Equal(RoutedCalls.OutcomeDigest(first.Response.Span), RoutedCalls.OutcomeDigest(other.Response!.Span));
 
-        // Another caller under the command ID: the normal path, whose deduplication replays the same outcome.
-        var session = (await routed.SubmitAsync(RoutedCalls.Session(), request)).Answer!;
-        Assert.Equal(RoutedCalls.OutcomeDigest(first.Response.Span), RoutedCalls.OutcomeDigest(session.Response!.Span));
+        // A different caller class first takes its normal policy path, then receives a conflict instead of the other caller's outcome.
+        var session = (await routed.SubmitAsync(RoutedCalls.Session(), request)).Response!;
+        Assert.Equal("command_id_reused", session.Error?.Code);
         Assert.Equal(1L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM task;")));
 
         // Other bytes: another request, and the same message re-encoded with its spec's fields in another order.
@@ -558,6 +558,79 @@ public sealed class RoutedDispatchTests
         var restarted = (await new RoutedCalls(node).SubmitAsync(caller, request)).Answer!;
         Assert.Equal(first.Response.ToByteArray(), restarted.Response!.ToByteArray());
         Assert.Equal(1L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM task;")));
+    }
+
+    /// <summary>Review B-2: earlier pending or no-effect calls never own a later committed outcome of another caller class.</summary>
+    [Fact(Timeout = 180_000)]
+    public async Task APreEffectFailureCannotClaimAnotherCallersLaterOutcome()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var node = await InProcessNode.Create().StartAsync();
+        Assert.SkipWhen(node.Runtime.Execution is null, "The node has no execution supervisor.");
+        await using var human = await node.ChannelAsync(helloAsHuman: true);
+        Assert.Null((await human.Queue.PausePoolAsync(new QueueServicePausePoolRequest { Meta = Tasks.Meta(), All = true }, cancellationToken: Ct)).Error);
+        var routed = new RoutedCalls(node);
+        var earlier = routed.Relay(Origin.Script);
+        var executing = RoutedCalls.Session();
+        var request = new TaskServiceSubmitTaskRequest { Meta = Tasks.Meta(), Spec = Tasks.Argv(node.Root, Tasks.TestLoad, "hold", "--hold-ms", "100") };
+
+        routed.Link.Reset(notStoppingFor: 0);
+        Assert.Equal("node_stopping", (await routed.SubmitAsync(earlier, request)).Response!.Error?.Code);
+        routed.Link.Reset();
+        var first = (await routed.SubmitAsync(executing, request)).Response!;
+        Assert.Null(first.Error);
+        var sameClass = (await routed.SubmitAsync(RoutedCalls.Session(), request)).Response!;
+        Assert.Equal(first.Value.TaskId, sameClass.Value.TaskId);
+        var wrongClass = (await routed.SubmitAsync(earlier, request)).Response!;
+        Assert.Equal("command_id_reused", wrongClass.Error?.Code);
+        Assert.Equal(1L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM task WHERE remote_command_id = $id;", ("$id", request.Meta.CommandId.Value.ToByteArray()))));
+    }
+
+    /// <summary>Review B-2: none of the four approval states may expose a different caller class's approval or recorded outcome.</summary>
+    [Theory(Timeout = 180_000)]
+    [InlineData(true, ApprovalState.Pending)]
+    [InlineData(true, ApprovalState.Approved)]
+    [InlineData(true, ApprovalState.Executed)]
+    [InlineData(true, ApprovalState.Failed)]
+    [InlineData(false, ApprovalState.Pending)]
+    [InlineData(false, ApprovalState.Approved)]
+    [InlineData(false, ApprovalState.Executed)]
+    [InlineData(false, ApprovalState.Failed)]
+    public async Task AnotherCallerClassCannotReadAnApprovalsStateOrOutcome(bool ownerIsRelay, ApprovalState state)
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var node = await InProcessNode.Create().StartAsync();
+        Assert.SkipWhen(node.Runtime.Execution is null, "The node has no execution supervisor.");
+        await using var human = await node.ChannelAsync(helloAsHuman: true);
+        Assert.Null((await human.Queue.PausePoolAsync(new QueueServicePausePoolRequest { Meta = Tasks.Meta(), All = true }, cancellationToken: Ct)).Error);
+        var task = await Tasks.SubmitAsync(human, Tasks.Argv(node.Root, Tasks.TestLoad, "hold", "--hold-ms", "100"));
+        var routed = new RoutedCalls(node);
+        var owner = ownerIsRelay ? routed.Relay(Origin.Script) : RoutedCalls.Session();
+        var foreign = ownerIsRelay ? RoutedCalls.Session() : routed.Relay(Origin.Script);
+        var meta = Tasks.Meta();
+        var raised = (await routed.CancelAsync(owner, task, meta)).Answer!;
+        Assert.Equal("approval_required", raised.Error?.Code);
+        var approvalId = raised.Error!.Details.State.Resource.Id;
+
+        if (state is not ApprovalState.Pending)
+        {
+            await node.Runtime.Processor.ExecuteAsync(context => Approvals.Decide(context, approvalId.Value.Span, approve: true, new ActorRef { Origin = Origin.Human }, "test"),
+                CommitDurability.Full);
+        }
+
+        if (state is ApprovalState.Executed or ApprovalState.Failed)
+        {
+            var error = ArcForges.Node.Core.NodeErrors.InvalidArgument("synthetic recorded outcome");
+            var bytes = new TaskServiceCancelTaskResponse { Error = error }.ToByteArray();
+            await node.Runtime.Processor.ExecuteAsync(context => Approvals.Executed(context, approvalId.Value.Span, bytes,
+                state == ApprovalState.Failed ? error : null, PermissionMatrix.TaskCancelOthers), CommitDurability.Full);
+        }
+
+        var foreignAnswer = await routed.CancelAsync(foreign, task, meta);
+        Assert.Equal("command_id_reused", foreignAnswer.Response?.Error?.Code ?? foreignAnswer.Answer?.Error?.Code);
+        var stored = node.Runtime.Store.Read(reader => Approvals.ByCommand(reader, meta.CommandId.Value.Span))!;
+        Assert.Equal((state, approvalId), (stored.State, stored.View.ApprovalId));
+        Assert.NotEqual(TaskState.Cancelled, (await Tasks.GetAsync(human, task)).State);
     }
 
     /// <summary>A stopped node refuses even a recorded replay before looking up the previous outcome (decisions B-2 and B-3).</summary>
@@ -621,14 +694,22 @@ public sealed class RoutedDispatchTests
         Assert.NotNull(prior);
         var result = new TaskServiceCancelTaskResponse { Value = new TaskServiceCancelTaskValue { State = TaskState.Running } }.ToByteArray();
         await node.Runtime.Processor.ExecuteIdempotentAsync(request.Meta.CommandId.Value.Memory, "arcforges.node.v1.TaskService/CancelTask", digest,
-            Origin.Remote, _ => result);
+            Origin.Remote, _ => result, afterComplete: context => RoutedCommandOwnership.Record(context.Transaction, request.Meta.CommandId.Value.Span,
+                new ActorRef { Origin = Origin.Remote, CenterCaller = owner, RemoteCommandId = request.Meta.CommandId }));
         await log.CompleteAsync(prior.Value, RoutedCallDecision.Executed, null, task.Value.ToByteArray(), 2,
             System.Security.Cryptography.SHA256.HashData(result), result.Length);
 
         var (answer, _) = await routed.CallAsync(other, RoutedMethod.CancelNodeTask, bytes, request.Meta.CommandId);
-        Assert.Equal((RoutedOutcome.RefusedByPolicy, adopted ? "permission_denied" : "approval_required",
-                adopted ? PermissionMatrix.ProcessTerminate : PermissionMatrix.TaskCancelOthers),
-            (answer!.Outcome, answer.Error?.Code, answer.Error?.Details.State.State));
+        if (adopted)
+        {
+            Assert.Equal((RoutedOutcome.RefusedByPolicy, "permission_denied", PermissionMatrix.ProcessTerminate),
+                (answer!.Outcome, answer.Error?.Code, answer.Error?.Details.State.State));
+        }
+        else
+        {
+            // The approval cell is evaluated, but another requester's recorded command cannot raise or reveal an approval.
+            Assert.Equal("command_id_reused", TaskServiceCancelTaskResponse.Parser.ParseFrom(answer!.Response).Error?.Code);
+        }
     }
 
     /// <summary>Decisions B-2: a duplicate while the first call is admitted answers effect UNKNOWN; the first then completes and replays.</summary>

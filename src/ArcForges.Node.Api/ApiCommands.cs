@@ -212,8 +212,8 @@ internal sealed class GateStaleException : Exception
 /// </summary>
 internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, string service)
 {
-    /// <summary>Command IDs whose call skipped the gate as a replay of a recorded outcome: their idempotent command may only replay.</summary>
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _replayOnly = new(StringComparer.Ordinal);
+    /// <summary>Request instances whose gate was skipped as a replay: their idempotent command may only replay.</summary>
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<RequestMeta, object> _replayOnly = new();
 
     /// <summary>The response meta echoing the request's correlation ID.</summary>
     public static ResponseMeta Meta(RequestMeta? request)
@@ -342,15 +342,25 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
         };
         try
         {
-            return await node.Processor.ExecuteAsync(context =>
+            var approvalAudited = false;
+            var replayFound = false;
+            var result = await node.Processor.ExecuteAsync(context =>
             {
+                caller.Routed?.BeforeReplay();
                 Approvals.Expire(context);
                 if (caller.CenterCaller is not null && RecordedIn(context.Transaction, service + "/" + gate.Method[(gate.Method.LastIndexOf('.') + 1)..],
                     capture.RequestDigest, meta, caller))
                 {
                     // Decisions B-2 and verifier N-1, inside the writer: an outcome recorded since the check (an approved execution whose approval
                     // record was deferred included) answers before any approval rule; the idempotent command replays it.
+                    replayFound = true;
                     return null;
+                }
+
+                // A different caller takes its own policy path, but cannot claim an existing approval or recorded command.
+                if (!RoutedCommandOwnership.MayUse(context.Transaction, meta.CommandId.Value.Span, caller.CenterCaller))
+                {
+                    return StoreErrors.CommandIdReused();
                 }
 
                 // Decisions B-3: raising the approval is the call's effect; the link and the expiry are read again immediately before it.
@@ -363,6 +373,7 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
                     return error;
                 }
 
+                approvalAudited = created;
                 if (created && policy?.NotifyDesktop != false)
                 {
                     Notifications.Add(context, "approval_needed", Severity.Warning, "Approval needed",
@@ -385,6 +396,17 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
                     _ => NodeErrors.PermissionDenied($"{gate.Method}: approval {id} was withdrawn"),
                 };
             }, CommitDurability.Full).ConfigureAwait(false);
+            if (approvalAudited)
+            {
+                caller.Routed?.MarkAudited();
+            }
+
+            if (replayFound)
+            {
+                MarkReplayOnly(meta);
+            }
+
+            return result;
         }
         catch (CommandQueueFullException)
         {
@@ -403,13 +425,15 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
     {
         ArgumentNullException.ThrowIfNull(caller);
         var digest = Digest(caller, request);
-        var replayOnly = _replayOnly.TryRemove(Key(meta), out _);
+        var replayOnly = _replayOnly.Remove(meta);
         try
         {
             // Review round 1: an approval recorded under this command ID answers only the same method and request; another request reusing the
             // ID is CONFLICT/command_id_reused, as for any reused command ID.
             if (!caller.Approved && node.Store.Read(reader => Approvals.ByCommand(reader, meta.CommandId.Value.Span)) is { } earlier
-                && !SameRequest(earlier, method, digest))
+                && (!SameRequest(earlier, method, digest)
+                    || ((caller.CenterCaller is not null || earlier.View.Requester?.CenterCaller is not null)
+                        && !CenterRouting.SameClass(caller.CenterCaller, earlier.View.Requester?.CenterCaller))))
             {
                 return (fail(StoreErrors.CommandIdReused()), false);
             }
@@ -439,7 +463,15 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
                 }
 
                 return response.ToByteArray();
-            }).ConfigureAwait(false);
+            },
+            beforeDedup: command =>
+            {
+                caller.Routed?.BeforeReplay();
+                var operation = service[(service.LastIndexOf('.') + 1)..] + "." + method;
+                return RoutedCommandOwnership.MayExecute(command.Transaction, meta.CommandId.Value.Span, caller.CenterCaller, operation, digest)
+                    ? null : StoreErrors.CommandIdReused();
+            },
+            afterComplete: command => RoutedCommandOwnership.Record(command.Transaction, meta.CommandId.Value.Span, caller.Actor)).ConfigureAwait(false);
             return outcome.Error is { } failure ? (fail(failure), false) : (parser.ParseFrom(outcome.Outcome), outcome.Replayed);
         }
         catch (CommandQueueFullException)
@@ -475,10 +507,10 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
 
         var name = method[(method.LastIndexOf('.') + 1)..];
         var digest = caller is null ? PayloadDigest.Compute(request) : Digest(caller, request);
-        return node.Store.Read(reader => RecordedIn(reader, service + "/" + name, digest, meta, caller)
-            || (Approvals.ByCommand(reader, id.Value.Span) is { State: ApprovalState.Executed or ApprovalState.Failed, Outcome.Length: > 0 } approval
-                && SameRequest(approval, name, digest)
-                && (caller?.CenterCaller is not { } center || CenterRouting.SameClass(approval.View.Requester?.CenterCaller, center))));
+        return node.Store.Read(reader => RoutedCommandOwnership.MayUse(reader, id.Value.Span, caller?.CenterCaller)
+            && (RecordedIn(reader, service + "/" + name, digest, meta, caller)
+                || (Approvals.ByCommand(reader, id.Value.Span) is { State: ApprovalState.Executed or ApprovalState.Failed, Outcome.Length: > 0 } approval
+                    && SameRequest(approval, name, digest))));
     }
 
     /// <summary>True when <c>command_dedup</c> holds an unexpired outcome of <paramref name="meta"/>'s command ID for this method and digest.</summary>
@@ -498,41 +530,15 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
                 && ((byte[])row.GetValue(1)).AsSpan().SequenceEqual(digest);
         }
 
-        if (!recorded || caller?.CenterCaller is not { } center)
-        {
-            return recorded;
-        }
-
-        // The generic gate is reached by a different caller after the dispatcher declined to replay. Never let that caller use another
-        // caller's command to skip its own policy. The current pending row is not evidence of the original caller.
-        using var first = reader.CreateCommand("""
-            SELECT caller FROM routed_call_log WHERE command_id = $id AND decision IN (1, 5) AND log_id <> $log ORDER BY log_id LIMIT 1;
-            """);
-        first.Parameters.AddWithValue("$id", id.Value.ToByteArray());
-        first.Parameters.AddWithValue("$log", caller.Routed?.LogId ?? 0);
-        if (first.ExecuteScalar() is not byte[] original)
-        {
-            return false;
-        }
-
-        try
-        {
-            return CenterRouting.SameClass(CenterCaller.Parser.ParseFrom(original), center);
-        }
-        catch (InvalidProtocolBufferException)
-        {
-            return false;
-        }
+        return recorded && RoutedCommandOwnership.MayUse(reader, id.Value.Span, caller?.CenterCaller);
     }
 
     /// <summary>Marks the call of <paramref name="meta"/>'s command ID as replay-only (its gate was skipped as a replay).</summary>
     public void MarkReplayOnly(RequestMeta meta)
     {
         ArgumentNullException.ThrowIfNull(meta);
-        _replayOnly[Key(meta)] = 0;
+        _replayOnly.GetValue(meta, static _ => new object());
     }
-
-    private static string Key(RequestMeta meta) => meta.CommandId is { } id ? Convert.ToHexString(id.Value.Span) : string.Empty;
 
     /// <summary>True when an approval captured this method (<c>&lt;Service&gt;.&lt;Method&gt;</c>) and this request digest.</summary>
     private static bool SameRequest(StoredApproval approval, string method, ReadOnlySpan<byte> digest) =>
@@ -547,12 +553,17 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
         {
             await node.Processor.ExecuteAsync(context =>
             {
+                var summary = caller.Routed is { Reason: { } reason } && decision == PermissionDecision.Deny ? "denied: " + reason : outcome;
                 AuditLog.Append(context.Transaction, caller.Actor, gate.Operation + " " + gate.Method, gate.TargetKind, gate.TargetId ?? [], decision,
-                    caller.ApprovalId ?? [], outcome);
+                    caller.ApprovalId ?? [], summary);
                 return 0;
-            }).ConfigureAwait(false);
+            }, caller.Routed is null ? CommitDurability.Normal : CommitDurability.Full).ConfigureAwait(false);
+            if (decision is PermissionDecision.Deny or PermissionDecision.Approval)
+            {
+                caller.Routed?.MarkAudited();
+            }
         }
-        catch (CommandQueueFullException)
+        catch (CommandQueueFullException) when (caller.Routed is null)
         {
             node.Log.Warning("api.audit.dropped", new LogField("operation", gate.Operation));
         }

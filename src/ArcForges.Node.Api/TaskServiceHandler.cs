@@ -5,6 +5,7 @@ using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.LocalRpc;
+using ArcForges.Node.CloudLink;
 using ArcForges.Node.Core;
 using ArcForges.Node.Core.Execution;
 using ArcForges.Node.Core.Scheduling;
@@ -370,15 +371,51 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
 
         var (tasks, next) = _node.Store.Read(reader => TaskRecords.ListTasks(reader, request.Filter, cursor, limit));
         var value = new TaskServiceListTasksValue { Page = new PageState { HasMore = next is not null } };
-        value.Tasks.Add(tasks.Select(task => RoutedView(caller, task)));
-        if (next is not null)
+        response.Value = value;
+        for (var index = 0; index < tasks.Count; index++)
+        {
+            var task = RoutedView(caller, tasks[index]);
+            value.Tasks.Add(task);
+            if (caller.CenterCaller is not null)
+            {
+                // Include the complete page envelope and the cursor in each size check. The cursor always names the last item delivered.
+                var more = index < tasks.Count - 1 || next is not null;
+                value.Page.HasMore = more;
+                if (more)
+                {
+                    value.Page.NextCursor = CursorOf(task);
+                }
+                else
+                {
+                    value.Page.ClearNextCursor();
+                }
+
+                if (response.CalculateSize() > ResultSigner.MaxPayloadBytes)
+                {
+                    value.Tasks.RemoveAt(value.Tasks.Count - 1);
+                    if (value.Tasks.Count == 0)
+                    {
+                        response.Error = NodeErrors.Internal(_node.Clock.GetUtcNow());
+                        return Task.FromResult(response);
+                    }
+
+                    value.Page.HasMore = true;
+                    value.Page.NextCursor = CursorOf(value.Tasks[^1]);
+                    break;
+                }
+            }
+        }
+
+        if (caller.CenterCaller is null && next is not null)
         {
             value.Page.NextCursor = next;
         }
 
-        response.Value = value;
         return Task.FromResult(response);
     }
+
+    private static string CursorOf(ManagedTask task) =>
+        new PageCursor(StoreTime.ToMicroseconds(ProtoTime.ToDateTimeOffset(task.CreatedAt)!.Value), task.TaskId.Value.ToByteArray()).ToString();
 
     /// <summary><c>WaitTask</c> for <paramref name="caller"/>.</summary>
     internal async Task<TaskServiceWaitTaskResponse> WaitTask(Caller caller, TaskServiceWaitTaskRequest request, CancellationToken cancellationToken)
@@ -448,7 +485,8 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
         }
 
         var value = new TaskServiceWaitTaskValue { Task = RoutedView(caller, task), Reached = reached };
-        if (request.TailBytes > 0 && task.CurrentAttempt is { } attempt && RoutedOutputAllowed(caller, task.Owner))
+        if (request.TailBytes > 0 && task.CurrentAttempt is { } attempt && RoutedOutputAllowed(caller, task.Owner)
+            && (caller.CenterCaller is null || _api.Allowed(caller, PermissionMatrix.TaskReadOutput)))
         {
             var (tail, truncated) = OutputReader.Tail(new AttemptFiles(_node.DataRoot, IdText.Format(attempt.AttemptId)), (int)request.TailBytes);
             value.Tail = ByteString.CopyFrom(tail);
@@ -1368,7 +1406,58 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
 
         value.TruncatedByRetention = _node.Store.Read(reader => reader.Scalar("SELECT output_purged FROM attempt WHERE attempt_id = $id;", ("$id", id)) is 1L);
         response.Value = value;
+        if (caller.CenterCaller is not null && response.CalculateSize() > ResultSigner.MaxPayloadBytes
+            && (!BoundRoutedOutput(response, stream) || response.CalculateSize() > ResultSigner.MaxPayloadBytes))
+        {
+            response.Error = NodeErrors.Internal(_node.Clock.GetUtcNow());
+        }
+
         return response;
+    }
+
+    /// <summary>Keep the longest indexed prefix whose complete serialized response fits; the next read resumes at its exact byte offset.</summary>
+    private static bool BoundRoutedOutput(TaskServiceReadTaskOutputResponse response, OutputStream stream)
+    {
+        var value = response.Value;
+        var records = value.Index.ToArray();
+        var data = value.Data;
+        var start = value.NextOffset - (ulong)data.Length;
+        value.Index.Clear();
+        value.ClearData();
+        value.Eof = false;
+        var indexBytes = 0;
+        var keptRecords = 0;
+        var keptBytes = 0;
+        long mergedBytes = 0;
+        foreach (var record in records)
+        {
+            var recordSize = record.CalculateSize();
+            indexBytes += CodedOutputStream.ComputeTagSize(TaskServiceReadTaskOutputValue.IndexFieldNumber)
+                + CodedOutputStream.ComputeLengthSize(recordSize) + recordSize;
+            mergedBytes += record.Length;
+            var end = stream is OutputStream.Stdout or OutputStream.Stderr
+                ? Math.Min((ulong)data.Length, record.Offset + record.Length - start)
+                : (ulong)Math.Min(data.Length, mergedBytes);
+            var bytes = checked((int)end);
+            value.NextOffset = start + (ulong)bytes;
+            var skeleton = value.CalculateSize();
+            var dataSize = CodedOutputStream.ComputeTagSize(TaskServiceReadTaskOutputValue.DataFieldNumber)
+                + CodedOutputStream.ComputeLengthSize(bytes) + bytes;
+            var fullValue = skeleton + dataSize + indexBytes;
+            var outer = response.CalculateSize() - skeleton - CodedOutputStream.ComputeLengthSize(skeleton);
+            if (outer + fullValue + CodedOutputStream.ComputeLengthSize(fullValue) > ResultSigner.MaxPayloadBytes)
+            {
+                break;
+            }
+
+            keptRecords++;
+            keptBytes = bytes;
+        }
+
+        value.Data = ByteString.CopyFrom(data.Span[..keptBytes]);
+        value.Index.Add(records.Take(keptRecords));
+        value.NextOffset = start + (ulong)keptBytes;
+        return keptBytes > 0 || data.Length == 0;
     }
 
     /// <inheritdoc />
@@ -1658,7 +1747,14 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
                 // Decisions B-3 and PN-15: the link, the stop and the expiry of a routed call, immediately before its effect.
                 caller.Routed?.BeforeEffect();
                 return execute(command).ToByteArray();
-            })).ConfigureAwait(false);
+            },
+            beforeDedup: command =>
+            {
+                caller.Routed?.BeforeReplay();
+                return RoutedCommandOwnership.MayExecute(command.Transaction, meta.CommandId.Value.Span, caller.CenterCaller,
+                    "TaskService." + method, digest) ? null : StoreErrors.CommandIdReused();
+            },
+            afterComplete: command => RoutedCommandOwnership.Record(command.Transaction, meta.CommandId.Value.Span, caller.Actor))).ConfigureAwait(false);
         if ((error ?? outcome.Error) is { } failure)
         {
             return (fail(failure), false);

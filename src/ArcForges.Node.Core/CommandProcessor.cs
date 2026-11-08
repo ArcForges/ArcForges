@@ -120,11 +120,16 @@ public sealed class CommandProcessor : IAsyncDisposable
     /// response; with another digest, <c>CONFLICT/command_id_reused</c>. The response bytes are stored with the effects.
     /// </summary>
     public Task<IdempotentOutcome> ExecuteIdempotentAsync(ReadOnlyMemory<byte> commandId, string method, ReadOnlyMemory<byte> payloadDigest, Origin origin,
-        Func<CommandContext, byte[]> command)
+        Func<CommandContext, byte[]> command, Func<CommandContext, ArcError?>? beforeDedup = null, Action<CommandContext>? afterComplete = null)
     {
         ArgumentNullException.ThrowIfNull(command);
         return ExecuteAsync(context =>
         {
+            if (beforeDedup?.Invoke(context) is { } refused)
+            {
+                return new IdempotentOutcome(false, null, refused);
+            }
+
             var decision = CommandDeduplication.Begin(context.Transaction, commandId.Span, method, payloadDigest.Span, origin);
             switch (decision.Status)
             {
@@ -138,6 +143,7 @@ public sealed class CommandProcessor : IAsyncDisposable
                 default:
                     var outcome = command(context);
                     CommandDeduplication.Complete(context.Transaction, commandId.Span, outcome);
+                    afterComplete?.Invoke(context);
                     return new IdempotentOutcome(false, outcome, null);
             }
         }, CommitDurability.Full);

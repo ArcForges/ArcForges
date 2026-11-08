@@ -38,11 +38,13 @@ public static class AuditLog
         transaction.Execute(
             """
             INSERT INTO audit_log (at, actor, operation, target_kind, target_id, decision, approval_id, remote_command_id, outcome_summary)
-            VALUES ($at, $actor, $operation, $kind, $target, $decision, $approval, NULL, $outcome);
+            VALUES ($at, $actor, $operation, $kind, $target, $decision, $approval, $remote, $outcome);
             """,
             ("$at", transaction.NowMicroseconds), ("$actor", actor.ToByteArray()), ("$operation", operation), ("$kind", targetKind),
             ("$target", targetId.Length > 0 ? targetId.ToArray() : null), ("$decision", (int)decision),
-            ("$approval", approvalId.Length == 16 ? approvalId.ToArray() : null), ("$outcome", outcome.Length <= 500 ? outcome : outcome[..500]));
+            ("$approval", approvalId.Length == 16 ? approvalId.ToArray() : null),
+            ("$remote", actor.RemoteCommandId is { Value.Length: 16 } remote ? remote.Value.ToByteArray() : null),
+            ("$outcome", outcome.Length <= 500 ? outcome : outcome[..500]));
     }
 
     /// <summary>The newest entries first (tests and diagnosis; no API lists the local audit log in release 1).</summary>
@@ -68,6 +70,12 @@ public static class AuditLog
     public static int Prune(StoreTransaction transaction)
     {
         ArgumentNullException.ThrowIfNull(transaction);
-        return transaction.Execute("DELETE FROM audit_log WHERE at < $cutoff;", ("$cutoff", transaction.NowMicroseconds - YearMicroseconds));
+        // A wall-clock jump must not remove the ownership of a dedup row that is still live. Both lookups use existing time/ID indexes.
+        var now = transaction.NowMicroseconds;
+        return transaction.Execute("""
+            DELETE FROM audit_log WHERE at < $cutoff AND (target_kind IS NOT $kind OR NOT EXISTS (
+                SELECT 1 FROM command_dedup d WHERE d.command_id = audit_log.remote_command_id
+                  AND d.created_at = audit_log.at AND d.expires_at > $now));
+            """, ("$cutoff", now - YearMicroseconds), ("$kind", RoutedCommandOwnership.TargetKind), ("$now", now));
     }
 }

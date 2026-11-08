@@ -57,24 +57,25 @@ internal sealed class RoutedAbortException : Exception
 /// The context of one center-routed call on its way through a TaskService body (AF-CTR-05 N2b): the link it arrived on, its expiry, its
 /// wait budget on the local monotonic clock, and the closed operation and reason of a refusal the body made (the dispatcher signs it).
 /// </summary>
-internal sealed class RoutedContext(IRoutedLink link, DateTimeOffset expiresAt, TimeSpan lifetime, TimeProvider clock, long logId)
+internal sealed class RoutedContext(IRoutedLink link, NodeLifecycle lifecycle, DateTimeOffset expiresAt, TimeSpan lifetime, TimeProvider clock, long receivedAt)
 {
     /// <summary>The margin a routed answer keeps before the call's deadline.</summary>
     public static readonly TimeSpan Margin = TimeSpan.FromSeconds(1);
 
-    private readonly long _received = clock.GetTimestamp();
-
     /// <summary>The link of the call.</summary>
     public IRoutedLink Link { get; } = link;
-
-    /// <summary>The current verified call's row, excluded when comparing a prior caller for replay.</summary>
-    public long LogId { get; } = logId;
 
     /// <summary>The matrix operation of the body's refusal, for its closed <c>state.state</c>.</summary>
     public string? Operation { get; private set; }
 
     /// <summary>The closed reason of the body's refusal.</summary>
     public string? Reason { get; private set; }
+
+    /// <summary>True once this call's policy refusal has a committed audit entry.</summary>
+    public bool Audited { get; private set; }
+
+    /// <summary>Marks a committed refusal or approval audit.</summary>
+    public void MarkAudited() => Audited = true;
 
     /// <summary>Records the closed operation and reason of a refusal the body made.</summary>
     public void Refused(string operation, string reason)
@@ -89,26 +90,30 @@ internal sealed class RoutedContext(IRoutedLink link, DateTimeOffset expiresAt, 
     /// </summary>
     public TimeSpan Remaining()
     {
-        var left = lifetime - clock.GetElapsedTime(_received) - Margin;
+        var left = lifetime - clock.GetElapsedTime(receivedAt) - Margin;
         return left > TimeSpan.Zero ? left : TimeSpan.Zero;
     }
 
     /// <summary>
-    /// Immediately before the effect (decisions B-3 and PN-15), inside its writer transaction: the link must still be usable, the node not
-    /// stopping and the call not past its expiry plus the skew; otherwise the transaction aborts and nothing is stored.
+    /// Inside the writer, a replay or new effect requires a usable link and a node that has not begun stopping (decisions B-2 and B-3).
     /// </summary>
-    public void BeforeEffect()
+    public void BeforeReplay()
     {
         if (!Link.Usable)
         {
             throw new RoutedAbortException(RoutedAbort.Dropped);
         }
 
-        if (Link.Stopping)
+        if (Link.Stopping || lifecycle.IsStopping)
         {
             throw new RoutedAbortException(RoutedAbort.Stopping);
         }
+    }
 
+    /// <summary>Also requires a still-valid expiry immediately before a new effect.</summary>
+    public void BeforeEffect()
+    {
+        BeforeReplay();
         if (!CallVerifier.StillValid(expiresAt, clock.GetUtcNow()))
         {
             throw new RoutedAbortException(RoutedAbort.Expired);
@@ -153,9 +158,20 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
         var method = header.Method;
         var risk = Risk(method);
         var operation = RoutedRefusals.Operation(method);
+        var actor = new ActorRef { Origin = Origin.Remote };
+        if (header.Caller is { } statedCaller)
+        {
+            actor.CenterCaller = statedCaller.Clone();
+        }
+
+        if (header.CommandId is { Value.Length: 16 } statedCommand)
+        {
+            actor.RemoteCommandId = statedCommand.Clone();
+        }
+
         if (Volatile.Read(ref _tasks) is not { } tasks)
         {
-            return Refused(operation, RoutedRefusals.DispatchUnavailable, risk);
+            return await AuditedRefusalAsync(actor, method, null, operation, RoutedRefusals.DispatchUnavailable, risk, null).ConfigureAwait(false);
         }
 
         if (!link.Usable)
@@ -166,7 +182,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
         var center = header.Caller;
         if (CenterRouting.Shape(center) is { } shape)
         {
-            return Refused(operation, shape, risk);
+            return await AuditedRefusalAsync(actor, method, null, operation, shape, risk, null).ConfigureAwait(false);
         }
 
         IMessage request;
@@ -216,7 +232,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
                     : Executed(method, meta, NodeErrors.CommandInProgress(), TaskIdOf(request), risk);
             }
 
-            var recorded = node.Store.Read(reader => Recorded(reader, header.CommandId!.Value.Span, MethodName(method), digest, center, call.LogId));
+            var recorded = node.Store.Read(reader => Recorded(reader, header.CommandId!.Value.Span, MethodName(method), digest, center));
             if (recorded is not null)
             {
                 if (!link.Usable)
@@ -246,7 +262,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
         }
 
         var lifetime = ProtoTime.ToDateTimeOffset(header.Deadline)!.Value - ProtoTime.ToDateTimeOffset(header.IssuedAt)!.Value;
-        var context = new RoutedContext(link, expires, lifetime, node.Clock, call.LogId);
+        var context = new RoutedContext(link, node.Lifecycle, expires, lifetime, node.Clock, call.ReceivedAt ?? node.Clock.GetTimestamp());
         var caller = new Caller(Origin.Remote, ClientKind.Unspecified, null, centerCaller: center.Clone())
         {
             CellsOrigin = CenterRouting.CellsOrigin(center, node.NodeId.Span),
@@ -257,23 +273,44 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
         var policy = node.Store.Read(PolicyRules.Current).Document;
         if (CenterRouting.Refusal(center, node.NodeId.Span, policy.CenterRouted) is { } reason)
         {
-            await AuditDeniedAsync(tasks, caller, operation, method, reason).ConfigureAwait(false);
-            return Refused(operation, reason, risk, TaskIdOf(request));
+            return await AuditedRefusalAsync(caller.Actor, method, meta, operation, reason, risk, TaskIdOf(request)).ConfigureAwait(false);
         }
 
         // The routed column narrowed by the caller's cells and the REMOTE overrides; a cancel is decided by its gate once its task is read.
         if (method != RoutedMethod.CancelNodeTask && tasks.Api.Decide(caller, operation) is { Decision: not PermissionDecision.Allow } verdict)
         {
             var denied = verdict.Source.StartsWith("policy permissions[", StringComparison.Ordinal) ? "permission_override" : "denied";
-            await AuditDeniedAsync(tasks, caller, operation, method, denied).ConfigureAwait(false);
-            return Refused(operation, denied, risk, TaskIdOf(request));
+            return await AuditedRefusalAsync(caller.Actor, method, meta, operation, denied, risk, TaskIdOf(request)).ConfigureAwait(false);
         }
 
         var slot = key is not null && _inFlight.TryAdd(key, center.Clone());
         try
         {
             var (response, error) = await RunAsync(tasks, method, caller, request, cancellationToken).ConfigureAwait(false);
-            return Answer(response, error, context, request, operation, risk);
+            if (response.CalculateSize() > ResultSigner.MaxPayloadBytes)
+            {
+                // A valid FULL view can exceed the wire limit. Report an existing bounded internal failure, never a truncated success.
+                var oversized = NodeErrors.Internal(node.Clock.GetUtcNow());
+                oversized.Effect = EffectCertainty.Unknown;
+                oversized.Retry = new RetryAdvice { Mode = RetryMode.Never };
+                return Executed(method, meta, oversized, TaskIdOf(request), risk);
+            }
+
+            var answer = Answer(response, error, context, request, operation, risk);
+            if (answer.Outcome == RoutedOutcome.RefusedByPolicy && !context.Audited)
+            {
+                var approved = error?.Code == "approval_required";
+                await WriteRefusalAuditAsync(caller.Actor, method, context.Operation ?? operation, context.Reason ?? "denied",
+                    approved ? PermissionDecision.Approval : PermissionDecision.Deny,
+                    approved ? answer.Error?.Details?.State?.Resource?.Id?.Value.ToByteArray() : null, TaskIdOf(request)).ConfigureAwait(false);
+            }
+
+            return answer;
+        }
+        catch (CommandQueueFullException)
+        {
+            // A policy refusal is never reported unless its audit committed.
+            return Executed(method, meta, NodeErrors.Overloaded(node.Clock.GetUtcNow()), TaskIdOf(request), risk);
         }
         catch (RoutedAbortException abort)
         {
@@ -298,21 +335,26 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
 
     /// <summary>
     /// For the same caller class only (decisions B-2, E2b review C2-N3): the outcome <c>command_dedup</c> recorded for this command, method and exact payload digest,
-    /// or the outcome of its executed approval; or an approval of it that is APPROVED (executing). The recorded caller is that of the first
-    /// earlier routed call of the command ID (<c>routed_call_log</c>), or the approval's requester; another caller takes the normal path.
+    /// or the outcome of its executed approval; or an approval of it that is APPROVED (executing). The caller is the recorded outcome's
+    /// transactionally associated requester, or the approval's requester; another caller takes the normal policy path.
     /// </summary>
-    private static RecordedCommand? Recorded(StoreReader reader, ReadOnlySpan<byte> commandId, string method, byte[] digest, CenterCaller caller, long logId)
+    private static RecordedCommand? Recorded(StoreReader reader, ReadOnlySpan<byte> commandId, string method, byte[] digest, CenterCaller caller)
     {
         var id = commandId.ToArray();
-        if (Approvals.ByCommand(reader, id) is { } approval && CenterRouting.SameClass(approval.View.Requester?.CenterCaller, caller))
+        if (!RoutedCommandOwnership.MayUse(reader, id, caller))
+        {
+            return null;
+        }
+
+        if (Approvals.ByCommand(reader, id) is { } approval && CenterRouting.SameClass(approval.View.Requester?.CenterCaller, caller)
+            && approval.RequestDigest.AsSpan().SequenceEqual(digest) && approval.View.Operation.EndsWith("." + method, StringComparison.Ordinal))
         {
             if (approval.State == ApprovalState.Approved)
             {
                 return new RecordedCommand(null, true);
             }
 
-            if (approval.State is ApprovalState.Executed or ApprovalState.Failed && approval.Outcome is { Length: > 0 } executed
-                && approval.RequestDigest.AsSpan().SequenceEqual(digest) && approval.View.Operation.EndsWith("." + method, StringComparison.Ordinal))
+            if (approval.State is ApprovalState.Executed or ApprovalState.Failed && approval.Outcome is { Length: > 0 } executed)
             {
                 return new RecordedCommand(executed, false);
             }
@@ -330,19 +372,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
             }
         }
 
-        if (outcome is null)
-        {
-            return null;
-        }
-
-        using var first = reader.CreateCommand("""
-            SELECT caller FROM routed_call_log WHERE command_id = $id AND decision IN (1, 5) AND log_id <> $log ORDER BY log_id LIMIT 1;
-            """);
-        first.Parameters.AddWithValue("$id", id);
-        first.Parameters.AddWithValue("$log", logId);
-        return first.ExecuteScalar() is byte[] recorded && CenterRouting.SameClass(CenterCaller.Parser.ParseFrom(recorded), caller)
-            ? new RecordedCommand(outcome, false)
-            : null;
+        return outcome is not null ? new RecordedCommand(outcome, false) : null;
     }
 
     private static (IMessage Request, RequestMeta? Meta) Parse(RoutedMethod method, ByteString payload) => method switch
@@ -431,8 +461,17 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
     }
 
     /// <summary>A recorded outcome, replayed byte for byte (Q-5): the stored bytes are the answer.</summary>
-    private static RoutedAnswer Replayed(RoutedMethod method, byte[] outcome, IMessage request, int risk)
+    private RoutedAnswer Replayed(RoutedMethod method, byte[] outcome, IMessage request, int risk)
     {
+        if (outcome.Length > ResultSigner.MaxPayloadBytes)
+        {
+            var oversized = NodeErrors.Internal(node.Clock.GetUtcNow());
+            oversized.Effect = EffectCertainty.Unknown;
+            oversized.Retry = new RetryAdvice { Mode = RetryMode.Never };
+            var meta = request is TaskServiceSubmitTaskRequest submit ? submit.Meta : ((TaskServiceCancelTaskRequest)request).Meta;
+            return Executed(method, meta, oversized, TaskIdOf(request), risk);
+        }
+
         ArcError? error;
         byte[]? taskId = TaskIdOf(request);
         if (method == RoutedMethod.SubmitNodeTask)
@@ -454,9 +493,27 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
 
     private Id Correlation() => CommandIds.New(node.Clock);
 
-    private static Task AuditDeniedAsync(TaskServiceHandler tasks, Caller caller, string operation, RoutedMethod method, string reason) =>
-        tasks.Api.AuditAsync(caller, new GateRequest(operation, "FleetService." + MethodName(method), "center-routed " + MethodName(method)),
-            PermissionDecision.Deny, "denied: " + reason);
+    private async Task<RoutedAnswer> AuditedRefusalAsync(ActorRef actor, RoutedMethod method, RequestMeta? meta, string operation, string reason,
+        int risk, byte[]? taskId)
+    {
+        try
+        {
+            await WriteRefusalAuditAsync(actor, method, operation, reason, PermissionDecision.Deny, null, taskId, fleetEntry: true).ConfigureAwait(false);
+            return Refused(operation, reason, risk, taskId);
+        }
+        catch (CommandQueueFullException)
+        {
+            return Executed(method, meta, NodeErrors.Overloaded(node.Clock.GetUtcNow()), taskId, risk);
+        }
+    }
+
+    private Task<int> WriteRefusalAuditAsync(ActorRef actor, RoutedMethod method, string operation, string reason, PermissionDecision decision,
+        byte[]? approvalId, byte[]? taskId, bool fleetEntry = false) => node.Processor.ExecuteAsync(context =>
+    {
+        AuditLog.Append(context.Transaction, actor, operation + (fleetEntry ? " FleetService." : " TaskService.") + MethodName(method), "task", taskId ?? [], decision,
+            approvalId ?? [], "denied: " + reason);
+        return 0;
+    }, CommitDurability.Full);
 
     private static string? Code(ArcError? error) => error is null ? null : error.Category.ToString().ToUpperInvariant() + "/" + error.Code;
 

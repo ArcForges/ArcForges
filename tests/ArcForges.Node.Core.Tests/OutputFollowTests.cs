@@ -39,6 +39,36 @@ public sealed class OutputFollowTests
         Assert.Equal(2, calls);
     }
 
+    /// <summary>Review B-5: a finished merged read ending exactly at a record boundary still has later records.</summary>
+    [Fact]
+    public void FinishedMergedReadsContinueAcrossExactRecordBoundaries()
+    {
+        using var root = new TemporaryRoot();
+        var files = new AttemptFiles(root.Path, "attempt");
+        Write(files, [OutputStreamKind.Stdout, OutputStreamKind.Stderr, OutputStreamKind.Stdout]);
+
+        var first = OutputReader.Read(files, OutputStream.Merged, 0, ChunkBytes, finished: true);
+        Assert.Equal(Data(OutputStreamKind.Stdout, 0), first.Data.ToByteArray());
+        Assert.Equal((ulong)ChunkBytes, first.NextOffset);
+        Assert.False(first.Eof);
+
+        var second = OutputReader.Read(files, OutputStream.Merged, first.NextOffset, ChunkBytes, finished: true);
+        Assert.Equal(Data(OutputStreamKind.Stderr, 0), second.Data.ToByteArray());
+        Assert.Equal((ulong)(2 * ChunkBytes), second.NextOffset);
+        Assert.False(second.Eof);
+
+        var third = OutputReader.Read(files, OutputStream.Merged, second.NextOffset, ChunkBytes, finished: true);
+        Assert.Equal(Data(OutputStreamKind.Stdout, 1), third.Data.ToByteArray());
+        Assert.Equal((ulong)(3 * ChunkBytes), third.NextOffset);
+        Assert.True(third.Eof);
+        var beyondEnd = OutputReader.Read(files, OutputStream.Merged, ulong.MaxValue, ChunkBytes, finished: true);
+        Assert.Empty(beyondEnd.Data);
+        Assert.Equal((ulong)(3 * ChunkBytes), beyondEnd.NextOffset);
+        Assert.True(beyondEnd.Eof);
+        Assert.Equal(Data(OutputStreamKind.Stdout, 0).Concat(Data(OutputStreamKind.Stderr, 0)).Concat(Data(OutputStreamKind.Stdout, 1)),
+            first.Data.ToByteArray().Concat(second.Data.ToByteArray()).Concat(third.Data.ToByteArray()));
+    }
+
     [Fact]
     public void AReconnectAfterNineThousandRecordsGetsTheRecordAfterThem()
     {
