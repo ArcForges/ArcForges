@@ -8,6 +8,7 @@ using ArcForges.Contracts.Relay.V1;
 using ArcForges.Node.CloudLink;
 using ArcForges.Node.Core;
 using ArcForges.Node.Core.Scheduling;
+using ArcForges.Node.Store.Policy;
 using Google.Protobuf;
 using Grpc.Core;
 
@@ -94,8 +95,16 @@ internal sealed class FleetServiceHandler(NodeRuntime node, ClientSessions sessi
         {
             // A direct Fleet caller can bypass the CLI. Classify the original bytes before requesting a nonce or opening relay transport.
             invalid = RoutedEnvironmentGuard.Check(forwarded.Request, forwarded.NodeId.Value.Span.SequenceEqual(node.NodeId.Span),
-                request.Meta?.CorrelationId, node.Clock,
-                () => node.Store.Read(PolicyRules.Current).Document.Privacy?.SecretNamePatterns.ToArray() ?? []);
+                request.Meta?.CorrelationId, node.Clock, () =>
+                {
+                    var current = node.Store.Read(PolicyRules.Current);
+                    if (!CryptographicOperations.FixedTimeEquals(current.Digest, PolicyDocuments.Digest(current.Document)))
+                    {
+                        throw new InvalidDataException("current policy digest mismatch");
+                    }
+
+                    return current.Document.Privacy?.SecretNamePatterns.ToArray() ?? [];
+                });
         }
         if (invalid is not null)
         {

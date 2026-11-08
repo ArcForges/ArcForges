@@ -10,6 +10,7 @@ using ArcForges.Contracts.Relay.V1;
 using ArcForges.Node.Api;
 using ArcForges.Node.CloudLink;
 using ArcForges.Node.Core.Scheduling;
+using ArcForges.Node.Store.Policy;
 using Google.Protobuf;
 
 namespace ArcForges.Node.CloudLink.Tests;
@@ -140,6 +141,97 @@ public sealed class RoutedCliTests
             Assert.True(ArcForges.Contracts.Node.Shapes.ContractShapeValidation.IsValid(answer.Error));
             Assert.False(answer.Error.ToString().Contains(SyntheticEnvironmentValue, StringComparison.Ordinal));
         }
+    }
+
+    [Fact(Timeout = 60000)]
+    public async Task InconsistentCurrentPolicyDigestIsRefusedBeforeNonceOrCenter()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var fixture = await Fixture.StartAsync();
+        await UpdateSyntheticPolicyAsync(fixture, customPattern: true, reverseMaps: false);
+        var store = fixture.Node.Runtime.Store;
+        var original = store.Read(PolicyRules.Current);
+        Assert.True(CryptographicOperations.FixedTimeEquals(original.Digest, PolicyDocuments.Digest(original.Document)), "normal policy write must retain its digest");
+        var environment = new EnvironmentSpec { Inherit = EnvironmentInherit.None };
+        environment.Set["AF_ZEBRA_VALUE"] = SyntheticEnvironmentValue;
+        var nonceCount = NonceRequests(fixture.Center);
+        var before = await DirectSubmitAsync(fixture, fixture.NodeId, environment);
+        Assert.True(before.Error is { Code: "invalid_argument", Effect: EffectCertainty.DidNotHappen }, "configured pattern must be refused before damage");
+        Assert.Equal(nonceCount, NonceRequests(fixture.Center));
+        Assert.True(fixture.Center.CallsOf("SubmitNodeTask").Count == 0);
+
+        // Damage only this test-owned fixture's current document; leave its original, valid-length stored digest untouched.
+        var damaged = original.Document.Clone();
+        damaged.Privacy.SecretNamePatterns.Clear();
+        store.Write(transaction => transaction.Execute("UPDATE policy_document SET document = $document WHERE is_current = 1", ("$document", damaged.ToByteArray())));
+        var current = store.Read(PolicyRules.Current);
+        Assert.False(CryptographicOperations.FixedTimeEquals(current.Digest, PolicyDocuments.Digest(current.Document)), "fixture must have a parseable mismatch");
+        fixture.Center.Script("SubmitNodeTask", Reply(SubmitResult(fixture.NodeId, CommandIds.New())));
+        nonceCount = NonceRequests(fixture.Center);
+        var after = await DirectSubmitAsync(fixture, fixture.NodeId, environment);
+        Assert.True(fixture.Center.CallsOf("SubmitNodeTask").Count == 0, "an inconsistent policy must never send a value to the center");
+        Assert.Equal(nonceCount, NonceRequests(fixture.Center));
+        Assert.True(after.Error is { Code: "invalid_state", Effect: EffectCertainty.DidNotHappen });
+        Assert.Equal(RetryMode.Never, after.Error.Retry.Mode);
+        Assert.True(ArcForges.Contracts.Node.Shapes.ContractShapeValidation.IsValid(after.Error));
+        Assert.True(after.Error.Details.State.Reason.Contains("policy", StringComparison.OrdinalIgnoreCase));
+        Assert.False(after.Error.ToString().Contains(SyntheticEnvironmentValue, StringComparison.Ordinal));
+    }
+
+    [Theory(Timeout = 60000)]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ValidEmptyPolicyAndMapOrdersRetainDefaultProtection(bool reverseMaps)
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var fixture = await Fixture.StartAsync();
+        await UpdateSyntheticPolicyAsync(fixture, customPattern: false, reverseMaps);
+        var current = fixture.Node.Runtime.Store.Read(PolicyRules.Current);
+        Assert.Empty(current.Document.Privacy.SecretNamePatterns);
+        Assert.Equal(2, current.Document.ResultCache.WorkspaceModes.Count);
+        Assert.True(CryptographicOperations.FixedTimeEquals(current.Digest, PolicyDocuments.Digest(current.Document)), "writer and reader must agree for map order");
+
+        var nonceCount = NonceRequests(fixture.Center);
+        var secret = new EnvironmentSpec { Inherit = EnvironmentInherit.None };
+        secret.Set["AF_SYNTH_TOKEN"] = SyntheticEnvironmentValue;
+        var refused = await DirectSubmitAsync(fixture, fixture.NodeId, secret);
+        Assert.True(refused.Error is { Code: "invalid_argument", Effect: EffectCertainty.DidNotHappen });
+        Assert.Equal(nonceCount, NonceRequests(fixture.Center));
+        Assert.True(fixture.Center.CallsOf("SubmitNodeTask").Count == 0);
+        fixture.Center.Script("SubmitNodeTask", Reply(SubmitResult(fixture.NodeId, CommandIds.New())));
+        var safe = new EnvironmentSpec { Inherit = EnvironmentInherit.None };
+        safe.Set["AF_ZEBRA_VALUE"] = "fixture-safe";
+        var accepted = await DirectSubmitAsync(fixture, fixture.NodeId, safe);
+        Assert.NotNull(accepted.Value);
+        Assert.Single(fixture.Center.CallsOf("SubmitNodeTask"));
+    }
+
+    private static async Task UpdateSyntheticPolicyAsync(Fixture fixture, bool customPattern, bool reverseMaps)
+    {
+        await using var human = await fixture.Node.ChannelAsync(Origin.Human);
+        var current = await human.Policy.GetPolicyAsync(new PolicyServiceGetPolicyRequest { Meta = CloudNode.Command() }, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Null(current.Error);
+        var document = current.Value.Document.Clone();
+        document.Privacy.SecretNamePatterns.Clear();
+        if (customPattern)
+        {
+            document.Privacy.SecretNamePatterns.Add("AF_ZEBRA_*");
+        }
+        document.ResultCache.WorkspaceModes.Clear();
+        if (reverseMaps)
+        {
+            document.ResultCache.WorkspaceModes.Add("synthetic-a", ResultCacheMode.Off);
+            document.ResultCache.WorkspaceModes.Add("synthetic-z", ResultCacheMode.Observe);
+        }
+        else
+        {
+            document.ResultCache.WorkspaceModes.Add("synthetic-z", ResultCacheMode.Observe);
+            document.ResultCache.WorkspaceModes.Add("synthetic-a", ResultCacheMode.Off);
+        }
+        var meta = CloudNode.Command();
+        meta.ExpectedRev = current.Value.Revision.Revision;
+        var changed = await human.Policy.UpdatePolicyAsync(new PolicyServiceUpdatePolicyRequest { Meta = meta, Document = document }, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Null(changed.Error);
     }
 
     [Fact]

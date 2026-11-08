@@ -47,7 +47,7 @@ internal static class RoutedEnvironmentGuard
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            var error = NodeErrors.InvalidState("environment", "the local policy is unavailable; environment values cannot be classified safely for the center");
+            var error = NodeErrors.InvalidState("environment", "the local policy is unavailable or inconsistent; environment values cannot be classified safely for the center");
             error.CorrelationId = Correlation(correlation, clock);
             return error;
         }
