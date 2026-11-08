@@ -561,10 +561,10 @@ internal sealed class TestNode : IAsyncDisposable
                 uninspectable = [.. _uninspectable];
             }
 
-            if (uninspectable.Count > 0)
+            // AF-CTR-05 N1 review B: a process may be uninspectable only while it starts or exits (another test's, with the parallel
+            // suites), so scan again before reporting it. The exact identity includes the start time, not just a recyclable PID.
+            uninspectable = await PersistentlyUninspectableAsync(uninspectable, async () =>
             {
-                // AF-CTR-05 N1 review B: a process may be uninspectable only while it starts or exits (another test's, with the parallel
-                // suites), so the scan runs again before one is reported; only a process uninspectable at both scans is.
                 await Task.Delay(TimeSpan.FromSeconds(2));
                 foreach (var process in LiveProcesses())
                 {
@@ -576,9 +576,9 @@ internal sealed class TestNode : IAsyncDisposable
 
                 lock (_uninspectable)
                 {
-                    uninspectable = [.. uninspectable.Intersect(_uninspectable, StringComparer.Ordinal)];
+                    return [.. _uninspectable];
                 }
-            }
+            });
 
             // Not killed: it may be another test's.
             leftovers.AddRange(uninspectable);
@@ -613,6 +613,18 @@ internal sealed class TestNode : IAsyncDisposable
         }
 
         ArcForges.Tests.Leftovers.Report(leftovers);
+    }
+
+    /// <summary>Reports only identities that remain uninspectable on a second scan; no rescan is needed if the first was empty.</summary>
+    internal static async Task<List<string>> PersistentlyUninspectableAsync(List<string> first, Func<Task<List<string>>> rescan)
+    {
+        if (first.Count == 0)
+        {
+            return first;
+        }
+
+        var second = await rescan();
+        return [.. first.Intersect(second, StringComparer.Ordinal)];
     }
 
     /// <summary>The attempts of this node's store.</summary>

@@ -96,6 +96,20 @@ public sealed class RealCenterRoutedTests
             Assert.Null(cancel.Error);
             Assert.Equal(TaskState.Cancelled, (await WaitLocalAsync(human, held, WaitTarget.Terminal)).State);
 
+            // B-1: the first delivery sees an injected stopping link; the real dispatcher creates the transient response
+            // and the node channel signs it. The merged center must leave it non-final and route the same command again.
+            var transient = Submit(target, "hold", "--hold-ms", "500");
+            delay.StopOnce(transient.Meta.CommandId);
+            var firstAttempt = await own.SubmitAsync(targetId, Origin.Script, transient);
+            Assert.Equal(("node_stopping", EffectCertainty.DidNotHappen, RetryMode.AfterTime),
+                (firstAttempt.Error?.Code, firstAttempt.Error?.Effect, firstAttempt.Error?.Retry?.Mode));
+            Assert.NotNull(firstAttempt.Error!.Retry.RetryAt);
+            Assert.Equal(0L, target.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM task WHERE remote_command_id = $id;", ("$id", transient.Meta.CommandId.Value.ToByteArray()))));
+            var retried = await own.SubmitAsync(targetId, Origin.Script, transient);
+            Assert.Null(retried.Error);
+            Assert.Equal(TaskState.Succeeded, (await WaitLocalAsync(human, retried.Value.TaskId, WaitTarget.Terminal)).State);
+            Assert.Equal(1L, target.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM task WHERE remote_command_id = $id;", ("$id", transient.Meta.CommandId.Value.ToByteArray()))));
+
             // N2-19: two different relayed origins share one queue and the same fixed pool capacity.
             Assert.Null((await human.Queue.SetParallelismAsync(new QueueServiceSetParallelismRequest
             {
@@ -430,17 +444,34 @@ public sealed class RealCenterRoutedTests
     private sealed class DelayResult
     {
         private Id? _command;
+        private Id? _stopCommand;
         public TaskCompletionSource Held { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public void Arm(Id command) => _command = command;
+        public void StopOnce(Id command) => Volatile.Write(ref _stopCommand, command);
         public bool Matches(VerifiedCall call) => _command is not null && Equals(call.Header.CommandId, _command);
+
+        public bool TakeStop(VerifiedCall call)
+        {
+            var command = Volatile.Read(ref _stopCommand);
+            return command is not null && Equals(call.Header.CommandId, command)
+                && ReferenceEquals(Interlocked.CompareExchange(ref _stopCommand, null, command), command);
+        }
+    }
+
+    // Inject the stopping condition for one identified delivery, leaving usability and all other deliveries untouched.
+    private sealed class StoppingLink(IRoutedLink inner) : IRoutedLink
+    {
+        public bool Usable => inner.Usable;
+        public bool Stopping => true;
     }
 
     private sealed class DelayedDispatcher(IRoutedDispatcher inner, DelayResult delay) : IRoutedDispatcher
     {
         public async Task<RoutedAnswer?> DispatchAsync(VerifiedCall call, IRoutedLink link, CancellationToken cancellationToken)
         {
-            var answer = await inner.DispatchAsync(call, link, cancellationToken);
+            var effectiveLink = delay.TakeStop(call) ? new StoppingLink(link) : link;
+            var answer = await inner.DispatchAsync(call, effectiveLink, cancellationToken);
             if (delay.Matches(call))
             {
                 delay.Held.TrySetResult();

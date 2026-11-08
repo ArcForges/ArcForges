@@ -112,6 +112,58 @@ public sealed class AdoptionLifecycleTests
         }
     }
 
+    /// <summary>Verifier N-7: the fixed deny is re-evaluated at approval execution after an actual Linux node restart.</summary>
+    [Fact(Timeout = 180_000)]
+    [Trait("env", "linux-real")]
+    public async Task AnApprovedRoutedCancelCannotReachARealLinuxAdoptedProcessAfterRestart()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "the real Linux adoption scope");
+        RequirePlatform();
+        await using var node = await InProcessNode.Create().StartAsync();
+        await using var human = await node.ChannelAsync(helloAsHuman: true);
+        var pid = StartOutsideAnyContainer();
+        var identity = ArcForges.Tests.ProcessIdentity.Capture(pid);
+        Assert.True(identity.HasValue, "the test process must have a readable PID and creation identity");
+        var owned = identity.Value;
+        TestContext.Current.TestOutputHelper?.WriteLine("owned adoption " + owned);
+        try
+        {
+            var taskId = await AdoptAsync(human, pid, owned);
+            Assert.True(owned.IsRunning());
+            // Construct the otherwise unreachable approval race on the real adopted task: temporarily mark its row as a
+            // command to raise the other-owner approval, then restore ADOPTED before restarting the real test node.
+            await node.Runtime.Processor.ExecuteAsync(context => context.Transaction.Execute("UPDATE task SET kind = $kind WHERE task_id = $id;",
+                ("$kind", (int)TaskKind.Command), ("$id", taskId.Value.ToByteArray())));
+            var routed = new RoutedCalls(node);
+            var raised = (await routed.CancelAsync(RoutedCalls.Session(), taskId)).Answer!;
+            Assert.Equal("approval_required", raised.Error?.Code);
+            var approval = raised.Error!.Details.State.Resource.Id;
+            await node.Runtime.Processor.ExecuteAsync(context => context.Transaction.Execute("UPDATE task SET kind = $kind WHERE task_id = $id;",
+                ("$kind", (int)TaskKind.Adopted), ("$id", taskId.Value.ToByteArray())));
+            Assert.Equal(0, await node.StopAsync());
+            Assert.True(owned.IsRunning(), "the test-owned adopted process must survive the node restart");
+            await node.StartAsync();
+            await using var restartedHuman = await node.ChannelAsync(helloAsHuman: true);
+            var before = await Tasks.GetAsync(restartedHuman, taskId, full: true);
+            Assert.Equal((TaskState.Running, TaskKind.Adopted), (before.State, before.Spec.Kind));
+            var decided = await restartedHuman.Approvals.DecideApprovalAsync(new ApprovalServiceDecideApprovalRequest
+            {
+                Meta = Tasks.Meta(),
+                ApprovalId = approval,
+                Decision = ApprovalDecisionKind.Approve,
+            }, cancellationToken: Ct);
+            Assert.Null(decided.Error);
+            Assert.Equal(ApprovalState.Failed, decided.Value.Approval.State);
+            Assert.True(owned.IsRunning(), "the denied approval must not terminate the recorded adopted process");
+            Assert.Equal(TaskState.Running, (await Tasks.GetAsync(restartedHuman, taskId)).State);
+        }
+        finally
+        {
+            owned.Kill();
+        }
+    }
+
     [Fact(Timeout = 180_000)]
     public async Task AnAdoptionContainerTheNodeCannotReopenAfterARestartIsLost()
     {

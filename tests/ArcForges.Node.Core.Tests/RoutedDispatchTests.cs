@@ -31,9 +31,12 @@ public sealed class RoutedDispatchTests
     {
         { PermissionMatrix.TaskSubmit, Origin.Remote, A }, { PermissionMatrix.TaskSubmit, Origin.Human, A }, { PermissionMatrix.TaskSubmit, Origin.Script, A },
         { PermissionMatrix.TaskSubmit, Origin.Agent, A },
-        { PermissionMatrix.TaskRead, Origin.Remote, A }, { PermissionMatrix.TaskRead, Origin.Agent, A },
-        { PermissionMatrix.TaskReadOutput, Origin.Remote, A }, { PermissionMatrix.TaskReadOutput, Origin.Script, A },
-        { PermissionMatrix.TaskCancelOwn, Origin.Remote, A }, { PermissionMatrix.TaskCancelOwn, Origin.Agent, A },
+        { PermissionMatrix.TaskRead, Origin.Remote, A }, { PermissionMatrix.TaskRead, Origin.Human, A }, { PermissionMatrix.TaskRead, Origin.Script, A },
+        { PermissionMatrix.TaskRead, Origin.Agent, A },
+        { PermissionMatrix.TaskReadOutput, Origin.Remote, A }, { PermissionMatrix.TaskReadOutput, Origin.Human, A }, { PermissionMatrix.TaskReadOutput, Origin.Script, A },
+        { PermissionMatrix.TaskReadOutput, Origin.Agent, A },
+        { PermissionMatrix.TaskCancelOwn, Origin.Remote, A }, { PermissionMatrix.TaskCancelOwn, Origin.Human, A }, { PermissionMatrix.TaskCancelOwn, Origin.Script, A },
+        { PermissionMatrix.TaskCancelOwn, Origin.Agent, A },
         { PermissionMatrix.TaskCancelOthers, Origin.Remote, P }, { PermissionMatrix.TaskCancelOthers, Origin.Human, P },
         { PermissionMatrix.TaskCancelOthers, Origin.Script, P }, { PermissionMatrix.TaskCancelOthers, Origin.Agent, P },
         { PermissionMatrix.ProcessTerminate, Origin.Remote, D }, { PermissionMatrix.ProcessTerminate, Origin.Human, D },
@@ -166,12 +169,14 @@ public sealed class RoutedDispatchTests
         var owner = RoutedCalls.Session();
         var spec = Tasks.Argv(node.Root, Tasks.TestLoad, "hold", "--hold-ms", "100");
         spec.Environment.Set["VISIBLE_NAME"] = "a value";
-        var request = new TaskServiceSubmitTaskRequest { Meta = Tasks.Meta(), Spec = spec };
+        var request = new TaskServiceSubmitTaskRequest { Meta = Tasks.Meta(), Spec = spec, CancelWhenCallerGone = true };
         var (answer, response) = await routed.SubmitAsync(owner, request);
         Assert.Equal(RoutedOutcome.Executed, answer!.Outcome);
         Assert.True(response!.Error is null, $"{response.Error?.Category}/{response.Error?.Code}");
+        Assert.Contains(response.Value.Warnings, warning => warning.Contains("cancel_when_caller_gone", StringComparison.Ordinal));
         Assert.Equal(3, answer.Risk);
         var taskId = response.Value.TaskId;
+        Assert.Null(node.Runtime.Execution!.BindingOf(taskId.Value.Span));
         Assert.Equal(taskId.Value.ToByteArray(), answer.TaskId);
 
         // CTR5-NODE-10: the owner is REMOTE with the center caller and the routed command ID; never a diagnostic local submission.
@@ -227,6 +232,13 @@ public sealed class RoutedDispatchTests
         Assert.Equal((1L, 1L, (long?)3, true, true, (string?)null), rows[0]);
         Assert.All(rows, row => Assert.Equal(1L, row.Item1));
         Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM remote_command_log;")));
+
+        // Q-5 also covers an ordinary own-task Cancel, not only Submit and a Cancel executed by an approval.
+        var cancelMeta = Tasks.Meta();
+        var cancelled = (await routed.CancelAsync(owner, taskId, cancelMeta)).Answer!;
+        var replayed = (await routed.CancelAsync(owner, taskId, cancelMeta)).Answer!;
+        Assert.Equal(RoutedOutcome.Executed, cancelled.Outcome);
+        Assert.Equal(cancelled.Response!.ToByteArray(), replayed.Response!.ToByteArray());
     }
 
     /// <summary>Two own-node relayed caller origins share the same queue, resource budget and fixed global parallelism.</summary>
@@ -331,6 +343,22 @@ public sealed class RoutedDispatchTests
         }
 
         var restore = await RestoreAsync(script, opened);
+        if (restore.Error?.Code == "approval_required")
+        {
+            // A HUMAN approval must never lend SCRIPT permission to restore center_routed. Exercise the potential
+            // bypass if a regression offers one, then check the actual stored policy before checking the refusal.
+            var decision = await human.Approvals.DecideApprovalAsync(new ApprovalServiceDecideApprovalRequest
+            {
+                Meta = Tasks.Meta(),
+                ApprovalId = restore.Error.Details.State.Resource.Id,
+                Decision = ApprovalDecisionKind.Approve,
+            }, cancellationToken: Ct);
+            Assert.Null(decision.Error);
+        }
+
+        var afterDeniedRestore = await human.Policy.GetPolicyAsync(new PolicyServiceGetPolicyRequest { Meta = Tasks.Meta() }, cancellationToken: Ct);
+        Assert.Null(afterDeniedRestore.Error);
+        Assert.Equal(RelayedFrom.OwnNode, afterDeniedRestore.Value.Document.CenterRouted.RelayedFrom);
         Assert.Equal("permission_denied", restore.Error?.Code);
         Assert.True(before < opened);
         Assert.Null((await RestoreAsync(human, opened)).Error);
@@ -466,10 +494,14 @@ public sealed class RoutedDispatchTests
         var queued = await Tasks.SubmitAsync(human, Tasks.Argv(node.Root, Tasks.TestLoad, "hold", "--hold-ms", "100"));
         var approval = (await routed.CancelAsync(RoutedCalls.Session(), queued)).Answer!.Error!.Details.State.Resource.Id;
         await node.Runtime.Processor.ExecuteAsync(context => context.Transaction.Execute("UPDATE task SET kind = 3 WHERE task_id = $id;", ("$id", queued.Value.ToByteArray())));
-        var decided = (await human.Approvals.DecideApprovalAsync(new ApprovalServiceDecideApprovalRequest { Meta = Tasks.Meta(), ApprovalId = approval, Decision = ApprovalDecisionKind.Approve },
+        Assert.Equal(0, await node.StopAsync());
+        await node.StartAsync();
+        await using var restartedHuman = await node.ChannelAsync(helloAsHuman: true);
+        Assert.Equal(3L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT kind FROM task WHERE task_id = $id;", ("$id", queued.Value.ToByteArray()))));
+        var decided = (await restartedHuman.Approvals.DecideApprovalAsync(new ApprovalServiceDecideApprovalRequest { Meta = Tasks.Meta(), ApprovalId = approval, Decision = ApprovalDecisionKind.Approve },
             cancellationToken: Ct)).Value.Approval;
         Assert.Equal(ApprovalState.Failed, decided.State);
-        Assert.NotEqual(TaskState.Cancelled, (await Tasks.GetAsync(human, queued)).State);
+        Assert.NotEqual(TaskState.Cancelled, (await Tasks.GetAsync(restartedHuman, queued)).State);
     }
 
     /// <summary>

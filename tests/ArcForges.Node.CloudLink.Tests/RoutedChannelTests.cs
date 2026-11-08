@@ -51,6 +51,76 @@ public sealed class RoutedChannelTests
         }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AKeyRefreshInFlightCannotDispatchAfterTheLinkIsSwitchedOff(bool switchOff)
+    {
+        var dispatcher = new Recording();
+        var releaseVerified = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var (link, connection) = await ChannelTests.ConnectedAsync(configured =>
+        {
+            configured.Dispatcher = dispatcher;
+            configured.StepHook = async at =>
+            {
+                if (switchOff && at == "verified")
+                {
+                    await releaseVerified.Task;
+                }
+            };
+        });
+        await using (link)
+        {
+            // Sign-in had only the original key. This valid newly named key is delivered by the held refresh, so the
+            // control proves that the very same kind of call can really pass verification and reach the dispatcher.
+            var rotated = link.Center.Channel.CommandPublicKey;
+            rotated.Kid = "cmd-rotated-0002";
+            link.Center.CommandKeys.Add(rotated);
+            var releaseRefresh = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            link.Center.Script("RefreshNodeSession", new FakeFault.Hold(releaseRefresh));
+            try
+            {
+                var (call, _) = link.Center.Channel.BuildCall(connection, new FakeCallSpec
+                {
+                    Method = RoutedMethod.GetNodeTask,
+                    FrameKid = rotated.Kid,
+                    HeaderKid = rotated.Kid,
+                });
+                await connection.SendCallAsync(call);
+                await Eventually.TrueAsync(() => link.Center.CallsOf("RefreshNodeSession").Count == 1, "call verification holds the key refresh");
+
+                // Refresh and SetCloudLink take the same gate: a switch requested while the network refresh is held
+                // queues until that refresh finishes. If verification wins that race, pause it at the verified hook.
+                Task<bool>? switching = null;
+                if (switchOff)
+                {
+                    switching = link.Service.SetCloudLinkAsync(false);
+                    Assert.False(switching.IsCompleted);
+                }
+
+                releaseRefresh.TrySetResult();
+                if (switchOff)
+                {
+                    Assert.True(await switching!.WaitAsync(TimeSpan.FromSeconds(15), Cancel));
+                    releaseVerified.TrySetResult();
+                    await Eventually.TrueAsync(() => link.Service.Status().Relay == RelayState.Disabled, "disabled channel drained its in-flight call");
+                    Assert.Equal(0, dispatcher.Calls);
+                    Assert.Empty(connection.VerifiedResults);
+                }
+                else
+                {
+                    await connection.ResultOfAsync(call.CallId);
+                    Assert.Equal(1, dispatcher.Calls);
+                }
+            }
+            finally
+            {
+                releaseRefresh.TrySetResult();
+                releaseVerified.TrySetResult();
+            }
+        }
+    }
+
     [Fact]
     public async Task ThereIsNoBindingWhileTheLinkIsOff()
     {
