@@ -17,5 +17,7 @@
     <PackageReference Include="ArcForges.Contracts.Foundation" />
     <PackageReference Include="ArcForges.LocalRpc" />
     <InternalsVisibleTo Include="ArcForges.Client.Tests" />
+    <InternalsVisibleTo Include="ArcForges.CommandLine" />
+    <InternalsVisibleTo Include="ArcForges.Node.CloudLink.Tests" />
   </ItemGroup>
 </Project>

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using ArcForges.Client;
 using ArcForges.Contracts.Fleet.V1;
 using ArcForges.Contracts.Foundation.V1;
@@ -120,7 +121,7 @@ internal sealed class TaskRoute(Cli cli, NodeSession session, Id nodeId, bool lo
             cli.Output.Fail(error, correlation);
             if (commandId is not null)
             {
-                cli.Output.Error.WriteLine("arcforges: the command may have run; do not submit a new command" + CommandText(commandId));
+                WarnUncertain(cli, commandId);
             }
 
             return ExitCodes.Failed;
@@ -134,6 +135,9 @@ internal sealed class TaskRoute(Cli cli, NodeSession session, Id nodeId, bool lo
 
         return submission ? error.Code == "program_not_found" ? TaskText.ProgramNotFound : TaskText.NotStarted : exit;
     }
+
+    private static void WarnUncertain(Cli cli, Id commandId) =>
+        cli.Output.Error.WriteLine("arcforges: the command may have run; do not submit a new command" + CommandText(commandId));
 
     private static string CommandText(Id? commandId) => commandId is null ? string.Empty : " (command " + IdText.Format(commandId) + ")";
 
@@ -491,92 +495,253 @@ internal sealed class TaskRoute(Cli cli, NodeSession session, Id nodeId, bool lo
         Func<TInner, ArcError?> innerErrorOf, Func<ArcError, TInner> fail, Id command, TimeSpan deadline, CancellationToken cancellationToken)
         where TInner : class, IMessage<TInner>
     {
+        // The server's CLI-session binding is valid only on the hello-checked local connection; never silently rebind after it is lost.
+        using var connection = session.PinConnection();
+        if (connection is null)
+        {
+            return fail(LocalConnectionChanged());
+        }
+
         var started = Stopwatch.GetTimestamp();
         var backoff = new LocalRpc.LocalRpcBackoff(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(2));
+        const int inFlight = 1;
+        const int previousUnknown = 2;
+        const int pendingApproval = 4;
         var uncertain = false;
+        var risk = 0;
+        var warned = 0;
         var waitedForApproval = false;
-        for (var retries = 0; ; retries++)
+        void WarnIfUncertain()
         {
-            var remaining = RetryBudget - Stopwatch.GetElapsedTime(started);
-            if (remaining <= TimeSpan.Zero)
+            if (Volatile.Read(ref risk) != 0 && Interlocked.Exchange(ref warned, 1) == 0)
             {
-                return fail(Uncertain());
+                WarnUncertain(cli, command);
             }
+        }
 
-            ArcError? error;
-            try
+        // `run` and `tasks` handle terminal signals themselves after a task is known. Cover only the earlier pending mutation window.
+        using var interrupts = new MutationInterrupts(WarnIfUncertain, cancellationToken);
+        cancellationToken = interrupts.Token;
+        try
+        {
+            for (var retries = 0; ; retries++)
             {
-                var unary = unaryTimeout ?? deadline;
-                var attemptBudget = MutationAttemptBudget(Stopwatch.GetElapsedTime(started), unary);
-                if (attemptBudget <= TimeSpan.Zero)
+                var remaining = RetryBudget - Stopwatch.GetElapsedTime(started);
+                if (remaining <= TimeSpan.Zero)
                 {
                     return fail(Uncertain());
                 }
 
-                var answer = await send(DateTime.UtcNow + attemptBudget, cancellationToken).ConfigureAwait(false);
-                error = errorOf(answer);
-                if (error is null)
+                ArcError? error;
+                try
                 {
-                    var decoded = Decode(answer, errorOf, payloadOf, parser, hasOutcome, fail);
-                    error = innerErrorOf(decoded);
+                    var unary = unaryTimeout ?? deadline;
+                    var attemptBudget = MutationAttemptBudget(Stopwatch.GetElapsedTime(started), unary);
+                    if (attemptBudget <= TimeSpan.Zero)
+                    {
+                        return fail(Uncertain());
+                    }
+
+                    cancellationToken.ThrowIfCancellationRequested();
+                    Interlocked.Or(ref risk, inFlight);
+                    var answer = await send(DateTime.UtcNow + attemptBudget, cancellationToken).ConfigureAwait(false);
+                    error = errorOf(answer);
                     if (error is null)
                     {
-                        return decoded;
+                        var decoded = Decode(answer, errorOf, payloadOf, parser, hasOutcome, fail);
+                        error = innerErrorOf(decoded);
+                        if (error is null)
+                        {
+                            Interlocked.Exchange(ref risk, 0);
+                            return decoded;
+                        }
+                    }
+
+                    // A known refusal removes the in-flight uncertainty, except when a prior attempt is unknown or an approval can run later.
+                    if (error.Effect == EffectCertainty.Unknown)
+                    {
+                        Interlocked.Or(ref risk, previousUnknown);
+                    }
+                    if (error.Code == "approval_required")
+                    {
+                        Interlocked.Or(ref risk, pendingApproval);
+                    }
+                    Interlocked.And(ref risk, ~inFlight);
+                }
+                catch (RpcException exception) when (!cancellationToken.IsCancellationRequested && exception.StatusCode is StatusCode.Unavailable or StatusCode.DeadlineExceeded)
+                {
+                    Interlocked.Or(ref risk, previousUnknown);
+                    Interlocked.And(ref risk, ~inFlight);
+                    uncertain = true;
+                    error = Uncertain();
+                }
+
+                if (!waitedForApproval && error.Code == "approval_required" && cli.WaitApproval is { } approvalWait
+                    && error.Details?.State?.Resource?.Id is { } approvalId
+                    && session.Hello.Node?.Node?.NodeId is { } own && own.Equals(NodeId))
+                {
+                    waitedForApproval = true;
+                    if (await cli.AwaitDecisionAsync(session, approvalId, approvalWait, cancellationToken).ConfigureAwait(false))
+                    {
+                        // Approval on this node ran the captured original request. Ask the center for that same command's outcome.
+                        started = Stopwatch.GetTimestamp();
+                        continue;
                     }
                 }
+
+                // These refusals must stay intact even if an earlier attempt was uncertain: replay_window_passed may name the recorded task,
+                // and command_id_reused is an actionable defect. Neither authorizes a fresh command ID.
+                if (error.Code == "command_id_reused" || error.Code == "invalid_state" && error.Details?.State?.Reason == "replay_window_passed")
+                {
+                    return fail(error);
+                }
+
+                uncertain |= error.Effect == EffectCertainty.Unknown;
+                var retryable = error.Retry?.Mode is RetryMode.SameCommand or RetryMode.AfterTime &&
+                    (error.Code == "node_unreachable" || error.Code == "operation_failed" && error.Details?.State?.Reason == "command_in_progress"
+                        || uncertain && error.Code == "cloud_unreachable" && error.Effect == EffectCertainty.DidNotHappen);
+                if (!retryable || retries >= MaximumRetries)
+                {
+                    return fail(uncertain && error.Effect == EffectCertainty.DidNotHappen ? Uncertain() : error);
+                }
+
+                // Do not spend the five mutation attempts while this node reconnects. Status reads and their waits use the same total budget;
+                // the server checks the original center/installation binding again before each actual relay send.
+                if (uncertain && !await AwaitOwnRelayAsync(started, cancellationToken).ConfigureAwait(false))
+                {
+                    return fail(Uncertain());
+                }
+
+                var wait = backoff.Next(retries + 1);
+                if (error.Retry?.Mode == RetryMode.AfterTime && ProtoTime.ToDateTimeOffset(error.Retry.RetryAt) is { } retryAt)
+                {
+                    var advised = retryAt - DateTimeOffset.UtcNow;
+                    if (advised > wait)
+                    {
+                        wait = advised;
+                    }
+                }
+
+                remaining = RetryBudget - Stopwatch.GetElapsedTime(started);
+                if (wait >= remaining)
+                {
+                    return fail(uncertain ? Uncertain() : error);
+                }
+
+                cli.Output.Trace("retrying the same routed command " + IdText.Format(command));
+                await Task.Delay(wait, cancellationToken).ConfigureAwait(false);
             }
-            catch (RpcException exception) when (!cancellationToken.IsCancellationRequested && exception.StatusCode is StatusCode.Unavailable or StatusCode.DeadlineExceeded)
+        }
+        catch (Exception exception) when (exception is OperationCanceledException or RpcException)
+        {
+            WarnIfUncertain();
+            if (interrupts.Interrupted)
             {
-                uncertain = true;
-                error = Uncertain();
+                // A signal during this window used to exit 130; retain it even if the RPC reports Cancelled rather than throwing OCE.
+                throw new OperationCanceledException("The routed mutation was interrupted.", exception, cancellationToken);
             }
 
-            if (!waitedForApproval && error.Code == "approval_required" && cli.WaitApproval is { } approvalWait
-                && error.Details?.State?.Resource?.Id is { } approvalId
-                && session.Hello.Node?.Node?.NodeId is { } own && own.Equals(NodeId))
+            throw;
+        }
+    }
+
+    /// <summary>Intercepts signals only while a routed mutation has no final result; normal attach/detach handlers resume on disposal.</summary>
+    private sealed class MutationInterrupts : IDisposable
+    {
+        private readonly CancellationTokenSource _stop;
+        private readonly List<PosixSignalRegistration> _registrations = [];
+        private int _interrupted;
+
+        public MutationInterrupts(Action warning, CancellationToken parent)
+        {
+            _stop = CancellationTokenSource.CreateLinkedTokenSource(parent);
+            foreach (var signal in new[] { PosixSignal.SIGINT, PosixSignal.SIGTERM })
             {
-                waitedForApproval = true;
-                if (await cli.AwaitDecisionAsync(session, approvalId, approvalWait, cancellationToken).ConfigureAwait(false))
+                try
                 {
-                    // Approval on this node ran the captured original request. Ask the center for that same command's outcome.
-                    started = Stopwatch.GetTimestamp();
-                    continue;
+                    _registrations.Add(PosixSignalRegistration.Create(signal, context =>
+                    {
+                        context.Cancel = true;
+                        Interlocked.Exchange(ref _interrupted, 1);
+                        try
+                        {
+                            warning();
+                        }
+                        finally
+                        {
+                            _stop.Cancel();
+                        }
+                    }));
+                }
+                catch (PlatformNotSupportedException)
+                {
                 }
             }
+        }
 
-            // These refusals must stay intact even if an earlier attempt was uncertain: replay_window_passed may name the recorded task,
-            // and command_id_reused is an actionable defect. Neither authorizes a fresh command ID.
-            if (error.Code == "command_id_reused" || error.Code == "invalid_state" && error.Details?.State?.Reason == "replay_window_passed")
+        public bool Interrupted => Volatile.Read(ref _interrupted) != 0;
+
+        public CancellationToken Token => _stop.Token;
+
+        public void Dispose()
+        {
+            foreach (var registration in _registrations)
             {
-                return fail(error);
+                registration.Dispose();
+            }
+            _stop.Dispose();
+        }
+    }
+
+    internal async Task<bool> AwaitOwnRelayAsync(long started, CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            var remaining = RetryBudget - Stopwatch.GetElapsedTime(started);
+            if (remaining <= TimeSpan.Zero)
+            {
+                return false;
             }
 
-            uncertain |= error.Effect == EffectCertainty.Unknown;
-            var retryable = error.Retry?.Mode is RetryMode.SameCommand or RetryMode.AfterTime &&
-                (error.Code == "node_unreachable" || error.Code == "operation_failed" && error.Details?.State?.Reason == "command_in_progress");
-            if (!retryable || retries >= MaximumRetries)
+            var unary = unaryTimeout ?? TimeSpan.FromSeconds(5);
+            var limit = remaining < unary ? remaining : unary;
+            AccountServiceGetAccountStatusResponse response;
+            try
             {
-                return fail(uncertain && error.Effect == EffectCertainty.DidNotHappen ? Uncertain() : error);
+                response = await session.Channel.Account.GetAccountStatusAsync(new AccountServiceGetAccountStatusRequest { Meta = Cli.Meta() },
+                    deadline: DateTime.UtcNow + limit, cancellationToken: cancellationToken).ResponseAsync.ConfigureAwait(false);
+            }
+            catch (RpcException exception) when (!cancellationToken.IsCancellationRequested
+                && exception.StatusCode is StatusCode.Unavailable or StatusCode.DeadlineExceeded)
+            {
+                // In particular, a lost local connection cannot be replaced while this mutation remains uncertain.
+                return false;
             }
 
-            var wait = backoff.Next(retries + 1);
-            if (error.Retry?.Mode == RetryMode.AfterTime && ProtoTime.ToDateTimeOffset(error.Retry.RetryAt) is { } retryAt)
+            if (response.Error is not null || response.Value?.Status is not { } status || !status.HasSignedIn || !status.SignedIn
+                || !status.HasCloudLinkEnabled || !status.CloudLinkEnabled || !status.HasRelay)
             {
-                var advised = retryAt - DateTimeOffset.UtcNow;
-                if (advised > wait)
-                {
-                    wait = advised;
-                }
+                return false;
+            }
+
+            if (status.Relay == RelayState.Connected)
+            {
+                return true;
+            }
+
+            if (status.Relay is not (RelayState.Connecting or RelayState.Backoff))
+            {
+                return false;
             }
 
             remaining = RetryBudget - Stopwatch.GetElapsedTime(started);
-            if (wait >= remaining)
+            if (remaining <= TimeSpan.Zero)
             {
-                return fail(uncertain ? Uncertain() : error);
+                return false;
             }
 
-            cli.Output.Trace("retrying the same routed command " + IdText.Format(command));
-            await Task.Delay(wait, cancellationToken).ConfigureAwait(false);
+            var pause = remaining < TimeSpan.FromSeconds(1) ? remaining : TimeSpan.FromSeconds(1);
+            await Task.Delay(pause, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -623,6 +788,17 @@ internal sealed class TaskRoute(Cli cli, NodeSession session, Id nodeId, bool lo
 
         return result;
     }
+
+    private static ArcError LocalConnectionChanged() => new()
+    {
+        Category = ErrorCategory.State,
+        Code = "invalid_state",
+        MessageKey = "error.state.invalid_state",
+        Effect = EffectCertainty.DidNotHappen,
+        Retry = new RetryAdvice { Mode = RetryMode.Never },
+        CorrelationId = CommandIds.New(),
+        Details = new ErrorDetails { State = new StateFailure { State = "local_connection", Reason = "session_changed" } },
+    };
 
     private static ArcError Internal() => new()
     {

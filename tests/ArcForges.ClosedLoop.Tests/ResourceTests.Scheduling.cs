@@ -233,6 +233,64 @@ public sealed partial class ResourceTests
 
             if (states.All(state => state is TaskState.Succeeded or TaskState.Failed or TaskState.Cancelled or TaskState.Lost))
             {
+                if (states.Any(state => state != TaskState.Succeeded))
+                {
+                    // Bounded failure-only diagnostics: the node's isolated root is removed at disposal. Never log the raw output or environment.
+                    try
+                    {
+                        TestContext.Current.TestOutputHelper?.WriteLine($"memory scenario: budget={budget} expected={expected} rampMiB={ramp} " +
+                            $"allocatorExited={allocator.HasExited} allocatorExit={(allocator.HasExited ? allocator.ExitCode.ToString(CultureInfo.InvariantCulture) : "pending")}");
+                        if (OperatingSystem.IsLinux() && SystemdTestEnvironment.CgroupDirectory(node.Slice) is { } cgroupDirectory)
+                        {
+                            foreach (var name in new[] { "memory.events", "memory.current", "memory.max", "memory.swap.current" })
+                            {
+                                var path = Path.Combine(cgroupDirectory, name);
+                                if (File.Exists(path))
+                                {
+                                    var value = File.ReadAllText(path).Replace('\n', ' ').Trim();
+                                    TestContext.Current.TestOutputHelper?.WriteLine($"cgroup {name}: {value}");
+                                }
+                            }
+
+                            TestContext.Current.TestOutputHelper?.WriteLine($"vmstat oom_kill before={oomBefore} after={VmStat("oom_kill")}");
+                        }
+
+                        foreach (var taskId in tasks)
+                        {
+                            var task = await TaskAsync(channel, taskId);
+                            var attempt = task.CurrentAttempt;
+                            var result = attempt?.Result;
+                            var exit = result is { HasExitCode: true } ? result.ExitCode.ToString(CultureInfo.InvariantCulture) : "none";
+                            var signal = result is { HasSignal: true } ? result.Signal.ToString(CultureInfo.InvariantCulture) : "none";
+                            var flags = "unavailable";
+                            if (attempt?.AttemptId is not null)
+                            {
+                                var output = await channel.Tasks.ReadTaskOutputAsync(new TaskServiceReadTaskOutputRequest
+                                {
+                                    Meta = Meta(),
+                                    AttemptId = attempt.AttemptId,
+                                    Stream = OutputStream.Stderr,
+                                    MaxBytes = 32768,
+                                }, deadline: DateTime.UtcNow.AddSeconds(10), cancellationToken: Ct);
+                                if (output.Error is null)
+                                {
+                                    var text = System.Text.Encoding.UTF8.GetString(output.Value.Data.Span);
+                                    var indicators = new[] { "OutOfMemoryException", "Out of memory", "Failed to create CoreCLR", "Permission denied", "No such file or directory" };
+                                    flags = string.Join(",", indicators.Where(indicator => text.Contains(indicator, StringComparison.OrdinalIgnoreCase)));
+                                    flags = $"bytes={output.Value.Data.Length} indicators={flags}";
+                                }
+                            }
+
+                            TestContext.Current.TestOutputHelper?.WriteLine($"task state={task.State} attempt={attempt?.State} exit={exit} signal={signal} " +
+                                $"reason={result?.TerminationReason} effect={result?.Effect} stderr {flags}");
+                        }
+                    }
+                    catch (Exception exception) when (exception is not OperationCanceledException)
+                    {
+                        TestContext.Current.TestOutputHelper?.WriteLine("memory diagnostics unavailable: " + exception.GetType().Name);
+                    }
+                }
+
                 Assert.All(states, state => Assert.Equal(TaskState.Succeeded, state));
                 break;
             }

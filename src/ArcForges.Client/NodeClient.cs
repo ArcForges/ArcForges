@@ -151,7 +151,13 @@ public sealed class NodeSession : IAsyncDisposable
         Endpoint = endpoint;
         Hello = hello;
         AutoStart = autoStart;
+        _helloConnectionGeneration = channel.ConnectionGeneration;
     }
+
+    private readonly int _helloConnectionGeneration;
+
+    // Refuse a replaced local connection; otherwise the node's per-session mutation binding could be silently lost.
+    internal IDisposable? PinConnection() => Channel.PinConnection(_helloConnectionGeneration);
 
     /// <summary>The channel.</summary>
     public NodeChannel Channel { get; }

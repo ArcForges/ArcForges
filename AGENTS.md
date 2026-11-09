@@ -104,6 +104,11 @@ any change. They are binding; this file summarizes them and adds the repository 
   (`CloudSignInTests`, `loop=cloud`, never in a routine suite) runs only when the coordinator sets `ARCFORGES_E2E_CENTER_URL` (a
   rehearsal or proof center, never production), `ARCFORGES_E2E_DIR` (node-approve's handshake directory) and optionally
   `ARCFORGES_E2E_CASES` (default `device-1,pkce-1`); otherwise it skips with its reason.
+- **Routed-task test isolation (AF-CTR-05):** `ARCFORGES_TEST_ALLOW_LOCAL_SCRIPT_SUBMIT=1` admits local SCRIPT submissions only on
+  a `--test-mode` node; production ignores the variable and it never admits AGENT. In-process `NodeHostOptions.WrapRoutedDispatcher` and
+  the `RealCenterRoutedTests` fixture's `OffsetClock` are test seams, not environment variables or production controls. The opt-in
+  `RealCenterRoutedTests` require a coordinator-owned isolated center, test credentials, browser and handshake directory; center
+  interruption/revocation and final cleanup are coordinator-controlled. They do not run against production or prove hosted/owner devices.
 - **OS secret stores (16-testing-strategy sections 1-2; the user's decisions of 2026-10-17).** Routine tests, the host verification and
   the deep tier never reach the real Windows Credential Manager or Secret Service. Tests use `tests/Shared/IsolatedSecretStore.cs`
   (in memory, scripted faults); nodes started with `--test-mode` and `arcforges-bench` keep keys in the file-backed store under

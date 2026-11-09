@@ -16,5 +16,6 @@
     <PackageReference Include="ArcForges.Contracts.Node" />
     <PackageReference Include="ArcForges.Contracts.Fleet" />
     <InternalsVisibleTo Include="ArcForges.Client.Tests" />
+    <InternalsVisibleTo Include="ArcForges.Node.CloudLink.Tests" />
   </ItemGroup>
 </Project>

@@ -29,8 +29,27 @@ public sealed record ClientSession(LocalRpcPeer Peer, ClientKind Kind, Origin Or
 /// </summary>
 public sealed class ClientSessions
 {
-    private readonly ConcurrentDictionary<string, ClientSession> _sessions = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, SessionEntry> _sessions = new(StringComparer.Ordinal);
     private readonly byte[] _relaySessionKey = RandomNumberGenerator.GetBytes(32);
+
+    private sealed class SessionEntry(ClientSession session)
+    {
+        private ClientSession _session = session;
+        private int _requiresRelayBinding = session.Kind == ClientKind.Cli ? 1 : 0;
+        public ClientSession Session => Volatile.Read(ref _session);
+        public bool RequiresRelayBinding => Volatile.Read(ref _requiresRelayBinding) != 0;
+        public RelayMutationBinding RelayBinding { get; } = new();
+
+        public void Update(ClientSession value)
+        {
+            if (value.Kind == ClientKind.Cli)
+            {
+                Volatile.Write(ref _requiresRelayBinding, 1);
+            }
+
+            Volatile.Write(ref _session, value);
+        }
+    }
 
     /// <summary>Open sessions.</summary>
     public int Count => _sessions.Count;
@@ -72,7 +91,7 @@ public sealed class ClientSessions
         ArgumentNullException.ThrowIfNull(context);
         var http = context.GetHttpContext();
         var id = http.Connection.Id;
-        if (_sessions.TryAdd(id, session))
+        if (_sessions.TryAdd(id, new SessionEntry(session)))
         {
             Opened?.Invoke(session);
             var lifetime = http.Features.Get<IConnectionLifetimeFeature>();
@@ -80,13 +99,14 @@ public sealed class ClientSessions
             {
                 if (_sessions.TryRemove(id, out var closed))
                 {
-                    Closed?.Invoke(closed);
+                    Closed?.Invoke(closed.Session);
                 }
             });
         }
-        else
+        else if (_sessions.TryGetValue(id, out var existing))
         {
-            _sessions[id] = session;
+            // A repeated hello on this connection must not discard a mutation's earlier center binding.
+            existing.Update(session);
         }
     }
 
@@ -94,7 +114,7 @@ public sealed class ClientSessions
     public ClientSession? SessionOf(ServerCallContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
-        return _sessions.TryGetValue(context.GetHttpContext().Connection.Id, out var session) ? session : null;
+        return _sessions.TryGetValue(context.GetHttpContext().Connection.Id, out var session) ? session.Session : null;
     }
 
     /// <summary>
@@ -113,6 +133,42 @@ public sealed class ClientSessions
     public Origin OriginOf(ServerCallContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
-        return _sessions.TryGetValue(context.GetHttpContext().Connection.Id, out var session) ? session.Origin : Origin.Script;
+        return _sessions.TryGetValue(context.GetHttpContext().Connection.Id, out var session) ? session.Session.Origin : Origin.Script;
+    }
+
+    // Capture the bounded binding while this call's hello session still exists. The reference stays valid even if the connection closes.
+    internal RelayMutationBinding? CliRelayBindingOf(ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        return _sessions.TryGetValue(context.GetHttpContext().Connection.Id, out var session) && session.RequiresRelayBinding
+            ? session.RelayBinding : null;
+    }
+}
+
+// One immutable identity per CLI connection, conservatively recorded after signing and before any relay send.
+internal sealed class RelayMutationBinding
+{
+    private readonly Lock _gate = new();
+    private string? _center;
+    private ByteString? _installation;
+
+    public bool TryBind(string center, ByteString installation)
+    {
+        if (string.IsNullOrEmpty(center) || installation.Length != 16)
+        {
+            return false;
+        }
+
+        lock (_gate)
+        {
+            if (_center is null)
+            {
+                _center = center;
+                _installation = installation;
+                return true;
+            }
+
+            return string.Equals(_center, center, StringComparison.Ordinal) && _installation!.Equals(installation);
+        }
     }
 }

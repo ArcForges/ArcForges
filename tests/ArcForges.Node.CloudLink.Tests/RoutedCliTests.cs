@@ -3,10 +3,12 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using ArcForges.Client;
+using ArcForges.CommandLine;
 using ArcForges.Contracts.Fleet.V1;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Contracts.Relay.V1;
+using ArcForges.LocalRpc;
 using ArcForges.Node.Api;
 using ArcForges.Node.CloudLink;
 using ArcForges.Node.Core.Scheduling;
@@ -58,6 +60,7 @@ public sealed class RoutedCliTests
             : new[] { "run", "--detach", "--env-inherit", "none", "--env", "AF_SYNTH_TOKEN=" + SyntheticEnvironmentValue, "--", "test-program" };
         var result = await fixture.CliSyntheticAsync(args);
         Assert.True(fixture.Center.CallsOf("SubmitNodeTask").Count == 0, "secret-shaped values must be refused before center send");
+        Assert.DoesNotContain("may have run", result.Stderr, StringComparison.Ordinal);
         Assert.Equal(nonceCount, NonceRequests(fixture.Center));
         Assert.True(result.ExitCode is not 0 and not 131, "explicit unsafe environment must be refused by the product, not by runtime startup");
         Assert.True(result.Stderr.Contains("environment", StringComparison.OrdinalIgnoreCase)
@@ -831,6 +834,39 @@ public sealed class RoutedCliTests
         Assert.Empty(fixture.Center.CallsOf("ListNodes"));
     }
 
+    [Fact(Timeout = 60000)]
+    public async Task ClosingTheLocalSessionDuringNonceWaitCannotSendTheMutation()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var fixture = await Fixture.StartAsync();
+        fixture.Center.Channel.AnswerNonces = false;
+        var script = await fixture.Node.ChannelAsync(Origin.Script);
+        var disposed = false;
+        try
+        {
+            var meta = CloudNode.Command();
+            var inner = new TaskServiceSubmitTaskRequest { Meta = meta.Clone(), Spec = new TaskSpec { Environment = new EnvironmentSpec { Inherit = EnvironmentInherit.None } } };
+            var fleet = new FleetService.FleetServiceClient(script.CallInvoker);
+            var before = NonceRequests(fixture.Center);
+            var pending = fleet.SubmitNodeTaskAsync(new FleetServiceSubmitNodeTaskRequest { Meta = meta, NodeId = fixture.NodeId, Request = inner.ToByteString() },
+                deadline: DateTime.UtcNow.AddSeconds(15), cancellationToken: ct).ResponseAsync;
+            await Eventually.TrueAsync(() => NonceRequests(fixture.Center) > before, "mutation nonce requested");
+            await script.DisposeAsync();
+            disposed = true;
+            var error = await Record.ExceptionAsync(async () => await pending);
+            Assert.True(error is OperationCanceledException or ObjectDisposedException
+                or Grpc.Core.RpcException { StatusCode: Grpc.Core.StatusCode.Cancelled or Grpc.Core.StatusCode.Unavailable });
+            Assert.Empty(fixture.Center.CallsOf("SubmitNodeTask"));
+        }
+        finally
+        {
+            if (!disposed)
+            {
+                await script.DisposeAsync();
+            }
+        }
+    }
+
     [Fact(Timeout = 60000, DisableParallelization = true)]
     [Trait("isolation", "exclusive")]
     public async Task RoutedNameResolutionHonorsTheGlobalUnaryDeadline()
@@ -973,6 +1009,7 @@ public sealed class RoutedCliTests
         fixture.Center.Script("SubmitNodeTask", Reply(SubmitResult(fixture.NodeId, taskId)));
         var result = await fixture.CliAsync("run", "--detach", "--env-inherit", "none", "--", CloudNode.TestLoad, "hold", "--hold-ms", "1");
         Assert.Equal(0, result.ExitCode);
+        Assert.DoesNotContain("may have run", result.Stderr, StringComparison.Ordinal);
         Assert.Equal(IdText.Format(taskId), result.Stdout.Trim());
         var calls = fixture.Center.CallsOf("SubmitNodeTask").Select(call => FleetServiceSubmitNodeTaskRequest.Parser.ParseFrom(FakeCenter.Payload(call.Body))).ToList();
         Assert.Equal(2, calls.Count);
@@ -983,6 +1020,780 @@ public sealed class RoutedCliTests
         Assert.Equal(first.CommandId, second.CommandId);
         Assert.Equal(first.RequestSha256, second.RequestSha256);
         Assert.NotEqual(first.RelayNonce, second.RelayNonce);
+    }
+
+    [Fact(Timeout = 60000)]
+    public async Task ARealCliUnderARegisteredAgentRootCannotSubmitLocally()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var fixture = await Fixture.StartAsync(signedIn: false);
+        await using var human = await fixture.Node.ChannelAsync(Origin.Human);
+        Assert.Null((await human.Queue.PausePoolAsync(new QueueServicePausePoolRequest { Meta = CloudNode.Command(), All = true }, cancellationToken: ct)).Error);
+        var sessionsSeen = new System.Collections.Concurrent.ConcurrentQueue<ClientSession>();
+        var sessions = new ClientSessions { Opened = sessionsSeen.Enqueue };
+        var processStart = ProtoTime.ToDateTimeOffset(ClientProcess.Identity(Environment.ProcessId)!.StartTime)!.Value;
+        sessions.Agents.Register(Environment.ProcessId, processStart);
+        var name = "af-x12-" + Guid.NewGuid().ToString("N")[..12];
+        var directory = Path.Combine(Path.GetTempPath(), name);
+        var endpoint = OperatingSystem.IsWindows() ? LocalRpcEndpoint.NamedPipe(name) : LocalRpcEndpoint.UnixDomainSocket(Path.Combine(directory, "node.sock"));
+        if (!OperatingSystem.IsWindows())
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        try
+        {
+            await using var server = NodeApiServer.Build(endpoint, fixture.Node.Runtime, sessions, cloud: fixture.Node.Cloud);
+            await server.StartAsync(ct);
+            try
+            {
+                var before = fixture.Node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM task;"));
+                var denied = await fixture.CliAtEndpointAsync(endpoint.Address, "--json", "run", "--local", "--detach", "--env-inherit", "none",
+                    "--cwd", fixture.Node.Root, "--", CloudNode.TestLoad, "hold", "--hold-ms", "100");
+                Assert.Equal(125, denied.ExitCode);
+                using (var json = System.Text.Json.JsonDocument.Parse(denied.Stdout))
+                {
+                    var error = json.RootElement.GetProperty("error");
+                    Assert.Equal("permission_denied", error.GetProperty("code").GetString());
+                    Assert.Equal("EFFECT_CERTAINTY_DID_NOT_HAPPEN", error.GetProperty("effect").GetString());
+                    Assert.Equal("local_submission_human_only", error.GetProperty("details").GetProperty("state").GetProperty("reason").GetString());
+                }
+                var agent = Assert.Single(sessionsSeen, session => session.Origin == Origin.Agent);
+                Assert.Equal(ClientKind.Cli, agent.Kind);
+                Assert.NotEqual(Environment.ProcessId, agent.Peer.ProcessId);
+                Assert.Equal(before, fixture.Node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM task;")));
+
+                // Removing the exact root makes another real child SCRIPT, which the isolated in-process test explicitly permits.
+                sessions.Agents.Remove(Environment.ProcessId);
+                var script = await fixture.CliAtEndpointAsync(endpoint.Address, "run", "--local", "--detach", "--env-inherit", "none",
+                    "--cwd", fixture.Node.Root, "--", CloudNode.TestLoad, "hold", "--hold-ms", "100");
+                Assert.Equal(0, script.ExitCode);
+                Assert.True(IdText.TryParse(script.Stdout.Trim(), out var taskBytes));
+                Assert.Contains(sessionsSeen, session => session.Kind == ClientKind.Cli && session.Origin == Origin.Script);
+                var task = new Id { Value = ByteString.CopyFrom(taskBytes) };
+                Assert.Null((await human.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = CloudNode.Command(), TaskId = task }, cancellationToken: ct)).Error);
+            }
+            finally
+            {
+                sessions.Agents.Remove(Environment.ProcessId);
+                await server.StopAsync(CancellationToken.None);
+            }
+        }
+        finally
+        {
+            if (!OperatingSystem.IsWindows() && Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    [Fact(Timeout = 60000)]
+    public async Task APrecanceledMutationDoesNotWarnOrReachTheCenter()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var fixture = await Fixture.StartAsync();
+        var channel = await fixture.Node.ChannelAsync(Origin.Script);
+        await using var session = new NodeSession(channel, new ResolvedEndpoint(fixture.Node.Endpoint, "test", fixture.Node.DataRoot), new NodeServiceHelloValue(), null);
+        using var error = new StringWriter(System.Globalization.CultureInfo.InvariantCulture);
+        var cli = new Cli(new CliOutput(TextWriter.Null, error, json: false, quiet: false, color: false, verbose: false, width: 120), false, null, false);
+        var route = new TaskRoute(cli, session, fixture.NodeId, local: false, unaryTimeout: null);
+        using var cancelled = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        await cancelled.CancelAsync();
+        var nonceCount = NonceRequests(fixture.Center);
+        var request = new TaskServiceSubmitTaskRequest { Meta = CloudNode.Command(), Spec = new TaskSpec { Environment = new EnvironmentSpec { Inherit = EnvironmentInherit.None } } };
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => route.SubmitAsync(request, cancelled.Token));
+        Assert.Empty(error.ToString());
+        Assert.Equal(nonceCount, NonceRequests(fixture.Center));
+        Assert.Empty(fixture.Center.CallsOf("SubmitNodeTask"));
+    }
+
+    [Fact(Timeout = 60000)]
+    public async Task AnExitedPtyCannotBeInterruptedThroughAReusedProcessId()
+    {
+        Assert.SkipUnless(OperatingSystem.IsLinux() && File.Exists("/usr/bin/script"), "actual PTY control requires Linux and script");
+        var ct = TestContext.Current.CancellationToken;
+        using var pty = Process.Start(new ProcessStartInfo("/usr/bin/script")
+        {
+            UseShellExecute = false,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            ArgumentList = { "-qefc", "exit 0", "/dev/null" },
+        }) ?? throw new InvalidOperationException("Could not start the owned PTY.");
+        await pty.WaitForExitAsync(ct);
+        Assert.Equal(0, pty.ExitCode);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => SendInterruptAsync(pty, ct));
+    }
+
+    [Fact(Timeout = 60000)]
+    public async Task AClosedPtyInputFailsWithoutSignallingAProcess()
+    {
+        Assert.SkipUnless(OperatingSystem.IsLinux() && File.Exists("/usr/bin/script"), "actual PTY control requires Linux and script");
+        var ct = TestContext.Current.CancellationToken;
+        using var pty = Process.Start(new ProcessStartInfo("/usr/bin/script")
+        {
+            UseShellExecute = false,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            ArgumentList = { "-qefc", "exec /bin/sleep 2", "/dev/null" },
+        }) ?? throw new InvalidOperationException("Could not start the owned PTY.");
+        Assert.False(pty.HasExited);
+        pty.StandardInput.Close();
+        await Assert.ThrowsAnyAsync<InvalidOperationException>(() => SendInterruptAsync(pty, ct));
+        await pty.WaitForExitAsync(ct).WaitAsync(TimeSpan.FromSeconds(10), ct);
+    }
+
+    [Fact(Timeout = 60000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
+    public async Task ThePtyHelperDeliversCtrlCToTheActualCliLogin()
+    {
+        Assert.SkipUnless(OperatingSystem.IsLinux() && File.Exists("/usr/bin/script"), "actual CLI Ctrl+C control requires the Linux PTY fixture");
+        var ct = TestContext.Current.CancellationToken;
+        ct.ThrowIfCancellationRequested();
+        await using var fixture = await Fixture.StartAsync(signedIn: false, testHumanImage: true);
+        var started = new TaskCompletionSource<Process>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cli = fixture.CliInPtyUntilAsync(started, waiting, "Waiting for the approval", "login", "--device-code");
+        try
+        {
+            var first = await Task.WhenAny(waiting.Task, cli, Task.Delay(TimeSpan.FromSeconds(10), ct));
+            if (first == cli)
+            {
+                var early = await cli;
+                var category = System.Text.RegularExpressions.Regex.Match(early.Stdout, @"[A-Z_]+/[a-z_]+").Value;
+                TestContext.Current.TestOutputHelper?.WriteLine("login control early exit=" + early.ExitCode + "; stdoutChars=" + early.Stdout.Length
+                    + "; category=" + category + "; nodeMessage=" + early.Stdout.Contains("node", StringComparison.OrdinalIgnoreCase)
+                    + "; stderrChars=" + early.Stderr.Length);
+            }
+            Assert.True(first == waiting.Task, "the login PTY must reach the waiting screen before it is interrupted");
+            Assert.False(cli.IsCompleted);
+            await SendInterruptAsync(await started.Task.WaitAsync(ct), ct);
+            var result = await cli;
+            Assert.Equal(130, result.ExitCode);
+            Assert.Contains("Sign-in cancelled.", result.Stdout, StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (!cli.IsCompleted)
+            {
+                await SendInterruptAsync(await started.Task.WaitAsync(ct), ct);
+                var result = await cli;
+                TestContext.Current.TestOutputHelper?.WriteLine("login control cleanup exit=" + result.ExitCode
+                    + "; stdoutChars=" + result.Stdout.Length + "; waiting=" + result.Stdout.Contains("Waiting for the approval", StringComparison.Ordinal)
+                    + "; error=" + result.Stdout.Contains("error", StringComparison.OrdinalIgnoreCase));
+            }
+        }
+    }
+
+    [Fact(Timeout = 60000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
+    public async Task CancelledInFlightCliSubmitReportsTheOriginalPossiblyExecutedCommand()
+    {
+        Assert.SkipUnless(OperatingSystem.IsLinux() && File.Exists("/usr/bin/script"), "actual CLI Ctrl+C control requires the Linux PTY fixture");
+        var ct = TestContext.Current.CancellationToken;
+        ct.ThrowIfCancellationRequested();
+        await using var fixture = await Fixture.StartAsync(testHumanImage: true);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var started = new TaskCompletionSource<Process>(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Center.Script("SubmitNodeTask", new FakeFault.Hold(release));
+        var cli = fixture.CliInPtyAsync(started, "run", "--detach", "--env-inherit", "none", "--", "test-program");
+        try
+        {
+            await Eventually.TrueAsync(() => fixture.Center.CallsOf("SubmitNodeTask").Count == 1, "initial submit reached the mocked center");
+            var first = FleetServiceSubmitNodeTaskRequest.Parser.ParseFrom(FakeCenter.Payload(Assert.Single(fixture.Center.CallsOf("SubmitNodeTask")).Body));
+            await SendInterruptAsync(await started.Task.WaitAsync(ct), ct);
+            var result = await cli;
+            TestContext.Current.TestOutputHelper?.WriteLine("actual nonverbose PTY CLI exit=" + result.ExitCode + "; merged output=" + result.Stdout);
+            Assert.Equal(130, result.ExitCode);
+            Assert.Single(fixture.Center.CallsOf("SubmitNodeTask"));
+            Assert.Contains("may have run", result.Stdout, StringComparison.Ordinal);
+            Assert.Contains(IdText.Format(first.Meta.CommandId), result.Stdout, StringComparison.Ordinal);
+        }
+        finally
+        {
+            release.TrySetResult();
+            if (!cli.IsCompleted)
+            {
+                await cli;
+            }
+        }
+    }
+
+    private static Task SendInterruptAsync(Process pty, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        // Keep the owned process/pipe alive until the byte is flushed, even if the CLI exits concurrently.
+        lock (pty)
+        {
+            if (pty.HasExited)
+            {
+                throw new InvalidOperationException("The owned PTY has already exited.");
+            }
+
+            // The terminal sends SIGINT to its own foreground group. A closed pipe fails safely; no numeric PID is looked up or signalled.
+            pty.StandardInput.Write('\u0003');
+            pty.StandardInput.Flush();
+        }
+
+        return Task.CompletedTask;
+    }
+
+    [Fact(Timeout = 60000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
+    public async Task CancelledCliDuringOwnRelayRecoveryReportsTheOriginalUnknownCommand()
+    {
+        Assert.SkipUnless(OperatingSystem.IsLinux() && File.Exists("/usr/bin/script"), "actual CLI Ctrl+C control requires the Linux PTY fixture");
+        var ct = TestContext.Current.CancellationToken;
+        await using var fixture = await Fixture.StartAsync(testHumanImage: true);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var started = new TaskCompletionSource<Process>(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Center.Script("SubmitNodeTask", new FakeFault.Hold(release));
+        fixture.Center.Script("SubmitNodeTask", new FakeFault.Transport(14, "dependency.unavailable"));
+        var cli = fixture.CliInPtyAsync(started, "run", "--detach", "--env-inherit", "none", "--", "test-program");
+        try
+        {
+            await Eventually.TrueAsync(() => fixture.Center.CallsOf("SubmitNodeTask").Count == 1, "the first submit reached the mocked center");
+            var first = FleetServiceSubmitNodeTaskRequest.Parser.ParseFrom(FakeCenter.Payload(Assert.Single(fixture.Center.CallsOf("SubmitNodeTask")).Body));
+            var connection = await fixture.Center.Channel.ProvedAsync();
+            await connection.CloseAsync(4500, "shutting_down", 20_000);
+            await Eventually.TrueAsync(() => fixture.Node.Cloud.Status().Relay == RelayState.Backoff, "own node channel entered backoff");
+            using var status = new LocalRequestProbe("/arcforges.node.v1.AccountService/GetAccountStatus");
+            release.TrySetResult();
+            await status.Seen.Task.WaitAsync(TimeSpan.FromSeconds(10), ct);
+            Assert.Equal(RelayState.Backoff, fixture.Node.Cloud.Status().Relay);
+            await SendInterruptAsync(await started.Task.WaitAsync(ct), ct);
+            var result = await cli;
+            Assert.Equal(130, result.ExitCode);
+            Assert.Contains("may have run", result.Stdout, StringComparison.Ordinal);
+            Assert.Contains(IdText.Format(first.Meta.CommandId), result.Stdout, StringComparison.Ordinal);
+            Assert.Single(fixture.Center.CallsOf("SubmitNodeTask"));
+        }
+        finally
+        {
+            release.TrySetResult();
+            if (!cli.IsCompleted)
+            {
+                await cli;
+            }
+        }
+    }
+
+    [Fact(Timeout = 60000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
+    public async Task CancelledCliDuringApprovalAfterUnknownReportsTheOriginalCommand()
+    {
+        Assert.SkipUnless(OperatingSystem.IsLinux() && File.Exists("/usr/bin/script"), "actual CLI Ctrl+C control requires the Linux PTY fixture");
+        var ct = TestContext.Current.CancellationToken;
+        await using var fixture = await Fixture.StartAsync(testHumanImage: true);
+        var approval = await CreatePendingApprovalAsync(fixture, ct);
+        fixture.Center.Script("SubmitNodeTask", new FakeFault.Transport(14, "dependency.unavailable"));
+        // The center is mocked: its scripted approval ID points to a real pending local approval, not a real captured submit.
+        fixture.Center.Script("SubmitNodeTask", new FakeFault.Refusal(approval));
+        var started = new TaskCompletionSource<Process>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var poll = new LocalRequestProbe("/arcforges.node.v1.ApprovalService/GetApproval");
+        var cli = fixture.CliInPtyUntilAsync(started, waiting, "Waiting for approval", "--wait-approval", "60s", "run", "--detach",
+            "--env-inherit", "none", "--", "test-program");
+        try
+        {
+            await waiting.Task.WaitAsync(TimeSpan.FromSeconds(15), ct);
+            await poll.Seen.Task.WaitAsync(TimeSpan.FromSeconds(10), ct);
+            var calls = fixture.Center.CallsOf("SubmitNodeTask").Select(call => FleetServiceSubmitNodeTaskRequest.Parser.ParseFrom(FakeCenter.Payload(call.Body))).ToArray();
+            Assert.Equal(2, calls.Length);
+            Assert.Equal(calls[0].Meta.CommandId, calls[1].Meta.CommandId);
+            Assert.Equal(calls[0].Request, calls[1].Request);
+            await SendInterruptAsync(await started.Task.WaitAsync(ct), ct);
+            var result = await cli;
+            Assert.Equal(130, result.ExitCode);
+            Assert.Contains("may have run", result.Stdout, StringComparison.Ordinal);
+            Assert.Contains(IdText.Format(calls[0].Meta.CommandId), result.Stdout, StringComparison.Ordinal);
+            Assert.Equal(2, fixture.Center.CallsOf("SubmitNodeTask").Count);
+        }
+        finally
+        {
+            if (!cli.IsCompleted)
+            {
+                await SendInterruptAsync(await started.Task.WaitAsync(ct), ct);
+                await cli;
+            }
+        }
+    }
+
+    [Fact(Timeout = 60000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
+    public async Task LostLocalConnectionDuringApprovalReportsTheOriginalCommand()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var fixture = await Fixture.StartAsync();
+        var approval = await CreatePendingApprovalAsync(fixture, ct);
+        fixture.Center.Script("SubmitNodeTask", new FakeFault.Refusal(approval));
+        var started = new TaskCompletionSource<Process>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var poll = new LocalRequestProbe("/arcforges.node.v1.ApprovalService/GetApproval", abort: true);
+        var cli = fixture.CliSyntheticUntilAsync(started, waiting, "Waiting for approval", "--wait-approval", "60s", "run", "--detach",
+            "--env-inherit", "none", "--", "test-program");
+        try
+        {
+            await waiting.Task.WaitAsync(TimeSpan.FromSeconds(15), ct);
+            await poll.Seen.Task.WaitAsync(TimeSpan.FromSeconds(10), ct);
+            var first = FleetServiceSubmitNodeTaskRequest.Parser.ParseFrom(FakeCenter.Payload(Assert.Single(fixture.Center.CallsOf("SubmitNodeTask")).Body));
+            var result = await cli;
+            var rpcStatus = System.Text.RegularExpressions.Regex.Match(result.Stderr, @"error: the call failed \(([^:]+):").Groups[1].Value;
+            var nodeClosed = result.Stderr.Contains("the node closed the connection", StringComparison.Ordinal);
+            TestContext.Current.TestOutputHelper?.WriteLine("approval local-disconnect CLI exit=" + result.ExitCode + "; rpcStatus=" + rpcStatus
+                + "; nodeClosed=" + nodeClosed);
+            if (nodeClosed)
+            {
+                Assert.Equal(75, result.ExitCode);
+            }
+            else
+            {
+                Assert.Equal("Internal", rpcStatus);
+                Assert.Equal(1, result.ExitCode);
+            }
+            Assert.Contains("may have run", result.Stderr, StringComparison.Ordinal);
+            Assert.Contains(IdText.Format(first.Meta.CommandId), result.Stderr, StringComparison.Ordinal);
+            Assert.Single(fixture.Center.CallsOf("SubmitNodeTask"));
+        }
+        finally
+        {
+            if (!cli.IsCompleted)
+            {
+                await fixture.Node.StopAsync();
+                await cli;
+            }
+        }
+    }
+
+    [Fact(Timeout = 60000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
+    public async Task FollowingAStartedTaskStillCancelsThenDetachesOnASecondInterrupt()
+    {
+        Assert.SkipUnless(OperatingSystem.IsLinux() && File.Exists("/usr/bin/script"), "actual CLI Ctrl+C control requires the Linux PTY fixture");
+        var ct = TestContext.Current.CancellationToken;
+        await using var fixture = await Fixture.StartAsync(testHumanImage: true);
+        var holdGet = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var holdCancel = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var taskId = CommandIds.New();
+        fixture.Center.Script("SubmitNodeTask", Reply(SubmitResult(fixture.NodeId, taskId)));
+        fixture.Center.Script("GetNodeTask", new FakeFault.Hold(holdGet));
+        fixture.Center.Script("CancelNodeTask", new FakeFault.Hold(holdCancel));
+        var started = new TaskCompletionSource<Process>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cli = fixture.CliInPtyAsync(started, "run", "--env-inherit", "none", "--", "test-program");
+        try
+        {
+            await Eventually.TrueAsync(() => fixture.Center.CallsOf("GetNodeTask").Count == 1, "the CLI is following the started task");
+            await SendInterruptAsync(await started.Task.WaitAsync(ct), ct);
+            await Eventually.TrueAsync(() => fixture.Center.CallsOf("CancelNodeTask").Count == 1, "the first interrupt submitted task cancellation");
+            var cancelled = FleetServiceCancelNodeTaskRequest.Parser.ParseFrom(FakeCenter.Payload(Assert.Single(fixture.Center.CallsOf("CancelNodeTask")).Body));
+            await SendInterruptAsync(await started.Task.WaitAsync(ct), ct);
+            var result = await cli;
+            Assert.Equal(130, result.ExitCode);
+            Assert.Contains("cancelling task " + IdText.Format(taskId), result.Stdout, StringComparison.Ordinal);
+            Assert.Contains("detached; task " + IdText.Format(taskId), result.Stdout, StringComparison.Ordinal);
+            Assert.Contains("may have run", result.Stdout, StringComparison.Ordinal);
+            Assert.Contains(IdText.Format(cancelled.Meta.CommandId), result.Stdout, StringComparison.Ordinal);
+            Assert.Single(fixture.Center.CallsOf("SubmitNodeTask"));
+            Assert.Single(fixture.Center.CallsOf("CancelNodeTask"));
+        }
+        finally
+        {
+            holdGet.TrySetResult();
+            holdCancel.TrySetResult();
+            if (!cli.IsCompleted)
+            {
+                await cli;
+            }
+        }
+    }
+
+    private static async Task<ArcError> CreatePendingApprovalAsync(Fixture fixture, CancellationToken cancellationToken)
+    {
+        await using var script = await fixture.Node.ChannelAsync(Origin.Script);
+        var response = await script.Queue.SetParallelismAsync(new QueueServiceSetParallelismRequest
+        {
+            Meta = CloudNode.Command(),
+            Scope = ParallelismScope.Global,
+            Mode = ParallelismMode.Fixed,
+            Fixed = 3,
+        }, cancellationToken: cancellationToken);
+        Assert.Equal("approval_required", response.Error?.Code);
+        Assert.NotNull(response.Error!.Details?.State?.Resource?.Id);
+        return response.Error;
+    }
+
+    /// <summary>Observes a local gRPC method entry using the existing ASP.NET diagnostic stream, never its payload or metadata.</summary>
+    private sealed class LocalRequestProbe : IObserver<DiagnosticListener>, IObserver<KeyValuePair<string, object?>>, IDisposable
+    {
+        private readonly string _path;
+        private readonly bool _abort;
+        private readonly List<IDisposable> _listeners = [];
+        private readonly IDisposable _all;
+
+        public LocalRequestProbe(string path, bool abort = false)
+        {
+            _path = path;
+            _abort = abort;
+            _all = DiagnosticListener.AllListeners.Subscribe(this);
+        }
+
+        public TaskCompletionSource Seen { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public void OnNext(DiagnosticListener listener)
+        {
+            if (listener.Name == "Microsoft.AspNetCore")
+            {
+                lock (_listeners)
+                {
+                    _listeners.Add(listener.Subscribe(this));
+                }
+            }
+        }
+
+        public void OnNext(KeyValuePair<string, object?> item)
+        {
+            if (item.Key == "Microsoft.AspNetCore.Hosting.HttpRequestIn.Start" && item.Value is { } value
+                && value.GetType().GetProperty("HttpContext")?.GetValue(value) is Microsoft.AspNetCore.Http.HttpContext context
+                && string.Equals(context.Request.Path.Value, _path, StringComparison.Ordinal))
+            {
+                if (_abort)
+                {
+                    context.Abort();
+                }
+                Seen.TrySetResult();
+            }
+        }
+
+        public void OnError(Exception error) => Seen.TrySetException(error);
+
+        public void OnCompleted()
+        {
+        }
+
+        public void Dispose()
+        {
+            _all.Dispose();
+            lock (_listeners)
+            {
+                foreach (var listener in _listeners)
+                {
+                    listener.Dispose();
+                }
+            }
+        }
+    }
+
+    [Fact(Timeout = 60000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
+    public async Task UncertainSubmitWaitsForTheOwnChannelAndRetriesTheOriginalBytes()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        ct.ThrowIfCancellationRequested();
+        await using var fixture = await Fixture.StartAsync();
+        var taskId = CommandIds.New();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Center.Script("SubmitNodeTask", new FakeFault.Hold(release));
+        fixture.Center.Script("SubmitNodeTask", new FakeFault.Transport(14, "dependency.unavailable"));
+        fixture.Center.Script("SubmitNodeTask", Reply(SubmitResult(fixture.NodeId, taskId)));
+        var cli = fixture.CliSyntheticSafeAsync("--verbose", "run", "--detach", "--env-inherit", "none", "--", CloudNode.TestLoad, "hold", "--hold-ms", "1");
+        try
+        {
+            await Eventually.TrueAsync(() => fixture.Center.CallsOf("SubmitNodeTask").Count == 1, "the first CLI submit reached FakeCenter");
+            var first = FleetServiceSubmitNodeTaskRequest.Parser.ParseFrom(FakeCenter.Payload(fixture.Center.CallsOf("SubmitNodeTask")[0].Body));
+            var connection = await fixture.Center.Channel.ProvedAsync();
+            await connection.CloseAsync(4500, "shutting_down", 8_000);
+            await Eventually.TrueAsync(() => fixture.Node.Cloud.Status().Relay == RelayState.Backoff, "the node channel entered reconnect backoff");
+            await using var script = await fixture.Node.ChannelAsync(Origin.Script);
+            var proxy = new FleetService.FleetServiceClient(script.CallInvoker);
+            var probe = await proxy.SubmitNodeTaskAsync(new FleetServiceSubmitNodeTaskRequest
+            {
+                Meta = first.Meta.Clone(),
+                NodeId = first.NodeId.Clone(),
+                Request = first.Request,
+            }, deadline: DateTime.UtcNow.AddSeconds(5), cancellationToken: ct);
+            TestContext.Current.TestOutputHelper?.WriteLine("disconnected proxy probe: at=" + DateTimeOffset.UtcNow.ToString("O")
+                + "; relay=" + fixture.Node.Cloud.Status().Relay + "; code=" + probe.Error?.Code + "; effect=" + probe.Error?.Effect
+                + "; retry=" + probe.Error?.Retry?.Mode + "; reason=" + probe.Error?.Details?.State?.Reason
+                + "; rawSha256=" + Convert.ToHexStringLower(SHA256.HashData(first.Request.Span)));
+            Assert.True(probe.Error is { Code: "cloud_unreachable", Effect: EffectCertainty.DidNotHappen });
+            Assert.Equal(RetryMode.AfterTime, probe.Error.Retry.Mode);
+            Assert.Equal("channel_not_connected", probe.Error.Details.State.Reason);
+            Assert.Single(fixture.Center.CallsOf("SubmitNodeTask"));
+            release.TrySetResult();
+            var result = await cli;
+            Assert.True(result.ExitCode == 0, "CLI must recover its uncertain submission after the same channel reconnects: " + result.Stderr);
+            Assert.Equal(IdText.Format(taskId), result.Stdout.Trim());
+            Assert.Contains("retrying the same routed command", result.Stderr, StringComparison.Ordinal);
+            var calls = fixture.Center.CallsOf("SubmitNodeTask").Select(call => FleetServiceSubmitNodeTaskRequest.Parser.ParseFrom(FakeCenter.Payload(call.Body))).ToList();
+            Assert.Equal(2, calls.Count);
+            Assert.Equal(calls[0].Request, calls[1].Request);
+            Assert.Equal(calls[0].Meta.CommandId, calls[1].Meta.CommandId);
+        }
+        finally
+        {
+            release.TrySetResult();
+            if (!cli.IsCompleted)
+            {
+                await cli;
+            }
+        }
+    }
+
+    [Fact(Timeout = 60000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
+    public async Task RelayReconnectWaitRespectsRemainingBudgetAndCallerCancellation()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var fixture = await Fixture.StartAsync();
+        var channel = await fixture.Node.ChannelAsync(Origin.Script);
+        await using var session = new NodeSession(channel, new ResolvedEndpoint(fixture.Node.Endpoint, "test", fixture.Node.DataRoot), new NodeServiceHelloValue(), null);
+        var cli = new Cli(new CliOutput(TextWriter.Null, TextWriter.Null, json: false, quiet: false, color: false, verbose: false, width: 120), false, null, false);
+        var route = new TaskRoute(cli, session, fixture.NodeId, local: false, unaryTimeout: null);
+        var connection = await fixture.Center.Channel.ProvedAsync();
+        await connection.CloseAsync(4500, "shutting_down", 8_000);
+        await Eventually.TrueAsync(() => fixture.Node.Cloud.Status().Relay == RelayState.Backoff, "the node channel entered reconnect backoff");
+
+        var almostExpired = Stopwatch.GetTimestamp() - (long)(119.75 * Stopwatch.Frequency);
+        var watch = Stopwatch.StartNew();
+        Assert.False(await route.AwaitOwnRelayAsync(almostExpired, ct));
+        Assert.InRange(watch.Elapsed, TimeSpan.FromMilliseconds(50), TimeSpan.FromSeconds(3));
+        using var cancel = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cancel.CancelAfter(TimeSpan.FromMilliseconds(100));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => route.AwaitOwnRelayAsync(Stopwatch.GetTimestamp(), cancel.Token));
+        Assert.Empty(fixture.Center.CallsOf("SubmitNodeTask"));
+    }
+
+    [Fact(Timeout = 60000)]
+    public async Task SwitchingOffTheLinkAfterAnUncertainSubmitStopsWithTheOriginalUnknownOutcome()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var fixture = await Fixture.StartAsync();
+        await using var human = await fixture.Node.ChannelAsync(Origin.Human);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Center.Script("SubmitNodeTask", new FakeFault.Hold(release));
+        fixture.Center.Script("SubmitNodeTask", new FakeFault.Transport(14, "dependency.unavailable"));
+        var cli = fixture.CliSyntheticSafeAsync("run", "--detach", "--env-inherit", "none", "--", CloudNode.TestLoad, "hold", "--hold-ms", "1");
+        try
+        {
+            await Eventually.TrueAsync(() => fixture.Center.CallsOf("SubmitNodeTask").Count == 1, "the first submit reached FakeCenter");
+            var first = FleetServiceSubmitNodeTaskRequest.Parser.ParseFrom(FakeCenter.Payload(fixture.Center.CallsOf("SubmitNodeTask")[0].Body));
+            Assert.Null((await human.Account.SetCloudLinkAsync(new AccountServiceSetCloudLinkRequest { Meta = CloudNode.Command(), Enabled = false },
+                cancellationToken: ct)).Error);
+            release.TrySetResult();
+            var result = await cli;
+            Assert.NotEqual(0, result.ExitCode);
+            Assert.Contains("may have run", result.Stderr, StringComparison.Ordinal);
+            Assert.Contains(IdText.Format(first.Meta.CommandId), result.Stderr, StringComparison.Ordinal);
+            Assert.Single(fixture.Center.CallsOf("SubmitNodeTask"));
+        }
+        finally
+        {
+            release.TrySetResult();
+            if (!cli.IsCompleted)
+            {
+                await cli;
+            }
+        }
+    }
+
+    [Fact(Timeout = 60000)]
+    public async Task AnUncertainCliSubmitCannotBeRetriedUnderAnotherInstallation()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var fixture = await Fixture.StartAsync();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Center.Script("SubmitNodeTask", new FakeFault.Hold(release));
+        fixture.Center.Script("SubmitNodeTask", new FakeFault.Transport(14, "dependency.unavailable"));
+        var cli = fixture.CliSyntheticSafeAsync("run", "--detach", "--env-inherit", "none", "--", CloudNode.TestLoad, "hold", "--hold-ms", "1");
+        try
+        {
+            await Eventually.TrueAsync(() => fixture.Center.CallsOf("SubmitNodeTask").Count == 1, "the first submit reached FakeCenter");
+            var first = FleetServiceSubmitNodeTaskRequest.Parser.ParseFrom(FakeCenter.Payload(fixture.Center.CallsOf("SubmitNodeTask")[0].Body));
+            var original = await fixture.Center.Channel.ProvedAsync();
+            var id = fixture.Node.Runtime.NodeId.ToArray();
+            var replacement = fixture.Center.Issue(id); // same center and display name, distinct account/installation
+            using (var key = NodeKeyStores.ForTestDataRoot(fixture.Node.DataRoot).Load(id, fixture.Center.Endpoint.Origin))
+            {
+                Assert.NotNull(key);
+                fixture.Center.Channel.RegisterNodeKey(replacement.AccessToken, key.PublicKey);
+            }
+            await fixture.Node.Cloud.AdoptAsync(replacement, fixture.Center.Endpoint);
+            await original.CloseAsync(4500, "shutting_down", 0);
+            await fixture.Center.Channel.ProvedAsync(2);
+            await Eventually.TrueAsync(() => fixture.Node.Cloud.Status().Relay == RelayState.Connected, "replacement installation connected");
+            release.TrySetResult();
+            var result = await cli;
+            Assert.NotEqual(0, result.ExitCode);
+            Assert.Contains("may have run", result.Stderr, StringComparison.Ordinal);
+            Assert.Contains(IdText.Format(first.Meta.CommandId), result.Stderr, StringComparison.Ordinal);
+            Assert.Single(fixture.Center.CallsOf("SubmitNodeTask"));
+        }
+        finally
+        {
+            release.TrySetResult();
+            if (!cli.IsCompleted)
+            {
+                await cli;
+            }
+        }
+    }
+
+    [Fact(Timeout = 60000)]
+    public async Task CredentialRefreshKeepsTheSameCliSessionRelayBinding()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var fixture = await Fixture.StartAsync();
+        await using var script = await fixture.Node.ChannelAsync(Origin.Script);
+        var fleet = new FleetService.FleetServiceClient(script.CallInvoker);
+        async Task<FleetServiceSubmitNodeTaskResponse> SubmitAsync()
+        {
+            var meta = CloudNode.Command();
+            var inner = new TaskServiceSubmitTaskRequest { Meta = meta.Clone(), Spec = new TaskSpec { Environment = new EnvironmentSpec { Inherit = EnvironmentInherit.None } } };
+            return await fleet.SubmitNodeTaskAsync(new FleetServiceSubmitNodeTaskRequest { Meta = meta, NodeId = fixture.NodeId, Request = inner.ToByteString() },
+                deadline: DateTime.UtcNow.AddSeconds(15), cancellationToken: ct);
+        }
+
+        fixture.Center.Script("SubmitNodeTask", Reply(SubmitResult(fixture.NodeId, CommandIds.New())));
+        fixture.Center.Script("SubmitNodeTask", Reply(SubmitResult(fixture.NodeId, CommandIds.New())));
+        Assert.NotNull((await SubmitAsync()).Value);
+        var generation = fixture.Node.Cloud.Generation;
+        await fixture.Node.Cloud.RefreshAsync(generation, ct);
+        Assert.True(fixture.Node.Cloud.Generation > generation);
+        await Eventually.TrueAsync(() => fixture.Node.Cloud.Status().Relay == RelayState.Connected, "the refreshed channel remains connected");
+        Assert.NotNull((await SubmitAsync()).Value);
+        Assert.Equal(2, fixture.Center.CallsOf("SubmitNodeTask").Count);
+    }
+
+    [Fact(Timeout = 60000)]
+    public async Task ConcurrentFirstRelayBindingsChooseExactlyOneIdentity()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var binding = new RelayMutationBinding();
+        var one = ByteString.CopyFrom(new byte[16]);
+        var two = ByteString.CopyFrom(Enumerable.Repeat((byte)1, 16).ToArray());
+        Assert.False(binding.TryBind(string.Empty, one));
+        Assert.False(binding.TryBind("https://one.example", ByteString.Empty));
+        var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var left = Task.Run(async () => { await start.Task.WaitAsync(ct); return binding.TryBind("https://one.example", one); }, ct);
+        var right = Task.Run(async () => { await start.Task.WaitAsync(ct); return binding.TryBind("https://two.example", two); }, ct);
+        start.TrySetResult();
+        var results = await Task.WhenAll(left, right).WaitAsync(ct);
+        Assert.NotEqual(results[0], results[1]);
+        var center = results[0] ? "https://one.example" : "https://two.example";
+        var installation = results[0] ? one : two;
+        var different = results[0] ? two : one;
+        Assert.True(binding.TryBind(center, installation)); // a credential refresh with the same identity keeps the binding
+        Assert.False(binding.TryBind(center, different));
+        Assert.False(binding.TryBind(center + "/other", installation));
+        Assert.True(new RelayMutationBinding().TryBind(center, different)); // a new connection has no prior binding
+    }
+
+    [Fact(Timeout = 90000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
+    public async Task PinnedLocalConnectionCannotRebindAfterTheNodeRestarts()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var fixture = await Fixture.StartAsync();
+        await using var channel = await fixture.Node.ChannelAsync(Origin.Script);
+        var generation = channel.ConnectionGeneration;
+        var session = new NodeSession(channel, new ResolvedEndpoint(fixture.Node.Endpoint, "test", fixture.Node.DataRoot), new NodeServiceHelloValue(), null);
+        var cli = new Cli(new CliOutput(TextWriter.Null, TextWriter.Null, json: false, quiet: false, color: false, verbose: false, width: 120), false, null, false);
+        var route = new TaskRoute(cli, session, fixture.NodeId, local: false, unaryTimeout: null);
+        using (var pin = channel.PinConnection(generation))
+        {
+            Assert.NotNull(pin);
+            await fixture.Node.StopAsync();
+            await fixture.Node.StartAsync();
+            var error = await Record.ExceptionAsync(async () => await channel.Account.GetAccountStatusAsync(new AccountServiceGetAccountStatusRequest(),
+                deadline: DateTime.UtcNow.AddSeconds(10), cancellationToken: ct));
+            Assert.IsType<Grpc.Core.RpcException>(error);
+            Assert.Equal(generation, channel.ConnectionGeneration);
+        }
+
+        // Normal reconnect is available again after the mutation scope, but a new generation cannot impersonate the old hello.
+        var answer = await channel.Account.GetAccountStatusAsync(new AccountServiceGetAccountStatusRequest(),
+            deadline: DateTime.UtcNow.AddSeconds(15), cancellationToken: ct);
+        Assert.Null(answer.Error);
+        Assert.True(channel.ConnectionGeneration > generation);
+        Assert.Null(channel.PinConnection(generation));
+        var refused = await route.SubmitAsync(new TaskServiceSubmitTaskRequest { Meta = CloudNode.Command() }, ct);
+        Assert.True(refused.Error is { Code: "invalid_state", Effect: EffectCertainty.DidNotHappen });
+        Assert.Equal(RetryMode.Never, refused.Error.Retry.Mode);
+        Assert.Equal("session_changed", refused.Error.Details.State.Reason);
+        Assert.True(ArcForges.Contracts.Node.Shapes.ContractShapeValidation.IsValid(refused.Error));
+        Assert.Empty(fixture.Center.CallsOf("SubmitNodeTask"));
+        using var current = channel.PinConnection(channel.ConnectionGeneration);
+        Assert.NotNull(current);
+    }
+
+    [Fact(Timeout = 60000)]
+    public async Task AChangedInstallationCannotReuseTheCliSessionsRelayBindingEvenIfTheFirstSendWasCancelled()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var fixture = await Fixture.StartAsync();
+        await using var script = await fixture.Node.ChannelAsync(Origin.Script);
+        var fleet = new FleetService.FleetServiceClient(script.CallInvoker);
+        var meta = CloudNode.Command();
+        var inner = new TaskServiceSubmitTaskRequest { Meta = meta.Clone(), Spec = new TaskSpec { Environment = new EnvironmentSpec { Inherit = EnvironmentInherit.None } } };
+        var request = new FleetServiceSubmitNodeTaskRequest { Meta = meta, NodeId = fixture.NodeId, Request = inner.ToByteString() };
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var cancel = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        fixture.Node.Cloud.BeforeRelayForward = async token =>
+        {
+            entered.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+        };
+        try
+        {
+            var pending = fleet.SubmitNodeTaskAsync(request, deadline: DateTime.UtcNow.AddSeconds(15), cancellationToken: cancel.Token).ResponseAsync;
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10), ct);
+            await cancel.CancelAsync();
+            var stopped = await Record.ExceptionAsync(async () => await pending);
+            Assert.True(stopped is OperationCanceledException or Grpc.Core.RpcException);
+        }
+        finally
+        {
+            fixture.Node.Cloud.BeforeRelayForward = null;
+        }
+
+        Assert.Empty(fixture.Center.CallsOf("SubmitNodeTask"));
+        var original = await fixture.Center.Channel.ProvedAsync();
+        var id = fixture.Node.Runtime.NodeId.ToArray();
+        var replacement = fixture.Center.Issue(id);
+        using (var key = NodeKeyStores.ForTestDataRoot(fixture.Node.DataRoot).Load(id, fixture.Center.Endpoint.Origin))
+        {
+            Assert.NotNull(key);
+            fixture.Center.Channel.RegisterNodeKey(replacement.AccessToken, key.PublicKey);
+        }
+        await fixture.Node.Cloud.AdoptAsync(replacement, fixture.Center.Endpoint);
+        await original.CloseAsync(4500, "shutting_down", 0);
+        await fixture.Center.Channel.ProvedAsync(2);
+        await Eventually.TrueAsync(() => fixture.Node.Cloud.Status().Relay == RelayState.Connected, "replacement installation connected");
+        fixture.Center.Script("SubmitNodeTask", Reply(SubmitResult(fixture.NodeId, CommandIds.New())));
+        var again = await script.Node.HelloAsync(new NodeServiceHelloRequest { Hello = ClientProcess.Hello(ClientKind.McpAdapter) },
+            deadline: DateTime.UtcNow.AddSeconds(10), cancellationToken: ct);
+        Assert.Null(again.Error);
+        var refused = await fleet.SubmitNodeTaskAsync(request, deadline: DateTime.UtcNow.AddSeconds(15), cancellationToken: ct);
+        Assert.True(refused.Error is { Code: "invalid_state", Effect: EffectCertainty.DidNotHappen });
+        Assert.Equal(RetryMode.Never, refused.Error.Retry.Mode);
+        Assert.Equal("relay_binding_changed", refused.Error.Details.State.Reason);
+        Assert.True(ArcForges.Contracts.Node.Shapes.ContractShapeValidation.IsValid(refused.Error));
+        Assert.Empty(fixture.Center.CallsOf("SubmitNodeTask"));
+
+        // A new CLI connection is independent: an ordinary new command can use the new installation.
+        var freshMeta = CloudNode.Command();
+        var freshInner = new TaskServiceSubmitTaskRequest { Meta = freshMeta.Clone(), Spec = new TaskSpec { Environment = new EnvironmentSpec { Inherit = EnvironmentInherit.None } } };
+        await using var fresh = await fixture.Node.ChannelAsync(Origin.Script);
+        var allowed = await new FleetService.FleetServiceClient(fresh.CallInvoker).SubmitNodeTaskAsync(new FleetServiceSubmitNodeTaskRequest
+        {
+            Meta = freshMeta,
+            NodeId = fixture.NodeId,
+            Request = freshInner.ToByteString(),
+        }, deadline: DateTime.UtcNow.AddSeconds(15), cancellationToken: ct);
+        Assert.NotNull(allowed.Value);
+        Assert.Single(fixture.Center.CallsOf("SubmitNodeTask"));
     }
 
     [Fact(Timeout = 60000)]
@@ -1303,11 +2114,30 @@ public sealed class RoutedCliTests
 
         public Id NodeId => new() { Value = ByteString.CopyFrom(Node.Runtime.NodeId.Span) };
 
-        public static async Task<Fixture> StartAsync(bool signedIn = true)
+        public static async Task<Fixture> StartAsync(bool signedIn = true, bool testHumanImage = false)
         {
             var center = await FakeCenter.StartAsync();
             center.ScriptedFleet = true;
-            var node = await CloudNode.Create(center.Endpoint.Url).StartAsync();
+            var node = CloudNode.Create(center.Endpoint.Url);
+            if (testHumanImage)
+            {
+                // Exclusive tests only: the real PTY CLI must be verified as HUMAN, using the existing test-mode image hook.
+                node.TestMode = true;
+                var previous = Environment.GetEnvironmentVariable(ClientImages.TestVariable);
+                try
+                {
+                    Environment.SetEnvironmentVariable(ClientImages.TestVariable, CloudNode.HelperExecutable);
+                    await node.StartAsync();
+                }
+                finally
+                {
+                    Environment.SetEnvironmentVariable(ClientImages.TestVariable, previous);
+                }
+            }
+            else
+            {
+                await node.StartAsync();
+            }
             var fixture = new Fixture(center, node);
             if (signedIn)
             {
@@ -1331,9 +2161,22 @@ public sealed class RoutedCliTests
 
         public Task<(int ExitCode, string Stdout, string Stderr)> CliSyntheticSafeAsync(params string[] args) => StartCliAsync(true, false, args);
 
-        private async Task<(int ExitCode, string Stdout, string Stderr)> StartCliAsync(bool synthetic, bool includeMarker, string[] args)
+        public Task<(int ExitCode, string Stdout, string Stderr)> CliInPtyAsync(TaskCompletionSource<Process> started, params string[] args) =>
+            StartCliAsync(true, false, args, started, pty: true);
+
+        public Task<(int ExitCode, string Stdout, string Stderr)> CliInPtyUntilAsync(TaskCompletionSource<Process> started, TaskCompletionSource ready,
+            string marker, params string[] args) => StartCliAsync(true, false, args, started, pty: true, ready, marker);
+
+        public Task<(int ExitCode, string Stdout, string Stderr)> CliSyntheticUntilAsync(TaskCompletionSource<Process> started, TaskCompletionSource ready,
+            string marker, params string[] args) => StartCliAsync(true, false, args, started, pty: false, ready, marker);
+
+        public Task<(int ExitCode, string Stdout, string Stderr)> CliAtEndpointAsync(string endpoint, params string[] args) =>
+            StartCliAsync(true, false, args, endpointAddress: endpoint);
+
+        private async Task<(int ExitCode, string Stdout, string Stderr)> StartCliAsync(bool synthetic, bool includeMarker, string[] args,
+            TaskCompletionSource<Process>? started = null, bool pty = false, TaskCompletionSource? ready = null, string? marker = null, string? endpointAddress = null)
         {
-            var start = new ProcessStartInfo(CloudNode.HelperExecutable)
+            var start = new ProcessStartInfo(pty ? "/usr/bin/script" : CloudNode.HelperExecutable)
             {
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
@@ -1341,10 +2184,22 @@ public sealed class RoutedCliTests
                 RedirectStandardInput = true,
                 CreateNoWindow = true,
             };
-            start.ArgumentList.Add(NodeLocations.TestModeOption);
-            foreach (var arg in args)
+            if (pty)
             {
-                start.ArgumentList.Add(arg);
+                // The existing PTY fixture resets an inherited ignored SIGINT so the CLI receives a real Ctrl+C.
+                static string Quote(string value) => "'" + value.Replace("'", "'\\''", StringComparison.Ordinal) + "'";
+                start.ArgumentList.Add("-qefc");
+                start.ArgumentList.Add("exec env --default-signal=INT " + string.Join(" ",
+                    new[] { CloudNode.HelperExecutable, NodeLocations.TestModeOption }.Concat(args).Select(Quote)));
+                start.ArgumentList.Add("/dev/null");
+            }
+            else
+            {
+                start.ArgumentList.Add(NodeLocations.TestModeOption);
+                foreach (var arg in args)
+                {
+                    start.ArgumentList.Add(arg);
+                }
             }
 
             if (synthetic)
@@ -1373,24 +2228,56 @@ public sealed class RoutedCliTests
                     start.Environment["PATH"] = "/usr/bin:/bin";
                 }
             }
-            start.Environment[NodeLocations.EndpointVariable] = Node.Endpoint.Address;
+            start.Environment[NodeLocations.EndpointVariable] = endpointAddress ?? Node.Endpoint.Address;
             start.Environment[NodeLocations.ConfigDirectoryVariable] = Path.GetDirectoryName(Node.ConfigPath)!;
             start.Environment.Remove("ARCFORGES_OS_SECRET_STORE_TESTS");
-            using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start the test CLI.");
-            var stdout = process.StandardOutput.ReadToEndAsync();
-            var stderr = process.StandardError.ReadToEndAsync();
+            var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start the test CLI.");
             try
             {
-                await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(40));
+                started?.TrySetResult(process);
+                var stdout = ready is not null && marker is not null
+                    ? ReadUntilAsync(process.StandardOutput, ready, marker)
+                    : process.StandardOutput.ReadToEndAsync();
+                var stderr = ready is not null && marker is not null
+                    ? ReadUntilAsync(process.StandardError, ready, marker)
+                    : process.StandardError.ReadToEndAsync();
+                try
+                {
+                    await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(40));
+                }
+                catch (TimeoutException)
+                {
+                    process.Kill(entireProcessTree: true);
+                    await process.WaitForExitAsync();
+                    throw;
+                }
+
+                return (process.ExitCode, await stdout, await stderr);
             }
-            catch (TimeoutException)
+            finally
             {
-                process.Kill(entireProcessTree: true);
-                await process.WaitForExitAsync();
-                throw;
+                lock (process)
+                {
+                    process.Dispose();
+                }
+            }
+        }
+
+        private static async Task<string> ReadUntilAsync(StreamReader reader, TaskCompletionSource ready, string marker)
+        {
+            var text = new StringBuilder();
+            var buffer = new char[4096];
+            int count;
+            while ((count = await reader.ReadAsync(buffer)) > 0)
+            {
+                text.Append(buffer, 0, count);
+                if (text.ToString().Contains(marker, StringComparison.Ordinal))
+                {
+                    ready.TrySetResult();
+                }
             }
 
-            return (process.ExitCode, await stdout, await stderr);
+            return text.ToString();
         }
 
         public async ValueTask DisposeAsync()
