@@ -532,6 +532,7 @@ public sealed class RealCenterRoutedTests
             var entries = queued.Value.Entries.Where(entry => entry.TaskId.Equals(humanId) || entry.TaskId.Equals(scriptId)).ToArray();
             Assert.Equal(2, entries.Length);
             Assert.NotEqual(entries[0].Queue.Position, entries[1].Queue.Position);
+            Assert.All(entries, entry => Assert.Equal(("default", 100u, 64UL << 20), (entry.Pool, entry.Request.CpuMillicores, entry.Request.MemExpectedBytes)));
             var humanCaller = entries.Single(entry => entry.TaskId.Equals(humanId)).Owner.CenterCaller;
             var scriptCaller = entries.Single(entry => entry.TaskId.Equals(scriptId)).Owner.CenterCaller;
             Assert.Equal((Origin.Human, targetId), (humanCaller.LocalOrigin, humanCaller.RelayingNodeId));
@@ -545,6 +546,11 @@ public sealed class RealCenterRoutedTests
                 var queue = await targetHuman.Queue.GetQueueAsync(new QueueServiceGetQueueRequest { Meta = CloudNode.Command() }, cancellationToken: Ct);
                 return queue.Error is null && queue.Value.Budget.GlobalRunning == 1 && queue.Value.Pools.Any(item => item.Name == "default" && item.Running == 1);
             }, TimeSpan.FromSeconds(30), "one cross-node task in the fixed pool");
+            var running = await targetHuman.Queue.GetQueueAsync(new QueueServiceGetQueueRequest { Meta = CloudNode.Command() }, cancellationToken: Ct);
+            Assert.Null(running.Error);
+            Assert.Equal(1u, running.Value.Budget.GlobalRunning);
+            Assert.Equal(queued.Value.Budget.GlobalMaxRunning, running.Value.Budget.GlobalMaxRunning);
+            Assert.True(running.Value.Budget.AccountedMemBytes > 0);
             foreach (var task in new[] { humanId, scriptId })
             {
                 Assert.Null((await targetHuman.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = CloudNode.Command(), TaskId = task }, cancellationToken: Ct)).Error);

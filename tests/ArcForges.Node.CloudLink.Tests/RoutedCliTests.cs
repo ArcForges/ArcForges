@@ -1108,6 +1108,43 @@ public sealed class RoutedCliTests
         Assert.Empty(fixture.Center.CallsOf("SubmitNodeTask"));
     }
 
+    [Fact(Timeout = 60000)]
+    public async Task AnExitedPtyCannotBeInterruptedThroughAReusedProcessId()
+    {
+        Assert.SkipUnless(OperatingSystem.IsLinux() && File.Exists("/usr/bin/script"), "actual PTY control requires Linux and script");
+        var ct = TestContext.Current.CancellationToken;
+        using var pty = Process.Start(new ProcessStartInfo("/usr/bin/script")
+        {
+            UseShellExecute = false,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            ArgumentList = { "-qefc", "exit 0", "/dev/null" },
+        }) ?? throw new InvalidOperationException("Could not start the owned PTY.");
+        await pty.WaitForExitAsync(ct);
+        Assert.Equal(0, pty.ExitCode);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => SendInterruptAsync(pty, ct));
+    }
+
+    [Fact(Timeout = 60000)]
+    public async Task AClosedPtyInputFailsWithoutSignallingAProcess()
+    {
+        Assert.SkipUnless(OperatingSystem.IsLinux() && File.Exists("/usr/bin/script"), "actual PTY control requires Linux and script");
+        var ct = TestContext.Current.CancellationToken;
+        using var pty = Process.Start(new ProcessStartInfo("/usr/bin/script")
+        {
+            UseShellExecute = false,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            ArgumentList = { "-qefc", "exec /bin/sleep 2", "/dev/null" },
+        }) ?? throw new InvalidOperationException("Could not start the owned PTY.");
+        Assert.False(pty.HasExited);
+        pty.StandardInput.Close();
+        await Assert.ThrowsAnyAsync<InvalidOperationException>(() => SendInterruptAsync(pty, ct));
+        await pty.WaitForExitAsync(ct).WaitAsync(TimeSpan.FromSeconds(10), ct);
+    }
+
     [Fact(Timeout = 60000, DisableParallelization = true)]
     [Trait("isolation", "exclusive")]
     public async Task ThePtyHelperDeliversCtrlCToTheActualCliLogin()
@@ -1116,7 +1153,7 @@ public sealed class RoutedCliTests
         var ct = TestContext.Current.CancellationToken;
         ct.ThrowIfCancellationRequested();
         await using var fixture = await Fixture.StartAsync(signedIn: false, testHumanImage: true);
-        var started = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var started = new TaskCompletionSource<Process>(TaskCreationOptions.RunContinuationsAsynchronously);
         var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var cli = fixture.CliInPtyUntilAsync(started, waiting, "Waiting for the approval", "login", "--device-code");
         try
@@ -1159,7 +1196,7 @@ public sealed class RoutedCliTests
         ct.ThrowIfCancellationRequested();
         await using var fixture = await Fixture.StartAsync(testHumanImage: true);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var started = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var started = new TaskCompletionSource<Process>(TaskCreationOptions.RunContinuationsAsynchronously);
         fixture.Center.Script("SubmitNodeTask", new FakeFault.Hold(release));
         var cli = fixture.CliInPtyAsync(started, "run", "--detach", "--env-inherit", "none", "--", "test-program");
         try
@@ -1184,33 +1221,23 @@ public sealed class RoutedCliTests
         }
     }
 
-    private static async Task SendInterruptAsync(int ptyPid, CancellationToken cancellationToken)
+    private static Task SendInterruptAsync(Process pty, CancellationToken cancellationToken)
     {
-        var pending = new Queue<int>([ptyPid]);
-        var leaves = new List<int>();
-        while (pending.TryDequeue(out var pid))
+        cancellationToken.ThrowIfCancellationRequested();
+        // Keep the owned process/pipe alive until the byte is flushed, even if the CLI exits concurrently.
+        lock (pty)
         {
-            var children = Directory.EnumerateDirectories($"/proc/{pid}/task")
-                .SelectMany(task => File.ReadAllText(Path.Combine(task, "children")).Split(' ', StringSplitOptions.RemoveEmptyEntries))
-                .Select(int.Parse).Distinct().ToArray();
-            if (children.Length == 0 && pid != ptyPid)
+            if (pty.HasExited)
             {
-                leaves.Add(pid);
+                throw new InvalidOperationException("The owned PTY has already exited.");
             }
-            foreach (var child in children)
-            {
-                pending.Enqueue(child);
-            }
+
+            // The terminal sends SIGINT to its own foreground group. A closed pipe fails safely; no numeric PID is looked up or signalled.
+            pty.StandardInput.Write('\u0003');
+            pty.StandardInput.Flush();
         }
 
-        Assert.Single(leaves);
-        using var signal = Process.Start(new ProcessStartInfo("/bin/kill")
-        {
-            UseShellExecute = false,
-            ArgumentList = { "-INT", leaves[0].ToString(System.Globalization.CultureInfo.InvariantCulture) },
-        }) ?? throw new InvalidOperationException("Could not signal the test CLI.");
-        await signal.WaitForExitAsync(cancellationToken);
-        Assert.Equal(0, signal.ExitCode);
+        return Task.CompletedTask;
     }
 
     [Fact(Timeout = 60000, DisableParallelization = true)]
@@ -1221,7 +1248,7 @@ public sealed class RoutedCliTests
         var ct = TestContext.Current.CancellationToken;
         await using var fixture = await Fixture.StartAsync(testHumanImage: true);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var started = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var started = new TaskCompletionSource<Process>(TaskCreationOptions.RunContinuationsAsynchronously);
         fixture.Center.Script("SubmitNodeTask", new FakeFault.Hold(release));
         fixture.Center.Script("SubmitNodeTask", new FakeFault.Transport(14, "dependency.unavailable"));
         var cli = fixture.CliInPtyAsync(started, "run", "--detach", "--env-inherit", "none", "--", "test-program");
@@ -1264,7 +1291,7 @@ public sealed class RoutedCliTests
         fixture.Center.Script("SubmitNodeTask", new FakeFault.Transport(14, "dependency.unavailable"));
         // The center is mocked: its scripted approval ID points to a real pending local approval, not a real captured submit.
         fixture.Center.Script("SubmitNodeTask", new FakeFault.Refusal(approval));
-        var started = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var started = new TaskCompletionSource<Process>(TaskCreationOptions.RunContinuationsAsynchronously);
         var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var poll = new LocalRequestProbe("/arcforges.node.v1.ApprovalService/GetApproval");
         var cli = fixture.CliInPtyUntilAsync(started, waiting, "Waiting for approval", "--wait-approval", "60s", "run", "--detach",
@@ -1302,7 +1329,7 @@ public sealed class RoutedCliTests
         await using var fixture = await Fixture.StartAsync();
         var approval = await CreatePendingApprovalAsync(fixture, ct);
         fixture.Center.Script("SubmitNodeTask", new FakeFault.Refusal(approval));
-        var started = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var started = new TaskCompletionSource<Process>(TaskCreationOptions.RunContinuationsAsynchronously);
         var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var poll = new LocalRequestProbe("/arcforges.node.v1.ApprovalService/GetApproval", abort: true);
         var cli = fixture.CliSyntheticUntilAsync(started, waiting, "Waiting for approval", "--wait-approval", "60s", "run", "--detach",
@@ -1353,7 +1380,7 @@ public sealed class RoutedCliTests
         fixture.Center.Script("SubmitNodeTask", Reply(SubmitResult(fixture.NodeId, taskId)));
         fixture.Center.Script("GetNodeTask", new FakeFault.Hold(holdGet));
         fixture.Center.Script("CancelNodeTask", new FakeFault.Hold(holdCancel));
-        var started = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var started = new TaskCompletionSource<Process>(TaskCreationOptions.RunContinuationsAsynchronously);
         var cli = fixture.CliInPtyAsync(started, "run", "--env-inherit", "none", "--", "test-program");
         try
         {
@@ -2134,20 +2161,20 @@ public sealed class RoutedCliTests
 
         public Task<(int ExitCode, string Stdout, string Stderr)> CliSyntheticSafeAsync(params string[] args) => StartCliAsync(true, false, args);
 
-        public Task<(int ExitCode, string Stdout, string Stderr)> CliInPtyAsync(TaskCompletionSource<int> started, params string[] args) =>
+        public Task<(int ExitCode, string Stdout, string Stderr)> CliInPtyAsync(TaskCompletionSource<Process> started, params string[] args) =>
             StartCliAsync(true, false, args, started, pty: true);
 
-        public Task<(int ExitCode, string Stdout, string Stderr)> CliInPtyUntilAsync(TaskCompletionSource<int> started, TaskCompletionSource ready,
+        public Task<(int ExitCode, string Stdout, string Stderr)> CliInPtyUntilAsync(TaskCompletionSource<Process> started, TaskCompletionSource ready,
             string marker, params string[] args) => StartCliAsync(true, false, args, started, pty: true, ready, marker);
 
-        public Task<(int ExitCode, string Stdout, string Stderr)> CliSyntheticUntilAsync(TaskCompletionSource<int> started, TaskCompletionSource ready,
+        public Task<(int ExitCode, string Stdout, string Stderr)> CliSyntheticUntilAsync(TaskCompletionSource<Process> started, TaskCompletionSource ready,
             string marker, params string[] args) => StartCliAsync(true, false, args, started, pty: false, ready, marker);
 
         public Task<(int ExitCode, string Stdout, string Stderr)> CliAtEndpointAsync(string endpoint, params string[] args) =>
             StartCliAsync(true, false, args, endpointAddress: endpoint);
 
         private async Task<(int ExitCode, string Stdout, string Stderr)> StartCliAsync(bool synthetic, bool includeMarker, string[] args,
-            TaskCompletionSource<int>? started = null, bool pty = false, TaskCompletionSource? ready = null, string? marker = null, string? endpointAddress = null)
+            TaskCompletionSource<Process>? started = null, bool pty = false, TaskCompletionSource? ready = null, string? marker = null, string? endpointAddress = null)
         {
             var start = new ProcessStartInfo(pty ? "/usr/bin/script" : CloudNode.HelperExecutable)
             {
@@ -2204,26 +2231,36 @@ public sealed class RoutedCliTests
             start.Environment[NodeLocations.EndpointVariable] = endpointAddress ?? Node.Endpoint.Address;
             start.Environment[NodeLocations.ConfigDirectoryVariable] = Path.GetDirectoryName(Node.ConfigPath)!;
             start.Environment.Remove("ARCFORGES_OS_SECRET_STORE_TESTS");
-            using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start the test CLI.");
-            started?.TrySetResult(process.Id);
-            var stdout = ready is not null && marker is not null
-                ? ReadUntilAsync(process.StandardOutput, ready, marker)
-                : process.StandardOutput.ReadToEndAsync();
-            var stderr = ready is not null && marker is not null
-                ? ReadUntilAsync(process.StandardError, ready, marker)
-                : process.StandardError.ReadToEndAsync();
+            var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start the test CLI.");
             try
             {
-                await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(40));
-            }
-            catch (TimeoutException)
-            {
-                process.Kill(entireProcessTree: true);
-                await process.WaitForExitAsync();
-                throw;
-            }
+                started?.TrySetResult(process);
+                var stdout = ready is not null && marker is not null
+                    ? ReadUntilAsync(process.StandardOutput, ready, marker)
+                    : process.StandardOutput.ReadToEndAsync();
+                var stderr = ready is not null && marker is not null
+                    ? ReadUntilAsync(process.StandardError, ready, marker)
+                    : process.StandardError.ReadToEndAsync();
+                try
+                {
+                    await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(40));
+                }
+                catch (TimeoutException)
+                {
+                    process.Kill(entireProcessTree: true);
+                    await process.WaitForExitAsync();
+                    throw;
+                }
 
-            return (process.ExitCode, await stdout, await stderr);
+                return (process.ExitCode, await stdout, await stderr);
+            }
+            finally
+            {
+                lock (process)
+                {
+                    process.Dispose();
+                }
+            }
         }
 
         private static async Task<string> ReadUntilAsync(StreamReader reader, TaskCompletionSource ready, string marker)
