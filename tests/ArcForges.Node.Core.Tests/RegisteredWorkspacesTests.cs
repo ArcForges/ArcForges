@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Diagnostics;
 using ArcForges.Node.Core.Files;
 using ArcForges.Node.Store;
 
@@ -11,6 +12,7 @@ public sealed class RegisteredWorkspacesTests
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     [Fact(Timeout = 30_000)]
+    [Trait("tool", "python")]
     public void RegistrationDuplicatePagingAndRestartUseTheSamePersistedNativeIdentity()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
@@ -20,6 +22,7 @@ public sealed class RegisteredWorkspacesTests
         var thirdPath = fixture.Workspace("third");
         File.WriteAllText(Path.Combine(firstPath, "marker.txt"), "test-owned file body");
         byte[] firstId;
+        byte[] firstIdentity;
         var expected = new HashSet<string>(StringComparer.Ordinal);
         using (var store = fixture.Open())
         {
@@ -42,11 +45,15 @@ public sealed class RegisteredWorkspacesTests
             var storedIdentity = (byte[])store.Read(r => r.Scalar(
                 "SELECT native_identity FROM workspace_root_identity WHERE workspace_id = $id;", ("$id", firstId)))!;
             Assert.Equal(OperatingSystem.IsLinux() ? 53 : 33, storedIdentity.Length);
+            firstIdentity = storedIdentity.ToArray();
             Assert.Equal(1, storedIdentity[0]);
             Assert.Equal(0L, store.Read(r => r.Scalar("""
                 SELECT instr(native_identity, $content) FROM workspace_root_identity WHERE workspace_id = $id;
                 """, ("$content", System.Text.Encoding.UTF8.GetBytes("test-owned file body")), ("$id", firstId))));
         }
+
+        // A separate real process reads the persisted SQLite row after the writer has closed.
+        ReadPersistedIdentityInAnotherProcess(fixture.DatabasePath, firstId, firstIdentity);
 
         using (var reopened = fixture.Open())
         {
@@ -232,6 +239,39 @@ public sealed class RegisteredWorkspacesTests
     }
 
     [Fact(Timeout = 30_000)]
+    public void VerifiedUseUpdatesPersistedLastUsedWithoutClockRollback()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        using var fixture = new OwnedFixture();
+        var path = fixture.Workspace("root");
+        var initial = new DateTimeOffset(2026, 11, 9, 12, 0, 0, TimeSpan.Zero);
+        var clock = new AdjustableClock(initial);
+        byte[] id;
+        using (var store = fixture.Open(clock))
+        {
+            var manager = new RegisteredWorkspaces(store);
+            var created = manager.RegisterFromVerifiedHuman(path, cancellationToken: Ct);
+            id = created.Id;
+            clock.Set(initial.AddMinutes(1));
+            using (manager.OpenForUse(id, Ct))
+            {
+            }
+
+            var used = manager.Get(id, Ct);
+            Assert.Equal(created.LastUsedAt + 60_000_000, used.LastUsedAt);
+            clock.Set(initial);
+            using (manager.OpenForUse(id, Ct))
+            {
+            }
+
+            Assert.Equal(used.LastUsedAt, manager.Get(id, Ct).LastUsedAt);
+        }
+
+        using var reopened = fixture.Open(clock);
+        Assert.Equal(StoreTime.ToMicroseconds(initial.AddMinutes(1)), new RegisteredWorkspaces(reopened).Get(id, Ct).LastUsedAt);
+    }
+
+    [Fact(Timeout = 30_000)]
     public void CancellationBeforeCommitOrOperationLeavesRegistrationAndFilesUntouched()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
@@ -283,6 +323,46 @@ public sealed class RegisteredWorkspacesTests
         Assert.True(Directory.Exists(path));
     }
 
+    private static void ReadPersistedIdentityInAnotherProcess(string databasePath, byte[] id, byte[] identity)
+    {
+        const string script = """
+            import sqlite3, sys
+            connection = sqlite3.connect(sys.argv[1])
+            connection.execute("PRAGMA query_only=ON")
+            row = connection.execute("SELECT hex(w.workspace_id), hex(i.native_identity) FROM workspace w JOIN workspace_root_identity i ON i.workspace_id=w.workspace_id WHERE w.workspace_id=? AND w.removed_at IS NULL AND i.released_at IS NULL", (bytes.fromhex(sys.argv[2]),)).fetchone()
+            assert row is not None
+            print(row[0])
+            print(row[1])
+            """;
+        var info = new ProcessStartInfo(OperatingSystem.IsWindows() ? "python" : "python3")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+            UseShellExecute = false,
+        };
+        info.ArgumentList.Add("-c");
+        info.ArgumentList.Add(script);
+        info.ArgumentList.Add(databasePath);
+        info.ArgumentList.Add(Convert.ToHexString(id));
+        using var process = Process.Start(info) ?? throw new InvalidOperationException("Could not start the independent SQLite reader.");
+        try
+        {
+            Assert.True(process.WaitForExit(5000), "independent SQLite reader timed out");
+            Assert.True(process.ExitCode == 0, process.StandardError.ReadToEnd());
+            var lines = process.StandardOutput.ReadToEnd().Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            Assert.Equal([Convert.ToHexString(id), Convert.ToHexString(identity)], lines);
+        }
+        finally
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                process.WaitForExit(3000);
+            }
+        }
+    }
+
     private static string Read(Microsoft.Win32.SafeHandles.SafeFileHandle handle)
     {
         var bytes = new byte[128];
@@ -290,12 +370,25 @@ public sealed class RegisteredWorkspacesTests
         return System.Text.Encoding.UTF8.GetString(bytes.AsSpan(0, count));
     }
 
+    private sealed class AdjustableClock(DateTimeOffset initial) : TimeProvider
+    {
+        private DateTimeOffset _current = initial;
+        public override DateTimeOffset GetUtcNow() => _current;
+        internal void Set(DateTimeOffset value) => _current = value;
+    }
+
     private sealed class OwnedFixture : IDisposable
     {
         private readonly DirectoryInfo _root = Directory.CreateTempSubdirectory("arcforges-registration-");
         internal string Root => _root.FullName;
+        internal string DatabasePath => Path.Combine(Root, "node-data", "store", "node.db");
         internal string Workspace(string name) => Directory.CreateDirectory(Path.Combine(Root, name)).FullName;
-        internal NodeStore Open() => NodeStore.Open(new NodeStoreOptions { DataRoot = Path.Combine(Root, "node-data"), BootIdentity = "synthetic-test-boot" });
+        internal NodeStore Open(TimeProvider? clock = null) => NodeStore.Open(new NodeStoreOptions
+        {
+            DataRoot = Path.Combine(Root, "node-data"),
+            BootIdentity = "synthetic-test-boot",
+            Clock = clock ?? TimeProvider.System,
+        });
         public void Dispose() => _root.Delete(recursive: true);
     }
 }

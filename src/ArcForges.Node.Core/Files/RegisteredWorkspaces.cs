@@ -166,19 +166,34 @@ internal sealed class RegisteredWorkspaces
         lock (_state.Gate)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var row = _store.Read(reader => FindById(reader, key)) ?? throw new RegisteredWorkspaceException("workspace_not_found");
-            var root = OpenVerified(row);
-            var text = Convert.ToHexString(key);
+            WorkspacePath? root = null;
             try
             {
-                cancellationToken.ThrowIfCancellationRequested();
+                _store.Write(transaction =>
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var row = FindById(transaction, key) ?? throw new RegisteredWorkspaceException("workspace_not_found");
+                    root = OpenVerified(row);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (transaction.Execute("""
+                        UPDATE workspace SET last_used_at = max(last_used_at, $now), rev = rev + 1
+                        WHERE workspace_id = $id AND kind = 1 AND state = 2 AND removed_at IS NULL;
+                        """, ("$id", key), ("$now", transaction.NowMicroseconds)) != 1)
+                    {
+                        throw new RegisteredWorkspaceException("workspace_not_found");
+                    }
+
+                    cancellationToken.ThrowIfCancellationRequested();
+                });
+                var text = Convert.ToHexString(key);
                 _state.Users.TryGetValue(text, out var current);
+                var use = new RegisteredWorkspaceUse(_state, text, root!);
                 _state.Users[text] = checked(current + 1);
-                return new RegisteredWorkspaceUse(_state, text, root);
+                return use;
             }
             catch
             {
-                root.Dispose();
+                root?.Dispose();
                 throw;
             }
         }
