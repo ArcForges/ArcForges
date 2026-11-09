@@ -54,100 +54,136 @@ internal sealed class RegisteredWorkspaces
     // The callback only coordinates changes to real test-owned roots between opening and transactional revalidation.
     internal RegisteredWorkspace RegisterFromVerifiedHuman(string absolutePath, string? name, Action? afterOpen, CancellationToken cancellationToken = default)
     {
+        using var prepared = PrepareRegistration(absolutePath, name, afterOpen, cancellationToken);
+        return _store.Write(transaction => RegisterPreparedFromVerifiedHuman(transaction, prepared, beforeEffect: null, cancellationToken),
+            CommitDurability.Full);
+    }
+
+    /// <summary>
+    /// Opens the candidate and examines bounded legacy rows before the command writer. The returned object keeps the candidate
+    /// handle alive until disposed; it conveys no caller authority and must only be used by a verified HUMAN application boundary.
+    /// </summary>
+    internal PreparedRegistration PrepareRegistration(string absolutePath, string? name = null, Action? afterOpen = null,
+        CancellationToken cancellationToken = default)
+    {
         cancellationToken.ThrowIfCancellationRequested();
-        using var opened = WorkspacePath.OpenRoot(absolutePath);
-        var native = RootIdentity.Encode(opened.RootIdentity);
-        var canonical = opened.RootPath;
-        ValidatePath(canonical);
-        var selectedName = ValidateName(name ?? DefaultName(canonical));
-        afterOpen?.Invoke();
-
-        // Fast duplicate path: unrelated old records are irrelevant when the previously recorded identity is verified.
-        var known = _store.Read(reader => FindByIdentity(reader, native.Platform, native.Bytes));
-        if (known is not null)
+        var opened = WorkspacePath.OpenRoot(absolutePath);
+        try
         {
-            lock (_state.Gate)
+            var native = RootIdentity.Encode(opened.RootIdentity);
+            var canonical = opened.RootPath;
+            ValidatePath(canonical);
+            var selectedName = ValidateName(name ?? DefaultName(canonical));
+            afterOpen?.Invoke();
+
+            // A duplicate is verified again inside the effect transaction. An unrelated legacy row cannot block that result.
+            var known = _store.Read(reader => FindByIdentity(reader, native.Platform, native.Bytes));
+            if (known is not null)
             {
-                return _store.Write(transaction =>
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    var current = FindByIdentity(transaction, native.Platform, native.Bytes)
-                        ?? throw new RegisteredWorkspaceException("workspace_registration_changed");
-                    return VerifiedDuplicate(current, canonical, opened.RootIdentity, native, cancellationToken);
-                }, CommitDurability.Full);
+                return new PreparedRegistration(opened, native, canonical, selectedName, legacy: null, started: 0);
             }
-        }
 
-        // Snapshot, open and compare old roots outside both the global registry gate and SQLite's single writer.
-        // The deadline is checked between native calls; an OS call itself may block and cannot be preempted here.
-        var started = Stopwatch.GetTimestamp();
-        var legacy = _store.Read(reader => ReadLegacySnapshot(reader, started, cancellationToken));
-        // Reserve an old spelling independently of what its pathname currently opens. In particular, an old root with
-        // trailing separators cannot be re-admitted by temporarily swapping a different object into that same spelling.
-        var candidateSpelling = LegacySpelling(canonical);
-        foreach (var item in legacy)
-        {
-            CheckLegacyBudget(started, cancellationToken);
-            if (string.Equals(LegacySpelling(item.Path), candidateSpelling, StringComparison.Ordinal))
+            // Neither this bounded snapshot nor the filesystem opens hold the writer or the shared registry gate.
+            var started = Stopwatch.GetTimestamp();
+            var legacy = _store.Read(reader => ReadLegacySnapshot(reader, started, cancellationToken));
+            var candidateSpelling = LegacySpelling(canonical);
+            foreach (var item in legacy)
             {
-                throw new RegisteredWorkspaceException("workspace_path_conflict");
-            }
-        }
-
-        RefuseLegacyAliases(legacy, native, started, cancellationToken);
-        CheckLegacyBudget(started, cancellationToken);
-
-        lock (_state.Gate)
-        {
-            return _store.Write(transaction =>
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                var existing = FindByIdentity(transaction, native.Platform, native.Bytes);
-                if (existing is not null)
-                {
-                    return VerifiedDuplicate(existing, canonical, opened.RootIdentity, native, cancellationToken);
-                }
-
-                // Compare the entire bounded ordered set, not just roots that happened to open successfully.
-                // New, removed, changed or newly identified legacy rows require a fresh operation.
-                var current = ReadLegacySnapshot(transaction, started, cancellationToken);
-                if (!legacy.SequenceEqual(current))
-                {
-                    throw new RegisteredWorkspaceException("legacy_snapshot_changed");
-                }
-
-                if (transaction.Scalar("""
-                    SELECT 1 FROM workspace_root_identity
-                    WHERE released_at IS NULL AND platform = $platform AND native_identity = $identity LIMIT 1;
-                    """, ("$platform", native.Platform), ("$identity", native.Bytes)) is not null)
-                {
-                    throw new RegisteredWorkspaceException("workspace_identity_conflict");
-                }
-
-                var occupied = transaction.Scalar(
-                    "SELECT 1 FROM workspace WHERE removed_at IS NULL AND root_path = $path LIMIT 1;",
-                    ("$path", canonical));
-                if (occupied is not null)
+                CheckLegacyBudget(started, cancellationToken);
+                if (string.Equals(LegacySpelling(item.Path), candidateSpelling, StringComparison.Ordinal))
                 {
                     throw new RegisteredWorkspaceException("workspace_path_conflict");
                 }
+            }
 
-                using var checkedRoot = ReopenCandidate(canonical, opened.RootIdentity, native);
-                CheckLegacyBudget(started, cancellationToken);
-                var id = StoreIds.NewUuid7(transaction.Clock);
-                var now = transaction.NowMicroseconds;
-                transaction.Execute("""
-                    INSERT INTO workspace (workspace_id, kind, state, name, root_path, created_at, last_used_at, rev)
-                    VALUES ($id, 1, 2, $name, $path, $now, $now, 0);
-                    """, ("$id", id), ("$name", selectedName), ("$path", canonical), ("$now", now));
-                transaction.Execute("""
-                    INSERT INTO workspace_root_identity (workspace_id, format_version, platform, native_identity, canonical_path, registered_at)
-                    VALUES ($id, 1, $platform, $identity, $path, $now);
-                    """, ("$id", id), ("$platform", native.Platform), ("$identity", native.Bytes), ("$path", canonical), ("$now", now));
-                cancellationToken.ThrowIfCancellationRequested();
-                return new RegisteredWorkspace(id, selectedName, canonical, now, now);
-            }, CommitDurability.Full);
+            RefuseLegacyAliases(legacy, native, started, cancellationToken);
+            CheckLegacyBudget(started, cancellationToken);
+            return new PreparedRegistration(opened, native, canonical, selectedName, legacy, started);
         }
+        catch
+        {
+            opened.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Completes a HUMAN-authorized registration inside the caller's already-open write transaction. The caller stores its
+    /// command receipt and event in this transaction as well. The pre-effect callback may refuse and roll back the transaction.
+    /// </summary>
+    internal RegisteredWorkspace RegisterPreparedFromVerifiedHuman(StoreTransaction transaction, PreparedRegistration prepared,
+        Action? beforeEffect = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(transaction);
+        ArgumentNullException.ThrowIfNull(prepared);
+        lock (_state.Gate)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var opened = prepared.Opened;
+            var native = prepared.Native;
+            var canonical = prepared.Canonical;
+            var existing = FindByIdentity(transaction, native.Platform, native.Bytes);
+            if (existing is not null)
+            {
+                return VerifiedDuplicate(existing, canonical, opened.RootIdentity, native, cancellationToken);
+            }
+
+            if (prepared.Legacy is not { } legacy)
+            {
+                // A known identity disappeared since the precheck. Never turn a duplicate into an unchecked new registration.
+                throw new RegisteredWorkspaceException("workspace_registration_changed");
+            }
+
+            // DB snapshot revalidation does not assert a lock over a same-user filesystem namespace.
+            var current = ReadLegacySnapshot(transaction, prepared.Started, cancellationToken);
+            if (!legacy.SequenceEqual(current))
+            {
+                throw new RegisteredWorkspaceException("legacy_snapshot_changed");
+            }
+
+            if (transaction.Scalar("""
+                SELECT 1 FROM workspace_root_identity
+                WHERE released_at IS NULL AND platform = $platform AND native_identity = $identity LIMIT 1;
+                """, ("$platform", native.Platform), ("$identity", native.Bytes)) is not null)
+            {
+                throw new RegisteredWorkspaceException("workspace_identity_conflict");
+            }
+
+            if (transaction.Scalar("SELECT 1 FROM workspace WHERE removed_at IS NULL AND root_path = $path LIMIT 1;",
+                ("$path", canonical)) is not null)
+            {
+                throw new RegisteredWorkspaceException("workspace_path_conflict");
+            }
+
+            using var checkedRoot = ReopenCandidate(canonical, opened.RootIdentity, native);
+            CheckLegacyBudget(prepared.Started, cancellationToken);
+            var id = StoreIds.NewUuid7(transaction.Clock);
+            var now = transaction.NowMicroseconds;
+            beforeEffect?.Invoke();
+            transaction.Execute("""
+                INSERT INTO workspace (workspace_id, kind, state, name, root_path, created_at, last_used_at, rev)
+                VALUES ($id, 1, 2, $name, $path, $now, $now, 0);
+                """, ("$id", id), ("$name", prepared.Name), ("$path", canonical), ("$now", now));
+            transaction.Execute("""
+                INSERT INTO workspace_root_identity (workspace_id, format_version, platform, native_identity, canonical_path, registered_at)
+                VALUES ($id, 1, $platform, $identity, $path, $now);
+                """, ("$id", id), ("$platform", native.Platform), ("$identity", native.Bytes), ("$path", canonical), ("$now", now));
+            cancellationToken.ThrowIfCancellationRequested();
+            return new RegisteredWorkspace(id, prepared.Name, canonical, now, now);
+        }
+    }
+
+    /// <summary>An opened candidate and bounded registration snapshot owned by the application until the transaction finishes.</summary>
+    internal sealed class PreparedRegistration(WorkspacePath opened, RootIdentity native, string canonical, string name,
+        List<LegacyRoot>? legacy, long started) : IDisposable
+    {
+        internal WorkspacePath Opened { get; } = opened;
+        internal RootIdentity Native { get; } = native;
+        internal string Canonical { get; } = canonical;
+        internal string Name { get; } = name;
+        internal List<LegacyRoot>? Legacy { get; } = legacy;
+        internal long Started { get; } = started;
+        public void Dispose() => Opened.Dispose();
     }
 
     // Coordinates only real filesystem and DB operations in tests.
@@ -216,13 +252,15 @@ internal sealed class RegisteredWorkspaces
     {
         cancellationToken.ThrowIfCancellationRequested();
         var key = CopyId(id);
-        lock (_state.Gate)
+        var text = Convert.ToHexString(key);
+        WorkspacePath? root = null;
+        var acquired = false;
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            WorkspacePath? root = null;
-            try
+            _store.Write(transaction =>
             {
-                _store.Write(transaction =>
+                // Every path taking both locks uses writer first, then the registry gate. A routed mutation already has the writer.
+                lock (_state.Gate)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     var row = FindById(transaction, key) ?? throw new RegisteredWorkspaceException("workspace_not_found");
@@ -237,65 +275,84 @@ internal sealed class RegisteredWorkspaces
                     }
 
                     cancellationToken.ThrowIfCancellationRequested();
-                });
-                var text = Convert.ToHexString(key);
-                _state.Users.TryGetValue(text, out var current);
-                var use = new RegisteredWorkspaceUse(_state, text, root!);
-                _state.Users[text] = checked(current + 1);
-                return use;
-            }
-            catch
+                    _state.Users.TryGetValue(text, out var current);
+                    _state.Users[text] = checked(current + 1);
+                    acquired = true;
+                }
+            });
+            return new RegisteredWorkspaceUse(_state, text, root!);
+        }
+        catch
+        {
+            if (acquired)
             {
-                root?.Dispose();
-                throw;
+                lock (_state.Gate)
+                {
+                    var current = _state.Users[text];
+                    if (current == 1)
+                    {
+                        _state.Users.Remove(text);
+                    }
+                    else
+                    {
+                        _state.Users[text] = current - 1;
+                    }
+                }
             }
+
+            root?.Dispose();
+            throw;
         }
     }
 
     /// <summary>
     /// Called only after the application has verified HUMAN authority. It retains the old workspace row and all files.
-    /// Pending file plans and approvals require workspace-bound persistent checks when their records are implemented;
-    /// the component is not an exposed product endpoint until that integration exists.
+    /// Pending file plans and approvals require workspace-bound persistent checks when their records are implemented.
     /// </summary>
     internal void UnregisterFromVerifiedHuman(ReadOnlySpan<byte> id, CancellationToken cancellationToken = default)
     {
+        var key = CopyId(id);
+        _store.Write(transaction => UnregisterPreparedFromVerifiedHuman(transaction, key, beforeEffect: null, cancellationToken), CommitDurability.Full);
+    }
+
+    /// <summary>Unregisters inside the caller's write transaction, including the caller's command receipt and any routed recheck.</summary>
+    internal void UnregisterPreparedFromVerifiedHuman(StoreTransaction transaction, ReadOnlySpan<byte> id,
+        Action? beforeEffect = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(transaction);
         cancellationToken.ThrowIfCancellationRequested();
         var key = CopyId(id);
         var text = Convert.ToHexString(key);
         lock (_state.Gate)
         {
-            cancellationToken.ThrowIfCancellationRequested();
             if (_state.Users.ContainsKey(text))
             {
                 throw new RegisteredWorkspaceException("workspace_in_use");
             }
 
-            _store.Write(transaction =>
+            _ = FindById(transaction, key) ?? throw new RegisteredWorkspaceException("workspace_not_found");
+            if (IsReferenced(transaction, key))
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                _ = FindById(transaction, key) ?? throw new RegisteredWorkspaceException("workspace_not_found");
-                if (IsReferenced(transaction, key))
-                {
-                    throw new RegisteredWorkspaceException("workspace_in_use");
-                }
+                throw new RegisteredWorkspaceException("workspace_in_use");
+            }
 
-                var now = transaction.NowMicroseconds;
-                var removed = transaction.Execute("""
-                    UPDATE workspace SET state = 5, removed_at = $now, rev = rev + 1
-                    WHERE workspace_id = $id AND kind = 1 AND removed_at IS NULL;
-                    """, ("$id", key), ("$now", now));
-                if (removed != 1)
-                {
-                    throw new RegisteredWorkspaceException("workspace_not_found");
-                }
+            var now = transaction.NowMicroseconds;
+            beforeEffect?.Invoke();
+            var removed = transaction.Execute("""
+                UPDATE workspace SET state = 5, removed_at = $now, rev = rev + 1
+                WHERE workspace_id = $id AND kind = 1 AND removed_at IS NULL;
+                """, ("$id", key), ("$now", now));
+            if (removed != 1)
+            {
+                throw new RegisteredWorkspaceException("workspace_not_found");
+            }
 
-                // A legacy row can be explicitly forgotten without fabricating an identity.
-                transaction.Execute("""
-                    UPDATE workspace_root_identity SET released_at = max(registered_at, $now)
-                    WHERE workspace_id = $id AND released_at IS NULL;
-                    """, ("$id", key), ("$now", now));
-                cancellationToken.ThrowIfCancellationRequested();
-            }, CommitDurability.Full);
+            // A legacy row can be explicitly forgotten without fabricating an identity.
+            transaction.Execute("""
+                UPDATE workspace_root_identity SET released_at = max(registered_at, $now)
+                WHERE workspace_id = $id AND released_at IS NULL;
+                """, ("$id", key), ("$now", now));
+            cancellationToken.ThrowIfCancellationRequested();
         }
     }
 
@@ -303,7 +360,7 @@ internal sealed class RegisteredWorkspaces
         SELECT EXISTS(SELECT 1 FROM task WHERE workspace_id = $id AND state IN (1, 2, 3, 4, 5, 6));
         """, ("$id", id)), System.Globalization.CultureInfo.InvariantCulture) != 0;
 
-    private sealed record LegacyRoot(string Id, string Path, long Revision, int Kind, int State);
+    internal sealed record LegacyRoot(string Id, string Path, long Revision, int Kind, int State);
 
     private static List<LegacyRoot> ReadLegacySnapshot(StoreReader reader, long started, CancellationToken cancellationToken)
     {
@@ -632,7 +689,7 @@ internal sealed class RegisteredWorkspaces
     }
 
     /// <summary>Version-1 identity includes the native volume and object instance; transient Linux mount IDs and path strings are excluded.</summary>
-    private sealed record RootIdentity(int Platform, byte[] Bytes)
+    internal sealed record RootIdentity(int Platform, byte[] Bytes)
     {
         internal static RootIdentity Encode(WorkspaceObjectIdentity identity, bool directory = true)
         {
