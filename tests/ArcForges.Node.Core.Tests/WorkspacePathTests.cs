@@ -118,13 +118,21 @@ public sealed class WorkspacePathTests
         File.WriteAllText(Path.Combine(outside, "secret.txt"), "outside marker");
         Run(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe"),
             ["/d", "/c", "mklink", "/J", Path.Combine(root, "jump"), outside]);
-        using var opened = WorkspacePath.OpenRoot(root);
-        Assert.Throws<WorkspacePathException>(() => opened.OpenRead("jump/secret.txt"));
-        foreach (var path in (string[])["NUL", "con.txt", "aux.log", "COM1.txt", "LPT9", "COM\u00b9", "name.", "name ", "normal:stream"])
+        using (var opened = WorkspacePath.OpenRoot(root))
         {
-            Assert.Throws<WorkspacePathException>(() => WorkspacePath.Components(path));
+            Assert.Throws<WorkspacePathException>(() => opened.OpenRead("jump/secret.txt"));
+            foreach (var path in (string[])["NUL", "con.txt", "aux.log", "COM1.txt", "LPT9", "COM\u00b9", "name.", "name ", "normal:stream"])
+            {
+                Assert.Throws<WorkspacePathException>(() => WorkspacePath.Components(path));
+            }
+
+            Assert.Equal("outside marker", File.ReadAllText(Path.Combine(outside, "secret.txt")));
         }
 
+        // Dispose every native guard before removing this exact test-owned junction without traversal.
+        // This also proves a refused reparse open has not leaked a no-delete-sharing handle.
+        Directory.Delete(Path.Combine(root, "jump"));
+        Assert.False(Directory.Exists(Path.Combine(root, "jump")));
         Assert.Equal("outside marker", File.ReadAllText(Path.Combine(outside, "secret.txt")));
     }
 
