@@ -27,7 +27,7 @@
       "minReaderVersion": 1,
       "file": "0003-schema-step-3.sql",
       "sha256": "ca717d638250ee3c59992e937b6a7b01056538d54a797bc82d0fa16b664bb4db",
-      "source": "AF-CTR-06 implementation; Design node-store section 2b target. Actual step-3 specification mirror and native validation still pending before delivery.",
+      "source": "ArcForges-Design docs/data/node-store.sql at a904a2232888e85ba990e857989a18bf55203c15 (merged by PR53 at a178cb934cd682c9ed75c64b1c39c33ed835848e), the exact schema step3 block after the separating blank line; AF-CTR-06 source foundation, not full product acceptance.",
       "addedBy": "AF-CTR-06"
     }
   ]
