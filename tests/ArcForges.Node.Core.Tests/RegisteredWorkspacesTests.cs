@@ -229,6 +229,98 @@ public sealed class RegisteredWorkspacesTests
         Assert.NotEqual(Convert.ToHexString(legacy), Convert.ToHexString(current.Id));
     }
 
+    [Theory(Timeout = 30_000)]
+    [InlineData(false, 1)]
+    [InlineData(true, 1)]
+    [InlineData(true, 2)]
+    public void AReservedLegacySpellingCannotBeAdmittedDuringRealDirectorySwaps(bool swap, int separators)
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        using var fixture = new OwnedFixture();
+        using var store = fixture.Open();
+        var original = fixture.Workspace("original");
+        var substitute = fixture.Workspace("substitute");
+        var stash = Path.Combine(fixture.Root, "stash");
+        File.WriteAllText(Path.Combine(original, "marker"), "original");
+        File.WriteAllText(Path.Combine(substitute, "marker"), "substitute");
+        InsertLegacy(store, original + new string(Path.DirectorySeparatorChar, separators));
+        var manager = new RegisteredWorkspaces(store);
+        var swapped = false;
+        var restoredByScanHook = false;
+        var renameDeniedByPlatform = false;
+        Action? beforeScan = null;
+        if (swap)
+        {
+            beforeScan = () =>
+            {
+                try
+                {
+                    Directory.Move(original, stash);
+                }
+                catch (Exception exception) when (OperatingSystem.IsWindows() && exception is IOException or UnauthorizedAccessException)
+                {
+                    // Native Windows no-delete-sharing can refuse the very first rename while the candidate is open.
+                    renameDeniedByPlatform = true;
+                    return;
+                }
+
+                Directory.Move(substitute, original);
+                swapped = true;
+            };
+            manager.AfterLegacyOpenForTests = () =>
+            {
+                Directory.Move(original, substitute);
+                Directory.Move(stash, original);
+                restoredByScanHook = true;
+            };
+        }
+
+        try
+        {
+            var failure = Assert.Throws<RegisteredWorkspaceException>(() =>
+                manager.RegisterFromVerifiedHuman(original, null, beforeScan, Ct));
+            Assert.Equal("workspace_path_conflict", failure.Reason);
+        }
+        finally
+        {
+            if (swapped && !restoredByScanHook)
+            {
+                // The spelling reservation refuses before opening the substituted legacy root; restore test-owned objects.
+                Directory.Move(original, substitute);
+                Directory.Move(stash, original);
+            }
+        }
+
+        if (swap && OperatingSystem.IsLinux())
+        {
+            Assert.True(swapped, "the original and substitute were really exchanged");
+            Assert.False(restoredByScanHook, "the exact spelling was refused before the substituted root was opened");
+        }
+        else if (swap && OperatingSystem.IsWindows())
+        {
+            Assert.True(swapped || renameDeniedByPlatform);
+        }
+
+        Assert.Equal("original", File.ReadAllText(Path.Combine(original, "marker")));
+        Assert.Equal("substitute", File.ReadAllText(Path.Combine(substitute, "marker")));
+        Assert.Equal(1L, store.Read(reader => reader.Scalar("SELECT count(*) FROM workspace WHERE removed_at IS NULL;")));
+        Assert.Equal(0L, store.Read(reader => reader.Scalar("SELECT count(*) FROM workspace_root_identity WHERE released_at IS NULL;")));
+    }
+
+    [Fact(Timeout = 30_000)]
+    public void ADisjointRootCanStillBeRegisteredWithAnAccessibleLegacyRoot()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        using var fixture = new OwnedFixture();
+        using var store = fixture.Open();
+        InsertLegacy(store, fixture.Workspace("old") + Path.DirectorySeparatorChar);
+        var newPath = fixture.Workspace("new");
+        var created = new RegisteredWorkspaces(store).RegisterFromVerifiedHuman(newPath, cancellationToken: Ct);
+        Assert.Equal(newPath, created.RootPath);
+        Assert.Equal(2L, store.Read(reader => reader.Scalar("SELECT count(*) FROM workspace WHERE removed_at IS NULL;")));
+        Assert.Equal(1L, store.Read(reader => reader.Scalar("SELECT count(*) FROM workspace_root_identity WHERE released_at IS NULL;")));
+    }
+
     [Fact(Timeout = 30_000)]
     public void LegacyCaseComparisonFollowsTheActualFilesystem()
     {

@@ -82,6 +82,18 @@ internal sealed class RegisteredWorkspaces
         // The deadline is checked between native calls; an OS call itself may block and cannot be preempted here.
         var started = Stopwatch.GetTimestamp();
         var legacy = _store.Read(reader => ReadLegacySnapshot(reader, started, cancellationToken));
+        // Reserve an old spelling independently of what its pathname currently opens. In particular, an old root with
+        // trailing separators cannot be re-admitted by temporarily swapping a different object into that same spelling.
+        var candidateSpelling = LegacySpelling(canonical);
+        foreach (var item in legacy)
+        {
+            CheckLegacyBudget(started, cancellationToken);
+            if (string.Equals(LegacySpelling(item.Path), candidateSpelling, StringComparison.Ordinal))
+            {
+                throw new RegisteredWorkspaceException("workspace_path_conflict");
+            }
+        }
+
         RefuseLegacyAliases(legacy, native, started, cancellationToken);
         CheckLegacyBudget(started, cancellationToken);
 
@@ -343,18 +355,8 @@ internal sealed class RegisteredWorkspaces
         foreach (var item in roots)
         {
             CheckLegacyBudget(started, cancellationToken);
-            // Old rows may end in one or more separators. Only trim those; do not erase dot components or fold case.
-            var legacy = item.Path;
-            while (Path.EndsInDirectorySeparator(legacy))
-            {
-                var trimmed = Path.TrimEndingDirectorySeparator(legacy);
-                if (trimmed.Length == legacy.Length)
-                {
-                    break;
-                }
-
-                legacy = trimmed;
-            }
+            // Do not erase dot components or fold case. Actual native identity comparison below handles an observed alias.
+            var legacy = LegacySpelling(item.Path);
 
             WorkspacePath root;
             try
@@ -386,6 +388,23 @@ internal sealed class RegisteredWorkspaces
                 }
             }
         }
+    }
+
+    private static string LegacySpelling(string path)
+    {
+        // Root separators themselves are retained. Old rows may contain multiple trailing separators.
+        while (Path.EndsInDirectorySeparator(path))
+        {
+            var trimmed = Path.TrimEndingDirectorySeparator(path);
+            if (trimmed.Length == path.Length)
+            {
+                break;
+            }
+
+            path = trimmed;
+        }
+
+        return OperatingSystem.IsWindows() ? path.Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar) : path;
     }
 
     private static void CheckLegacyBudget(long started, CancellationToken cancellationToken)
