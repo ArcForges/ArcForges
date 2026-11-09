@@ -101,6 +101,8 @@ A node that is signed out, cannot reach the center or has no channel exits 4 wit
 outcome remains uncertain, the CLI prints the command ID so the existing operation can be investigated rather than submitted again.
 After an uncertain outcome, it waits within that window for its own node channel to reconnect before retrying. It does not resend a
 mutation under a different center or installation; if the local node connection is lost, it stops and keeps the outcome uncertain.
+If an interrupted mutation might have reached the node or an approval is pending, the CLI warns that it may have run and prints its
+original command ID. Ctrl+C exits 130; a lost local connection retains its existing transport-failure exit.
 An explicit `--wait-approval` may wait for a human decision separately and restart that retry window; its wait is not included in the
 two-minute transport bound.
 
