@@ -369,14 +369,19 @@ public sealed class RealCenterRoutedTests
         var observed = new JsonObject { ["relayNodeId"] = relayUuid, ["targetNodeId"] = targetUuid, ["state"] = "running", ["phases"] = phases };
         void SaveObserved() => Write(directory, "x-two-node-observed.json", observed);
 
-        async Task<ProcessRun> PhaseAsync(string name, bool pty, params string[] args)
+        async Task<ProcessRun> PhaseAsync(string name, CloudNode sender, bool pty, params string[] args)
         {
-            var phase = new JsonObject { ["phase"] = name, ["startedUtc"] = DateTimeOffset.UtcNow.ToString("O") };
+            var phase = new JsonObject
+            {
+                ["phase"] = name,
+                ["sourceNodeId"] = ReferenceEquals(sender, relay) ? relayUuid : targetUuid,
+                ["startedUtc"] = DateTimeOffset.UtcNow.ToString("O")
+            };
             phases.Add(phase);
             SaveObserved();
             try
             {
-                var result = await CliAsync(relay, pty, args);
+                var result = await CliAsync(sender, pty, args);
                 phase["exitCode"] = result.ExitCode;
                 if (result.Output.TrimStart().StartsWith('{'))
                 {
@@ -460,21 +465,32 @@ public sealed class RealCenterRoutedTests
             targetRunning = false;
             await TestNode.WaitAsync(async () => (await NodeFromRelayAsync(targetId)).Online == NodeOnlineState.Offline,
                 ConnectedTimeout, "stopped target is offline at the center");
-            var offline = await PhaseAsync("offline", pty: false, "--json", "run", "--detach", "--node", targetUuid, "--cwd", target.Root,
+            var offline = await PhaseAsync("offline", relay, pty: false, "--json", "run", "--detach", "--node", targetUuid, "--cwd", target.Root,
                 "--title", "x-offline", "--", "/bin/sleep", "1");
             Refusal(offline, 75, "node_offline");
-            await target.StartAsync();
+            imageBefore = Environment.GetEnvironmentVariable(ClientImages.TestVariable);
+            try
+            {
+                // The restarted target must still verify its own literal PTY CLI as HUMAN.
+                Environment.SetEnvironmentVariable(ClientImages.TestVariable, CloudNode.HelperExecutable);
+                await target.StartAsync();
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(ClientImages.TestVariable, imageBefore);
+            }
             targetRunning = true;
+            Assert.Equal(targetId.Value, ByteString.CopyFrom(target.Runtime.NodeId.Span));
             targetHuman = await target.ChannelAsync(Origin.Human);
             Assert.Equal(beforeOffline, target.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM task;")));
             await AwaitConnectedAsync(targetHuman, "restarted target channel");
             await TestNode.WaitAsync(async () => (await NodeFromRelayAsync(targetId)).Online == NodeOnlineState.Online,
                 ConnectedTimeout, "restarted target is online at the center");
 
-            // X15 local substitute: PB-2 is closed by default; a target HUMAN opts in, then two actual CLI origins share a queue.
+            // X15 local substitute: PB-2 is closed by default; a target HUMAN opts in, then CLIs on two source nodes share a queue.
             var beforeDeny = target.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM task;"));
             var beforeDenyLog = target.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM routed_call_log WHERE decision = 2 AND refusal_code = 'AUTHORIZATION/permission_denied';"));
-            var denied = await PhaseAsync("cross-node-default", pty: false, "--json", "run", "--detach", "--node", targetUuid, "--cwd", target.Root,
+            var denied = await PhaseAsync("cross-node-default", relay, pty: false, "--json", "run", "--detach", "--node", targetUuid, "--cwd", target.Root,
                 "--title", "x-cross-denied", "--", "/bin/sleep", "1");
             Refusal(denied, 125, "permission_denied");
             Assert.Equal(beforeDeny, target.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM task;")));
@@ -493,9 +509,9 @@ public sealed class RealCenterRoutedTests
                 Fixed = 1,
             }, cancellationToken: Ct)).Error);
             Assert.Null((await targetHuman.Queue.PausePoolAsync(new QueueServicePausePoolRequest { Meta = CloudNode.Command(), All = true }, cancellationToken: Ct)).Error);
-            var humanRun = await PhaseAsync("cross-node-human", pty: true, "run", "--detach", "--node", targetUuid, "--cwd", target.Root,
+            var humanRun = await PhaseAsync("cross-node-human", target, pty: true, "run", "--detach", "--node", targetUuid, "--cwd", target.Root,
                 "--title", "x-cross-human", "--cpu", "0.1", "--mem", "64MiB", "--", "/bin/sleep", "120");
-            var scriptRun = await PhaseAsync("cross-node-script", pty: false, "run", "--detach", "--node", targetUuid, "--cwd", target.Root,
+            var scriptRun = await PhaseAsync("cross-node-script", relay, pty: false, "run", "--detach", "--node", targetUuid, "--cwd", target.Root,
                 "--title", "x-cross-script", "--cpu", "0.1", "--mem", "64MiB", "--", "/bin/sleep", "120");
             Assert.Equal(0, humanRun.ExitCode);
             Assert.Equal(0, scriptRun.ExitCode);
@@ -516,10 +532,11 @@ public sealed class RealCenterRoutedTests
             var entries = queued.Value.Entries.Where(entry => entry.TaskId.Equals(humanId) || entry.TaskId.Equals(scriptId)).ToArray();
             Assert.Equal(2, entries.Length);
             Assert.NotEqual(entries[0].Queue.Position, entries[1].Queue.Position);
-            Assert.Equal(Origin.Human, entries.Single(entry => entry.TaskId.Equals(humanId)).Owner.CenterCaller.LocalOrigin);
-            Assert.Equal(Origin.Script, entries.Single(entry => entry.TaskId.Equals(scriptId)).Owner.CenterCaller.LocalOrigin);
-            Assert.All(entries, entry => Assert.Equal(relayId, entry.Owner.CenterCaller.RelayingNodeId));
-            Assert.NotEqual(entries[0].Owner.CenterCaller.LocalSessionId, entries[1].Owner.CenterCaller.LocalSessionId);
+            var humanCaller = entries.Single(entry => entry.TaskId.Equals(humanId)).Owner.CenterCaller;
+            var scriptCaller = entries.Single(entry => entry.TaskId.Equals(scriptId)).Owner.CenterCaller;
+            Assert.Equal((Origin.Human, targetId), (humanCaller.LocalOrigin, humanCaller.RelayingNodeId));
+            Assert.Equal((Origin.Script, relayId), (scriptCaller.LocalOrigin, scriptCaller.RelayingNodeId));
+            Assert.NotEqual(humanCaller.LocalSessionId, scriptCaller.LocalSessionId);
             var pool = Assert.Single(queued.Value.Pools, item => item.Name == "default");
             Assert.Equal((ParallelismMode.Fixed, 1u), (pool.MaxParallelMode, pool.MaxParallelFixed));
             Assert.Null((await targetHuman.Queue.ResumePoolAsync(new QueueServiceResumePoolRequest { Meta = CloudNode.Command(), All = true }, cancellationToken: Ct)).Error);
@@ -540,7 +557,7 @@ public sealed class RealCenterRoutedTests
             clock.OffsetSeconds = 400;
             try
             {
-                var expired = await PhaseAsync("target-clock-plus-400", pty: false, "--json", "run", "--detach", "--node", targetUuid, "--cwd", target.Root,
+                var expired = await PhaseAsync("target-clock-plus-400", relay, pty: false, "--json", "run", "--detach", "--node", targetUuid, "--cwd", target.Root,
                     "--title", "x-expired", "--", "/bin/sleep", "1");
                 Refusal(expired, 125, "expired");
                 Assert.Equal(beforeExpired, target.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM task;")));
@@ -552,7 +569,7 @@ public sealed class RealCenterRoutedTests
             }
 
             // X6: this already accepted task must survive the coordinator's targeted device revocation.
-            var survivor = await PhaseAsync("accepted-before-revoke", pty: false, "run", "--detach", "--node", targetUuid, "--cwd", target.Root,
+            var survivor = await PhaseAsync("accepted-before-revoke", relay, pty: false, "run", "--detach", "--node", targetUuid, "--cwd", target.Root,
                 "--title", "x-survivor", "--", "/bin/sh", "-c", "while [ ! -e \"$1\" ]; do /bin/sleep 0.2; done", "sh", survivorRelease);
             Assert.Equal(0, survivor.ExitCode);
             Assert.True(IdText.TryParse(survivor.Output.Trim(), out var survivorBytes));
@@ -588,7 +605,7 @@ public sealed class RealCenterRoutedTests
             var relayStatus = await StatusAsync(relayHuman);
             Assert.True(relayStatus.SignedIn && relayStatus.Relay == RelayState.Connected, "the separate relay remains authorized and connected");
             var beforeRevoked = target.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM task;"));
-            var revoked = await PhaseAsync("target-revoked", pty: false, "--json", "run", "--detach", "--node", targetUuid, "--cwd", target.Root,
+            var revoked = await PhaseAsync("target-revoked", relay, pty: false, "--json", "run", "--detach", "--node", targetUuid, "--cwd", target.Root,
                 "--title", "x-revoked", "--", "/bin/sleep", "1");
             Refusal(revoked, 125, "not_found");
             Assert.Equal(beforeRevoked, target.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM task;")));
