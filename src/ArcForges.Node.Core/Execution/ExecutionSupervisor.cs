@@ -723,6 +723,12 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
 
     // --------------------------------------------------------------------------------------------------------------------- submit
 
+    /// <summary>
+    /// Test seam: pauses a real SubmitTask after validation but before its transaction, to coordinate a real workspace change.
+    /// Production never sets this callback; it does not supply or replace workspace, task, storage or policy behavior.
+    /// </summary>
+    internal Func<CancellationToken, Task>? BeforeSubmitTransactionForTests { get; set; }
+
     /// <summary>Persists a submission in the writer (AD-0006 section 1: before the receipt) and journals it.</summary>
     public TaskServiceSubmitTaskValue Submit(CommandContext context, SubmitPlan plan)
     {

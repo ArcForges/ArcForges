@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Diagnostics;
+using ArcForges.Contracts.Node.V1;
 using ArcForges.Node.Core.Files;
 using ArcForges.Node.Store;
 
@@ -169,6 +170,128 @@ public sealed class RegisteredWorkspacesTests
         Assert.Equal("preserved", File.ReadAllText(Path.Combine(firstPath, "marker")));
     }
 
+    [Theory(Timeout = 30_000)]
+    [InlineData(TaskState.Queued)]
+    [InlineData(TaskState.WaitingDependency)]
+    [InlineData(TaskState.Placing)]
+    [InlineData(TaskState.Running)]
+    [InlineData(TaskState.Paused)]
+    [InlineData(TaskState.RetryWait)]
+    public void EveryNonterminalTaskBlocksOnlyItsOwnRegisteredWorkspace(TaskState state)
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        using var fixture = new OwnedFixture();
+        using var store = fixture.Open();
+        var manager = new RegisteredWorkspaces(store);
+        var first = manager.RegisterFromVerifiedHuman(fixture.Workspace("first"), cancellationToken: Ct);
+        var other = manager.RegisterFromVerifiedHuman(fixture.Workspace("other"), cancellationToken: Ct);
+        InsertTask(store, first.Id, (int)state);
+        Assert.Equal("workspace_in_use", Assert.Throws<RegisteredWorkspaceException>(() => manager.UnregisterFromVerifiedHuman(first.Id, Ct)).Reason);
+        manager.UnregisterFromVerifiedHuman(other.Id, Ct);
+        Assert.Equal(first.Id, manager.Get(first.Id, Ct).Id);
+    }
+
+    [Theory(Timeout = 30_000)]
+    [InlineData(TaskState.Succeeded)]
+    [InlineData(TaskState.Failed)]
+    [InlineData(TaskState.Cancelled)]
+    [InlineData(TaskState.Lost)]
+    public void TerminalTaskAllowsUnregistrationButItsHistoryIsRetained(TaskState state)
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        using var fixture = new OwnedFixture();
+        using var store = fixture.Open();
+        var manager = new RegisteredWorkspaces(store);
+        var registered = manager.RegisterFromVerifiedHuman(fixture.Workspace("root"), cancellationToken: Ct);
+        var task = InsertTask(store, registered.Id, (int)state);
+        manager.UnregisterFromVerifiedHuman(registered.Id, Ct);
+        Assert.Equal(1L, store.Read(r => r.Scalar("SELECT count(*) FROM task WHERE task_id=$task AND workspace_id=$workspace;",
+            ("$task", task), ("$workspace", registered.Id))));
+    }
+
+    [Fact(Timeout = 30_000)]
+    public void LegacyTrailingSeparatorCannotCreateADuplicateRegistration()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        using var fixture = new OwnedFixture();
+        var root = fixture.Workspace("legacy");
+        using var store = fixture.Open();
+        var legacy = InsertLegacy(store, root + Path.DirectorySeparatorChar);
+        var manager = new RegisteredWorkspaces(store);
+        Assert.Equal("workspace_path_conflict", Assert.Throws<RegisteredWorkspaceException>(
+            () => manager.RegisterFromVerifiedHuman(root, cancellationToken: Ct)).Reason);
+        Assert.Equal(1L, store.Read(r => r.Scalar("SELECT count(*) FROM workspace WHERE removed_at IS NULL;")));
+        Assert.Equal(0L, store.Read(r => r.Scalar("SELECT count(*) FROM workspace_root_identity;")));
+        Assert.Equal("workspace_identity_missing", Assert.Throws<RegisteredWorkspaceException>(() => manager.List(10, cancellationToken: Ct)).Reason);
+        manager.UnregisterFromVerifiedHuman(legacy, Ct);
+        var current = manager.RegisterFromVerifiedHuman(root, cancellationToken: Ct);
+        Assert.NotEqual(Convert.ToHexString(legacy), Convert.ToHexString(current.Id));
+    }
+
+    [Fact(Timeout = 30_000)]
+    public void LegacyCaseComparisonFollowsTheActualFilesystem()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        using var fixture = new OwnedFixture();
+        var lower = fixture.Workspace("legacycase");
+        var upper = Path.Combine(fixture.Root, "LEGACYCASE");
+        var equivalent = Directory.Exists(upper);
+        if (!equivalent)
+        {
+            Directory.CreateDirectory(upper);
+        }
+
+        using var store = fixture.Open();
+        InsertLegacy(store, lower + Path.DirectorySeparatorChar);
+        var manager = new RegisteredWorkspaces(store);
+        if (equivalent)
+        {
+            Assert.Equal("workspace_path_conflict", Assert.Throws<RegisteredWorkspaceException>(
+                () => manager.RegisterFromVerifiedHuman(upper, cancellationToken: Ct)).Reason);
+            Assert.Equal(1L, store.Read(r => r.Scalar("SELECT count(*) FROM workspace WHERE removed_at IS NULL;")));
+        }
+        else
+        {
+            var distinct = manager.RegisterFromVerifiedHuman(upper, cancellationToken: Ct);
+            Assert.Equal(distinct.Id, manager.Get(distinct.Id, Ct).Id);
+            Assert.Equal(2L, store.Read(r => r.Scalar("SELECT count(*) FROM workspace WHERE removed_at IS NULL;")));
+        }
+    }
+
+    [Fact(Timeout = 30_000)]
+    [Trait("env", "linux-real")]
+    public void LegacySymlinkAliasIsRefusedWhenItsIdentityCannotBeSafelyProven()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "Linux native symlink alias");
+        using var fixture = new OwnedFixture();
+        var root = fixture.Workspace("root");
+        var alias = Path.Combine(fixture.Root, "legacy-link");
+        Directory.CreateSymbolicLink(alias, root);
+        using var store = fixture.Open();
+        InsertLegacy(store, alias);
+        var manager = new RegisteredWorkspaces(store);
+        Assert.Equal("legacy_root_unverifiable", Assert.Throws<RegisteredWorkspaceException>(
+            () => manager.RegisterFromVerifiedHuman(root, cancellationToken: Ct)).Reason);
+        Assert.Equal(1L, store.Read(r => r.Scalar("SELECT count(*) FROM workspace WHERE removed_at IS NULL;")));
+        Assert.Equal(0L, store.Read(r => r.Scalar("SELECT count(*) FROM workspace_root_identity;")));
+    }
+
+    [Fact(Timeout = 30_000)]
+    public void UnavailableLegacyRootFailsClosedInsteadOfGuessingDistinctIdentity()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        using var fixture = new OwnedFixture();
+        var root = fixture.Workspace("root");
+        using var store = fixture.Open();
+        InsertLegacy(store, Path.Combine(fixture.Root, "missing-legacy"));
+        var manager = new RegisteredWorkspaces(store);
+        Assert.Equal("legacy_root_unverifiable", Assert.Throws<RegisteredWorkspaceException>(
+            () => manager.RegisterFromVerifiedHuman(root, cancellationToken: Ct)).Reason);
+        Assert.Equal(1L, store.Read(r => r.Scalar("SELECT count(*) FROM workspace WHERE removed_at IS NULL;")));
+        Assert.Equal(0L, store.Read(r => r.Scalar("SELECT count(*) FROM workspace_root_identity;")));
+    }
+
     [Fact(Timeout = 30_000)]
     [Trait("env", "linux-real")]
     public void AliasedStorePathsStillShareTheSameUseLease()
@@ -321,6 +444,28 @@ public sealed class RegisteredWorkspacesTests
         Assert.Equal("workspace_identity_invalid", Assert.Throws<RegisteredWorkspaceException>(() => manager.Get(registered.Id, Ct)).Reason);
         manager.UnregisterFromVerifiedHuman(registered.Id, Ct);
         Assert.True(Directory.Exists(path));
+    }
+
+    private static byte[] InsertLegacy(NodeStore store, string path)
+    {
+        var id = StoreIds.NewUuid7(store.Clock);
+        store.Write(transaction => transaction.Execute("""
+            INSERT INTO workspace (workspace_id, kind, state, name, root_path, created_at, last_used_at, rev)
+            VALUES ($id, 1, 2, 'legacy', $path, $now, $now, 0);
+            """, ("$id", id), ("$path", path), ("$now", transaction.NowMicroseconds)));
+        return id;
+    }
+
+    private static byte[] InsertTask(NodeStore store, byte[] workspace, int state)
+    {
+        var id = StoreIds.NewUuid7(store.Clock);
+        store.Write(transaction => transaction.Execute("""
+            INSERT INTO task (task_id, state, kind, title, command_summary, spec, spec_digest, owner, owner_origin, workspace_id,
+                              pool, priority, effective_priority, side_effect, side_effect_source, command_fingerprint, command_digest, created_at, rev)
+            VALUES ($task, $state, 1, 'test', 'synthetic', x'01', zeroblob(32), x'01', 1, $workspace,
+                    'test', 1, 1, 1, 1, 'synthetic', zeroblob(32), $now, 0);
+            """, ("$task", id), ("$state", state), ("$workspace", workspace), ("$now", transaction.NowMicroseconds)));
+        return id;
     }
 
     private static void ReadPersistedIdentityInAnotherProcess(string databasePath, byte[] id, byte[] identity)

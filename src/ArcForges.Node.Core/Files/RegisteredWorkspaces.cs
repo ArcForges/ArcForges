@@ -63,6 +63,7 @@ internal sealed class RegisteredWorkspaces
             return _store.Write(transaction =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                RefuseLegacyAliases(transaction, native, cancellationToken);
                 var existing = FindByIdentity(transaction, native.Platform, native.Bytes);
                 if (existing is not null)
                 {
@@ -247,8 +248,64 @@ internal sealed class RegisteredWorkspaces
     }
 
     private static bool IsReferenced(StoreReader reader, byte[] id) => Convert.ToInt64(reader.Scalar("""
-        SELECT EXISTS(SELECT 1 FROM task WHERE workspace_id = $id AND state IN (3, 4, 5));
+        SELECT EXISTS(SELECT 1 FROM task WHERE workspace_id = $id AND state IN (1, 2, 3, 4, 5, 6));
         """, ("$id", id)), System.Globalization.CultureInfo.InvariantCulture) != 0;
+
+    private static void RefuseLegacyAliases(StoreReader reader, RootIdentity candidate, CancellationToken cancellationToken)
+    {
+        using var command = reader.CreateCommand("""
+            SELECT w.root_path FROM workspace AS w LEFT JOIN workspace_root_identity AS i
+                ON i.workspace_id = w.workspace_id AND i.released_at IS NULL
+            WHERE w.removed_at IS NULL AND i.workspace_id IS NULL;
+            """);
+        using var rows = command.ExecuteReader();
+        while (rows.Read())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            // Old rows may end in one or more separators. Only trim those; do not erase dot components or fold case.
+            var legacy = rows.GetString(0);
+            while (Path.EndsInDirectorySeparator(legacy))
+            {
+                var trimmed = Path.TrimEndingDirectorySeparator(legacy);
+                if (trimmed.Length == legacy.Length)
+                {
+                    break;
+                }
+
+                legacy = trimmed;
+            }
+
+            WorkspacePath root;
+            try
+            {
+                root = WorkspacePath.OpenRoot(legacy);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                // An inaccessible, ambiguous or unsafe old path might still name the same object: never invent its identity.
+                throw new RegisteredWorkspaceException("legacy_root_unverifiable", exception);
+            }
+
+            using (root)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                RootIdentity actual;
+                try
+                {
+                    actual = RootIdentity.Encode(root.RootIdentity);
+                }
+                catch (RegisteredWorkspaceException exception)
+                {
+                    throw new RegisteredWorkspaceException("legacy_root_unverifiable", exception);
+                }
+
+                if (actual.Platform == candidate.Platform && CryptographicOperations.FixedTimeEquals(actual.Bytes, candidate.Bytes))
+                {
+                    throw new RegisteredWorkspaceException("workspace_path_conflict");
+                }
+            }
+        }
+    }
 
     private static Stored? FindById(StoreReader reader, byte[] id)
     {
