@@ -25,8 +25,32 @@ public sealed class PrivateFilesSharingTests : IDisposable
         // The premise: while the holder is open, an open for reading is refused, and that refusal is transient.
         var refused = Assert.ThrowsAny<IOException>(() => new FileStream(FilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete).Dispose());
         Assert.True(PrivateFiles.Transient(refused, replacing: false), refused.GetType().Name + " " + refused.HResult);
-        var read = ReleaseOnRefusal(holder, replacing: false, "CreateFile", () => PrivateFiles.ReadOrNull(FilePath));
+        var read = ReleaseOnRefusal(holder, replacing: false, () => PrivateFiles.ReadOrNull(FilePath));
         Assert.Equal("first"u8.ToArray(), read);
+    }
+
+    [Fact(DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
+    public void AnUnrelatedRefusalCannotReleaseTheOwnedFile()
+    {
+        PrivateFiles.WriteAtomic(FilePath, "first"u8);
+        // A prefix-related path must not count as the file held by this test.
+        var unrelatedPath = FilePath + ".other";
+        PrivateFiles.WriteAtomic(unrelatedPath, "other"u8);
+        using var holder = new FileStream(FilePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        using var unrelated = new FileStream(unrelatedPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        var read = ReleaseOnRefusal(holder, replacing: false, () =>
+        {
+            var refusal = Assert.ThrowsAny<IOException>(() =>
+                new FileStream(unrelatedPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete).Dispose());
+            Assert.True(PrivateFiles.Transient(refusal, replacing: false));
+            Assert.True(holder.CanRead, "A refusal on another file must not release the owned holder.");
+            Assert.Throws<FileNotFoundException>(() => File.ReadAllBytes(FilePath + ".missing"));
+            Assert.True(holder.CanRead, "A nontransient error must not release the owned holder.");
+            return PrivateFiles.ReadOrNull(FilePath);
+        });
+        Assert.Equal("first"u8.ToArray(), read);
+        Assert.False(holder.CanRead);
     }
 
     [Fact(DisableParallelization = true)]
@@ -51,7 +75,22 @@ public sealed class PrivateFilesSharingTests : IDisposable
         using var holder = new FileStream(FilePath, FileMode.Open, FileAccess.Read, FileShare.Read);
         if (OperatingSystem.IsWindows())
         {
-            ReleaseOnRefusal(holder, replacing: true, "MoveFile", () =>
+            // The replace exception can omit the path, so prove this exact target refuses a real replacement while held.
+            var probe = Path.Combine(_root, "replace-probe");
+            File.WriteAllText(probe, "probe");
+            try
+            {
+                var refused = Record.Exception(() => File.Move(probe, FilePath, overwrite: true));
+                Assert.NotNull(refused);
+                Assert.True(PrivateFiles.Transient(refused, replacing: true));
+                Assert.True(File.Exists(probe));
+            }
+            finally
+            {
+                File.Delete(probe);
+            }
+
+            ReleaseOnRefusal(holder, replacing: true, () =>
             {
                 PrivateFiles.WriteAtomic(FilePath, "second"u8);
                 return true;
@@ -73,8 +112,16 @@ public sealed class PrivateFilesSharingTests : IDisposable
     {
         PrivateFiles.WriteAtomic(FilePath, "first"u8);
         using var holder = new FileStream(FilePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        if (OperatingSystem.IsWindows())
+        {
+            var refused = Record.Exception(() => File.Delete(FilePath));
+            Assert.NotNull(refused);
+            Assert.True(PrivateFiles.Transient(refused, replacing: true));
+            Assert.True(File.Exists(FilePath));
+        }
+
         var deleted = OperatingSystem.IsWindows()
-            ? ReleaseOnRefusal(holder, replacing: true, "DeleteFile", () => PrivateFiles.Delete(FilePath))
+            ? ReleaseOnRefusal(holder, replacing: true, () => PrivateFiles.Delete(FilePath))
             : PrivateFiles.Delete(FilePath);
         Assert.True(deleted);
         Assert.False(File.Exists(FilePath));
@@ -168,7 +215,15 @@ public sealed class PrivateFilesSharingTests : IDisposable
         Assert.Single(link.Center.CallsOf("ReportNodeInfo"));
     }
 
-    private static T ReleaseOnRefusal<T>(FileStream holder, bool replacing, string windowsThrowSite, Func<T> action)
+    private static bool NamesHeldFile(IOException exception, FileStream holder)
+    {
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        var path = holder.Name;
+        // The exact quoted path prevents a prefix-related file from satisfying the owned-file check. Never log the exception message.
+        return exception.Message.Contains("'" + path + "'", comparison) || exception.Message.Contains("\"" + path + "\"", comparison);
+    }
+
+    private static T ReleaseOnRefusal<T>(FileStream holder, bool replacing, Func<T> action)
     {
         var threadId = Environment.CurrentManagedThreadId;
         var observed = false;
@@ -185,7 +240,7 @@ public sealed class PrivateFilesSharingTests : IDisposable
             {
                 // The subscription surrounds only the synchronous operation on this test's unique file and thread.
                 if (!PrivateFiles.Transient(args.Exception, replacing)
-                    || (OperatingSystem.IsWindows() && args.Exception.TargetSite?.Name != windowsThrowSite))
+                    || (args.Exception is IOException io && !NamesHeldFile(io, holder)))
                 {
                     return;
                 }
