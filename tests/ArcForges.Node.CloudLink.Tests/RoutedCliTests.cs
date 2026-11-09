@@ -8,6 +8,7 @@ using ArcForges.Contracts.Fleet.V1;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Contracts.Relay.V1;
+using ArcForges.LocalRpc;
 using ArcForges.Node.Api;
 using ArcForges.Node.CloudLink;
 using ArcForges.Node.Core.Scheduling;
@@ -1019,6 +1020,72 @@ public sealed class RoutedCliTests
         Assert.Equal(first.CommandId, second.CommandId);
         Assert.Equal(first.RequestSha256, second.RequestSha256);
         Assert.NotEqual(first.RelayNonce, second.RelayNonce);
+    }
+
+    [Fact(Timeout = 60000)]
+    public async Task ARealCliUnderARegisteredAgentRootCannotSubmitLocally()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var fixture = await Fixture.StartAsync(signedIn: false);
+        await using var human = await fixture.Node.ChannelAsync(Origin.Human);
+        Assert.Null((await human.Queue.PausePoolAsync(new QueueServicePausePoolRequest { Meta = CloudNode.Command(), All = true }, cancellationToken: ct)).Error);
+        var sessionsSeen = new System.Collections.Concurrent.ConcurrentQueue<ClientSession>();
+        var sessions = new ClientSessions { Opened = sessionsSeen.Enqueue };
+        var processStart = ProtoTime.ToDateTimeOffset(ClientProcess.Identity(Environment.ProcessId)!.StartTime)!.Value;
+        sessions.Agents.Register(Environment.ProcessId, processStart);
+        var name = "af-x12-" + Guid.NewGuid().ToString("N")[..12];
+        var directory = Path.Combine(Path.GetTempPath(), name);
+        var endpoint = OperatingSystem.IsWindows() ? LocalRpcEndpoint.NamedPipe(name) : LocalRpcEndpoint.UnixDomainSocket(Path.Combine(directory, "node.sock"));
+        if (!OperatingSystem.IsWindows())
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        try
+        {
+            await using var server = NodeApiServer.Build(endpoint, fixture.Node.Runtime, sessions, cloud: fixture.Node.Cloud);
+            await server.StartAsync(ct);
+            try
+            {
+                var before = fixture.Node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM task;"));
+                var denied = await fixture.CliAtEndpointAsync(endpoint.Address, "--json", "run", "--local", "--detach", "--env-inherit", "none",
+                    "--cwd", fixture.Node.Root, "--", CloudNode.TestLoad, "hold", "--hold-ms", "100");
+                Assert.Equal(125, denied.ExitCode);
+                using (var json = System.Text.Json.JsonDocument.Parse(denied.Stdout))
+                {
+                    var error = json.RootElement.GetProperty("error");
+                    Assert.Equal("permission_denied", error.GetProperty("code").GetString());
+                    Assert.Equal("EFFECT_CERTAINTY_DID_NOT_HAPPEN", error.GetProperty("effect").GetString());
+                    Assert.Equal("local_submission_human_only", error.GetProperty("details").GetProperty("state").GetProperty("reason").GetString());
+                }
+                var agent = Assert.Single(sessionsSeen, session => session.Origin == Origin.Agent);
+                Assert.Equal(ClientKind.Cli, agent.Kind);
+                Assert.NotEqual(Environment.ProcessId, agent.Peer.ProcessId);
+                Assert.Equal(before, fixture.Node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM task;")));
+
+                // Removing the exact root makes another real child SCRIPT, which the isolated in-process test explicitly permits.
+                sessions.Agents.Remove(Environment.ProcessId);
+                var script = await fixture.CliAtEndpointAsync(endpoint.Address, "run", "--local", "--detach", "--env-inherit", "none",
+                    "--cwd", fixture.Node.Root, "--", CloudNode.TestLoad, "hold", "--hold-ms", "100");
+                Assert.Equal(0, script.ExitCode);
+                Assert.True(IdText.TryParse(script.Stdout.Trim(), out var taskBytes));
+                Assert.Contains(sessionsSeen, session => session.Kind == ClientKind.Cli && session.Origin == Origin.Script);
+                var task = new Id { Value = ByteString.CopyFrom(taskBytes) };
+                Assert.Null((await human.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = CloudNode.Command(), TaskId = task }, cancellationToken: ct)).Error);
+            }
+            finally
+            {
+                sessions.Agents.Remove(Environment.ProcessId);
+                await server.StopAsync(CancellationToken.None);
+            }
+        }
+        finally
+        {
+            if (!OperatingSystem.IsWindows() && Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
     }
 
     [Fact(Timeout = 60000)]
@@ -2076,8 +2143,11 @@ public sealed class RoutedCliTests
         public Task<(int ExitCode, string Stdout, string Stderr)> CliSyntheticUntilAsync(TaskCompletionSource<int> started, TaskCompletionSource ready,
             string marker, params string[] args) => StartCliAsync(true, false, args, started, pty: false, ready, marker);
 
+        public Task<(int ExitCode, string Stdout, string Stderr)> CliAtEndpointAsync(string endpoint, params string[] args) =>
+            StartCliAsync(true, false, args, endpointAddress: endpoint);
+
         private async Task<(int ExitCode, string Stdout, string Stderr)> StartCliAsync(bool synthetic, bool includeMarker, string[] args,
-            TaskCompletionSource<int>? started = null, bool pty = false, TaskCompletionSource? ready = null, string? marker = null)
+            TaskCompletionSource<int>? started = null, bool pty = false, TaskCompletionSource? ready = null, string? marker = null, string? endpointAddress = null)
         {
             var start = new ProcessStartInfo(pty ? "/usr/bin/script" : CloudNode.HelperExecutable)
             {
@@ -2131,7 +2201,7 @@ public sealed class RoutedCliTests
                     start.Environment["PATH"] = "/usr/bin:/bin";
                 }
             }
-            start.Environment[NodeLocations.EndpointVariable] = Node.Endpoint.Address;
+            start.Environment[NodeLocations.EndpointVariable] = endpointAddress ?? Node.Endpoint.Address;
             start.Environment[NodeLocations.ConfigDirectoryVariable] = Path.GetDirectoryName(Node.ConfigPath)!;
             start.Environment.Remove("ARCFORGES_OS_SECRET_STORE_TESTS");
             using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start the test CLI.");

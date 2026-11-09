@@ -311,6 +311,326 @@ public sealed class RealCenterRoutedTests
         }
     }
 
+    /// <summary>Two real in-process nodes and literal CLIs use the isolated real center; the two browser devices use a virtual authenticator.</summary>
+    [Fact(Timeout = 900_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
+    public async Task RealTwoNodeClisCoverOfflinePolicyExpiryAndStagedRevocation()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        var url = Environment.GetEnvironmentVariable("ARCFORGES_E2E_CENTER_URL");
+        Assert.SkipUnless(!string.IsNullOrEmpty(url), "ARCFORGES_E2E_CENTER_URL is not set");
+        Assert.SkipUnless(OperatingSystem.IsLinux() && File.Exists("/usr/bin/script"), "the isolated two-node PTY acceptance requires Linux and script");
+        Assert.SkipWhen(ArcForges.Tests.SystemdTestEnvironment.SkipReason is not null, ArcForges.Tests.SystemdTestEnvironment.SkipReason ?? string.Empty);
+        Assert.True(CenterEndpoint.TryParse(url, out var center, out var reason), reason);
+        Assert.True(center.Scheme == "http" && (center.Host == "localhost" || (IPAddress.TryParse(center.Host, out var address) && IPAddress.IsLoopback(address)))
+            && center.PathBase.Length == 0, "the acceptance center must be an isolated loopback center");
+        var directory = Environment.GetEnvironmentVariable("ARCFORGES_E2E_DIR");
+        Assert.True(!string.IsNullOrEmpty(directory) && Path.IsPathFullyQualified(directory), "ARCFORGES_E2E_DIR must be absolute");
+        Directory.CreateDirectory(directory);
+        foreach (var name in new[] { "x-relay.begin.json", "x-relay.result.json", "x-target.begin.json", "x-target.result.json",
+            "x-target-revoke.request.json", "x-target-revoke.ack.json", "x-two-node-observed.json" })
+        {
+            Assert.False(File.Exists(Path.Combine(directory, name)), "two-node acceptance requires a fresh handshake directory");
+        }
+
+        var clock = new OffsetClock();
+        await using var relay = CloudNode.Create(center.Url);
+        await using var target = CloudNode.Create(center.Url);
+        relay.TestMode = true;
+        target.TestMode = true;
+        relay.AllowLocalScriptSubmit = false;
+        target.AllowLocalScriptSubmit = false;
+        target.Clock = clock;
+        var imageBefore = Environment.GetEnvironmentVariable(ClientImages.TestVariable);
+        try
+        {
+            // Exclusive, isolated nodes only: allow their literal PTY CLI to verify as HUMAN.
+            Environment.SetEnvironmentVariable(ClientImages.TestVariable, CloudNode.HelperExecutable);
+            await relay.StartAsync();
+            await target.StartAsync();
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(ClientImages.TestVariable, imageBefore);
+        }
+
+        await using var relayHuman = await relay.ChannelAsync(Origin.Human);
+        NodeChannel? targetHuman = await target.ChannelAsync(Origin.Human);
+        var targetRunning = true;
+        var relayResultWritten = false;
+        var targetResultWritten = false;
+        var survivorStarted = false;
+        var survivorRelease = Path.Combine(target.Root, "x-survivor-release");
+        var relayId = new Id { Value = ByteString.CopyFrom(relay.Runtime.NodeId.Span) };
+        var targetId = new Id { Value = ByteString.CopyFrom(target.Runtime.NodeId.Span) };
+        var relayUuid = new Guid(relayId.Value.Span, bigEndian: true).ToString("D");
+        var targetUuid = new Guid(targetId.Value.Span, bigEndian: true).ToString("D");
+        var phases = new JsonArray();
+        var observed = new JsonObject { ["relayNodeId"] = relayUuid, ["targetNodeId"] = targetUuid, ["state"] = "running", ["phases"] = phases };
+        void SaveObserved() => Write(directory, "x-two-node-observed.json", observed);
+
+        async Task<ProcessRun> PhaseAsync(string name, bool pty, params string[] args)
+        {
+            var phase = new JsonObject { ["phase"] = name, ["startedUtc"] = DateTimeOffset.UtcNow.ToString("O") };
+            phases.Add(phase);
+            SaveObserved();
+            try
+            {
+                var result = await CliAsync(relay, pty, args);
+                phase["exitCode"] = result.ExitCode;
+                if (result.Output.TrimStart().StartsWith('{'))
+                {
+                    using var document = JsonDocument.Parse(result.Output);
+                    if (document.RootElement.TryGetProperty("error", out var error))
+                    {
+                        phase["errorCode"] = error.GetProperty("code").GetString();
+                        phase["effect"] = error.GetProperty("effect").GetString();
+                        if (error.TryGetProperty("correlationId", out var correlation))
+                        {
+                            phase["correlationId"] = correlation.GetString();
+                        }
+                    }
+                }
+                else if (IdText.TryParse(result.Output.Trim(), out var id))
+                {
+                    phase["taskId"] = new Guid(id, bigEndian: true).ToString("D");
+                }
+                return result;
+            }
+            finally
+            {
+                phase["finishedUtc"] = DateTimeOffset.UtcNow.ToString("O");
+                SaveObserved();
+            }
+        }
+
+        static void Refusal(ProcessRun result, int exit, string code)
+        {
+            Assert.Equal(exit, result.ExitCode);
+            using var json = JsonDocument.Parse(result.Output);
+            var error = json.RootElement.GetProperty("error");
+            Assert.Equal(code, error.GetProperty("code").GetString());
+            Assert.Equal("EFFECT_CERTAINTY_DID_NOT_HAPPEN", error.GetProperty("effect").GetString());
+        }
+
+        JsonObject TaskBinding(Id task)
+        {
+            // The verified target log and task row carry public IDs and digests; request bytes are never written to the handshake.
+            var command = Assert.IsType<byte[]>(target.Runtime.Store.Read(reader => reader.Scalar("SELECT remote_command_id FROM task WHERE task_id = $id;",
+                ("$id", task.Value.ToByteArray()))));
+            var digest = Assert.IsType<byte[]>(target.Runtime.Store.Read(reader => reader.Scalar(
+                "SELECT request_sha256 FROM routed_call_log WHERE command_id = $id AND method = 1 AND decision = 1 ORDER BY log_id LIMIT 1;", ("$id", command))));
+            Assert.Equal(16, command.Length);
+            Assert.Equal(32, digest.Length);
+            return new JsonObject
+            {
+                ["taskId"] = new Guid(task.Value.Span, bigEndian: true).ToString("D"),
+                ["commandId"] = new Guid(command, bigEndian: true).ToString("D"),
+                ["requestSha256"] = Convert.ToHexStringLower(digest)
+            };
+        }
+
+        async Task<FleetNode> NodeFromRelayAsync(Id id)
+        {
+            var fleet = new FleetService.FleetServiceClient(relayHuman.CallInvoker);
+            var response = await fleet.ListNodesAsync(new FleetServiceListNodesRequest { Meta = CloudNode.Command() },
+                deadline: DateTime.UtcNow.AddSeconds(20), cancellationToken: Ct);
+            Assert.Null(response.Error);
+            return Assert.Single(response.Value.Nodes, node => node.NodeId.Equals(id));
+        }
+
+        try
+        {
+            SaveObserved();
+            var relayFlow = await BeginAsync(relay, relayHuman, center, directory, "x-relay");
+            await AwaitSignInAsync(relayHuman, relayFlow, "X relay");
+            // This result advances the one browser actor; it is not the result of the two-node acceptance.
+            WriteResult(directory, "x-relay", passed: true, "relay enrollment and connection only; target checks follow");
+            relayResultWritten = true;
+            var targetFlow = await BeginAsync(target, targetHuman, center, directory, "x-target");
+            await AwaitSignInAsync(targetHuman, targetFlow, "X target");
+            Assert.Equal(NodeOnlineState.Online, (await NodeFromRelayAsync(relayId)).Online);
+            Assert.Equal(NodeOnlineState.Online, (await NodeFromRelayAsync(targetId)).Online);
+
+            // X5: a distinct live relay sees a genuinely stopped target as offline, then the same target restarts.
+            var beforeOffline = target.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM task;"));
+            await targetHuman.DisposeAsync();
+            targetHuman = null;
+            Assert.Equal(0, await target.StopAsync());
+            targetRunning = false;
+            await TestNode.WaitAsync(async () => (await NodeFromRelayAsync(targetId)).Online == NodeOnlineState.Offline,
+                ConnectedTimeout, "stopped target is offline at the center");
+            var offline = await PhaseAsync("offline", pty: false, "--json", "run", "--detach", "--node", targetUuid, "--cwd", target.Root,
+                "--title", "x-offline", "--", "/bin/sleep", "1");
+            Refusal(offline, 75, "node_offline");
+            await target.StartAsync();
+            targetRunning = true;
+            targetHuman = await target.ChannelAsync(Origin.Human);
+            Assert.Equal(beforeOffline, target.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM task;")));
+            await AwaitConnectedAsync(targetHuman, "restarted target channel");
+            await TestNode.WaitAsync(async () => (await NodeFromRelayAsync(targetId)).Online == NodeOnlineState.Online,
+                ConnectedTimeout, "restarted target is online at the center");
+
+            // X15 local substitute: PB-2 is closed by default; a target HUMAN opts in, then two actual CLI origins share a queue.
+            var beforeDeny = target.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM task;"));
+            var beforeDenyLog = target.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM routed_call_log WHERE decision = 2 AND refusal_code = 'AUTHORIZATION/permission_denied';"));
+            var denied = await PhaseAsync("cross-node-default", pty: false, "--json", "run", "--detach", "--node", targetUuid, "--cwd", target.Root,
+                "--title", "x-cross-denied", "--", "/bin/sleep", "1");
+            Refusal(denied, 125, "permission_denied");
+            Assert.Equal(beforeDeny, target.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM task;")));
+            Assert.Equal((long)beforeDenyLog! + 1, target.Runtime.Store.Read(reader => reader.Scalar(
+                "SELECT count(*) FROM routed_call_log WHERE decision = 2 AND refusal_code = 'AUTHORIZATION/permission_denied';")));
+            Assert.Contains(target.Runtime.Store.Read(reader => AuditLog.Recent(reader)), entry => entry.Decision == PermissionDecision.Deny
+                && entry.Operation == "task.submit FleetService.SubmitTask" && entry.Actor.Origin == Origin.Remote
+                && entry.Actor.CenterCaller?.RelayingNodeId.Equals(relayId) == true);
+            await SetCrossNodeAsync(targetHuman);
+            Assert.Null((await targetHuman.Queue.SetParallelismAsync(new QueueServiceSetParallelismRequest
+            {
+                Meta = CloudNode.Command(),
+                Scope = ParallelismScope.Pool,
+                Target = "default",
+                Mode = ParallelismMode.Fixed,
+                Fixed = 1,
+            }, cancellationToken: Ct)).Error);
+            Assert.Null((await targetHuman.Queue.PausePoolAsync(new QueueServicePausePoolRequest { Meta = CloudNode.Command(), All = true }, cancellationToken: Ct)).Error);
+            var humanRun = await PhaseAsync("cross-node-human", pty: true, "run", "--detach", "--node", targetUuid, "--cwd", target.Root,
+                "--title", "x-cross-human", "--cpu", "0.1", "--mem", "64MiB", "--", "/bin/sleep", "120");
+            var scriptRun = await PhaseAsync("cross-node-script", pty: false, "run", "--detach", "--node", targetUuid, "--cwd", target.Root,
+                "--title", "x-cross-script", "--cpu", "0.1", "--mem", "64MiB", "--", "/bin/sleep", "120");
+            Assert.Equal(0, humanRun.ExitCode);
+            Assert.Equal(0, scriptRun.ExitCode);
+            Assert.True(IdText.TryParse(humanRun.Output.Trim(), out var humanBytes));
+            Assert.True(IdText.TryParse(scriptRun.Output.Trim(), out var scriptBytes));
+            var humanId = new Id { Value = ByteString.CopyFrom(humanBytes) };
+            var scriptId = new Id { Value = ByteString.CopyFrom(scriptBytes) };
+            observed["crossNodeHuman"] = TaskBinding(humanId);
+            observed["crossNodeScript"] = TaskBinding(scriptId);
+            SaveObserved();
+            await TestNode.WaitAsync(async () =>
+            {
+                var queue = await targetHuman.Queue.GetQueueAsync(new QueueServiceGetQueueRequest { Meta = CloudNode.Command() }, cancellationToken: Ct);
+                return queue.Error is null && queue.Value.Entries.Count(entry => entry.TaskId.Equals(humanId) || entry.TaskId.Equals(scriptId)) == 2;
+            }, TimeSpan.FromSeconds(30), "both cross-node callers share the target queue");
+            var queued = await targetHuman.Queue.GetQueueAsync(new QueueServiceGetQueueRequest { Meta = CloudNode.Command() }, cancellationToken: Ct);
+            Assert.Null(queued.Error);
+            var entries = queued.Value.Entries.Where(entry => entry.TaskId.Equals(humanId) || entry.TaskId.Equals(scriptId)).ToArray();
+            Assert.Equal(2, entries.Length);
+            Assert.NotEqual(entries[0].Queue.Position, entries[1].Queue.Position);
+            Assert.Equal(Origin.Human, entries.Single(entry => entry.TaskId.Equals(humanId)).Owner.CenterCaller.LocalOrigin);
+            Assert.Equal(Origin.Script, entries.Single(entry => entry.TaskId.Equals(scriptId)).Owner.CenterCaller.LocalOrigin);
+            Assert.All(entries, entry => Assert.Equal(relayId, entry.Owner.CenterCaller.RelayingNodeId));
+            Assert.NotEqual(entries[0].Owner.CenterCaller.LocalSessionId, entries[1].Owner.CenterCaller.LocalSessionId);
+            var pool = Assert.Single(queued.Value.Pools, item => item.Name == "default");
+            Assert.Equal((ParallelismMode.Fixed, 1u), (pool.MaxParallelMode, pool.MaxParallelFixed));
+            Assert.Null((await targetHuman.Queue.ResumePoolAsync(new QueueServiceResumePoolRequest { Meta = CloudNode.Command(), All = true }, cancellationToken: Ct)).Error);
+            await TestNode.WaitAsync(async () =>
+            {
+                var queue = await targetHuman.Queue.GetQueueAsync(new QueueServiceGetQueueRequest { Meta = CloudNode.Command() }, cancellationToken: Ct);
+                return queue.Error is null && queue.Value.Budget.GlobalRunning == 1 && queue.Value.Pools.Any(item => item.Name == "default" && item.Running == 1);
+            }, TimeSpan.FromSeconds(30), "one cross-node task in the fixed pool");
+            foreach (var task in new[] { humanId, scriptId })
+            {
+                Assert.Null((await targetHuman.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = CloudNode.Command(), TaskId = task }, cancellationToken: Ct)).Error);
+                Assert.Equal(TaskState.Cancelled, (await WaitLocalAsync(targetHuman, task, WaitTarget.Terminal)).State);
+            }
+
+            // X9: the actual relay CLI sends once while the target's in-process clock is fast; no node task may be created.
+            var beforeExpired = target.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM task;"));
+            var beforeExpiredLog = target.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM routed_call_log WHERE decision = 3 AND refusal_step = 'expired';"));
+            clock.OffsetSeconds = 400;
+            try
+            {
+                var expired = await PhaseAsync("target-clock-plus-400", pty: false, "--json", "run", "--detach", "--node", targetUuid, "--cwd", target.Root,
+                    "--title", "x-expired", "--", "/bin/sleep", "1");
+                Refusal(expired, 125, "expired");
+                Assert.Equal(beforeExpired, target.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM task;")));
+                Assert.Equal((long)beforeExpiredLog! + 1, target.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM routed_call_log WHERE decision = 3 AND refusal_step = 'expired';")));
+            }
+            finally
+            {
+                clock.OffsetSeconds = 0;
+            }
+
+            // X6: this already accepted task must survive the coordinator's targeted device revocation.
+            var survivor = await PhaseAsync("accepted-before-revoke", pty: false, "run", "--detach", "--node", targetUuid, "--cwd", target.Root,
+                "--title", "x-survivor", "--", "/bin/sh", "-c", "while [ ! -e \"$1\" ]; do /bin/sleep 0.2; done", "sh", survivorRelease);
+            Assert.Equal(0, survivor.ExitCode);
+            Assert.True(IdText.TryParse(survivor.Output.Trim(), out var survivorBytes));
+            var survivorId = new Id { Value = ByteString.CopyFrom(survivorBytes) };
+            survivorStarted = true;
+            observed["acceptedBeforeRevoke"] = TaskBinding(survivorId);
+            SaveObserved();
+            Assert.Equal(TaskState.Running, (await WaitLocalAsync(targetHuman, survivorId, WaitTarget.Started)).State);
+            var request = new JsonObject
+            {
+                ["phase"] = "revoke-target",
+                ["targetCase"] = "x-target",
+                ["relayCase"] = "x-relay",
+                ["targetNodeId"] = targetUuid,
+                ["relayNodeId"] = relayUuid
+            };
+            Write(directory, "x-target-revoke.request.json", request);
+            var ackPath = Path.Combine(directory, "x-target-revoke.ack.json");
+            await TestNode.WaitAsync(() => File.Exists(ackPath), TimeSpan.FromMinutes(3), "coordinator target-revocation acknowledgement");
+            using (var ackDocument = JsonDocument.Parse(await File.ReadAllTextAsync(ackPath, Ct)))
+            {
+                var ack = ackDocument.RootElement;
+                foreach (var key in new[] { "phase", "targetCase", "relayCase", "targetNodeId", "relayNodeId" })
+                {
+                    Assert.Equal(request[key]!.GetValue<string>(), ack.GetProperty(key).GetString());
+                }
+                Assert.True(ack.GetProperty("ok").GetBoolean());
+                Assert.True(ack.GetProperty("targetRevoked").GetBoolean());
+                Assert.True(ack.GetProperty("relayStillAuthorized").GetBoolean());
+                Assert.False(string.IsNullOrEmpty(ack.GetProperty("observedUtc").GetString()));
+            }
+            await TestNode.WaitAsync(async () => !(await StatusAsync(targetHuman)).SignedIn, TimeSpan.FromMinutes(2), "target signed out after revocation");
+            var relayStatus = await StatusAsync(relayHuman);
+            Assert.True(relayStatus.SignedIn && relayStatus.Relay == RelayState.Connected, "the separate relay remains authorized and connected");
+            var beforeRevoked = target.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM task;"));
+            var revoked = await PhaseAsync("target-revoked", pty: false, "--json", "run", "--detach", "--node", targetUuid, "--cwd", target.Root,
+                "--title", "x-revoked", "--", "/bin/sleep", "1");
+            Refusal(revoked, 125, "not_found");
+            Assert.Equal(beforeRevoked, target.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM task;")));
+            var afterRevoke = await targetHuman.Tasks.GetTaskAsync(new TaskServiceGetTaskRequest { Meta = CloudNode.Command(), TaskId = survivorId }, cancellationToken: Ct);
+            Assert.Null(afterRevoke.Error);
+            Assert.Equal(TaskState.Running, afterRevoke.Value.Task.State);
+            await File.WriteAllTextAsync(survivorRelease, "release", CancellationToken.None);
+            Assert.Equal(TaskState.Succeeded, (await WaitLocalAsync(targetHuman, survivorId, WaitTarget.Terminal)).State);
+            observed["survivorTaskId"] = new Guid(survivorId.Value.Span, bigEndian: true).ToString("D");
+            SaveObserved();
+            WriteResult(directory, "x-target", passed: true, "two-node CLI checks and target-only staged revocation completed");
+            targetResultWritten = true;
+        }
+        finally
+        {
+            clock.OffsetSeconds = 0;
+            observed["state"] = targetResultWritten ? "passed" : "interrupted";
+            SaveObserved();
+            if (survivorStarted && !File.Exists(survivorRelease))
+            {
+                await File.WriteAllTextAsync(survivorRelease, "release", CancellationToken.None);
+            }
+            if (!relayResultWritten)
+            {
+                WriteResult(directory, "x-relay", passed: false, "interrupted");
+            }
+            if (!targetResultWritten)
+            {
+                WriteResult(directory, "x-target", passed: false, "interrupted");
+            }
+            if (targetHuman is not null)
+            {
+                if (targetRunning)
+                {
+                    await targetHuman.Account.SignOutAsync(new AccountServiceSignOutRequest { Meta = CloudNode.Command(), RevokeRemote = false }, cancellationToken: CancellationToken.None);
+                }
+                await targetHuman.DisposeAsync();
+            }
+            await relayHuman.Account.SignOutAsync(new AccountServiceSignOutRequest { Meta = CloudNode.Command(), RevokeRemote = false }, cancellationToken: CancellationToken.None);
+        }
+    }
+
     /// <summary>Actual SCRIPT CLI retry after a root-controlled local-center interruption; the target node is in process.</summary>
     [Fact(Timeout = 900_000, DisableParallelization = true)]
     [Trait("isolation", "exclusive")]
