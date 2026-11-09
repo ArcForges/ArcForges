@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text;
 using ArcForges.Node.Core.Platform;
 
@@ -7,7 +8,7 @@ namespace ArcForges.Node.Core.Tests;
 
 /// <summary>AF-CTR-06: actual native opened identities and no-follow workspace resolution.</summary>
 [Trait("feature", "workspace-path")]
-public sealed class WorkspacePathTests
+public sealed partial class WorkspacePathTests
 {
     [Fact(Timeout = 30_000)]
     public void ActualHandlesRemainAnchoredAfterOpeningAnotherDirectory()
@@ -103,6 +104,7 @@ public sealed class WorkspacePathTests
         Assert.Throws<WorkspacePathException>(() => opened.OpenRead("final.txt"));
         Assert.Throws<WorkspacePathException>(() => opened.OpenRead("fifo"));
         Assert.Throws<WorkspacePathException>(() => WorkspacePath.OpenRoot(Path.Combine(root, "jump")));
+        Assert.Equal("path_invalid", Assert.Throws<WorkspacePathException>(() => WorkspacePath.OpenRoot(Path.Combine(root, "jump", "..", "root"))).Reason);
         Assert.Equal("outside marker", File.ReadAllText(Path.Combine(outside, "secret.txt")));
     }
 
@@ -121,6 +123,7 @@ public sealed class WorkspacePathTests
         using (var opened = WorkspacePath.OpenRoot(root))
         {
             Assert.Throws<WorkspacePathException>(() => opened.OpenRead("jump/secret.txt"));
+            Assert.Equal("path_invalid", Assert.Throws<WorkspacePathException>(() => WorkspacePath.OpenRoot(Path.Combine(root, "jump", "..", "root"))).Reason);
             foreach (var path in (string[])["NUL", "con.txt", "aux.log", "COM1.txt", "LPT9", "COM\u00b9", "name.", "name ", "normal:stream"])
             {
                 Assert.Throws<WorkspacePathException>(() => WorkspacePath.Components(path));
@@ -231,6 +234,209 @@ public sealed class WorkspacePathTests
             previous = next.RootIdentity;
         }
     }
+
+    [Fact(Timeout = 30_000)]
+    public void RawAbsoluteRootComponentsAreCheckedBeforeNormalization()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        using var fixture = new OwnedDirectory();
+        var target = Directory.CreateDirectory(Path.Combine(fixture.Path, "target")).FullName;
+        var separator = Path.DirectorySeparatorChar;
+        foreach (var invalid in new[]
+        {
+            fixture.Path + separator + "." + separator + "target",
+            fixture.Path + separator + "jump" + separator + ".." + separator + "target",
+            fixture.Path + separator + separator + "target",
+            target + separator,
+        })
+        {
+            Assert.Equal("path_invalid", Assert.Throws<WorkspacePathException>(() => WorkspacePath.OpenRoot(invalid)).Reason);
+        }
+
+        using var opened = WorkspacePath.OpenRoot(target);
+        Assert.True(opened.RootIdentity.IsDirectory);
+    }
+
+    [Fact(Timeout = 30_000)]
+    [Trait("env", "linux-real")]
+    public void LinuxParentMovedOutsideCannotSupplyANewFileToTheRootLookup()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "Linux native root-relative lookup");
+        using var fixture = new OwnedDirectory();
+        var root = Directory.CreateDirectory(Path.Combine(fixture.Path, "root")).FullName;
+        var parent = Directory.CreateDirectory(Path.Combine(root, "parent")).FullName;
+        var moved = Path.Combine(fixture.Path, "outside-parent");
+        using var opened = WorkspacePath.OpenRoot(root);
+        var retainedParent = opened.OpenDirectory("parent");
+        var before = WorkspacePath.Identity(retainedParent);
+        Directory.Move(parent, moved);
+        File.WriteAllText(Path.Combine(moved, "external.txt"), "outside synthetic data");
+        Assert.True(before.SameObject(WorkspacePath.Identity(retainedParent)));
+        Assert.Throws<WorkspacePathException>(() => opened.OpenRead("parent/external.txt"));
+        Assert.Equal("outside synthetic data", File.ReadAllText(Path.Combine(moved, "external.txt")));
+    }
+
+    [Fact(Timeout = 30_000)]
+    [Trait("env", "linux-real")]
+    public void LinuxFifoIsRejectedWithoutEnablingAnExternalWriter()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "Linux FIFO native open semantics");
+        using var fixture = new OwnedDirectory();
+        var fifo = Path.Combine(fixture.Path, "fifo");
+        Run("mkfifo", [fifo]);
+        using var opened = WorkspacePath.OpenRoot(fixture.Path);
+        static void AssertNoReader(string path)
+        {
+            var writer = OpenLinux(path, 1 | 0x800 | 0x80000);
+            var error = Marshal.GetLastPInvokeError();
+            if (writer >= 0)
+            {
+                CloseLinux(writer);
+            }
+
+            Assert.True(writer < 0 && error == 6, "FIFO writer must receive ENXIO while there is no data reader");
+        }
+
+        AssertNoReader(fifo);
+        var reachedCheckpoint = false;
+        var failure = Assert.Throws<WorkspacePathException>(() => opened.OpenRead("fifo", () =>
+        {
+            reachedCheckpoint = true;
+            AssertNoReader(fifo);
+        }));
+        Assert.True(reachedCheckpoint);
+        Assert.Equal("path_link_or_special", failure.Reason);
+        AssertNoReader(fifo);
+        foreach (var entry in Directory.EnumerateFileSystemEntries("/proc/self/fd"))
+        {
+            string? target;
+            try
+            {
+                target = new FileInfo(entry).LinkTarget;
+            }
+            catch (IOException)
+            {
+                continue; // Another runtime-owned descriptor can close during enumeration.
+            }
+
+            Assert.NotEqual(fifo, target);
+        }
+    }
+
+    [Fact(Timeout = 30_000)]
+    [Trait("env", "linux-real")]
+    public void LinuxDataReopenUsesTheCheckedObjectAfterItsNameIsReplaced()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "Linux procfs handle reopening");
+        using var fixture = new OwnedDirectory();
+        var root = Directory.CreateDirectory(Path.Combine(fixture.Path, "root")).FullName;
+        var target = Path.Combine(root, "file");
+        var original = Path.Combine(root, "retained");
+        var outside = Path.Combine(fixture.Path, "outside");
+        File.WriteAllText(target, "verified object");
+        File.WriteAllText(outside, "outside marker");
+        using var opened = WorkspacePath.OpenRoot(root);
+        var reachedCheckpoint = false;
+        var file = opened.OpenRead("file", () =>
+        {
+            reachedCheckpoint = true;
+            File.Move(target, original);
+            File.CreateSymbolicLink(target, outside);
+        });
+        Assert.True(reachedCheckpoint);
+        Assert.Equal("verified object", Read(file));
+        Assert.Throws<WorkspacePathException>(() => opened.OpenRead("file"));
+        Assert.Equal("outside marker", File.ReadAllText(outside));
+    }
+
+    [Fact(Timeout = 30_000)]
+    [Trait("env", "linux-real")]
+    public void LinuxLiteralDeletedSuffixIsAllowedButAnUnlinkedRootIsRefused()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "Linux deleted-object metadata");
+        using var fixture = new OwnedDirectory();
+        var live = Directory.CreateDirectory(Path.Combine(fixture.Path, "valid (deleted)")).FullName;
+        using (var opened = WorkspacePath.OpenRoot(live))
+        {
+            Assert.Equal(live, opened.RootPath);
+            Assert.True(opened.RootIdentity.Links > 0);
+            using var reopened = WorkspacePath.OpenRoot(live, opened.RootIdentity);
+            Assert.True(opened.RootIdentity.SameObject(reopened.RootIdentity));
+        }
+
+        var removed = Directory.CreateDirectory(Path.Combine(fixture.Path, "removed")).FullName;
+        var failure = Assert.Throws<WorkspacePathException>(() => WorkspacePath.OpenRoot(removed, expected: null, afterRootOpen: () =>
+        {
+            Directory.Delete(removed);
+            Directory.CreateDirectory(removed);
+        }));
+        Assert.Equal("root_changed", failure.Reason);
+        using var replacement = WorkspacePath.OpenRoot(removed);
+        Assert.Equal(removed, replacement.RootPath);
+    }
+
+    [Fact(Timeout = 30_000)]
+    [Trait("env", "linux-real")]
+    public void LinuxSearchOnlyAncestorDoesNotNeedDirectoryReadPermission()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "Linux search-only ancestor permission");
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        using var fixture = new OwnedDirectory();
+        var ancestor = Directory.CreateDirectory(Path.Combine(fixture.Path, "search-only")).FullName;
+        var root = Directory.CreateDirectory(Path.Combine(ancestor, "root")).FullName;
+        File.WriteAllText(Path.Combine(root, "visible.txt"), "known child");
+        var nested = Directory.CreateDirectory(Path.Combine(root, "nested-search-only")).FullName;
+        File.WriteAllText(Path.Combine(nested, "visible.txt"), "known nested child");
+        var previousMode = File.GetUnixFileMode(ancestor);
+        var previousNestedMode = File.GetUnixFileMode(nested);
+        try
+        {
+            File.SetUnixFileMode(ancestor, UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute);
+            File.SetUnixFileMode(nested, UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute);
+            var readFd = OpenLinux(ancestor, 0x10000 | 0x80000);
+            var readError = Marshal.GetLastPInvokeError();
+            if (readFd >= 0)
+            {
+                CloseLinux(readFd);
+            }
+
+            Assert.True(readFd < 0 && readError == 13, "a read-mode directory open must receive EACCES");
+            var metadataFd = OpenLinux(ancestor, 0x200000 | 0x10000 | 0x80000);
+            Assert.True(metadataFd >= 0, "O_PATH must retain search-only ancestor access");
+            CloseLinux(metadataFd);
+            var nestedRead = OpenLinux(nested, 0x10000 | 0x80000);
+            var nestedError = Marshal.GetLastPInvokeError();
+            if (nestedRead >= 0)
+            {
+                CloseLinux(nestedRead);
+            }
+
+            Assert.True(nestedRead < 0 && nestedError == 13, "the intermediate directory must also deny reading");
+            using var opened = WorkspacePath.OpenRoot(root);
+            Assert.Equal("known child", Read(opened.OpenRead("visible.txt")));
+            Assert.Equal("known nested child", Read(opened.OpenRead("nested-search-only/visible.txt")));
+        }
+        finally
+        {
+            File.SetUnixFileMode(nested, previousNestedMode);
+            File.SetUnixFileMode(ancestor, previousMode);
+        }
+    }
+
+    [LibraryImport("libc", EntryPoint = "open", StringMarshalling = StringMarshalling.Utf8, SetLastError = true)]
+    private static partial int OpenLinux(string name, int flags);
+
+    [LibraryImport("libc", EntryPoint = "close", SetLastError = true)]
+    private static partial int CloseLinux(int descriptor);
 
     private static string Read(Microsoft.Win32.SafeHandles.SafeFileHandle handle)
     {

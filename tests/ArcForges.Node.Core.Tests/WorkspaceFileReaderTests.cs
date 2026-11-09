@@ -92,6 +92,102 @@ public sealed class WorkspaceFileReaderTests
         Assert.Throws<OperationCanceledException>(() => WorkspaceFileReader.Read(root, "missing.bin", 0, 1, cancelled.Token));
     }
 
+    [Fact(Timeout = 30_000)]
+    public void CancellationAtEofRefusesWithoutInventingAContentDigest()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        using var fixture = new OwnedDirectory();
+        File.WriteAllBytes(Path.Combine(fixture.Path, "four.bin"), [1, 2, 3, 4]);
+        using var root = WorkspacePath.OpenRoot(fixture.Path);
+        using var cancelled = new CancellationTokenSource();
+        var failure = Assert.Throws<WorkspaceReadException>(() => WorkspaceFileReader.Read(root, "four.bin", 4, 1, phase =>
+        {
+            if (phase == WorkspaceReadCheckpoint.AfterInitialSize)
+            {
+                cancelled.Cancel();
+            }
+        }, cancelled.Token));
+        Assert.Equal("file_read_cancelled", failure.Reason);
+        Assert.Equal(0, failure.ObservedBytes);
+        Assert.Null(failure.ObservedSha256);
+    }
+
+    [Fact(Timeout = 30_000)]
+    public void CancellationAfterPartialNativeReadsPreservesOnlyObservedByteDigest()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        using var fixture = new OwnedDirectory();
+        var bytes = Enumerable.Range(0, 65_536).Select(i => (byte)(i % 251)).ToArray();
+        File.WriteAllBytes(Path.Combine(fixture.Path, "payload.bin"), bytes);
+        using var root = WorkspacePath.OpenRoot(fixture.Path);
+        using var cancelled = new CancellationTokenSource();
+        var failure = Assert.Throws<WorkspaceReadException>(() => WorkspaceFileReader.Read(root, "payload.bin", 0, (ulong)bytes.Length, phase =>
+        {
+            if (phase == WorkspaceReadCheckpoint.AfterBytesRead)
+            {
+                cancelled.Cancel();
+            }
+        }, cancelled.Token));
+        Assert.Equal("file_read_cancelled", failure.Reason);
+        Assert.InRange(failure.ObservedBytes, 1, bytes.Length - 1);
+        Assert.NotNull(failure.ObservedSha256);
+        Assert.Equal(SHA256.HashData(bytes.AsSpan(0, failure.ObservedBytes)), failure.ObservedSha256.Value.ToArray());
+    }
+
+    [Fact(Timeout = 30_000)]
+    [Trait("env", "linux-real")]
+    public void GrowthAfterTheInitialEofCheckIsNotAZeroProgressContinuation()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "Linux competing writer on an open file");
+        using var fixture = new OwnedDirectory();
+        var path = Path.Combine(fixture.Path, "four.bin");
+        File.WriteAllBytes(path, [1, 2, 3, 4]);
+        using var root = WorkspacePath.OpenRoot(fixture.Path);
+        var failure = Assert.Throws<WorkspaceReadException>(() => WorkspaceFileReader.Read(root, "four.bin", 4, 1, phase =>
+        {
+            if (phase == WorkspaceReadCheckpoint.AfterInitialSize)
+            {
+                using var writer = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
+                writer.WriteByte(5);
+            }
+        }, TestContext.Current.CancellationToken));
+        Assert.Equal("file_changed_while_reading", failure.Reason);
+        Assert.Equal(0, failure.ObservedBytes);
+        Assert.Null(failure.ObservedSha256);
+        Assert.Equal(new byte[] { 1, 2, 3, 4, 5 }, File.ReadAllBytes(path));
+    }
+
+    [Fact(Timeout = 30_000)]
+    [Trait("env", "linux-real")]
+    public void HardLinkAddedAfterInitialEofCheckFailsTheFinalIdentityCheck()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "Linux competing hard-link change");
+        using var fixture = new OwnedDirectory();
+        var path = Path.Combine(fixture.Path, "four.bin");
+        var alias = Path.Combine(fixture.Path, "alias.bin");
+        File.WriteAllBytes(path, [1, 2, 3, 4]);
+        using var root = WorkspacePath.OpenRoot(fixture.Path);
+        var failure = Assert.Throws<WorkspaceReadException>(() => WorkspaceFileReader.Read(root, "four.bin", 4, 1, phase =>
+        {
+            if (phase == WorkspaceReadCheckpoint.AfterInitialSize)
+            {
+                using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("ln", [path, alias])
+                {
+                    RedirectStandardError = true,
+                    CreateNoWindow = true,
+                })!;
+                var error = process.StandardError.ReadToEnd();
+                Assert.True(process.WaitForExit(10_000) && process.ExitCode == 0, "hard-link setup: " + error);
+            }
+        }, TestContext.Current.CancellationToken));
+        Assert.Equal("file_changed_while_reading", failure.Reason);
+        Assert.Equal(0, failure.ObservedBytes);
+        Assert.Null(failure.ObservedSha256);
+        Assert.Equal(new byte[] { 1, 2, 3, 4 }, File.ReadAllBytes(alias));
+    }
+
     private sealed class OwnedDirectory : IDisposable
     {
         private readonly DirectoryInfo _directory = Directory.CreateTempSubdirectory("arcforges-workspace-read-");

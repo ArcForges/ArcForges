@@ -41,6 +41,7 @@ internal sealed partial class WorkspacePath : IDisposable
     private readonly List<SafeFileHandle> _directories = [];
     private readonly List<SafeFileHandle> _files = [];
     private SafeFileHandle? _rootHandle;
+    private byte[]? _linuxFileSystemUuid;
     private bool _disposed;
 
     private WorkspacePath()
@@ -60,39 +61,65 @@ internal sealed partial class WorkspacePath : IDisposable
     /// Opens an existing absolute directory without following any component's link and records the actual root identity.
     /// A supplied expected identity is checked before serving a registered workspace again.
     /// </summary>
-    public static WorkspacePath OpenRoot(string path, WorkspaceObjectIdentity? expected = null)
+    public static WorkspacePath OpenRoot(string path, WorkspaceObjectIdentity? expected = null) => OpenRoot(path, expected, afterRootOpen: null);
+
+    // The callback only coordinates actual filesystem races in component tests; production passes no callback.
+    internal static WorkspacePath OpenRoot(string path, WorkspaceObjectIdentity? expected, Action? afterRootOpen)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         ValidateUtf8Path(path);
+        if (path.Contains('\0', StringComparison.Ordinal))
+        {
+            throw new WorkspacePathException("path_invalid");
+        }
+
         if (!Path.IsPathFullyQualified(path))
         {
             throw new WorkspacePathException("root_not_absolute");
         }
 
-        var full = Path.GetFullPath(path);
-        var root = Path.GetPathRoot(full) ?? throw new WorkspacePathException("root_not_absolute");
+        // Reject the supplied components before any normalization can erase ".", "..", or an empty component.
+        var root = Path.GetPathRoot(path) ?? throw new WorkspacePathException("root_not_absolute");
         if (OperatingSystem.IsWindows() && (root.Length != 3 || !char.IsAsciiLetter(root[0]) || root[1] != ':'))
         {
             throw new WorkspacePathException("root_not_supported");
         }
 
+        var raw = path[root.Length..];
+        var parts = raw.Length == 0 ? [] : raw.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.None);
+        foreach (var component in parts)
+        {
+            ValidateComponent(component);
+        }
+
         var owner = new WorkspacePath();
         try
         {
-            var first = OperatingSystem.IsWindows() ? WindowsRoot(root) : LinuxOpen(-100, "/", directory: true);
-            owner._directories.Add(first);
-            var current = first;
-            var relative = full[root.Length..].TrimEnd(Path.DirectorySeparatorChar);
-            foreach (var component in relative.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
+            SafeFileHandle current;
+            if (OperatingSystem.IsLinux())
             {
-                ValidateComponent(component);
-                current = OpenChild(current, component, directory: true);
-                owner._directories.Add(current);
+                // Registration may traverse to a filesystem mounted below /; the registered root anchors later NO_XDEV lookups.
+                using var slash = LinuxOpenSlash();
+                using var metadata = LinuxOpenAt2(slash, parts.Length == 0 ? "." : string.Join('/', parts), noCrossMount: false);
+                current = Retain(owner._directories, LinuxReopenChecked(metadata, directory: true, knownUuid: null, afterMetadataOpen: null));
+                owner._linuxFileSystemUuid = LinuxFileSystemUuid(current);
+            }
+            else if (OperatingSystem.IsWindows())
+            {
+                current = Retain(owner._directories, WindowsRoot(root));
+                foreach (var component in parts)
+                {
+                    current = Retain(owner._directories, OpenChild(current, component, directory: true));
+                }
+            }
+            else
+            {
+                throw new WorkspacePathException("path_enforcement_unavailable");
             }
 
             owner._rootHandle = current;
             owner.RootIdentity = Identity(current);
-            if (!owner.RootIdentity.IsDirectory)
+            if (!owner.RootIdentity.IsDirectory || owner.RootIdentity.Links == 0)
             {
                 throw new WorkspacePathException("root_not_directory");
             }
@@ -102,7 +129,8 @@ internal sealed partial class WorkspacePath : IDisposable
                 throw new WorkspacePathException("root_changed");
             }
 
-            owner.RootPath = FinalPath(current);
+            afterRootOpen?.Invoke();
+            owner.RootPath = FinalPath(current, path);
             return owner;
         }
         catch
@@ -137,32 +165,51 @@ internal sealed partial class WorkspacePath : IDisposable
         return parts;
     }
 
-    /// <summary>Opens a checked directory beneath this root, retaining the complete directory chain.</summary>
+    /// <summary>Opens a checked directory beneath this root, retaining its handle until disposal.</summary>
     public SafeFileHandle OpenDirectory(string path)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        var current = RootHandle;
-        foreach (var component in Components(path, allowRoot: true))
+        var parts = Components(path, allowRoot: true);
+        if (parts.Length == 0)
         {
-            current = OpenChild(current, component, directory: true);
-            _directories.Add(current);
-            CheckVolume(current);
+            return RootHandle;
+        }
+
+        if (OperatingSystem.IsLinux())
+        {
+            using var metadata = LinuxOpenAt2(RootHandle, string.Join('/', parts), noCrossMount: true);
+            CheckVolume(metadata, _linuxFileSystemUuid);
+            return Retain(_directories, LinuxReopenChecked(metadata, directory: true, _linuxFileSystemUuid, afterMetadataOpen: null));
+        }
+
+        var current = RootHandle;
+        foreach (var component in parts)
+        {
+            current = RetainCheckedDirectory(OpenChild(current, component, directory: true));
         }
 
         return current;
     }
 
     /// <summary>Opens a regular single-link file for reading beneath the root; callers never reopen its unchecked path.</summary>
-    public SafeFileHandle OpenRead(string path)
+    public SafeFileHandle OpenRead(string path) => OpenRead(path, afterMetadataOpen: null);
+
+    // The callback only coordinates real filesystem races in component tests; production passes no callback.
+    internal SafeFileHandle OpenRead(string path, Action? afterMetadataOpen)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         var parts = Components(path);
+        if (OperatingSystem.IsLinux())
+        {
+            using var metadata = LinuxOpenAt2(RootHandle, string.Join('/', parts), noCrossMount: true);
+            CheckVolume(metadata, _linuxFileSystemUuid);
+            return Retain(_files, LinuxReopenChecked(metadata, directory: false, _linuxFileSystemUuid, afterMetadataOpen));
+        }
+
         var parent = RootHandle;
         foreach (var component in parts.AsSpan(0, parts.Length - 1))
         {
-            parent = OpenChild(parent, component, directory: true);
-            _directories.Add(parent);
-            CheckVolume(parent);
+            parent = RetainCheckedDirectory(OpenChild(parent, component, directory: true));
         }
 
         var file = OpenChild(parent, parts[^1], directory: false);
@@ -175,8 +222,7 @@ internal sealed partial class WorkspacePath : IDisposable
             }
 
             CheckVolume(file);
-            _files.Add(file);
-            return file;
+            return Retain(_files, file);
         }
         catch
         {
@@ -212,9 +258,37 @@ internal sealed partial class WorkspacePath : IDisposable
         }
     }
 
-    private void CheckVolume(SafeFileHandle handle)
+    private static SafeFileHandle Retain(List<SafeFileHandle> handles, SafeFileHandle handle)
     {
-        var identity = Identity(handle);
+        try
+        {
+            handles.Add(handle);
+            return handle;
+        }
+        catch
+        {
+            handle.Dispose();
+            throw;
+        }
+    }
+
+    private SafeFileHandle RetainCheckedDirectory(SafeFileHandle directory)
+    {
+        try
+        {
+            CheckVolume(directory);
+            return Retain(_directories, directory);
+        }
+        catch
+        {
+            directory.Dispose();
+            throw;
+        }
+    }
+
+    private void CheckVolume(SafeFileHandle handle, byte[]? linuxUuid = null)
+    {
+        var identity = OperatingSystem.IsLinux() ? LinuxIdentity(handle, linuxUuid) : Identity(handle);
         if (identity.Volume != RootIdentity.Volume || identity.High != RootIdentity.High && OperatingSystem.IsLinux())
         {
             throw new WorkspacePathException("mount_crossing");
@@ -267,7 +341,7 @@ internal sealed partial class WorkspacePath : IDisposable
 
     private static SafeFileHandle OpenChild(SafeFileHandle parent, string component, bool directory)
     {
-        var handle = OperatingSystem.IsWindows() ? WindowsOpen(parent, component, directory) : LinuxOpen(checked((int)parent.DangerousGetHandle()), component, directory);
+        var handle = WindowsOpen(parent, component, directory);
         try
         {
             var identity = Identity(handle);
@@ -285,24 +359,123 @@ internal sealed partial class WorkspacePath : IDisposable
         }
     }
 
-    private static SafeFileHandle LinuxOpen(int parent, string name, bool directory)
+    private static SafeFileHandle LinuxOpenSlash()
     {
-        // O_NONBLOCK prevents a raced-in FIFO from blocking the control loop; fstat refuses any non-regular final object.
-        const int ReadOnly = 0;
-        const int NonBlock = 0x800;
-        const int CloseOnExec = 0x80000;
-        const int NoFollow = 0x20000;
-        const int Directory = 0x10000;
-        var descriptor = OpenAt(parent, name, ReadOnly | NonBlock | CloseOnExec | NoFollow | (directory ? Directory : 0), 0);
+        // The literal filesystem root is opened as metadata only; registration does not read ancestors.
+        var descriptor = OpenAt(-100, "/", 0x200000 | 0x80000 | 0x20000 | 0x10000, 0);
+        return descriptor < 0 ? throw NativeFailure() : new SafeFileHandle(descriptor, ownsHandle: true);
+    }
+
+    private static unsafe SafeFileHandle LinuxOpenAt2(SafeFileHandle root, string path, bool noCrossMount)
+    {
+        // One lookup from the live anchor, so moving a previously opened intermediate directory cannot redirect the rest.
+        return LinuxOpenAt2(root, path, 0x200000 | 0x80000 | 0x20000, 0x08 | 0x04 | 0x02 | (noCrossMount ? 0x01u : 0u));
+    }
+
+    private static unsafe SafeFileHandle LinuxOpenAt2(SafeFileHandle root, string path, ulong flags, ulong resolve)
+    {
+        if (RuntimeInformation.ProcessArchitecture is not (Architecture.X64 or Architecture.Arm64))
+        {
+            throw new WorkspacePathException("path_enforcement_unavailable");
+        }
+
+        var retained = false;
+        try
+        {
+            root.DangerousAddRef(ref retained);
+            var how = new LinuxOpenHow { Flags = flags, Resolve = resolve };
+            var descriptor = LinuxSyscall(437, checked((int)root.DangerousGetHandle()), path, ref how, (nuint)sizeof(LinuxOpenHow));
+            if (descriptor < 0)
+            {
+                var error = Marshal.GetLastPInvokeError();
+                throw error is 1 or 7 or 22 or 38 or 95 ? new WorkspacePathException("path_enforcement_unavailable") : NativeFailure();
+            }
+
+            return new SafeFileHandle(checked((nint)descriptor), ownsHandle: true);
+        }
+        finally
+        {
+            if (retained)
+            {
+                root.DangerousRelease();
+            }
+        }
+    }
+
+    private static SafeFileHandle LinuxReopenChecked(SafeFileHandle metadata, bool directory, byte[]? knownUuid, Action? afterMetadataOpen)
+    {
+        // O_PATH has no data-open effect. In particular, a FIFO or device is refused before any data handle is opened.
+        var original = LinuxBasicIdentity(metadata);
+        afterMetadataOpen?.Invoke();
+        RequireLinuxKind(original, directory);
+
+        // For ordinary descendants the root's UUID makes the full identity available before the data open.
+        var prior = knownUuid is null ? original : LinuxIdentity(metadata, knownUuid);
+        if (!SameLinuxSnapshot(original, prior))
+        {
+            throw new WorkspacePathException("file_identity_changed");
+        }
+
+        using var proc = LinuxProcFdDirectory();
+        var descriptor = OpenAt(checked((int)proc.DangerousGetHandle()), metadata.DangerousGetHandle().ToInt64().ToString(CultureInfo.InvariantCulture),
+            0x80000 | 0x800 | (directory ? 0x10000 : 0), 0);
         if (descriptor < 0)
         {
             throw NativeFailure();
         }
 
-        return new SafeFileHandle(descriptor, ownsHandle: true);
+        var result = new SafeFileHandle(descriptor, ownsHandle: true);
+        try
+        {
+            var actualUuid = LinuxFileSystemUuid(result);
+            if (knownUuid is not null && !knownUuid.AsSpan().SequenceEqual(actualUuid))
+            {
+                throw new WorkspacePathException("mount_crossing");
+            }
+
+            var held = LinuxIdentity(metadata, actualUuid);
+            var reopened = LinuxIdentity(result, actualUuid);
+            RequireLinuxKind(held, directory);
+            RequireLinuxKind(reopened, directory);
+            if (!SameLinuxSnapshot(original, held) || !SameLinuxSnapshot(held, reopened) || !held.SameObject(reopened) ||
+                (knownUuid is not null && !prior.SameObject(held)))
+            {
+                throw new WorkspacePathException("file_identity_changed");
+            }
+
+            return result;
+        }
+        catch
+        {
+            result.Dispose();
+            throw;
+        }
     }
 
-    private static unsafe WorkspaceObjectIdentity LinuxIdentity(SafeFileHandle handle)
+    private static void RequireLinuxKind(WorkspaceObjectIdentity identity, bool directory)
+    {
+        if (directory ? !identity.IsDirectory : !identity.IsFile)
+        {
+            throw new WorkspacePathException("path_link_or_special");
+        }
+
+        if (!directory && identity.Links != 1)
+        {
+            throw new WorkspacePathException("file_hard_link");
+        }
+
+        if (directory && identity.Links == 0)
+        {
+            throw new WorkspacePathException("root_changed");
+        }
+    }
+
+    private static bool SameLinuxSnapshot(WorkspaceObjectIdentity first, WorkspaceObjectIdentity second) =>
+        first.Volume == second.Volume && first.High == second.High && first.Low == second.Low &&
+        first.Created == second.Created && first.CreatedNanoseconds == second.CreatedNanoseconds &&
+        first.Mode == second.Mode && first.Links == second.Links;
+
+    private static unsafe WorkspaceObjectIdentity LinuxBasicIdentity(SafeFileHandle handle)
     {
         // Birth time is part of the persistent identity; unsupported metadata cannot silently become zero.
         const uint Required = 0x1000 | 0x800 | 0x100 | 0x4 | 0x1;
@@ -313,15 +486,30 @@ internal sealed partial class WorkspacePath : IDisposable
             throw new WorkspacePathException("identity_unavailable");
         }
 
-        // Inodes and birth times can both repeat within one clock tick. A filesystem UUID and opaque export handle
-        // distinguish the actual instance (including its filesystem generation) without treating a volatile mount ID as durable.
-        var instance = LinuxInstanceToken(handle, *(ulong*)(buffer + 144));
-
         var mode = *(ushort*)(buffer + 28);
         var created = unchecked((ulong)*(long*)(buffer + 80));
         var createdNanos = *(uint*)(buffer + 88);
         return new WorkspaceObjectIdentity(((ulong)*(uint*)(buffer + 136) << 32) | *(uint*)(buffer + 140),
-            *(ulong*)(buffer + 32), *(ulong*)(buffer + 144), created, createdNanos, *(uint*)(buffer + 16), mode, instance);
+            *(ulong*)(buffer + 32), *(ulong*)(buffer + 144), created, createdNanos, *(uint*)(buffer + 16), mode);
+    }
+
+    private static WorkspaceObjectIdentity LinuxIdentity(SafeFileHandle handle, byte[]? knownUuid = null)
+    {
+        var retained = false;
+        try
+        {
+            handle.DangerousAddRef(ref retained);
+            var identity = LinuxBasicIdentity(handle);
+            var uuid = knownUuid ?? LinuxFileSystemUuid(handle);
+            return identity with { InstanceToken = LinuxInstanceToken(handle, identity.High, uuid) };
+        }
+        finally
+        {
+            if (retained)
+            {
+                handle.DangerousRelease();
+            }
+        }
     }
 
     private static SafeFileHandle WindowsRoot(string path)
@@ -378,7 +566,7 @@ internal sealed partial class WorkspacePath : IDisposable
             (information.FileAttributes & 0x10) != 0 ? 0x4000u : 0x8000u);
     }
 
-    private static string FinalPath(SafeFileHandle handle)
+    private static string FinalPath(SafeFileHandle handle, string requestedPath)
     {
         if (OperatingSystem.IsWindows())
         {
@@ -393,16 +581,74 @@ internal sealed partial class WorkspacePath : IDisposable
             return windowsCanonical.StartsWith("\\\\?\\", StringComparison.Ordinal) ? windowsCanonical[4..] : throw new WorkspacePathException("root_not_supported");
         }
 
-        var name = "/proc/self/fd/" + handle.DangerousGetHandle().ToInt64().ToString(CultureInfo.InvariantCulture);
+        using var proc = LinuxProcFdDirectory();
+        var descriptorName = handle.DangerousGetHandle().ToInt64().ToString(CultureInfo.InvariantCulture);
         var bytes = new byte[16384];
-        var length = ReadLink(name, bytes, (nuint)bytes.Length);
+        var length = ReadLinkAt(checked((int)proc.DangerousGetHandle()), descriptorName, bytes, (nuint)bytes.Length);
         if (length <= 0 || length >= bytes.Length)
         {
             throw new WorkspacePathException("canonical_path_unavailable");
         }
 
-        var canonical = StrictUtf8.GetString(bytes, 0, checked((int)length));
-        return canonical.EndsWith(" (deleted)", StringComparison.Ordinal) ? throw new WorkspacePathException("root_changed") : canonical;
+        string canonical;
+        try
+        {
+            canonical = StrictUtf8.GetString(bytes, 0, checked((int)length));
+        }
+        catch (DecoderFallbackException exception)
+        {
+            throw new WorkspacePathException("canonical_path_unavailable", exception);
+        }
+
+        // The readlink suffix " (deleted)" is ambiguous: use native link count and the exact originally requested name.
+        var current = LinuxBasicIdentity(handle);
+        if (!current.IsDirectory || current.Links == 0 || !canonical.Equals(requestedPath, StringComparison.Ordinal))
+        {
+            throw new WorkspacePathException("root_changed");
+        }
+
+        return canonical;
+    }
+
+    private static unsafe SafeFileHandle LinuxProcFdDirectory()
+    {
+        var raw = OpenAt(-100, "/proc", 0x200000 | 0x80000 | 0x20000 | 0x10000, 0);
+        if (raw < 0)
+        {
+            throw new WorkspacePathException("procfs_unavailable");
+        }
+
+        using var procRoot = new SafeFileHandle(raw, ownsHandle: true);
+        RequireProcFs(procRoot);
+        var self = new byte[32];
+        var count = ReadLinkAt(raw, "self", self, (nuint)self.Length);
+        var expected = GetProcessId().ToString(CultureInfo.InvariantCulture);
+        if (count <= 0 || count >= self.Length || Encoding.ASCII.GetString(self, 0, checked((int)count)) != expected)
+        {
+            throw new WorkspacePathException("procfs_unavailable");
+        }
+
+        // Resolve the kernel's self link inside the verified proc mount, forbidding any mount crossing.
+        var descriptors = LinuxOpenAt2(procRoot, "self/fd", 0x200000 | 0x80000 | 0x10000, 0x08 | 0x01);
+        try
+        {
+            RequireProcFs(descriptors);
+            return descriptors;
+        }
+        catch
+        {
+            descriptors.Dispose();
+            throw;
+        }
+    }
+
+    private static unsafe void RequireProcFs(SafeFileHandle handle)
+    {
+        var buffer = stackalloc byte[256];
+        if (FStatFs(checked((int)handle.DangerousGetHandle()), buffer) != 0 || *(long*)buffer != 0x9fa0)
+        {
+            throw new WorkspacePathException("procfs_unavailable");
+        }
     }
 
     private static WorkspacePathException NativeFailure() => new("native_" + Marshal.GetLastPInvokeError().ToString(CultureInfo.InvariantCulture));
@@ -413,7 +659,21 @@ internal sealed partial class WorkspacePath : IDisposable
     [LibraryImport("libc", EntryPoint = "statx", StringMarshalling = StringMarshalling.Utf8, SetLastError = true)]
     private static unsafe partial int Statx(int directory, string path, int flags, uint mask, byte* buffer);
 
-    private static unsafe byte[] LinuxInstanceToken(SafeFileHandle handle, ulong mountId)
+    private static unsafe byte[] LinuxFileSystemUuid(SafeFileHandle handle)
+    {
+        var uuid = stackalloc byte[17];
+        new Span<byte>(uuid, 17).Clear();
+        // FS_IOC_GETFSUUID, a read-only generic Linux ioctl; fsuuid2 is a length byte plus sixteen UUID bytes.
+        if (ReadFileSystemUuid(checked((int)handle.DangerousGetHandle()), 0x80111500, uuid) != 0 || uuid[0] != 16 ||
+            new ReadOnlySpan<byte>(uuid + 1, 16).IndexOfAnyExcept((byte)0) < 0)
+        {
+            throw new WorkspacePathException("identity_filesystem_unavailable");
+        }
+
+        return new ReadOnlySpan<byte>(uuid + 1, 16).ToArray();
+    }
+
+    private static unsafe byte[] LinuxInstanceToken(SafeFileHandle handle, ulong mountId, ReadOnlySpan<byte> uuid)
     {
         var descriptor = checked((int)handle.DangerousGetHandle());
         var fileHandle = stackalloc byte[136];
@@ -425,18 +685,9 @@ internal sealed partial class WorkspacePath : IDisposable
             throw new WorkspacePathException("identity_handle_unavailable");
         }
 
-        var uuid = stackalloc byte[17];
-        new Span<byte>(uuid, 17).Clear();
-        // FS_IOC_GETFSUUID, a read-only generic Linux ioctl; fsuuid2 is a length byte plus sixteen UUID bytes.
-        if (ReadFileSystemUuid(descriptor, 0x80111500, uuid) != 0 || uuid[0] != 16 ||
-            new ReadOnlySpan<byte>(uuid + 1, 16).IndexOfAnyExcept((byte)0) < 0)
-        {
-            throw new WorkspacePathException("identity_filesystem_unavailable");
-        }
-
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         hash.AppendData("ArcForges fs-object v1\0"u8);
-        hash.AppendData(new ReadOnlySpan<byte>(uuid + 1, 16));
+        hash.AppendData(uuid);
         Span<byte> header = stackalloc byte[8];
         BinaryPrimitives.WriteInt32BigEndian(header, *(int*)(fileHandle + 4));
         BinaryPrimitives.WriteUInt32BigEndian(header[4..], *(uint*)fileHandle);
@@ -451,8 +702,17 @@ internal sealed partial class WorkspacePath : IDisposable
     [LibraryImport("libc", EntryPoint = "name_to_handle_at", StringMarshalling = StringMarshalling.Utf8, SetLastError = true)]
     private static unsafe partial int NameToHandleAt(int descriptor, string name, byte* fileHandle, out int mountId, int flags);
 
-    [LibraryImport("libc", EntryPoint = "readlink", StringMarshalling = StringMarshalling.Utf8, SetLastError = true)]
-    private static partial nint ReadLink(string path, [Out] byte[] buffer, nuint size);
+    [LibraryImport("libc", EntryPoint = "readlinkat", StringMarshalling = StringMarshalling.Utf8, SetLastError = true)]
+    private static partial nint ReadLinkAt(int directory, string path, [Out] byte[] buffer, nuint size);
+
+    [LibraryImport("libc", EntryPoint = "syscall", StringMarshalling = StringMarshalling.Utf8, SetLastError = true)]
+    private static partial long LinuxSyscall(long number, int directory, string path, ref LinuxOpenHow how, nuint size);
+
+    [LibraryImport("libc", EntryPoint = "fstatfs", SetLastError = true)]
+    private static unsafe partial int FStatFs(int descriptor, byte* buffer);
+
+    [LibraryImport("libc", EntryPoint = "getpid")]
+    private static partial int GetProcessId();
 
     [LibraryImport("kernel32.dll", EntryPoint = "CreateFileW", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
     private static partial SafeFileHandle CreateFile(string name, uint access, uint share, nint security, uint disposition, uint flags, nint template);
@@ -481,6 +741,14 @@ internal sealed partial class WorkspacePath : IDisposable
 
     [LibraryImport("ntdll.dll")]
     private static partial uint RtlNtStatusToDosError(int status);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct LinuxOpenHow
+    {
+        public ulong Flags;
+        public ulong Mode;
+        public ulong Resolve;
+    }
 
     [StructLayout(LayoutKind.Sequential)]
     private struct UnicodeString
