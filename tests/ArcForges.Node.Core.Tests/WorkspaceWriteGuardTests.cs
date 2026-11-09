@@ -49,7 +49,11 @@ public sealed partial class WorkspaceWriteGuardTests
         {
             Assert.Equal("READY", await ReadLine(process));
             using var root = WorkspacePath.OpenRoot(fixture.Path);
-            var error = Assert.Throws<WorkspacePathException>(() => root.OpenExistingWriteGuard("data"));
+            var error = Assert.Throws<WorkspacePathException>(() =>
+            {
+                // Dispose an unexpectedly accepted guard before the negative assertion fails.
+                using var unexpectedGuard = root.OpenExistingWriteGuard("data");
+            });
             Assert.Equal("file_in_use", error.Reason);
         }
         finally
@@ -365,17 +369,61 @@ public sealed partial class WorkspaceWriteGuardTests
     }
 
     private const string HolderScript = """
-        import mmap, sys
+        import mmap, os, sys
         path, kind = sys.argv[1:]
         file = open(path, "r+b" if kind == "write" else "rb", buffering=0)
         mapping = None
-        if kind == "mapping":
-            mapping = mmap.mmap(file.fileno(), 0, access=mmap.ACCESS_READ)
+        view = None
+        if kind == "mapping" and sys.platform == "win32":
+            # Keep only a real mapped view: close every explicit file/section handle.
+            import ctypes
+            from ctypes import wintypes as w
+            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel.CreateFileW.argtypes = [w.LPCWSTR, w.DWORD, w.DWORD, ctypes.c_void_p, w.DWORD, w.DWORD, w.HANDLE]
+            kernel.CreateFileW.restype = w.HANDLE
+            kernel.CreateFileMappingW.argtypes = [w.HANDLE, ctypes.c_void_p, w.DWORD, w.DWORD, w.DWORD, w.LPCWSTR]
+            kernel.CreateFileMappingW.restype = w.HANDLE
+            kernel.MapViewOfFile.argtypes = [w.HANDLE, w.DWORD, w.DWORD, w.DWORD, ctypes.c_size_t]
+            kernel.MapViewOfFile.restype = ctypes.c_void_p
+            kernel.CloseHandle.argtypes = [w.HANDLE]
+            kernel.CloseHandle.restype = w.BOOL
+            kernel.GetHandleInformation.argtypes = [w.HANDLE, ctypes.POINTER(w.DWORD)]
+            kernel.GetHandleInformation.restype = w.BOOL
+            kernel.UnmapViewOfFile.argtypes = [ctypes.c_void_p]
+            kernel.UnmapViewOfFile.restype = w.BOOL
             file.close()
+            handle = kernel.CreateFileW(path, 0x80000000, 7, None, 3, 0, None)
+            assert handle not in (None, ctypes.c_void_p(-1).value), ctypes.get_last_error()
+            section = kernel.CreateFileMappingW(handle, None, 2, 0, 0, None)
+            assert section, ctypes.get_last_error()
+            view = kernel.MapViewOfFile(section, 4, 0, 0, 0)
+            assert view, ctypes.get_last_error()
+            assert kernel.CloseHandle(section)
+            assert kernel.CloseHandle(handle)
+            for closed in (section, handle):
+                flags = w.DWORD()
+                ctypes.set_last_error(0)
+                assert not kernel.GetHandleInformation(closed, ctypes.byref(flags))
+                assert ctypes.get_last_error() == 6
+            assert ctypes.string_at(view, 8) == b"test-own"
+        elif kind == "mapping":
+            # CPython's default trackfd=True duplicates the FD even after file.close().
+            identity = os.fstat(file.fileno())
+            mapping = mmap.mmap(file.fileno(), 0, access=mmap.ACCESS_READ, trackfd=False)
+            file.close()
+            for candidate in os.listdir("/proc/self/fd"):
+                try:
+                    observed = os.stat("/proc/self/fd/" + candidate)
+                except FileNotFoundError:
+                    continue
+                assert (observed.st_dev, observed.st_ino) != (identity.st_dev, identity.st_ino)
+            assert mapping[:8] == b"test-own"
         print("READY", flush=True)
         sys.stdin.readline()
         if mapping is not None:
             mapping.close()
+        if view is not None:
+            assert kernel.UnmapViewOfFile(view)
         if not file.closed:
             file.close()
         """;
