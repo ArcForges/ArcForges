@@ -126,4 +126,78 @@ public sealed class WorkspaceSubmitRegistryTests
         Assert.Equal(response.Value.TaskId, replay.Value.TaskId);
         Assert.Equal(1L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM task WHERE task_id=$id;", ("$id", taskId))));
     }
+    [Fact(Timeout = 120_000)]
+    public async Task UnregisteringAChildReselectsTheParentAndItsFirstApplicablePreparedRule()
+    {
+        var cancellation = TestContext.Current.CancellationToken;
+        cancellation.ThrowIfCancellationRequested();
+        await using var node = await InProcessNode.Create().StartAsync();
+        await using var human = await node.ChannelAsync(helloAsHuman: true);
+        await using var script = await node.ChannelAsync();
+        Assert.Null((await human.Queue.PausePoolAsync(new QueueServicePausePoolRequest { Meta = Tasks.Meta(), All = true }, cancellationToken: cancellation)).Error);
+        var parent = Directory.CreateDirectory(Path.Combine(node.Root, "workspace")).FullName;
+        var child = Directory.CreateDirectory(Path.Combine(parent, "child")).FullName;
+        var manager = new RegisteredWorkspaces(node.Runtime.Store);
+        var parentRegistration = manager.RegisterFromVerifiedHuman(parent, cancellationToken: cancellation);
+        var childRegistration = manager.RegisterFromVerifiedHuman(child, cancellationToken: cancellation);
+        var policy = await Sched.ChangePolicyAsync(human, document =>
+        {
+            document.RetrySafety ??= new RetrySafetyPolicy();
+            document.RetrySafety.Rules.Add(new RetrySafetyRule
+            {
+                Pattern = ".*hold.*",
+                WorkspaceId = new Id { Value = ByteString.CopyFrom(childRegistration.Id) },
+                SideEffect = SideEffectClass.Pure,
+            });
+            document.RetrySafety.Rules.Add(new RetrySafetyRule
+            {
+                Pattern = ".*hold.*",
+                WorkspaceId = new Id { Value = ByteString.CopyFrom(parentRegistration.Id) },
+                SideEffect = SideEffectClass.Idempotent,
+            });
+            document.RetrySafety.Rules.Add(new RetrySafetyRule { Pattern = ".*hold.*", SideEffect = SideEffectClass.Pure });
+        });
+        Assert.Null(policy.Error);
+        Assert.Equal(childRegistration.Id, node.Runtime.Store.Read(reader => ExecutionSupervisor.WorkspaceOf(reader, child)));
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var resume = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var execution = node.Runtime.Execution!;
+        execution.BeforeSubmitTransactionForTests = async token =>
+        {
+            entered.TrySetResult();
+            await resume.Task.WaitAsync(token).ConfigureAwait(false);
+        };
+        var request = new TaskServiceSubmitTaskRequest
+        {
+            Meta = Tasks.Meta(),
+            Spec = Tasks.Argv(child, Tasks.TestLoad, "hold", "--hold-ms", "60000"),
+        };
+        var pending = script.Tasks.SubmitTaskAsync(request, deadline: DateTime.UtcNow.AddSeconds(30), cancellationToken: cancellation).ResponseAsync;
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10), cancellation);
+            manager.UnregisterFromVerifiedHuman(childRegistration.Id, cancellation);
+        }
+        finally
+        {
+            resume.TrySetResult();
+        }
+
+        var response = await pending.WaitAsync(TimeSpan.FromSeconds(15), cancellation);
+        execution.BeforeSubmitTransactionForTests = null;
+        Assert.Null(response.Error);
+        var actual = node.Runtime.Store.Read(reader =>
+        {
+            using var command = reader.CreateCommand("SELECT workspace_id, side_effect, side_effect_source FROM task WHERE task_id=$id;");
+            command.Parameters.AddWithValue("$id", response.Value.TaskId.Value.ToByteArray());
+            using var rows = command.ExecuteReader();
+            Assert.True(rows.Read());
+            return (Workspace: (byte[])rows.GetValue(0), SideEffect: rows.GetInt32(1), Source: rows.GetInt32(2));
+        });
+        Assert.Equal(parentRegistration.Id, actual.Workspace);
+        Assert.Equal((int)SideEffectClass.Idempotent, actual.SideEffect);
+        Assert.Equal((int)SideEffectSource.Policy, actual.Source);
+        Assert.Equal("workspace_in_use", Assert.Throws<RegisteredWorkspaceException>(
+            () => manager.UnregisterFromVerifiedHuman(parentRegistration.Id, cancellation)).Reason);
+    }
 }

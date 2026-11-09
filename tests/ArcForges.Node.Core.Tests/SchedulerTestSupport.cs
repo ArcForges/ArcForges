@@ -245,9 +245,11 @@ internal static class Sched
     {
         var execution = node.Runtime.Execution!;
         var settings = execution.Settings;
+        var parts = SubmittedEnvironment.Split(spec, settings.SecretNames);
         var plan = new SubmitPlan
         {
-            Parts = SubmittedEnvironment.Split(spec, settings.SecretNames),
+            Parts = parts,
+            Storage = PreparedSubmitStorage.Create(parts),
             Owner = new ActorRef { Origin = Origin.Agent, ClientKind = ClientKind.McpAdapter, SessionId = new Id { Value = ByteString.CopyFrom(session) } },
             Title = "fair share",
             Summary = CommandText.Summary(spec.Command, settings.SecretNames),

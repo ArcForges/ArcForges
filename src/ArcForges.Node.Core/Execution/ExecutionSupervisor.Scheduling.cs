@@ -752,8 +752,11 @@ public sealed partial class ExecutionSupervisor
         while (rows.Read())
         {
             var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(rows.GetString(1)));
+            // Native filesystem roots already end in a separator ("/", "C:\\", UNC roots). Do not double it.
+            var prefix = Path.EndsInDirectorySeparator(root) ? root : root + Path.DirectorySeparatorChar;
+            var alternate = Path.EndsInDirectorySeparator(root) ? root : root + Path.AltDirectorySeparatorChar;
             var inside = string.Equals(directory, root, comparison)
-                || directory.StartsWith(root + Path.DirectorySeparatorChar, comparison) || directory.StartsWith(root + Path.AltDirectorySeparatorChar, comparison);
+                || directory.StartsWith(prefix, comparison) || directory.StartsWith(alternate, comparison);
             if (inside && root.Length > bestLength)
             {
                 best = (byte[])rows.GetValue(0);

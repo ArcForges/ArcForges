@@ -265,6 +265,18 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
             warnings.Add("join_existing joins only tasks of the same session; sessions arrive with AF-AI-01, so the task was queued as a new task.");
         }
 
+        // The policy snapshot is fixed for this call, but the workspace is selected only inside the write transaction.
+        // Do all command-dependent matching and digest/serialization work before acquiring that writer.
+        var matchedRules = source == SideEffectSource.Default && settings.RetrySafetyRules.Count > 0
+            ? PolicyRules.PrepareRetrySafety(settings.RetrySafetyRules, CommandLine(spec.Command), execution.AfterRetryMatchForTests, cancellationToken)
+            : [];
+        var fingerprint = CommandText.Fingerprint(spec.Command);
+        var commandDigest = CommandText.Digest(spec, EnvironmentDigest(spec.Environment));
+        var storage = PreparedSubmitStorage.Create(parts);
+        var dependencies = spec.DependsOn.Select(dependency => (dependency.TaskId.Value.ToByteArray(),
+            dependency.HasCondition ? dependency.Condition : DependencyCondition.Succeeded)).ToArray();
+        cancellationToken.ThrowIfCancellationRequested();
+
         var summary = CommandText.Summary(spec.Command, settings.SecretNames);
         CallerKey? binding = request.CancelWhenCallerGone && session is not null
             ? new CallerKey(session.Peer.ProcessId, session.Peer.ProcessStartTime.UtcTicks)
@@ -285,8 +297,8 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
                 var effectiveSideEffect = sideEffect;
                 var effectiveSource = source;
                 // Workspace-scoped retry safety must be derived from that same selection, not an earlier read snapshot.
-                if (effectiveSource == SideEffectSource.Default && settings.RetrySafetyRules.Count > 0
-                    && PolicyRules.RetrySafety(settings.RetrySafetyRules, CommandLine(spec.Command), workspace ?? []) is { } ruled)
+                if (effectiveSource == SideEffectSource.Default
+                    && PolicyRules.PreparedRetrySafety(matchedRules, workspace ?? []) is { } ruled)
                 {
                     effectiveSideEffect = ruled;
                     effectiveSource = SideEffectSource.Policy;
@@ -295,6 +307,7 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
                 var plan = new SubmitPlan
                 {
                     Parts = parts,
+                    Storage = storage,
 
                     // The caller's ActorRef: a center-routed owner carries its center_caller and the routed command ID (CTR5-NODE-10).
                     Owner = caller.Actor,
@@ -302,8 +315,8 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
                     RemoteCommandId = caller.CenterCaller is null ? null : request.Meta.CommandId.Value.ToByteArray(),
                     Title = spec.HasTitle && spec.Title.Length > 0 ? spec.Title : summary,
                     Summary = summary,
-                    Fingerprint = CommandText.Fingerprint(spec.Command),
-                    CommandDigest = CommandText.Digest(spec, EnvironmentDigest(spec.Environment)),
+                    Fingerprint = fingerprint,
+                    CommandDigest = commandDigest,
                     Kind = spec.HasKind ? spec.Kind : TaskKind.Command,
                     Pool = pool,
                     Priority = spec.HasPriority ? spec.Priority : poolPolicy is { HasDefaultPriority: true, DefaultPriority: not Priority.Unspecified } ? poolPolicy.DefaultPriority : Priority.Normal,
@@ -311,12 +324,15 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
                     SideEffectSource = effectiveSource,
                     Warnings = warnings,
                     CommandId = request.Meta.CommandId,
-                    Dependencies = [.. spec.DependsOn.Select(dependency => (dependency.TaskId.Value.ToByteArray(),
-                        dependency.HasCondition ? dependency.Condition : DependencyCondition.Succeeded))],
+                    Dependencies = dependencies,
                     Keys = keys,
                     WorkspaceId = workspace,
                 };
-                return new TaskServiceSubmitTaskResponse { Meta = Meta(request.Meta), Value = execution.Submit(command, plan) };
+                return new TaskServiceSubmitTaskResponse
+                {
+                    Meta = Meta(request.Meta),
+                    Value = execution.Submit(command, plan, caller.Routed is { } routed ? routed.BeforeEffect : null),
+                };
             }).ConfigureAwait(false);
         if (result.OutcomeCase == TaskServiceSubmitTaskResponse.OutcomeOneofCase.Value && !replayed)
         {

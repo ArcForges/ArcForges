@@ -95,6 +95,9 @@ public sealed class SubmitPlan
     /// <summary>The spec split into its stored parts.</summary>
     public required SubmittedEnvironment Parts { get; init; }
 
+    /// <summary>Pre-serialized task metadata and digest, prepared outside the writer.</summary>
+    public required PreparedSubmitStorage Storage { get; init; }
+
     /// <summary>The owner (set by the node from the connection).</summary>
     public required ActorRef Owner { get; init; }
 
@@ -148,6 +151,39 @@ public sealed class SubmitPlan
 
     /// <summary>The task's workspace (the longest registered root containing the working directory), or <see langword="null"/>.</summary>
     public byte[]? WorkspaceId { get; init; }
+}
+
+/// <summary>The persisted spec and labels prepared before a submit transaction.</summary>
+public sealed class PreparedSubmitStorage
+{
+    private readonly SubmittedEnvironment _parts;
+
+    private PreparedSubmitStorage(SubmittedEnvironment parts, byte[] spec, byte[] digest, string labels)
+    {
+        _parts = parts;
+        Spec = spec;
+        Digest = digest;
+        Labels = labels;
+    }
+
+    internal byte[] Spec { get; }
+
+    internal byte[] Digest { get; }
+
+    internal string Labels { get; }
+
+    internal bool BelongsTo(SubmittedEnvironment parts) => ReferenceEquals(_parts, parts);
+
+    /// <summary>Serializes and hashes the redacted spec without holding the SQLite writer.</summary>
+    public static PreparedSubmitStorage Create(SubmittedEnvironment parts)
+    {
+        ArgumentNullException.ThrowIfNull(parts);
+        var spec = parts.RedactedSpec;
+        var bytes = spec.ToByteArray();
+        var labels = JsonSerializer.Serialize(new Dictionary<string, string>(spec.Labels, StringComparer.Ordinal),
+            ExecutionJsonContext.Default.DictionaryStringString);
+        return new PreparedSubmitStorage(parts, bytes, System.Security.Cryptography.SHA256.HashData(bytes), labels);
+    }
 }
 
 /// <summary>A caller of <c>cancel_when_caller_gone</c>: the submitting client process.</summary>
@@ -729,21 +765,36 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
     /// </summary>
     internal Func<CancellationToken, Task>? BeforeSubmitTransactionForTests { get; set; }
 
+    /// <summary>Tests coordinate after an actual retry-rule match, outside the writer. Production never sets it.</summary>
+    internal Action<int>? AfterRetryMatchForTests { get; set; }
+
+    /// <summary>Tests coordinate immediately before the final routed check and task insertion. Production never sets it.</summary>
+    internal Action? BeforeSubmitEffectForTests { get; set; }
+
     /// <summary>Persists a submission in the writer (AD-0006 section 1: before the receipt) and journals it.</summary>
-    public TaskServiceSubmitTaskValue Submit(CommandContext context, SubmitPlan plan)
+    public TaskServiceSubmitTaskValue Submit(CommandContext context, SubmitPlan plan, Action? beforeEffect = null)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(plan);
+        if (!plan.Storage.BelongsTo(plan.Parts))
+        {
+            throw new ArgumentException("The prepared metadata must belong to this submission.", nameof(plan));
+        }
+
         var transaction = context.Transaction;
         var now = transaction.NowMicroseconds;
         var taskId = StoreIds.NewUuid7(transaction.Clock);
         var spec = plan.Parts.RedactedSpec;
         byte[]? envDigest = plan.Parts.Snapshot is { } snapshot ? EnvSnapshots.Reference(transaction, snapshot) : null;
-        var specBytes = spec.ToByteArray();
-        var labels = JsonSerializer.Serialize(new Dictionary<string, string>(spec.Labels, StringComparer.Ordinal), ExecutionJsonContext.Default.DictionaryStringString);
+        var specBytes = plan.Storage.Spec;
+        var labels = plan.Storage.Labels;
 
         // 04 section 8: a task with dependencies starts in WAITING_DEPENDENCY; the admission pass queues or cancels it.
         var waiting = plan.Dependencies.Count > 0;
+        // Any environment reference above is in this same transaction and is rolled back on refusal.
+        // Recheck immediately before the actual task insertion, after all preparation possible here.
+        BeforeSubmitEffectForTests?.Invoke();
+        beforeEffect?.Invoke();
         transaction.Execute(
             """
             INSERT INTO task (task_id, state, state_reason, kind, title, command_summary, spec, env_digest, spec_digest, owner, owner_origin, owner_session_id,
@@ -754,7 +805,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             """,
             ("$id", taskId), ("$state", waiting ? (int)TaskState.WaitingDependency : (int)TaskState.Queued), ("$reason", waiting ? Scheduling.BlockingReasons.Dependency : null),
             ("$kind", (int)plan.Kind), ("$title", plan.Title), ("$summary", plan.Summary), ("$spec", specBytes), ("$env", envDigest),
-            ("$specDigest", System.Security.Cryptography.SHA256.HashData(specBytes)), ("$owner", plan.Owner.ToByteArray()), ("$origin", (int)plan.Owner.Origin),
+            ("$specDigest", plan.Storage.Digest), ("$owner", plan.Owner.ToByteArray()), ("$origin", (int)plan.Owner.Origin),
             ("$session", plan.SessionId), ("$workspace", plan.WorkspaceId), ("$pool", plan.Pool), ("$priority", (int)plan.Priority), ("$sideEffect", (int)plan.SideEffect),
             ("$source", (int)plan.SideEffectSource), ("$fingerprint", plan.Fingerprint), ("$digest", plan.CommandDigest), ("$now", now),
             ("$pinned", spec.Output?.Pin == true ? 1 : 0), ("$labels", labels), ("$localDiagnostic", plan.LocalDiagnostic ? 1 : 0),

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Diagnostics;
 using ArcForges.Contracts.Node.V1;
+using ArcForges.Node.Core.Execution;
 using ArcForges.Node.Core.Files;
 using ArcForges.Node.Store;
 
@@ -444,6 +445,151 @@ public sealed class RegisteredWorkspacesTests
         Assert.Equal("workspace_identity_invalid", Assert.Throws<RegisteredWorkspaceException>(() => manager.Get(registered.Id, Ct)).Reason);
         manager.UnregisterFromVerifiedHuman(registered.Id, Ct);
         Assert.True(Directory.Exists(path));
+    }
+
+    [Fact(Timeout = 30_000)]
+    public void WorkspaceSelectionMatchesNativeFilesystemRootAndLongestBoundedPrefix()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        using var fixture = new OwnedFixture();
+        var parent = fixture.Workspace("parent");
+        var child = Directory.CreateDirectory(Path.Combine(parent, "child")).FullName;
+        var sibling = fixture.Workspace("parent-other");
+        var root = Path.GetPathRoot(parent)!;
+        using var store = fixture.Open();
+        var rootId = InsertLegacy(store, root);
+        Assert.Equal(rootId, store.Read(reader => ExecutionSupervisor.WorkspaceOf(reader, root)));
+        Assert.Equal(rootId, store.Read(reader => ExecutionSupervisor.WorkspaceOf(reader, parent)));
+        var parentId = InsertLegacy(store, parent);
+        Assert.Equal(parentId, store.Read(reader => ExecutionSupervisor.WorkspaceOf(reader, child)));
+        Assert.Equal(rootId, store.Read(reader => ExecutionSupervisor.WorkspaceOf(reader, sibling)));
+        var childId = InsertLegacy(store, child);
+        Assert.Equal(childId, store.Read(reader => ExecutionSupervisor.WorkspaceOf(reader, child)));
+    }
+
+    [Fact(Timeout = 30_000)]
+    public void VerifiedDuplicateIgnoresAnUnrelatedUnverifiableLegacyRootButNewRootDoesNot()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        using var fixture = new OwnedFixture();
+        using var store = fixture.Open();
+        var manager = new RegisteredWorkspaces(store);
+        var existingPath = fixture.Workspace("known");
+        var existing = manager.RegisterFromVerifiedHuman(existingPath, cancellationToken: Ct);
+        InsertLegacy(store, Path.Combine(fixture.Root, "missing-legacy"));
+        Assert.Equal(existing.Id, manager.RegisterFromVerifiedHuman(existingPath, cancellationToken: Ct).Id);
+        var newPath = fixture.Workspace("new");
+        Assert.Equal("legacy_root_unverifiable", Assert.Throws<RegisteredWorkspaceException>(
+            () => manager.RegisterFromVerifiedHuman(newPath, cancellationToken: Ct)).Reason);
+        Assert.Equal(1L, store.Read(reader => reader.Scalar("SELECT count(*) FROM workspace_root_identity;")));
+    }
+
+    [Fact(Timeout = 30_000)]
+    public async Task LegacyNativeScanDoesNotHoldWriterAndChangedSnapshotRefusesInsertion()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        using var fixture = new OwnedFixture();
+        using var store = fixture.Open();
+        var legacyId = InsertLegacy(store, fixture.Workspace("old"));
+        var manager = new RegisteredWorkspaces(store);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        manager.AfterLegacyOpenForTests = () =>
+        {
+            entered.TrySetResult();
+            if (!release.Wait(TimeSpan.FromSeconds(4)))
+            {
+                throw new TimeoutException("test did not release native legacy inspection");
+            }
+        };
+        var path = fixture.Workspace("new");
+        var pending = Task.Run(() => Record.Exception(() => manager.RegisterFromVerifiedHuman(path, cancellationToken: Ct)), Ct);
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(3), Ct);
+            // This is an actual unrelated SQLite write during a real, successfully opened legacy root.
+            await Task.Run(() => store.Write(transaction => transaction.Execute(
+                "UPDATE workspace SET rev = rev + 1 WHERE workspace_id = $id;", ("$id", legacyId))), Ct)
+                .WaitAsync(TimeSpan.FromSeconds(3), Ct);
+        }
+        finally
+        {
+            release.Set();
+        }
+
+        var error = Assert.IsType<RegisteredWorkspaceException>(await pending.WaitAsync(TimeSpan.FromSeconds(10), Ct));
+        Assert.Equal("legacy_snapshot_changed", error.Reason);
+        Assert.Equal(0L, store.Read(reader => reader.Scalar("SELECT count(*) FROM workspace_root_identity;")));
+        manager.AfterLegacyOpenForTests = null;
+        Assert.NotNull(manager.RegisterFromVerifiedHuman(path, cancellationToken: Ct));
+    }
+
+    [Fact(Timeout = 30_000)]
+    public void InvalidUtf8LegacyPathCannotBeMistakenForAnExistingReplacementCharacterPath()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        using var fixture = new OwnedFixture();
+        using var store = fixture.Open();
+        _ = fixture.Workspace("legacy-�");
+        var invalid = System.Text.Encoding.UTF8.GetBytes(Path.Combine(fixture.Root, "legacy-")).Concat(new byte[] { 0xff }).ToArray();
+        var id = StoreIds.NewUuid7(store.Clock);
+        store.Write(transaction => transaction.Execute("""
+            INSERT INTO workspace (workspace_id, kind, state, name, root_path, created_at, last_used_at, rev)
+            VALUES ($id, 1, 2, 'legacy', CAST($path AS TEXT), $now, $now, 0);
+            """, ("$id", id), ("$path", invalid), ("$now", transaction.NowMicroseconds)));
+        var manager = new RegisteredWorkspaces(store);
+        var error = Assert.Throws<RegisteredWorkspaceException>(() => manager.RegisterFromVerifiedHuman(
+            fixture.Workspace("new"), cancellationToken: Ct));
+        Assert.Equal("legacy_root_unverifiable", error.Reason);
+        Assert.Equal(0L, store.Read(reader => reader.Scalar("SELECT count(*) FROM workspace_root_identity;")));
+    }
+
+    [Fact(Timeout = 30_000)]
+    public void CancellationDuringRealLegacyInspectionLeavesNoNewIdentity()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        using var fixture = new OwnedFixture();
+        using var store = fixture.Open();
+        InsertLegacy(store, fixture.Workspace("old"));
+        var manager = new RegisteredWorkspaces(store);
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        var opened = false;
+        manager.AfterLegacyOpenForTests = () =>
+        {
+            opened = true;
+            cancellation.Cancel();
+        };
+        Assert.ThrowsAny<OperationCanceledException>(() => manager.RegisterFromVerifiedHuman(
+            fixture.Workspace("new"), cancellationToken: cancellation.Token));
+        Assert.True(opened);
+        Assert.Equal(0L, store.Read(reader => reader.Scalar("SELECT count(*) FROM workspace_root_identity;")));
+    }
+
+    [Fact(Timeout = 30_000)]
+    public void LegacyScanLimitAndCancellationFailClosed()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        using var fixture = new OwnedFixture();
+        using var store = fixture.Open();
+        var path = fixture.Workspace("new");
+        store.Write(transaction =>
+        {
+            for (var index = 0; index <= RegisteredWorkspaces.MaxLegacyRoots; index++)
+            {
+                transaction.Execute("""
+                    INSERT INTO workspace (workspace_id, kind, state, name, root_path, created_at, last_used_at, rev)
+                    VALUES ($id, 1, 2, 'legacy', $path, $now, $now, 0);
+                    """, ("$id", StoreIds.NewUuid7(transaction.Clock)), ("$path", Path.Combine(fixture.Root, "old-" + index)),
+                    ("$now", transaction.NowMicroseconds));
+            }
+        });
+        var manager = new RegisteredWorkspaces(store);
+        Assert.Equal("legacy_scan_limit", Assert.Throws<RegisteredWorkspaceException>(
+            () => manager.RegisterFromVerifiedHuman(path, cancellationToken: Ct)).Reason);
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+        Assert.ThrowsAny<OperationCanceledException>(() => manager.RegisterFromVerifiedHuman(path, cancellationToken: cancelled.Token));
+        Assert.Equal(0L, store.Read(reader => reader.Scalar("SELECT count(*) FROM workspace_root_identity;")));
     }
 
     private static byte[] InsertLegacy(NodeStore store, string path)

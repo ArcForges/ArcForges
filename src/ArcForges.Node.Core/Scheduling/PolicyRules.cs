@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Globalization;
+using System.Runtime.ExceptionServices;
 using System.Text.RegularExpressions;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
@@ -345,6 +346,74 @@ public static class PolicyRules
             catch (ArgumentException)
             {
                 // A pattern validation refuses; an older stored one that no longer parses simply never matches.
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>A matching retry rule or a deferred legacy regex failure, in original policy order.</summary>
+    internal sealed record PreparedRetryRule(RetrySafetyRule Rule, Exception? Failure);
+
+    /// <summary>
+    /// Matches command-dependent retry rules outside the SQLite writer. Matching rules retain their original order and scopes;
+    /// the selected workspace must still be resolved within the effect transaction. Legacy regex failures that the previous
+    /// implementation would throw are deferred until that rule is reached in the selected scope.
+    /// </summary>
+    internal static IReadOnlyList<PreparedRetryRule> PrepareRetrySafety(IReadOnlyList<RetrySafetyRule> rules, string commandLine,
+        Action<int>? afterMatchForTests = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(rules);
+        var matched = new List<PreparedRetryRule>();
+        for (var index = 0; index < rules.Count; index++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var rule = rules[index];
+            if (rule.SideEffect is not (SideEffectClass.Pure or SideEffectClass.Idempotent) || !rule.HasPattern)
+            {
+                continue;
+            }
+
+            try
+            {
+                if (new Regex(rule.Pattern, RegexOptions.NonBacktracking | RegexOptions.CultureInvariant).IsMatch(commandLine))
+                {
+                    matched.Add(new PreparedRetryRule(rule.Clone(), null));
+                }
+
+                // Test-only coordination after real regex work; no production caller installs this callback.
+                afterMatchForTests?.Invoke(index);
+            }
+            catch (ArgumentException)
+            {
+                // Preserve the old handling of malformed legacy rules.
+            }
+            catch (Exception exception) when (exception is NotSupportedException or RegexMatchTimeoutException)
+            {
+                // The old loop evaluated only rules in this scope and stopped after its first match.
+                matched.Add(new PreparedRetryRule(rule.Clone(), exception));
+            }
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        return matched;
+    }
+
+    /// <summary>Selects the first pre-matched rule that applies to the final transaction's workspace.</summary>
+    internal static SideEffectClass? PreparedRetrySafety(IReadOnlyList<PreparedRetryRule> matched, ReadOnlySpan<byte> workspace)
+    {
+        ArgumentNullException.ThrowIfNull(matched);
+        foreach (var item in matched)
+        {
+            var rule = item.Rule;
+            if (rule.WorkspaceId is not { Value.Length: 16 } scope || scope.Value.Span.SequenceEqual(workspace))
+            {
+                if (item.Failure is not null)
+                {
+                    ExceptionDispatchInfo.Capture(item.Failure).Throw();
+                }
+
+                return rule.SideEffect;
             }
         }
 

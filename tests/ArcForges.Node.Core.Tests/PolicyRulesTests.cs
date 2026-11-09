@@ -77,4 +77,41 @@ public sealed class PolicyRulesTests
         Assert.Equal(SideEffectClass.Pure, PolicyRules.RetrySafety(rules, "cargo check", other));
         Assert.Null(PolicyRules.RetrySafety(rules, "cargo publish", workspace));
     }
+    [Fact]
+    public void PreparedRulesPreserveOrderAndWorkspaceSelection()
+    {
+        var first = Enumerable.Repeat((byte)1, 16).ToArray();
+        var second = Enumerable.Repeat((byte)2, 16).ToArray();
+        var rules = new List<RetrySafetyRule>
+        {
+            new() { Pattern = "match", WorkspaceId = new Id { Value = ByteString.CopyFrom(first) }, SideEffect = SideEffectClass.Pure },
+            new() { Pattern = "match", WorkspaceId = new Id { Value = ByteString.CopyFrom(second) }, SideEffect = SideEffectClass.Idempotent },
+            new() { Pattern = "match", SideEffect = SideEffectClass.Pure },
+            new() { Pattern = "(", SideEffect = SideEffectClass.Pure },
+        };
+        var prepared = PolicyRules.PrepareRetrySafety(rules, "a matching command", cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(3, prepared.Count);
+        foreach (var scope in new[] { first, second, new byte[16], Array.Empty<byte>() })
+        {
+            Assert.Equal(PolicyRules.RetrySafety(rules, "a matching command", scope), PolicyRules.PreparedRetrySafety(prepared, scope));
+        }
+
+        // Unsupported legacy patterns throw only if their scoped rule is reached before an earlier match.
+        var unsupported = new List<RetrySafetyRule>
+        {
+            new() { Pattern = "(?=match)", WorkspaceId = new Id { Value = ByteString.CopyFrom(first) }, SideEffect = SideEffectClass.Pure },
+            new() { Pattern = "match", SideEffect = SideEffectClass.Idempotent },
+        };
+        var withFailure = PolicyRules.PrepareRetrySafety(unsupported, "match", cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(PolicyRules.RetrySafety(unsupported, "match", second), PolicyRules.PreparedRetrySafety(withFailure, second));
+        Assert.Throws<NotSupportedException>(() => PolicyRules.RetrySafety(unsupported, "match", first));
+        Assert.Throws<NotSupportedException>(() => PolicyRules.PreparedRetrySafety(withFailure, first));
+        unsupported.Insert(0, new RetrySafetyRule { Pattern = "match", SideEffect = SideEffectClass.Pure });
+        Assert.Equal(PolicyRules.RetrySafety(unsupported, "match", first),
+            PolicyRules.PreparedRetrySafety(PolicyRules.PrepareRetrySafety(unsupported, "match", cancellationToken: TestContext.Current.CancellationToken), first));
+
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        Assert.ThrowsAny<OperationCanceledException>(() => PolicyRules.PrepareRetrySafety(rules, "match", cancellationToken: cancellation.Token));
+    }
 }

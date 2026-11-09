@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Buffers.Binary;
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using ArcForges.Node.Core.Platform;
@@ -29,6 +30,9 @@ internal sealed record RegisteredWorkspacePage(IReadOnlyList<RegisteredWorkspace
 internal sealed class RegisteredWorkspaces
 {
     private const int FormatVersion = 1;
+    // A new identity cannot be admitted unless every active legacy root was inspected.
+    internal const int MaxLegacyRoots = 512;
+    private static readonly TimeSpan LegacyScanBudget = TimeSpan.FromSeconds(5);
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
     private static readonly Lock SharedGate = new();
     private static readonly Dictionary<string, WeakReference<SharedState>> Shared =
@@ -58,20 +62,46 @@ internal sealed class RegisteredWorkspaces
         var selectedName = ValidateName(name ?? DefaultName(canonical));
         afterOpen?.Invoke();
 
+        // Fast duplicate path: unrelated old records are irrelevant when the previously recorded identity is verified.
+        var known = _store.Read(reader => FindByIdentity(reader, native.Platform, native.Bytes));
+        if (known is not null)
+        {
+            lock (_state.Gate)
+            {
+                return _store.Write(transaction =>
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var current = FindByIdentity(transaction, native.Platform, native.Bytes)
+                        ?? throw new RegisteredWorkspaceException("workspace_registration_changed");
+                    return VerifiedDuplicate(current, canonical, opened.RootIdentity, native, cancellationToken);
+                }, CommitDurability.Full);
+            }
+        }
+
+        // Snapshot, open and compare old roots outside both the global registry gate and SQLite's single writer.
+        // The deadline is checked between native calls; an OS call itself may block and cannot be preempted here.
+        var started = Stopwatch.GetTimestamp();
+        var legacy = _store.Read(reader => ReadLegacySnapshot(reader, started, cancellationToken));
+        RefuseLegacyAliases(legacy, native, started, cancellationToken);
+        CheckLegacyBudget(started, cancellationToken);
+
         lock (_state.Gate)
         {
             return _store.Write(transaction =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                RefuseLegacyAliases(transaction, native, cancellationToken);
                 var existing = FindByIdentity(transaction, native.Platform, native.Bytes);
                 if (existing is not null)
                 {
-                    // A duplicate is valid only while its original recorded path still names the same opened root.
-                    using var verified = OpenVerified(existing);
-                    using var candidate = ReopenCandidate(canonical, opened.RootIdentity, native);
-                    cancellationToken.ThrowIfCancellationRequested();
-                    return existing.Public();
+                    return VerifiedDuplicate(existing, canonical, opened.RootIdentity, native, cancellationToken);
+                }
+
+                // Compare the entire bounded ordered set, not just roots that happened to open successfully.
+                // New, removed, changed or newly identified legacy rows require a fresh operation.
+                var current = ReadLegacySnapshot(transaction, started, cancellationToken);
+                if (!legacy.SequenceEqual(current))
+                {
+                    throw new RegisteredWorkspaceException("legacy_snapshot_changed");
                 }
 
                 if (transaction.Scalar("""
@@ -79,7 +109,6 @@ internal sealed class RegisteredWorkspaces
                     WHERE released_at IS NULL AND platform = $platform AND native_identity = $identity LIMIT 1;
                     """, ("$platform", native.Platform), ("$identity", native.Bytes)) is not null)
                 {
-                    // An orphaned or inconsistent active identity is not silently reassigned.
                     throw new RegisteredWorkspaceException("workspace_identity_conflict");
                 }
 
@@ -88,12 +117,11 @@ internal sealed class RegisteredWorkspaces
                     ("$path", canonical));
                 if (occupied is not null)
                 {
-                    // Includes legacy rows: do not invent an identity for their historical root.
                     throw new RegisteredWorkspaceException("workspace_path_conflict");
                 }
 
                 using var checkedRoot = ReopenCandidate(canonical, opened.RootIdentity, native);
-                cancellationToken.ThrowIfCancellationRequested();
+                CheckLegacyBudget(started, cancellationToken);
                 var id = StoreIds.NewUuid7(transaction.Clock);
                 var now = transaction.NowMicroseconds;
                 transaction.Execute("""
@@ -108,6 +136,18 @@ internal sealed class RegisteredWorkspaces
                 return new RegisteredWorkspace(id, selectedName, canonical, now, now);
             }, CommitDurability.Full);
         }
+    }
+
+    // Coordinates only real filesystem and DB operations in tests.
+    internal Action? AfterLegacyOpenForTests { get; set; }
+
+    private static RegisteredWorkspace VerifiedDuplicate(Stored existing, string canonical, WorkspaceObjectIdentity identity,
+        RootIdentity native, CancellationToken cancellationToken)
+    {
+        using var verified = OpenVerified(existing);
+        using var candidate = ReopenCandidate(canonical, identity, native);
+        cancellationToken.ThrowIfCancellationRequested();
+        return existing.Public();
     }
 
     /// <summary>Reads one live record and verifies its recorded path against the actual currently opened root.</summary>
@@ -251,19 +291,60 @@ internal sealed class RegisteredWorkspaces
         SELECT EXISTS(SELECT 1 FROM task WHERE workspace_id = $id AND state IN (1, 2, 3, 4, 5, 6));
         """, ("$id", id)), System.Globalization.CultureInfo.InvariantCulture) != 0;
 
-    private static void RefuseLegacyAliases(StoreReader reader, RootIdentity candidate, CancellationToken cancellationToken)
+    private sealed record LegacyRoot(string Id, string Path, long Revision, int Kind, int State);
+
+    private static List<LegacyRoot> ReadLegacySnapshot(StoreReader reader, long started, CancellationToken cancellationToken)
     {
+        CheckLegacyBudget(started, cancellationToken);
         using var command = reader.CreateCommand("""
-            SELECT w.root_path FROM workspace AS w LEFT JOIN workspace_root_identity AS i
+            SELECT hex(w.workspace_id),
+                   CASE WHEN length(CAST(w.root_path AS BLOB)) <= 4096 THEN CAST(w.root_path AS BLOB) END,
+                   w.rev, w.kind, w.state
+            FROM workspace AS w LEFT JOIN workspace_root_identity AS i
                 ON i.workspace_id = w.workspace_id AND i.released_at IS NULL
-            WHERE w.removed_at IS NULL AND i.workspace_id IS NULL;
+            WHERE w.removed_at IS NULL AND i.workspace_id IS NULL
+            ORDER BY w.workspace_id LIMIT $limit;
             """);
+        command.Parameters.AddWithValue("$limit", MaxLegacyRoots + 1);
         using var rows = command.ExecuteReader();
+        var roots = new List<LegacyRoot>();
         while (rows.Read())
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            CheckLegacyBudget(started, cancellationToken);
+            if (roots.Count == MaxLegacyRoots)
+            {
+                throw new RegisteredWorkspaceException("legacy_scan_limit");
+            }
+
+            if (rows.IsDBNull(1))
+            {
+                throw new RegisteredWorkspaceException("legacy_root_unverifiable");
+            }
+
+            string path;
+            try
+            {
+                // SQLite TEXT may contain invalid UTF-8. GetString replaces malformed bytes and could open a different directory.
+                path = StrictUtf8.GetString((byte[])rows.GetValue(1));
+            }
+            catch (DecoderFallbackException exception)
+            {
+                throw new RegisteredWorkspaceException("legacy_root_unverifiable", exception);
+            }
+
+            roots.Add(new LegacyRoot(rows.GetString(0), path, rows.GetInt64(2), rows.GetInt32(3), rows.GetInt32(4)));
+        }
+
+        return roots;
+    }
+
+    private void RefuseLegacyAliases(IReadOnlyList<LegacyRoot> roots, RootIdentity candidate, long started, CancellationToken cancellationToken)
+    {
+        foreach (var item in roots)
+        {
+            CheckLegacyBudget(started, cancellationToken);
             // Old rows may end in one or more separators. Only trim those; do not erase dot components or fold case.
-            var legacy = rows.GetString(0);
+            var legacy = item.Path;
             while (Path.EndsInDirectorySeparator(legacy))
             {
                 var trimmed = Path.TrimEndingDirectorySeparator(legacy);
@@ -282,13 +363,13 @@ internal sealed class RegisteredWorkspaces
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
             {
-                // An inaccessible, ambiguous or unsafe old path might still name the same object: never invent its identity.
                 throw new RegisteredWorkspaceException("legacy_root_unverifiable", exception);
             }
 
             using (root)
             {
-                cancellationToken.ThrowIfCancellationRequested();
+                AfterLegacyOpenForTests?.Invoke();
+                CheckLegacyBudget(started, cancellationToken);
                 RootIdentity actual;
                 try
                 {
@@ -304,6 +385,15 @@ internal sealed class RegisteredWorkspaces
                     throw new RegisteredWorkspaceException("workspace_path_conflict");
                 }
             }
+        }
+    }
+
+    private static void CheckLegacyBudget(long started, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (Stopwatch.GetElapsedTime(started) >= LegacyScanBudget)
+        {
+            throw new RegisteredWorkspaceException("legacy_scan_timeout");
         }
     }
 
