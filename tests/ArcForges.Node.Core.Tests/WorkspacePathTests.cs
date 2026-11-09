@@ -190,6 +190,40 @@ public sealed class WorkspacePathTests
         Assert.Equal("path_invalid_utf8", Assert.Throws<WorkspacePathException>(() => WorkspacePath.OpenRoot(Path.Combine(fixture.Path, malformed))).Reason);
     }
 
+    [Fact(Timeout = 30_000)]
+    [Trait("env", "linux-real")]
+    public void RecreatedDirectoriesDoNotReuseThePersistedNativeIdentity()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "Linux inode generation and birth-time reuse");
+        using var fixture = new OwnedDirectory();
+        var path = Path.Combine(fixture.Path, "recreated");
+        Directory.CreateDirectory(path);
+        WorkspaceObjectIdentity previous;
+        using (var opened = WorkspacePath.OpenRoot(path))
+        {
+            previous = opened.RootIdentity;
+        }
+
+        for (var index = 0; index < 128; index++)
+        {
+            TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+            Directory.Delete(path);
+            Directory.CreateDirectory(path);
+            using var next = WorkspacePath.OpenRoot(path);
+            Assert.False(previous.SameObject(next.RootIdentity));
+            if (previous.Low == next.RootIdentity.Low && previous.Created == next.RootIdentity.Created &&
+                previous.CreatedNanoseconds == next.RootIdentity.CreatedNanoseconds)
+            {
+                Assert.False(previous.InstanceToken.Span.SequenceEqual(next.RootIdentity.InstanceToken.Span));
+            }
+
+            var failure = Assert.Throws<WorkspacePathException>(() => WorkspacePath.OpenRoot(path, previous));
+            Assert.Equal("root_changed", failure.Reason);
+            previous = next.RootIdentity;
+        }
+    }
+
     private static string Read(Microsoft.Win32.SafeHandles.SafeFileHandle handle)
     {
         var bytes = new byte[256];

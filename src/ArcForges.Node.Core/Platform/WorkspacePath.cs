@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Buffers.Binary;
 using System.Globalization;
+using System.Security.Cryptography;
 using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
@@ -7,7 +9,7 @@ using Microsoft.Win32.SafeHandles;
 namespace ArcForges.Node.Core.Platform;
 
 /// <summary>The identity read from an opened filesystem object, not from its name.</summary>
-internal readonly record struct WorkspaceObjectIdentity(ulong Volume, ulong Low, ulong High, ulong Created, uint CreatedNanoseconds, uint Links, uint Mode)
+internal readonly record struct WorkspaceObjectIdentity(ulong Volume, ulong Low, ulong High, ulong Created, uint CreatedNanoseconds, uint Links, uint Mode, ReadOnlyMemory<byte> InstanceToken = default)
 {
     /// <summary>True for an ordinary directory.</summary>
     public bool IsDirectory => (Mode & 0xf000) == 0x4000;
@@ -16,7 +18,10 @@ internal readonly record struct WorkspaceObjectIdentity(ulong Volume, ulong Low,
     public bool IsFile => (Mode & 0xf000) == 0x8000;
 
     /// <summary>The persistent object identity; link count and current mode are separate checks.</summary>
-    public bool SameObject(WorkspaceObjectIdentity other) => Volume == other.Volume && Low == other.Low && High == other.High && Created == other.Created && CreatedNanoseconds == other.CreatedNanoseconds;
+    public bool SameObject(WorkspaceObjectIdentity other) => Created == other.Created && CreatedNanoseconds == other.CreatedNanoseconds &&
+        (InstanceToken.IsEmpty && other.InstanceToken.IsEmpty
+            ? Volume == other.Volume && Low == other.Low && High == other.High
+            : !InstanceToken.IsEmpty && !other.InstanceToken.IsEmpty && InstanceToken.Span.SequenceEqual(other.InstanceToken.Span));
 }
 
 /// <summary>A closed, non-content-bearing refusal of native workspace resolution.</summary>
@@ -308,11 +313,15 @@ internal sealed partial class WorkspacePath : IDisposable
             throw new WorkspacePathException("identity_unavailable");
         }
 
+        // Inodes and birth times can both repeat within one clock tick. A filesystem UUID and opaque export handle
+        // distinguish the actual instance (including its filesystem generation) without treating a volatile mount ID as durable.
+        var instance = LinuxInstanceToken(handle, *(ulong*)(buffer + 144));
+
         var mode = *(ushort*)(buffer + 28);
         var created = unchecked((ulong)*(long*)(buffer + 80));
         var createdNanos = *(uint*)(buffer + 88);
         return new WorkspaceObjectIdentity(((ulong)*(uint*)(buffer + 136) << 32) | *(uint*)(buffer + 140),
-            *(ulong*)(buffer + 32), *(ulong*)(buffer + 144), created, createdNanos, *(uint*)(buffer + 16), mode);
+            *(ulong*)(buffer + 32), *(ulong*)(buffer + 144), created, createdNanos, *(uint*)(buffer + 16), mode, instance);
     }
 
     private static SafeFileHandle WindowsRoot(string path)
@@ -403,6 +412,44 @@ internal sealed partial class WorkspacePath : IDisposable
 
     [LibraryImport("libc", EntryPoint = "statx", StringMarshalling = StringMarshalling.Utf8, SetLastError = true)]
     private static unsafe partial int Statx(int directory, string path, int flags, uint mask, byte* buffer);
+
+    private static unsafe byte[] LinuxInstanceToken(SafeFileHandle handle, ulong mountId)
+    {
+        var descriptor = checked((int)handle.DangerousGetHandle());
+        var fileHandle = stackalloc byte[136];
+        new Span<byte>(fileHandle, 136).Clear();
+        *(uint*)fileHandle = 128;
+        if (NameToHandleAt(descriptor, string.Empty, fileHandle, out var exportedMount, 0x1000) != 0 ||
+            *(uint*)fileHandle is 0 or > 128 || (ulong)(uint)exportedMount != mountId)
+        {
+            throw new WorkspacePathException("identity_handle_unavailable");
+        }
+
+        var uuid = stackalloc byte[17];
+        new Span<byte>(uuid, 17).Clear();
+        // FS_IOC_GETFSUUID, a read-only generic Linux ioctl; fsuuid2 is a length byte plus sixteen UUID bytes.
+        if (ReadFileSystemUuid(descriptor, 0x80111500, uuid) != 0 || uuid[0] != 16 ||
+            new ReadOnlySpan<byte>(uuid + 1, 16).IndexOfAnyExcept((byte)0) < 0)
+        {
+            throw new WorkspacePathException("identity_filesystem_unavailable");
+        }
+
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        hash.AppendData("ArcForges fs-object v1\0"u8);
+        hash.AppendData(new ReadOnlySpan<byte>(uuid + 1, 16));
+        Span<byte> header = stackalloc byte[8];
+        BinaryPrimitives.WriteInt32BigEndian(header, *(int*)(fileHandle + 4));
+        BinaryPrimitives.WriteUInt32BigEndian(header[4..], *(uint*)fileHandle);
+        hash.AppendData(header);
+        hash.AppendData(new ReadOnlySpan<byte>(fileHandle + 8, checked((int)*(uint*)fileHandle)));
+        return hash.GetHashAndReset();
+    }
+
+    [LibraryImport("libc", EntryPoint = "ioctl", SetLastError = true)]
+    private static unsafe partial int ReadFileSystemUuid(int descriptor, nuint request, byte* buffer);
+
+    [LibraryImport("libc", EntryPoint = "name_to_handle_at", StringMarshalling = StringMarshalling.Utf8, SetLastError = true)]
+    private static unsafe partial int NameToHandleAt(int descriptor, string name, byte* fileHandle, out int mountId, int flags);
 
     [LibraryImport("libc", EntryPoint = "readlink", StringMarshalling = StringMarshalling.Utf8, SetLastError = true)]
     private static partial nint ReadLink(string path, [Out] byte[] buffer, nuint size);
