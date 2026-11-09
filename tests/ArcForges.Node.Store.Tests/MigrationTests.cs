@@ -30,7 +30,7 @@ public sealed class MigrationTests
         }
 
         clock.Advance(TimeSpan.FromMinutes(1));
-        using (var store = root.Open(clock))
+        using (var store = root.Open(clock, new MigrationPlan(StoreMigrations.Released.Steps.Take(2))))
         {
             Assert.Equal(1, store.Opening.MigratedFrom);
             Assert.Equal(2, store.Metadata.SchemaVersion);
