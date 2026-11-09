@@ -231,6 +231,101 @@ internal sealed partial class WorkspacePath : IDisposable
         }
     }
 
+    /// <summary>
+    /// Opens and guards an existing regular file for a future in-place mutation. The guard owns its private handle and never
+    /// exposes a write operation: journaling, authorization, name revalidation and result settlement are separate requirements.
+    /// </summary>
+    internal WorkspaceWriteGuard OpenExistingWriteGuard(string path) => OpenExistingWriteGuard(path, afterMetadataOpen: null);
+
+    // The callback only coordinates races on real test-owned filesystem objects.
+    internal WorkspaceWriteGuard OpenExistingWriteGuard(string path, Action? afterMetadataOpen)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        var parts = Components(path);
+        SafeFileHandle file;
+        if (OperatingSystem.IsLinux())
+        {
+            using var metadata = LinuxOpenAt2(RootHandle, string.Join('/', parts), noCrossMount: true);
+            CheckVolume(metadata, _linuxFileSystemUuid);
+            try
+            {
+                file = LinuxReopenChecked(metadata, directory: false, _linuxFileSystemUuid, afterMetadataOpen, writable: true);
+            }
+            catch (WorkspacePathException exception) when (exception.Reason is "native_11" or "native_26")
+            {
+                throw new WorkspacePathException("file_in_use", exception);
+            }
+        }
+        else if (OperatingSystem.IsWindows())
+        {
+            var parent = RootHandle;
+            foreach (var component in parts.AsSpan(0, parts.Length - 1))
+            {
+                parent = RetainCheckedDirectory(OpenChild(parent, component, directory: true));
+            }
+
+            // This first open requests metadata only, before any data-open of a possible special/reparse object.
+            SafeFileHandle metadataHandle;
+            try
+            {
+                metadataHandle = WindowsOpen(parent, parts[^1], directory: false, metadataOnly: true);
+            }
+            catch (WorkspacePathException exception) when (exception.Reason == "native_32")
+            {
+                throw new WorkspacePathException("file_in_use", exception);
+            }
+
+            using var metadata = metadataHandle;
+            var before = Identity(metadata);
+            if (!before.IsFile || before.Links != 1)
+            {
+                throw new WorkspacePathException(before.Links != 1 ? "file_hard_link" : "file_not_regular");
+            }
+
+            CheckVolume(metadata);
+            afterMetadataOpen?.Invoke();
+            file = ReOpenFile(metadata, 0xC0000000, 0, 0x00200000);
+            if (file.IsInvalid)
+            {
+                var error = Marshal.GetLastPInvokeError();
+                file.Dispose();
+                throw new WorkspacePathException(error == 32 ? "file_in_use" : "file_guard_unavailable");
+            }
+
+            try
+            {
+                var held = Identity(metadata);
+                var actual = Identity(file);
+                if (!held.IsFile || held.Links != 1 || !actual.IsFile || actual.Links != 1 ||
+                    !before.SameObject(held) || !held.SameObject(actual))
+                {
+                    throw new WorkspacePathException("file_identity_changed");
+                }
+
+                CheckVolume(file);
+            }
+            catch
+            {
+                file.Dispose();
+                throw;
+            }
+        }
+        else
+        {
+            throw new WorkspacePathException("file_guard_unavailable");
+        }
+
+        try
+        {
+            return WorkspaceWriteGuard.Acquire(file);
+        }
+        catch
+        {
+            file.Dispose();
+            throw;
+        }
+    }
+
     /// <summary>Reads identity, kind and hard-link count from the actual opened handle.</summary>
     public static WorkspaceObjectIdentity Identity(SafeFileHandle handle)
     {
@@ -402,7 +497,7 @@ internal sealed partial class WorkspacePath : IDisposable
         }
     }
 
-    private static SafeFileHandle LinuxReopenChecked(SafeFileHandle metadata, bool directory, byte[]? knownUuid, Action? afterMetadataOpen)
+    private static SafeFileHandle LinuxReopenChecked(SafeFileHandle metadata, bool directory, byte[]? knownUuid, Action? afterMetadataOpen, bool writable = false)
     {
         // O_PATH has no data-open effect. In particular, a FIFO or device is refused before any data handle is opened.
         var original = LinuxBasicIdentity(metadata);
@@ -418,7 +513,7 @@ internal sealed partial class WorkspacePath : IDisposable
 
         using var proc = LinuxProcFdDirectory();
         var descriptor = OpenAt(checked((int)proc.DangerousGetHandle()), metadata.DangerousGetHandle().ToInt64().ToString(CultureInfo.InvariantCulture),
-            0x80000 | 0x800 | (directory ? 0x10000 : 0), 0);
+            0x80000 | 0x800 | (directory ? 0x10000 : writable ? 2 : 0), 0);
         if (descriptor < 0)
         {
             throw NativeFailure();
@@ -524,7 +619,7 @@ internal sealed partial class WorkspacePath : IDisposable
         return handle;
     }
 
-    private static unsafe SafeFileHandle WindowsOpen(SafeFileHandle parent, string name, bool directory)
+    private static unsafe SafeFileHandle WindowsOpen(SafeFileHandle parent, string name, bool directory, bool metadataOnly = false)
     {
         // FILE_CASE_SENSITIVE_INFO is read from the actual parent. A case-sensitive directory must retain exact-case lookup.
         uint flags;
@@ -543,8 +638,8 @@ internal sealed partial class WorkspacePath : IDisposable
                 ObjectName = (nint)(&unicode),
                 Attributes = (flags & 1) == 0 ? 0x40u : 0u,
             };
-            var status = NtCreateFile(out var raw, 0x00100081, ref attributes, out _, 0, 0, directory ? 3u : 1u, 1,
-                0x20u | 0x00200000u | (directory ? 1u : 0x40u), 0, 0);
+            var status = NtCreateFile(out var raw, metadataOnly ? 0x00100080u : 0x00100081u, ref attributes, out _, 0, 0,
+                metadataOnly ? 7u : directory ? 3u : 1u, 1, 0x20u | 0x00200000u | (directory ? 1u : 0x40u), 0, 0);
             if (status < 0)
             {
                 throw new WorkspacePathException("native_" + RtlNtStatusToDosError(status).ToString(CultureInfo.InvariantCulture));
@@ -716,6 +811,9 @@ internal sealed partial class WorkspacePath : IDisposable
 
     [LibraryImport("kernel32.dll", EntryPoint = "CreateFileW", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
     private static partial SafeFileHandle CreateFile(string name, uint access, uint share, nint security, uint disposition, uint flags, nint template);
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    private static partial SafeFileHandle ReOpenFile(SafeFileHandle original, uint access, uint share, uint flags);
 
     [LibraryImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
