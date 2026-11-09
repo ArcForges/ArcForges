@@ -5,7 +5,9 @@ using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Contracts.Relay.V1;
 using ArcForges.Node.Core;
+using ArcForges.Node.Store;
 using Google.Protobuf;
+using Microsoft.Data.Sqlite;
 
 namespace ArcForges.Node.CloudLink.Tests;
 
@@ -86,6 +88,7 @@ public sealed class ChannelTests
     }
 
     [Fact]
+    [Trait("feature", "cross-log-replay")]
     public async Task AReplayedCallIsRefusedAlsoAfterARestart()
     {
         var (link, connection) = await ConnectedAsync();
@@ -114,6 +117,94 @@ public sealed class ChannelTests
             Assert.All(link.RoutedLog().Skip(1), row => Assert.Equal((RoutedCallLog.Replayed, "AUTHENTICATION/signature_invalid", false), (row.Step, row.Code, row.CallId)));
         }
     }
+
+    [Fact]
+    [Trait("feature", "cross-log-replay")]
+    public async Task SharedReceiptReplayIsSignedAuditedAndSurvivesRestart()
+    {
+        // REAL node channel, ES256 verification/result signing and SQLite across restart. The independent loopback
+        // peer is FakeCenter (MOCKED), and the file receipt is a synthetic SQL seed: no file RPC or E2E claim.
+        var dispatcher = new RecordingDispatcher();
+        var (link, connection) = await ConnectedAsync(fixture => fixture.Dispatcher = dispatcher);
+        await using (link)
+        {
+            var fileId = CommandIds.New();
+            SeedFileReceipt(link.Store!, fileId);
+
+            // An unverified frame's caller-controlled ID must not be reserved by either receipt table.
+            var forgedId = CommandIds.New();
+            var (forged, _) = link.Center.Channel.BuildCall(connection, new FakeCallSpec
+            {
+                CallId = forgedId,
+                AlterSignature = signature =>
+                {
+                    var copy = (byte[])signature.Clone();
+                    copy[0] ^= 1;
+                    return copy;
+                },
+            });
+            await connection.SendCallAsync(forged);
+            await Eventually.TrueAsync(() => connection.VerifiedResults.Count == 1, "the node-signed forged-frame refusal");
+            Assert.Equal(RoutedOutcome.RefusedVerification, connection.VerifiedResults.First().Header.Outcome);
+            Assert.Equal("signature", connection.VerifiedResults.First().Header.Error.Details.State.Reason);
+            Assert.Equal(1L, link.Store!.Read(reader => reader.Scalar("SELECT count(*) FROM routed_verified_call_id;")));
+            Assert.Equal(0L, link.Store.Read(reader => reader.Scalar("SELECT count(*) FROM routed_verified_call_id WHERE call_id = $id;",
+                ("$id", forgedId.Value.ToByteArray()))));
+            Assert.Equal(0, dispatcher.Calls);
+
+            // A valid signed old task call using the file receipt's ID must receive call_replayed, rather than
+            // letting the trigger throw out of the channel and lose the signed refusal.
+            var (fileCollision, _) = link.Center.Channel.BuildCall(connection, new FakeCallSpec { CallId = fileId });
+            await connection.SendCallAsync(fileCollision);
+            await Eventually.TrueAsync(() => connection.VerifiedResults.Count == 2, "the signed cross-log replay refusal");
+            Assert.Equal(RoutedOutcome.RefusedVerification, connection.VerifiedResults.Last().Header.Outcome);
+            Assert.Equal(RoutedCallLog.Replayed, connection.VerifiedResults.Last().Header.Error.Details.State.Reason);
+            Assert.Equal(0, dispatcher.Calls);
+
+            // In the other direction a real verified task call owns its ID before a synthetic file writer tries it.
+            var taskId = CommandIds.New();
+            var (taskCall, _) = link.Center.Channel.BuildCall(connection, new FakeCallSpec { CallId = taskId });
+            await connection.SendCallAsync(taskCall);
+            await Eventually.TrueAsync(() => connection.VerifiedResults.Count == 3, "the verified task's answer");
+            Assert.Equal(RoutedOutcome.RefusedByPolicy, connection.VerifiedResults.Last().Header.Outcome);
+            Assert.Equal(1, dispatcher.Calls);
+            var duplicate = Assert.Throws<SqliteException>(() => SeedFileReceipt(link.Store!, taskId));
+            Assert.Equal(19, duplicate.SqliteErrorCode);
+            Assert.Contains("verified_call_id_replayed", duplicate.Message, StringComparison.Ordinal);
+            Assert.Equal(2L, link.Store!.Read(reader => reader.Scalar("SELECT count(*) FROM routed_verified_call_id;")));
+            Assert.Equal(1L, link.Store.Read(reader => reader.Scalar("SELECT count(*) FROM routed_file_call_log;")));
+            Assert.Equal(1L, link.Store.Read(reader => reader.Scalar("SELECT count(*) FROM routed_call_log WHERE call_id IS NOT NULL;")));
+
+            await link.StopAsync();
+            await link.StartAsync();
+            var again = await link.Center.Channel.ProvedAsync(2);
+            await Eventually.TrueAsync(() => link.Service.Status().Relay == RelayState.Connected, "connected after restart");
+            Assert.Equal(2L, link.Store!.Read(reader => reader.Scalar("SELECT count(*) FROM routed_verified_call_id;")));
+            foreach (var replayed in new[] { fileCollision, taskCall })
+            {
+                var expected = again.VerifiedResults.Count + 1;
+                await again.SendCallAsync(replayed);
+                await Eventually.TrueAsync(() => again.VerifiedResults.Count == expected, "the signed replay after restart");
+                var result = again.VerifiedResults.Last().Header;
+                Assert.Equal(RoutedOutcome.RefusedVerification, result.Outcome);
+                Assert.Equal(RoutedCallLog.Replayed, result.Error.Details.State.Reason);
+            }
+
+            Assert.Empty(connection.UnverifiedResults);
+            Assert.Empty(again.UnverifiedResults);
+            Assert.Equal(1, dispatcher.Calls);
+            Assert.Equal([3L, 3L, 2L, 3L, 3L], link.RoutedLog().Select(row => row.Decision));
+            Assert.Equal(["signature", RoutedCallLog.Replayed, RoutedCallLog.Replayed, RoutedCallLog.Replayed],
+                link.RoutedLog().Where(row => row.Decision == 3).Select(row => row.Step));
+            Assert.All(link.RoutedLog().Where(row => row.Decision == 3), row =>
+                Assert.Equal(("AUTHENTICATION/signature_invalid", false), (row.Code, row.CallId)));
+        }
+    }
+
+    private static void SeedFileReceipt(NodeStore store, Id callId) => store.Write(transaction => transaction.Execute("""
+        INSERT INTO routed_file_call_log (received_at, frame_sha256, decision, call_id, signature_kid, method, caller, request_sha256, request_size)
+        VALUES (0, zeroblob(32), 5, $id, 'synthetic-file-kid', 9, x'01', zeroblob(32), 1);
+        """, ("$id", callId.Value.ToByteArray())));
 
     [Fact]
     public async Task AVerificationRefusalIsSignedLoggedAndHasNoEffect()

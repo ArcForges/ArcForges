@@ -18,9 +18,9 @@ CREATE TABLE routed_file_call_log (
   workspace_id BLOB CHECK (workspace_id IS NULL OR length(workspace_id) = 16),
   risk INTEGER CHECK (risk IS NULL OR risk BETWEEN 1 AND 3),
   request_sha256 BLOB CHECK (request_sha256 IS NULL OR length(request_sha256) = 32),
-  request_size INTEGER CHECK (request_size IS NULL OR request_size BETWEEN 0 AND 245760),
+  request_size INTEGER CHECK (request_size IS NULL OR request_size BETWEEN 1 AND 245760),
   response_sha256 BLOB CHECK (response_sha256 IS NULL OR length(response_sha256) = 32),
-  response_size INTEGER CHECK (response_size IS NULL OR response_size BETWEEN 0 AND 1040384),
+  response_size INTEGER CHECK (response_size IS NULL OR response_size BETWEEN 1 AND 1040384),
   CHECK ((decision = 3) = (call_id IS NULL)),
   CHECK (decision <> 3 OR (signature_kid IS NULL AND method IS NULL AND caller IS NULL AND command_id IS NULL
                           AND workspace_id IS NULL AND risk IS NULL AND request_sha256 IS NULL AND request_size IS NULL
@@ -29,6 +29,8 @@ CREATE TABLE routed_file_call_log (
   CHECK (decision IN (1, 5) OR refusal_code IS NOT NULL),
   CHECK (decision = 3 OR (signature_kid IS NOT NULL AND method IS NOT NULL AND caller IS NOT NULL
                          AND request_sha256 IS NOT NULL AND request_size IS NOT NULL)),
+  CHECK ((response_sha256 IS NULL) = (response_size IS NULL)),
+  CHECK ((decision = 1) = (response_sha256 IS NOT NULL)),
   CHECK (decision = 3 OR ((method IN (10, 11, 14, 15, 17, 18)) = (command_id IS NOT NULL)))
 ) STRICT;
 CREATE INDEX ix_routed_file_call_log__received ON routed_file_call_log (received_at);
@@ -47,25 +49,48 @@ CREATE INDEX ix_routed_verified_call_id__received ON routed_verified_call_id (re
 INSERT INTO routed_verified_call_id (call_id, log_kind, log_id, received_at)
   SELECT call_id, 1, log_id, received_at FROM routed_call_log WHERE call_id IS NOT NULL;
 
--- AFTER INSERT sees SQLite's actual allocated INTEGER PRIMARY KEY. A collision aborts the complete insert transaction.
--- These run for an older compatible binary too, which knows only routed_call_log and never writes the registry itself.
+-- SQLite can propagate INSERT OR IGNORE/REPLACE into an AFTER trigger and silently defeat a unique index.
+-- Explicit RAISE(ABORT) before either receipt insert protects every retained row and the shared call ID, regardless of conflict policy.
+-- In a BEFORE trigger SQLite exposes the auto-rowid sentinel as -1, indistinguishable from an explicit -1.
+-- If an old receipt actually has log_id=-1, fail closed until that receipt's normal retention removes it.
+CREATE TRIGGER tr_routed_call_log__guard BEFORE INSERT ON routed_call_log
+BEGIN
+  SELECT RAISE(ABORT, 'routed_log_id_retained') WHERE EXISTS (SELECT 1 FROM routed_call_log WHERE log_id = NEW.log_id);
+  SELECT RAISE(ABORT, 'verified_call_id_replayed') WHERE NEW.call_id IS NOT NULL
+    AND EXISTS (SELECT 1 FROM routed_verified_call_id WHERE call_id = NEW.call_id);
+END;
+CREATE TRIGGER tr_routed_file_call_log__guard BEFORE INSERT ON routed_file_call_log
+BEGIN
+  SELECT RAISE(ABORT, 'routed_log_id_retained') WHERE EXISTS (SELECT 1 FROM routed_file_call_log WHERE log_id = NEW.log_id);
+  SELECT RAISE(ABORT, 'verified_call_id_replayed') WHERE NEW.call_id IS NOT NULL
+    AND EXISTS (SELECT 1 FROM routed_verified_call_id WHERE call_id = NEW.call_id);
+END;
+
+-- AFTER INSERT sees the allocated INTEGER PRIMARY KEY. Check the owner key with an explicit abort too, so a corrupt/orphan registry
+-- cannot be ignored or replaced by an outer conflict policy. Compatible older writers need not write the registry themselves.
 CREATE TRIGGER tr_routed_call_log__reserve AFTER INSERT ON routed_call_log WHEN NEW.call_id IS NOT NULL
 BEGIN
+  SELECT RAISE(ABORT, 'verified_registry_owner_conflict')
+    WHERE EXISTS (SELECT 1 FROM routed_verified_call_id WHERE log_kind = 1 AND log_id = NEW.log_id);
   INSERT INTO routed_verified_call_id (call_id, log_kind, log_id, received_at)
     VALUES (NEW.call_id, 1, NEW.log_id, NEW.received_at);
 END;
 CREATE TRIGGER tr_routed_file_call_log__reserve AFTER INSERT ON routed_file_call_log WHEN NEW.call_id IS NOT NULL
 BEGIN
+  SELECT RAISE(ABORT, 'verified_registry_owner_conflict')
+    WHERE EXISTS (SELECT 1 FROM routed_verified_call_id WHERE log_kind = 2 AND log_id = NEW.log_id);
   INSERT INTO routed_verified_call_id (call_id, log_kind, log_id, received_at)
     VALUES (NEW.call_id, 2, NEW.log_id, NEW.received_at);
 END;
-CREATE TRIGGER tr_routed_call_log__immutable_id BEFORE UPDATE OF call_id ON routed_call_log WHEN NEW.call_id IS NOT OLD.call_id
+CREATE TRIGGER tr_routed_call_log__immutable_id BEFORE UPDATE ON routed_call_log
+WHEN NEW.call_id IS NOT OLD.call_id OR NEW.log_id IS NOT OLD.log_id
 BEGIN
-  SELECT RAISE(ABORT, 'verified_call_id_immutable');
+  SELECT RAISE(ABORT, 'verified_receipt_identity_immutable');
 END;
-CREATE TRIGGER tr_routed_file_call_log__immutable_id BEFORE UPDATE OF call_id ON routed_file_call_log WHEN NEW.call_id IS NOT OLD.call_id
+CREATE TRIGGER tr_routed_file_call_log__immutable_id BEFORE UPDATE ON routed_file_call_log
+WHEN NEW.call_id IS NOT OLD.call_id OR NEW.log_id IS NOT OLD.log_id
 BEGIN
-  SELECT RAISE(ABORT, 'verified_call_id_immutable');
+  SELECT RAISE(ABORT, 'verified_receipt_identity_immutable');
 END;
 -- Log retention removes only its own registry member, atomically. The existing receipt retention policy remains authoritative.
 CREATE TRIGGER tr_routed_call_log__release AFTER DELETE ON routed_call_log WHEN OLD.call_id IS NOT NULL

@@ -56,7 +56,7 @@ public sealed class FileReceiptMigrationTests
         Assert.Equal(1L, Count(store, "routed_file_call_log"));
         Assert.Equal(19, Assert.Throws<SqliteException>(() => store.Write(t => t.Execute(
             "UPDATE routed_file_call_log SET call_id = randomblob(16);"))).SqliteErrorCode);
-        store.Write(t => t.Execute("UPDATE routed_file_call_log SET decision = 1, response_size = 0, response_sha256 = zeroblob(32);"));
+        store.Write(t => t.Execute("UPDATE routed_file_call_log SET decision = 1, response_size = 1, response_sha256 = zeroblob(32);"));
         Assert.Equal(1L, Count(store, "routed_verified_call_id"));
         Assert.Equal(1L, store.Read(r => r.Scalar("SELECT decision FROM routed_file_call_log;")));
     }
@@ -152,6 +152,234 @@ public sealed class FileReceiptMigrationTests
     }
 
     [Fact]
+    public void AllConflictPoliciesAbortDuplicateIdsAcrossAndWithinBothLogs()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        foreach (var recursive in new[] { false, true })
+        {
+            using var root = new TemporaryDataRoot();
+            var clock = new ManualClock();
+            using var store = root.Open(clock);
+            store.Write(t => t.Execute("PRAGMA recursive_triggers = " + (recursive ? "ON" : "OFF") + ";"));
+            foreach (var first in new[] { "routed_call_log", "routed_file_call_log" })
+            {
+                foreach (var second in new[] { "routed_call_log", "routed_file_call_log" })
+                {
+                    foreach (var policy in new[] { "INSERT", "INSERT OR IGNORE", "INSERT OR REPLACE" })
+                    {
+                        var id = StoreIds.NewUuid7(clock);
+                        Insert(store, first, id, first == "routed_call_log" ? 2 : 9);
+                        var attempted = Statement(second).Replace("INSERT INTO", policy + " INTO", StringComparison.Ordinal);
+                        var failure = Assert.Throws<SqliteException>(() => store.Write(t => t.Execute(attempted,
+                            ("$id", id), ("$method", second == "routed_call_log" ? 2 : 9), ("$command", null))));
+                        Assert.Equal(19, failure.SqliteErrorCode);
+                        Assert.Contains("verified_call_id_replayed", failure.Message, StringComparison.Ordinal);
+                        Assert.Equal(1L, Count(store, first));
+                        Assert.Equal(first == second ? 1L : 0L, Count(store, second));
+                        Assert.Equal(1L, Count(store, "routed_verified_call_id"));
+                        Assert.Equal(first == "routed_call_log" ? 1L : 2L, store.Read(r => r.Scalar("SELECT log_kind FROM routed_verified_call_id;")));
+                        Assert.Equal(id, (byte[])store.Read(r => r.Scalar("SELECT call_id FROM routed_verified_call_id;"))!);
+                        store.Write(t =>
+                        {
+                            t.Execute("DELETE FROM routed_call_log;");
+                            t.Execute("DELETE FROM routed_file_call_log;");
+                        });
+                        Assert.Equal(0L, Count(store, "routed_verified_call_id"));
+                    }
+                }
+            }
+        }
+    }
+
+    [Fact]
+    public void ExplicitReceiptIdCannotReplaceVerifiedOrRefusedRowsUnderAnyConflictPolicy()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        foreach (var recursive in new[] { false, true })
+        {
+            using var root = new TemporaryDataRoot();
+            var clock = new ManualClock();
+            using var store = root.Open(clock);
+            store.Write(t => t.Execute("PRAGMA recursive_triggers = " + (recursive ? "ON" : "OFF") + ";"));
+            foreach (var table in new[] { "routed_call_log", "routed_file_call_log" })
+            {
+                foreach (var logId in new long[] { -1, 0, 42 })
+                {
+                    foreach (var verified in new[] { false, true })
+                    {
+                        foreach (var policy in new[] { "INSERT", "INSERT OR IGNORE", "INSERT OR REPLACE" })
+                        {
+                            var original = StoreIds.NewUuid7(clock);
+                            if (verified)
+                            {
+                                var initial = ExplicitStatement(table, "INSERT");
+                                store.Write(t => t.Execute(initial, ("$log", logId), ("$id", original),
+                                    ("$method", table == "routed_call_log" ? 2 : 9), ("$command", null)));
+                            }
+                            else
+                            {
+                                store.Write(t => t.Execute("INSERT INTO " + table +
+                                    " (log_id, received_at, frame_sha256, decision, refusal_step, refusal_code) " +
+                                    "VALUES ($log, 0, zeroblob(32), 3, 'signature', 'AUTHENTICATION/signature_invalid');", ("$log", logId)));
+                            }
+
+                            var replacement = StoreIds.NewUuid7(clock);
+                            var failure = Assert.Throws<SqliteException>(() => store.Write(t => t.Execute(ExplicitStatement(table, policy),
+                                ("$log", logId), ("$id", replacement), ("$method", table == "routed_call_log" ? 2 : 9), ("$command", null))));
+                            Assert.Equal(19, failure.SqliteErrorCode);
+                            Assert.Contains("routed_log_id_retained", failure.Message, StringComparison.Ordinal);
+                            Assert.Equal(1L, Count(store, table));
+                            Assert.Equal(verified ? 1L : 0L, Count(store, "routed_verified_call_id"));
+                            if (verified)
+                            {
+                                Assert.Equal(original, (byte[])store.Read(r => r.Scalar("SELECT call_id FROM " + table + ";"))!);
+                                Assert.Equal(original, (byte[])store.Read(r => r.Scalar("SELECT call_id FROM routed_verified_call_id;"))!);
+                            }
+                            else
+                            {
+                                Assert.Equal(3L, store.Read(r => r.Scalar("SELECT decision FROM " + table + ";")));
+                            }
+
+                            // SQLite's BEFORE INSERT sentinel is also -1 for automatic allocation: an existing -1 receipt
+                            // fails closed until its actual retention deletes that row, with no false release.
+                            if (logId == -1)
+                            {
+                                var automatic = Assert.Throws<SqliteException>(() =>
+                                    Insert(store, table, StoreIds.NewUuid7(clock), table == "routed_call_log" ? 2 : 9));
+                                Assert.Contains("routed_log_id_retained", automatic.Message, StringComparison.Ordinal);
+                            }
+
+                            store.Write(t => t.Execute("DELETE FROM " + table + ";"));
+                            Assert.Equal(0L, Count(store, "routed_verified_call_id"));
+                            Insert(store, table, StoreIds.NewUuid7(clock), table == "routed_call_log" ? 2 : 9);
+                            store.Write(t => t.Execute("DELETE FROM " + table + ";"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    [Fact]
+    public void APreexistingOrphanOwnerCannotBeIgnoredOrReplacedByAnAllocatedId()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        using var root = new TemporaryDataRoot();
+        var clock = new ManualClock();
+        using var store = root.Open(clock);
+        foreach (var table in new[] { "routed_call_log", "routed_file_call_log" })
+        {
+            foreach (var policy in new[] { "INSERT", "INSERT OR IGNORE", "INSERT OR REPLACE" })
+            {
+                // A synthetic inconsistent registry row tests fail-closed behavior; ordinary writes never create this state.
+                var retained = StoreIds.NewUuid7(clock);
+                store.Write(t => t.Execute("""
+                    INSERT INTO routed_verified_call_id (call_id, log_kind, log_id, received_at) VALUES ($id, $kind, 1, 0);
+                    """, ("$id", retained), ("$kind", table == "routed_call_log" ? 1 : 2)));
+                var attempted = Statement(table).Replace("INSERT INTO", policy + " INTO", StringComparison.Ordinal);
+                var failure = Assert.Throws<SqliteException>(() => store.Write(t => t.Execute(attempted,
+                    ("$id", StoreIds.NewUuid7(clock)), ("$method", table == "routed_call_log" ? 2 : 9), ("$command", null))));
+                Assert.Equal(19, failure.SqliteErrorCode);
+                Assert.Contains("verified_registry_owner_conflict", failure.Message, StringComparison.Ordinal);
+                Assert.Equal(0L, Count(store, table));
+                Assert.Equal(1L, Count(store, "routed_verified_call_id"));
+                Assert.Equal(retained, (byte[])store.Read(r => r.Scalar("SELECT call_id FROM routed_verified_call_id;"))!);
+                store.Write(t => t.Execute("DELETE FROM routed_verified_call_id;"));
+            }
+        }
+    }
+
+    [Fact]
+    public void BothReceiptIdentityKeysAreImmutableAndRetentionReleasesExactlyTheirOwner()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        using var root = new TemporaryDataRoot();
+        var clock = new ManualClock();
+        using var store = root.Open(clock);
+        foreach (var table in new[] { "routed_call_log", "routed_file_call_log" })
+        {
+            var id = StoreIds.NewUuid7(clock);
+            Insert(store, table, id, table == "routed_call_log" ? 2 : 9);
+            foreach (var change in new[] { "log_id = log_id + 100", "rowid = log_id + 100", "_rowid_ = log_id + 100", "oid = log_id + 100", "call_id = randomblob(16)", "call_id = NULL" })
+            {
+                var failure = Assert.Throws<SqliteException>(() => store.Write(t => t.Execute("UPDATE " + table + " SET " + change + ";")));
+                Assert.Equal(19, failure.SqliteErrorCode);
+                Assert.Contains("verified_receipt_identity_immutable", failure.Message, StringComparison.Ordinal);
+            }
+
+            Assert.Equal(id, (byte[])store.Read(r => r.Scalar("SELECT call_id FROM routed_verified_call_id;"))!);
+            store.Write(t => t.Execute("DELETE FROM " + table + ";"));
+            Assert.Equal(0L, Count(store, "routed_verified_call_id"));
+            Insert(store, table == "routed_call_log" ? "routed_file_call_log" : "routed_call_log", id,
+                table == "routed_call_log" ? 9 : 2);
+            store.Write(t =>
+            {
+                t.Execute("DELETE FROM routed_call_log;");
+                t.Execute("DELETE FROM routed_file_call_log;");
+            });
+            Assert.Equal(0L, Count(store, "routed_verified_call_id"));
+        }
+
+        // Unverified receipts have no ID reservation, but their receipt key must not move either.
+        foreach (var table in new[] { "routed_call_log", "routed_file_call_log" })
+        {
+            store.Write(t => t.Execute("INSERT INTO " + table +
+                " (received_at, frame_sha256, decision, refusal_step, refusal_code) VALUES (0, zeroblob(32), 3, 'signature', 'AUTHENTICATION/signature_invalid');"));
+            Assert.Equal(19, Assert.Throws<SqliteException>(() => store.Write(t => t.Execute("UPDATE " + table + " SET log_id = log_id + 100;"))).SqliteErrorCode);
+            store.Write(t => t.Execute("DELETE FROM " + table + ";"));
+        }
+    }
+
+    [Fact]
+    public void FileReceiptSizesAndOutcomePairsMatchAuthenticatedFrameShapes()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        using var root = new TemporaryDataRoot();
+        var clock = new ManualClock();
+        using var store = root.Open(clock);
+        void Add(int decision, long? requestSize, byte[]? requestHash, long? responseSize, byte[]? responseHash)
+        {
+            store.Write(t => t.Execute("""
+                INSERT INTO routed_file_call_log (received_at, frame_sha256, decision, refusal_code, call_id, signature_kid, method,
+                  caller, request_sha256, request_size, response_sha256, response_size)
+                VALUES (0, zeroblob(32), $decision, $code, $id, 'isolated-test-kid', 9, x'01', $request, $size, $response, $responseSize);
+                """, ("$decision", decision), ("$code", decision is 2 or 4 ? "AUTHORIZATION/permission_denied" : null),
+                ("$id", StoreIds.NewUuid7(clock)), ("$request", requestHash), ("$size", requestSize),
+                ("$response", responseHash), ("$responseSize", responseSize)));
+        }
+
+        var sha = new byte[32];
+        Add(5, 1, sha, null, null);
+        Add(5, 245_760, sha, null, null);
+        Add(1, 1, sha, 1, sha);
+        Add(1, 245_760, sha, 1_040_384, sha);
+        Add(2, 1, sha, null, null);
+        Add(4, 1, sha, null, null);
+
+        void Rejected(Action action) => Assert.Equal(19, Assert.Throws<SqliteException>(action).SqliteErrorCode);
+        Rejected(() => Add(5, 0, sha, null, null));
+        Rejected(() => Add(5, 245_761, sha, null, null));
+        Rejected(() => Add(5, null, sha, null, null));
+        Rejected(() => Add(5, 1, null, null, null));
+        Rejected(() => Add(5, 1, new byte[31], null, null));
+        Rejected(() => Add(1, 1, sha, 0, sha));
+        Rejected(() => Add(1, 1, sha, 1_040_385, sha));
+        Rejected(() => Add(1, 1, sha, null, null));
+        Rejected(() => Add(1, 1, sha, 1, null));
+        Rejected(() => Add(1, 1, sha, null, sha));
+        Rejected(() => Add(1, 1, sha, 1, new byte[31]));
+        foreach (var decision in new[] { 2, 4, 5 })
+        {
+            Rejected(() => Add(decision, 1, sha, 1, sha));
+            Rejected(() => Add(decision, 1, sha, 1, null));
+            Rejected(() => Add(decision, 1, sha, null, sha));
+        }
+
+        Assert.Equal(6L, Count(store, "routed_file_call_log"));
+        Assert.Equal(6L, Count(store, "routed_verified_call_id"));
+    }
+
+    [Fact]
     public void NativeRootIdentityHasOneActiveRegistrationWithoutInventingLegacyIdentities()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
@@ -187,10 +415,15 @@ public sealed class FileReceiptMigrationTests
     private static void Insert(NodeStore store, string table, byte[] id, int method, bool command = false) => store.Write(t => t.Execute(
         Statement(table), ("$id", id), ("$method", method), ("$command", command ? StoreIds.NewUuid7(t.Clock) : null)));
 
+    private static string ExplicitStatement(string table, string policy) =>
+        Statement(table).Replace("INSERT INTO", policy + " INTO", StringComparison.Ordinal)
+            .Replace("(received_at,", "(log_id, received_at,", StringComparison.Ordinal)
+            .Replace("VALUES (0,", "VALUES ($log, 0,", StringComparison.Ordinal);
+
     private static long Count(NodeStore store, string table) => (long)store.Read(r => r.Scalar("SELECT count(*) FROM " + table + ";"))!;
 
     private static string Statement(string table) => table is "routed_call_log" or "routed_file_call_log"
         ? "INSERT INTO " + table + " (received_at, frame_sha256, decision, call_id, signature_kid, method, caller, command_id, request_sha256, request_size) " +
-          "VALUES (0, zeroblob(32), 5, $id, 'isolated-test-kid', $method, x'01', $command, zeroblob(32), 0);"
+          "VALUES (0, zeroblob(32), 5, $id, 'isolated-test-kid', $method, x'01', $command, zeroblob(32), 1);"
         : throw new ArgumentOutOfRangeException(nameof(table));
 }

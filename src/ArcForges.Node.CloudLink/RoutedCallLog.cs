@@ -90,7 +90,7 @@ internal sealed class RoutedCallLog(IRoutedCallStore store, TimeProvider clock)
         var now = StoreTime.NowMicroseconds(clock);
         var id = await store.WriteAsync(transaction =>
         {
-            if (transaction.Scalar("SELECT 1 FROM routed_call_log WHERE call_id = $call;", ("$call", row.CallId)) is not null)
+            if (transaction.Scalar("SELECT 1 FROM routed_verified_call_id WHERE call_id = $call;", ("$call", row.CallId)) is not null)
             {
                 InsertRefusal(transaction, now, row.FrameSha256, Replayed, "AUTHENTICATION/signature_invalid");
                 return 0;

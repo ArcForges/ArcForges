@@ -26,7 +26,7 @@
       "version": 3,
       "minReaderVersion": 1,
       "file": "0003-schema-step-3.sql",
-      "sha256": "94c4ba9778ca288fc3959b80a63a012c2513ef96e37fbcbaeb43ec485acce3b7",
+      "sha256": "ca717d638250ee3c59992e937b6a7b01056538d54a797bc82d0fa16b664bb4db",
       "source": "AF-CTR-06 implementation; Design node-store section 2b target. Actual step-3 specification mirror and native validation still pending before delivery.",
       "addedBy": "AF-CTR-06"
     }
