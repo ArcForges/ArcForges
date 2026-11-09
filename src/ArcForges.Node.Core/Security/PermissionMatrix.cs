@@ -100,6 +100,15 @@ public static class PermissionMatrix
     /// <summary>Decide an approval.</summary>
     public const string ApprovalDecide = "approval.decide";
 
+    /// <summary>Register an existing root; HUMAN only, including a same-node HUMAN relay.</summary>
+    public const string WorkspaceRegister = "workspace.register";
+
+    /// <summary>Forget a registered root; HUMAN only, including a same-node HUMAN relay.</summary>
+    public const string WorkspaceUnregister = "workspace.unregister";
+
+    /// <summary>Read registered workspace metadata.</summary>
+    public const string WorkspaceRead = "workspace.read";
+
     /// <summary>Plan a cleanup.</summary>
     public const string CleanupPlan = "cleanup.plan";
 
@@ -160,6 +169,9 @@ public static class PermissionMatrix
         new(PolicyCenterRouted, "Change the center-routed policy and its cross-node relay opt-in (HUMAN-edited)", A, D, D, null, RiskClass.Unspecified, D, true,
             RiskClass.High),
         new(ApprovalDecide, "Decide an approval", A, D, D, "decide_approval", RiskClass.High, D, true, RiskClass.High),
+        new(WorkspaceRegister, "Register a workspace (HUMAN only)", A, D, D, "register_node_workspace", RiskClass.High, D, true, RiskClass.High),
+        new(WorkspaceUnregister, "Unregister a workspace (HUMAN only)", A, D, D, "unregister_node_workspace", RiskClass.High, D, true, RiskClass.High),
+        new(WorkspaceRead, "Read registered workspaces", A, A, A, "list_node_workspaces", RiskClass.Low, D, false, RiskClass.Low),
         new(CleanupPlan, "Plan cleanup", A, A, A, null, RiskClass.Unspecified, D, false, RiskClass.Low),
         new(CleanupExecute, "Execute cleanup", A, P, P, null, RiskClass.Unspecified, D, false, RiskClass.High),
         new(ProcessAdopt, "Adopt a process", A, D, D, null, RiskClass.Unspecified, D, false, RiskClass.High),
@@ -226,7 +238,7 @@ public static class PermissionMatrix
     /// </summary>
     public static PermissionDecision RoutedDefault(string operation) => operation switch
     {
-        TaskSubmit or TaskRead or TaskReadOutput or TaskCancelOwn => A,
+        TaskSubmit or TaskRead or TaskReadOutput or TaskCancelOwn or WorkspaceRegister or WorkspaceUnregister or WorkspaceRead => A,
         TaskCancelOthers => P,
         _ => D,
     };

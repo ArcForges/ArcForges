@@ -120,7 +120,7 @@ internal sealed record CloudLinkOptions
 internal static class ChannelContract
 {
     /// <summary>The cohort of ArcForges.Contracts.Relay, Fleet, Foundation and Node (AF-CTR-05 C2, K2).</summary>
-    public const string Cohort = "1.0.0-ci.437.1";
+    public const string Cohort = "1.0.0-ci.450.1";
 }
 
 /// <summary>

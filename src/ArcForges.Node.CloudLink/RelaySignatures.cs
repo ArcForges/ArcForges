@@ -84,7 +84,7 @@ internal static class RelaySignatures
     /// The relay assertion's signing input (Plan addendum D0-B1, C-N2): the origin domain string followed by the canonical fields of
     /// <paramref name="assertion"/> (its signature excluded) and SHA-256 of the canonical center URL. The pre-conditions of relay.proto apply
     /// first: every ID the layout names is present, 16 bytes and not all zero (an absent target or command ID is 16 zero bytes, only where
-    /// the layout allows it), every digest and nonce 32 bytes, local_origin 1..3, method 1..8, nanos 0..999,999,999, and the expiry after the
+    /// the layout allows it), every digest and nonce 32 bytes, local_origin 1..3, an implemented method, nanos 0..999,999,999, and the expiry after the
     /// issue and at most 120 s after it; <see langword="null"/> refuses.
     /// </summary>
     public static byte[]? AssertionInput(RelayAssertion assertion, CenterEndpoint center)
@@ -93,13 +93,14 @@ internal static class RelaySignatures
         ArgumentNullException.ThrowIfNull(center);
         var method = assertion.HasMethod ? (int)assertion.Method : 0;
         var origin = assertion.HasLocalOrigin ? (int)assertion.LocalOrigin : 0;
-        if (method is < 1 or > 8 || origin is < 1 or > 3)
+        if ((method is < 1 or > 8) && (method is < 17 or > 20) || origin is < 1 or > 3)
         {
             return null;
         }
 
         var listNodes = method == (int)RoutedMethod.ListNodes;
-        var commanded = method is (int)RoutedMethod.SubmitNodeTask or (int)RoutedMethod.CancelNodeTask;
+        var commanded = method is (int)RoutedMethod.SubmitNodeTask or (int)RoutedMethod.CancelNodeTask
+            or (int)RoutedMethod.RegisterNodeWorkspace or (int)RoutedMethod.UnregisterNodeWorkspace;
         if (!IdBytes(assertion.RelayingNodeId, out var relaying) || !IdBytes(assertion.RelayingInstallationId, out var installation)
             || !IdBytes(assertion.LocalSessionId, out var session)
             || !OptionalId(assertion.TargetNodeId, required: !listNodes, out var target)
@@ -329,7 +330,7 @@ internal sealed record RelayAssertionFields
     /// <summary>The local caller's client session at this node.</summary>
     public required Id LocalSessionId { get; init; }
 
-    /// <summary>The routed method (1..8).</summary>
+    /// <summary>The routed method (existing 1..8 or implemented workspace 17..20).</summary>
     public required RoutedMethod Method { get; init; }
 
     /// <summary>SHA-256 of the request bytes (relay.proto RelayAssertion.request_sha256).</summary>
@@ -338,6 +339,6 @@ internal sealed record RelayAssertionFields
     /// <summary>The target node; absent for LIST_NODES only.</summary>
     public Id? TargetNodeId { get; init; }
 
-    /// <summary>The command ID of SUBMIT_NODE_TASK and CANCEL_NODE_TASK; absent otherwise.</summary>
+    /// <summary>The command ID of a routed mutation; absent on reads.</summary>
     public Id? CommandId { get; init; }
 }

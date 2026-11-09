@@ -24,6 +24,9 @@ internal readonly record struct WorkspaceObjectIdentity(ulong Volume, ulong Low,
             : !InstanceToken.IsEmpty && !other.InstanceToken.IsEmpty && InstanceToken.Span.SequenceEqual(other.InstanceToken.Span));
 }
 
+/// <summary>Observable metadata used to reject an opened file changing while its bytes are inspected.</summary>
+internal readonly record struct WorkspaceFileStamp(long Size, long Modification, uint ModificationNanoseconds, long Change, uint ChangeNanoseconds);
+
 /// <summary>A closed, non-content-bearing refusal of native workspace resolution.</summary>
 internal sealed class WorkspacePathException(string reason, Exception? inner = null) : IOException(reason, inner)
 {
@@ -191,6 +194,46 @@ internal sealed partial class WorkspacePath : IDisposable
         return current;
     }
 
+    /// <summary>
+    /// Opens a fresh directory description for an internal bounded enumeration. Its native position is independent of
+    /// the retained anchor; enumeration itself is not a namespace lock and names still require checked root-relative opens.
+    /// </summary>
+    internal SafeFileHandle OpenDirectoryForEnumeration(string path)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        var parts = Components(path, allowRoot: true);
+        if (OperatingSystem.IsLinux())
+        {
+            using var metadata = LinuxOpenAt2(RootHandle, parts.Length == 0 ? "." : string.Join('/', parts), noCrossMount: true);
+            CheckVolume(metadata, _linuxFileSystemUuid);
+            return Retain(_directories, LinuxReopenChecked(metadata, directory: true, _linuxFileSystemUuid, afterMetadataOpen: null));
+        }
+
+        if (OperatingSystem.IsWindows())
+        {
+            var source = parts.Length == 0 ? RootHandle : OpenDirectory(path);
+            var expected = Identity(source);
+            var reopened = ReOpenFile(source, 0x00100081, 3, 0x02200000);
+            try
+            {
+                if (reopened.IsInvalid || !expected.SameObject(Identity(reopened)))
+                {
+                    throw new WorkspacePathException("directory_identity_changed");
+                }
+
+                CheckVolume(reopened);
+                return Retain(_directories, reopened);
+            }
+            catch
+            {
+                reopened.Dispose();
+                throw;
+            }
+        }
+
+        throw new WorkspacePathException("path_enforcement_unavailable");
+    }
+
     /// <summary>Opens a regular single-link file for reading beneath the root; callers never reopen its unchecked path.</summary>
     public SafeFileHandle OpenRead(string path) => OpenRead(path, afterMetadataOpen: null);
 
@@ -351,6 +394,39 @@ internal sealed partial class WorkspacePath : IDisposable
         {
             _directories[index].Dispose();
         }
+    }
+
+    /// <summary>Reads size, modification and change times from the opened object; no name is reopened.</summary>
+    internal static unsafe WorkspaceFileStamp FileStamp(SafeFileHandle handle)
+    {
+        ArgumentNullException.ThrowIfNull(handle);
+        if (OperatingSystem.IsLinux())
+        {
+            const uint Required = 0x200 | 0x40 | 0x80; // STATX_SIZE, MTIME, CTIME
+            var buffer = stackalloc byte[256];
+            if (Statx(checked((int)handle.DangerousGetHandle()), string.Empty, 0x1000 | 0x100, Required, buffer) != 0 ||
+                (*(uint*)buffer & Required) != Required)
+            {
+                throw new WorkspacePathException("file_metadata_unavailable");
+            }
+
+            return new WorkspaceFileStamp(checked((long)*(ulong*)(buffer + 40)), *(long*)(buffer + 112), *(uint*)(buffer + 120),
+                *(long*)(buffer + 96), *(uint*)(buffer + 104));
+        }
+
+        if (OperatingSystem.IsWindows())
+        {
+            if (!GetBasicInformation(handle, 0, out var basic, (uint)sizeof(FileBasicInformation)) ||
+                !GetFileInformationByHandle(handle, out var standard))
+            {
+                throw new WorkspacePathException("file_metadata_unavailable");
+            }
+
+            var size = ((ulong)standard.FileSizeHigh << 32) | standard.FileSizeLow;
+            return new WorkspaceFileStamp(checked((long)size), basic.LastWriteTime, 0, basic.ChangeTime, 0);
+        }
+
+        throw new WorkspacePathException("path_enforcement_unavailable");
     }
 
     private static SafeFileHandle Retain(List<SafeFileHandle> handles, SafeFileHandle handle)
@@ -825,6 +901,10 @@ internal sealed partial class WorkspacePath : IDisposable
 
     [LibraryImport("kernel32.dll", EntryPoint = "GetFileInformationByHandleEx", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool GetBasicInformation(SafeFileHandle file, int informationClass, out FileBasicInformation information, uint size);
+
+    [LibraryImport("kernel32.dll", EntryPoint = "GetFileInformationByHandleEx", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool GetIdentityInformation(SafeFileHandle file, int informationClass, out FileIdInformation information, uint size);
 
     [LibraryImport("kernel32.dll", SetLastError = true)]
@@ -880,6 +960,16 @@ internal sealed partial class WorkspacePath : IDisposable
         public ulong Volume;
         public ulong Low;
         public ulong High;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FileBasicInformation
+    {
+        public long CreationTime;
+        public long LastAccessTime;
+        public long LastWriteTime;
+        public long ChangeTime;
+        public uint FileAttributes;
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 4)]

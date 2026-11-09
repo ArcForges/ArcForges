@@ -38,6 +38,9 @@ public sealed class PermissionTests
         { PermissionMatrix.ParallelismLowerOwnSession, A, P, A, "set_parallelism" },
         { PermissionMatrix.PolicyChange, A, P, P, null },
         { PermissionMatrix.ApprovalDecide, A, D, D, "decide_approval" },
+        { PermissionMatrix.WorkspaceRegister, A, D, D, "register_node_workspace" },
+        { PermissionMatrix.WorkspaceUnregister, A, D, D, "unregister_node_workspace" },
+        { PermissionMatrix.WorkspaceRead, A, A, A, "list_node_workspaces" },
         { PermissionMatrix.CleanupPlan, A, A, A, null },
         { PermissionMatrix.CleanupExecute, A, P, P, null },
         { PermissionMatrix.ProcessAdopt, A, D, D, null },
@@ -89,6 +92,26 @@ public sealed class PermissionTests
         Assert.Equal(D, PermissionMatrix.Decide(Origin.Agent, PermissionMatrix.SignInRead, overrides).Decision);
         Assert.Equal(A, PermissionMatrix.Decide(Origin.Script, PermissionMatrix.SignInRead, overrides).Decision);
         Assert.NotNull(PermissionMatrix.Valid(overrides[0]));
+    }
+
+    [Fact]
+    public void WorkspaceMutationRemainsHumanOnlyAcrossLocalAndRoutedCells()
+    {
+        foreach (var operation in new[] { PermissionMatrix.WorkspaceRegister, PermissionMatrix.WorkspaceUnregister })
+        {
+            var attemptedOverride = new PermissionOverride { Operation = operation, Origin = Origin.Agent, Decision = A };
+            Assert.True(PermissionMatrix.Find(operation)!.Fixed);
+            Assert.NotNull(PermissionMatrix.Valid(attemptedOverride));
+            Assert.Equal(A, PermissionMatrix.Decide(Origin.Human, operation, []).Decision);
+            Assert.Equal(D, PermissionMatrix.Decide(Origin.Agent, operation, [attemptedOverride]).Decision);
+            Assert.Equal(D, PermissionMatrix.Decide(Origin.Script, operation, []).Decision);
+            Assert.Equal(A, PermissionMatrix.DecideRouted(operation, Origin.Human, []).Decision);
+            Assert.Equal(A, PermissionMatrix.DecideRouted(operation, Origin.Remote, []).Decision);
+            Assert.Equal(D, PermissionMatrix.DecideRouted(operation, Origin.Script, []).Decision);
+            Assert.Equal(D, PermissionMatrix.DecideRouted(operation, Origin.Agent, [attemptedOverride]).Decision);
+        }
+
+        Assert.Equal(A, PermissionMatrix.DecideRouted(PermissionMatrix.WorkspaceRead, Origin.Agent, []).Decision);
     }
 
     [Fact]

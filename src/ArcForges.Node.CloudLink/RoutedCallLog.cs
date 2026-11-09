@@ -41,13 +41,13 @@ internal sealed record VerifiedCallRow
     /// <summary>The command key that signed the call.</summary>
     public required string Kid { get; init; }
 
-    /// <summary>The routed method, 1..6.</summary>
+    /// <summary>The verified task method 1..6 or file/workspace method 9..20.</summary>
     public required int Method { get; init; }
 
     /// <summary>The node.v1 CenterCaller bytes as the call header signed them.</summary>
     public required byte[] Caller { get; init; }
 
-    /// <summary>The command ID of a submit or cancel (16 bytes), else <see langword="null"/>.</summary>
+    /// <summary>The command ID of a mutation (16 bytes), else <see langword="null"/>.</summary>
     public byte[]? CommandId { get; init; }
 
     /// <summary>SHA-256 of the payload.</summary>
@@ -96,13 +96,22 @@ internal sealed class RoutedCallLog(IRoutedCallStore store, TimeProvider clock)
                 return 0;
             }
 
-            return (long)transaction.Scalar("""
-                INSERT INTO routed_call_log (received_at, frame_sha256, decision, call_id, signature_kid, method, caller, command_id,
-                  request_sha256, request_size)
-                VALUES ($at, $frame, 5, $call, $kid, $method, $caller, $command, $request, $size)
-                RETURNING log_id;
-                """, ("$at", now), ("$frame", row.FrameSha256), ("$call", row.CallId), ("$kid", row.Kid), ("$method", row.Method),
-                ("$caller", row.Caller), ("$command", (object?)row.CommandId ?? DBNull.Value), ("$request", row.RequestSha256), ("$size", row.RequestSize))!;
+            var sql = row.Method is >= 9 and <= 20
+                ? """
+                  INSERT INTO routed_file_call_log (received_at, frame_sha256, decision, call_id, signature_kid, method, caller, command_id,
+                    request_sha256, request_size)
+                  VALUES ($at, $frame, 5, $call, $kid, $method, $caller, $command, $request, $size)
+                  RETURNING log_id;
+                  """
+                : """
+                  INSERT INTO routed_call_log (received_at, frame_sha256, decision, call_id, signature_kid, method, caller, command_id,
+                    request_sha256, request_size)
+                  VALUES ($at, $frame, 5, $call, $kid, $method, $caller, $command, $request, $size)
+                  RETURNING log_id;
+                  """;
+            return (long)transaction.Scalar(sql, ("$at", now), ("$frame", row.FrameSha256), ("$call", row.CallId), ("$kid", row.Kid),
+                ("$method", row.Method), ("$caller", row.Caller), ("$command", (object?)row.CommandId ?? DBNull.Value),
+                ("$request", row.RequestSha256), ("$size", row.RequestSize))!;
         }).ConfigureAwait(false);
         return id == 0 ? null : id;
     }
@@ -121,20 +130,29 @@ internal sealed class RoutedCallLog(IRoutedCallStore store, TimeProvider clock)
 
     /// <summary>Completes a pending row with its final decision (1, 2 or 4) and what the answer named.</summary>
     public Task CompleteAsync(long logId, RoutedCallDecision decision, string? refusalCode, byte[]? taskId = null, int? risk = null,
-        byte[]? responseSha256 = null, long? responseSize = null)
+        byte[]? responseSha256 = null, long? responseSize = null, bool fileWorkspace = false, byte[]? workspaceId = null)
     {
         if (decision is not (RoutedCallDecision.Executed or RoutedCallDecision.RefusedByPolicy or RoutedCallDecision.Expired))
         {
             throw new ArgumentOutOfRangeException(nameof(decision), "A verified call ends executed, refused by policy or expired.");
         }
 
-        return store.WriteAsync(transaction => transaction.Execute("""
-            UPDATE routed_call_log SET decision = $decision, refusal_code = $code, task_id = $task, risk = $risk,
-              response_sha256 = $response, response_size = $size
-            WHERE log_id = $id AND decision = 5;
-            """, ("$decision", (int)decision), ("$code", (object?)refusalCode ?? DBNull.Value), ("$task", (object?)taskId ?? DBNull.Value),
-            ("$risk", (object?)risk ?? DBNull.Value), ("$response", (object?)responseSha256 ?? DBNull.Value), ("$size", (object?)responseSize ?? DBNull.Value),
-            ("$id", logId)));
+        var sql = fileWorkspace
+            ? """
+              UPDATE routed_file_call_log SET decision = $decision, refusal_code = $code, workspace_id = $workspace, risk = $risk,
+                response_sha256 = $response, response_size = $size
+              WHERE log_id = $id AND decision = 5;
+              """
+            : """
+              UPDATE routed_call_log SET decision = $decision, refusal_code = $code, task_id = $task, risk = $risk,
+                response_sha256 = $response, response_size = $size
+              WHERE log_id = $id AND decision = 5;
+              """;
+        return store.WriteAsync(transaction => transaction.Execute(sql,
+            ("$decision", (int)decision), ("$code", (object?)refusalCode ?? DBNull.Value),
+            (fileWorkspace ? "$workspace" : "$task", (object?)(fileWorkspace ? workspaceId : taskId) ?? DBNull.Value),
+            ("$risk", (object?)risk ?? DBNull.Value), ("$response", (object?)responseSha256 ?? DBNull.Value),
+            ("$size", (object?)responseSize ?? DBNull.Value), ("$id", logId)));
     }
 
     /// <summary>
@@ -148,6 +166,14 @@ internal sealed class RoutedCallLog(IRoutedCallStore store, TimeProvider clock)
         var removed = transaction.Execute("DELETE FROM routed_call_log WHERE received_at < $cutoff;", ("$cutoff", now - Micros(Retention)));
         removed += transaction.Execute("DELETE FROM routed_call_log WHERE decision = 1 AND method BETWEEN 2 AND 5 AND received_at < $cutoff;",
             ("$cutoff", now - Micros(ReadRetention)));
+        removed += transaction.Execute("DELETE FROM routed_file_call_log WHERE received_at < $cutoff;", ("$cutoff", now - Micros(Retention)));
+        removed += transaction.Execute("""
+            DELETE FROM routed_file_call_log WHERE decision = 1 AND method IN (9, 12, 13, 16, 19, 20) AND received_at < $cutoff;
+            """, ("$cutoff", now - Micros(ReadRetention)));
+        removed += transaction.Execute("""
+            DELETE FROM routed_file_call_log WHERE decision = 3 AND log_id NOT IN
+              (SELECT log_id FROM routed_file_call_log WHERE decision = 3 ORDER BY log_id DESC LIMIT $kept);
+            """, ("$kept", RefusalsKept));
         removed += transaction.Execute("""
             DELETE FROM routed_call_log WHERE decision = 3 AND log_id NOT IN
               (SELECT log_id FROM routed_call_log WHERE decision = 3 ORDER BY log_id DESC LIMIT $kept);

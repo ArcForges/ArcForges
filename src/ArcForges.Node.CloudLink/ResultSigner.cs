@@ -62,6 +62,9 @@ internal static partial class RoutedRefusals
         RoutedMethod.SubmitNodeTask => "task.submit",
         RoutedMethod.ReadNodeTaskOutput => "task.read_output",
         RoutedMethod.CancelNodeTask => "task.cancel_others",
+        RoutedMethod.RegisterNodeWorkspace => "workspace.register",
+        RoutedMethod.UnregisterNodeWorkspace => "workspace.unregister",
+        RoutedMethod.ListNodeWorkspaces or RoutedMethod.GetNodeWorkspace => "workspace.read",
         _ => "task.read",
     };
 
@@ -248,7 +251,9 @@ internal sealed class ResultSigner(INodeKey key, ReadOnlyMemory<byte> nodeId, Ti
 /// <param name="TaskId">The task the call named or created (16 bytes), for <c>routed_call_log.task_id</c>.</param>
 /// <param name="Risk">The risk class (1..3), for <c>routed_call_log.risk</c>.</param>
 /// <param name="HandlerCode">For EXECUTED, the handler's own error as <c>CATEGORY/code</c> when the response is one, for <c>routed_call_log.refusal_code</c>.</param>
-internal sealed record RoutedAnswer(RoutedOutcome Outcome, ByteString? Response, ArcError? Error, byte[]? TaskId = null, int? Risk = null, string? HandlerCode = null);
+/// <param name="WorkspaceId">The workspace the call named or created, for the file/workspace log when verified.</param>
+internal sealed record RoutedAnswer(RoutedOutcome Outcome, ByteString? Response, ArcError? Error, byte[]? TaskId = null, int? Risk = null,
+    string? HandlerCode = null, byte[]? WorkspaceId = null);
 
 /// <summary>
 /// The link a verified call arrived on, as the dispatcher re-reads it (AF-CTR-05 decisions B-3; N1 review A C-N1, B N-12): whether the call

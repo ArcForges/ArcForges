@@ -16,7 +16,7 @@ namespace ArcForges.Node.Api;
 
 /// <summary>
 /// The restricted local FleetService proxy. It derives the caller and local session from the actual LocalRpc connection, signs a fresh
-/// channel nonce over the original request bytes, and forwards only the eight AF-CTR-05 methods through the node's bound center transport.
+/// channel nonce over the original request bytes, and forwards the eight AF-CTR-05 and four AF-CTR-06 workspace methods through the node's bound center transport.
 /// All other FleetService methods retain the generated UNIMPLEMENTED implementation.
 /// </summary>
 internal sealed class FleetServiceHandler(NodeRuntime node, ClientSessions sessions, CloudLinkService cloud) : FleetService.FleetServiceBase
@@ -253,6 +253,161 @@ internal sealed class FleetServiceHandler(NodeRuntime node, ClientSessions sessi
             error => new FleetServiceCancelNodeTaskResponse { Meta = ApiCommands.Meta(request.Meta), Error = error });
     }
 
+
+    public override Task<FleetServiceRegisterNodeWorkspaceResponse> RegisterNodeWorkspace(FleetServiceRegisterNodeWorkspaceRequest request, ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var forwarded = request.Clone();
+        var invalid = Validation.RequiredId(forwarded.NodeId, "node_id") ?? Payload(forwarded.HasRequest, forwarded.Request, 245760);
+        Id? command = null;
+        if (invalid is null)
+        {
+            try
+            {
+                command = WorkspaceServiceRegisterWorkspaceRequest.Parser.ParseFrom(forwarded.Request).Meta?.CommandId;
+                invalid = Validation.CommandId(forwarded.Meta) ?? Validation.RequiredId(command, "request.meta.command_id");
+                if (invalid is null && !command!.Equals(forwarded.Meta.CommandId))
+                {
+                    invalid = NodeErrors.InvalidArgument("meta.command_id must equal the inner request command_id");
+                }
+            }
+            catch (InvalidProtocolBufferException)
+            {
+                invalid = NodeErrors.InvalidArgument("request: invalid node request bytes");
+            }
+        }
+
+        if (invalid is not null)
+        {
+            return Task.FromResult(new FleetServiceRegisterNodeWorkspaceResponse { Meta = ApiCommands.Meta(request.Meta), Error = invalid });
+        }
+
+        return ForwardAsync(context, request.Meta?.CorrelationId, RoutedMethod.RegisterNodeWorkspace, forwarded.NodeId, command,
+            _ => SHA256.HashData(forwarded.Request.Span),
+            (caller, assertion, client, options) =>
+            {
+                forwarded.Caller = caller;
+                forwarded.RelayAssertion = assertion;
+                return client.RegisterNodeWorkspaceAsync(forwarded, options).ResponseAsync;
+            }, answer => answer.Error, answer => answer.Value is not null,
+            error => new FleetServiceRegisterNodeWorkspaceResponse { Meta = ApiCommands.Meta(request.Meta), Error = error });
+    }
+
+    public override Task<FleetServiceUnregisterNodeWorkspaceResponse> UnregisterNodeWorkspace(FleetServiceUnregisterNodeWorkspaceRequest request, ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var forwarded = request.Clone();
+        var invalid = Validation.RequiredId(forwarded.NodeId, "node_id") ?? Payload(forwarded.HasRequest, forwarded.Request, 245760);
+        Id? command = null;
+        if (invalid is null)
+        {
+            try
+            {
+                command = WorkspaceServiceUnregisterWorkspaceRequest.Parser.ParseFrom(forwarded.Request).Meta?.CommandId;
+                invalid = Validation.CommandId(forwarded.Meta) ?? Validation.RequiredId(command, "request.meta.command_id");
+                if (invalid is null && !command!.Equals(forwarded.Meta.CommandId))
+                {
+                    invalid = NodeErrors.InvalidArgument("meta.command_id must equal the inner request command_id");
+                }
+            }
+            catch (InvalidProtocolBufferException)
+            {
+                invalid = NodeErrors.InvalidArgument("request: invalid node request bytes");
+            }
+        }
+
+        if (invalid is not null)
+        {
+            return Task.FromResult(new FleetServiceUnregisterNodeWorkspaceResponse { Meta = ApiCommands.Meta(request.Meta), Error = invalid });
+        }
+
+        return ForwardAsync(context, request.Meta?.CorrelationId, RoutedMethod.UnregisterNodeWorkspace, forwarded.NodeId, command,
+            _ => SHA256.HashData(forwarded.Request.Span),
+            (caller, assertion, client, options) =>
+            {
+                forwarded.Caller = caller;
+                forwarded.RelayAssertion = assertion;
+                return client.UnregisterNodeWorkspaceAsync(forwarded, options).ResponseAsync;
+            }, answer => answer.Error, answer => answer.Value is not null,
+            error => new FleetServiceUnregisterNodeWorkspaceResponse { Meta = ApiCommands.Meta(request.Meta), Error = error });
+    }
+
+    public override Task<FleetServiceListNodeWorkspacesResponse> ListNodeWorkspaces(FleetServiceListNodeWorkspacesRequest request, ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var forwarded = request.Clone();
+        var invalid = Validation.RequiredId(forwarded.NodeId, "node_id") ?? Payload(forwarded.HasRequest, forwarded.Request, 245760);
+        Id? command = null;
+        if (invalid is null)
+        {
+            try
+            {
+                var inner = WorkspaceServiceListWorkspacesRequest.Parser.ParseFrom(forwarded.Request);
+                if (forwarded.Meta?.CommandId is not null || inner.Meta?.CommandId is not null)
+                {
+                    invalid = NodeErrors.InvalidArgument("meta.command_id: absent for a workspace read");
+                }
+            }
+            catch (InvalidProtocolBufferException)
+            {
+                invalid = NodeErrors.InvalidArgument("request: invalid node request bytes");
+            }
+        }
+
+        if (invalid is not null)
+        {
+            return Task.FromResult(new FleetServiceListNodeWorkspacesResponse { Meta = ApiCommands.Meta(request.Meta), Error = invalid });
+        }
+
+        return ForwardAsync(context, request.Meta?.CorrelationId, RoutedMethod.ListNodeWorkspaces, forwarded.NodeId, command,
+            _ => SHA256.HashData(forwarded.Request.Span),
+            (caller, assertion, client, options) =>
+            {
+                forwarded.Caller = caller;
+                forwarded.RelayAssertion = assertion;
+                return client.ListNodeWorkspacesAsync(forwarded, options).ResponseAsync;
+            }, answer => answer.Error, answer => answer.Value is not null,
+            error => new FleetServiceListNodeWorkspacesResponse { Meta = ApiCommands.Meta(request.Meta), Error = error });
+    }
+
+    public override Task<FleetServiceGetNodeWorkspaceResponse> GetNodeWorkspace(FleetServiceGetNodeWorkspaceRequest request, ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var forwarded = request.Clone();
+        var invalid = Validation.RequiredId(forwarded.NodeId, "node_id") ?? Payload(forwarded.HasRequest, forwarded.Request, 245760);
+        Id? command = null;
+        if (invalid is null)
+        {
+            try
+            {
+                var inner = WorkspaceServiceGetWorkspaceRequest.Parser.ParseFrom(forwarded.Request);
+                if (forwarded.Meta?.CommandId is not null || inner.Meta?.CommandId is not null)
+                {
+                    invalid = NodeErrors.InvalidArgument("meta.command_id: absent for a workspace read");
+                }
+            }
+            catch (InvalidProtocolBufferException)
+            {
+                invalid = NodeErrors.InvalidArgument("request: invalid node request bytes");
+            }
+        }
+
+        if (invalid is not null)
+        {
+            return Task.FromResult(new FleetServiceGetNodeWorkspaceResponse { Meta = ApiCommands.Meta(request.Meta), Error = invalid });
+        }
+
+        return ForwardAsync(context, request.Meta?.CorrelationId, RoutedMethod.GetNodeWorkspace, forwarded.NodeId, command,
+            _ => SHA256.HashData(forwarded.Request.Span),
+            (caller, assertion, client, options) =>
+            {
+                forwarded.Caller = caller;
+                forwarded.RelayAssertion = assertion;
+                return client.GetNodeWorkspaceAsync(forwarded, options).ResponseAsync;
+            }, answer => answer.Error, answer => answer.Value is not null,
+            error => new FleetServiceGetNodeWorkspaceResponse { Meta = ApiCommands.Meta(request.Meta), Error = error });
+    }
+
     private static ArcError? Payload(bool present, ByteString bytes, int maximum) =>
         !present || bytes.Length == 0 || bytes.Length > maximum ? NodeErrors.InvalidArgument("request: required within the routed size limit") : null;
 
@@ -314,7 +469,9 @@ internal sealed class FleetServiceHandler(NodeRuntime node, ClientSessions sessi
             }
 
             var maximum = method == RoutedMethod.WaitNodeTask ? TimeSpan.FromSeconds(55) :
-                method == RoutedMethod.ReadNodeTaskOutput ? TimeSpan.FromSeconds(30) : TimeSpan.FromSeconds(10);
+                method == RoutedMethod.ReadNodeTaskOutput ? TimeSpan.FromSeconds(30) :
+                method is RoutedMethod.RegisterNodeWorkspace or RoutedMethod.UnregisterNodeWorkspace or
+                    RoutedMethod.ListNodeWorkspaces or RoutedMethod.GetNodeWorkspace ? TimeSpan.FromSeconds(15) : TimeSpan.FromSeconds(10);
             var answer = await cloud.ForwardRelayAsync(signed,
                 (client, options) => send(caller, signed.Assertion.ToByteString(), client, options), left < maximum ? left : maximum, context.CancellationToken)
                 .ConfigureAwait(false);

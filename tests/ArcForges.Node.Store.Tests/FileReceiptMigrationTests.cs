@@ -22,7 +22,8 @@ public sealed class FileReceiptMigrationTests
             Insert(old, "routed_call_log", id, 1);
         }
 
-        using (var current = root.Open(clock))
+        var step3 = new MigrationPlan(StoreMigrations.Released.Steps.Take(3));
+        using (var current = root.Open(clock, step3))
         {
             Assert.Equal(2, current.Opening.MigratedFrom);
             Assert.Equal(3, current.Metadata.SchemaVersion);

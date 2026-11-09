@@ -30,6 +30,31 @@ public sealed class CallVerifierTests
     public void AWellFormedCallPassesEveryCheck() => Assert.Null(Check(Build()).Refusal);
 
     [Fact]
+    public void SignedWorkspaceCallsRequireCommandIdsExactlyForMutations()
+    {
+        foreach (var method in new[] { RoutedMethod.RegisterNodeWorkspace, RoutedMethod.UnregisterNodeWorkspace,
+            RoutedMethod.ListNodeWorkspaces, RoutedMethod.GetNodeWorkspace })
+        {
+            var mutation = method is RoutedMethod.RegisterNodeWorkspace or RoutedMethod.UnregisterNodeWorkspace;
+            var valid = Build(change: header =>
+            {
+                header.Method = method;
+                header.CommandId = mutation ? CommandIds.New() : null;
+            });
+            Assert.Null(Check(valid).Refusal);
+            var bad = Build(change: header =>
+            {
+                header.Method = method;
+                header.CommandId = mutation ? null : CommandIds.New();
+            });
+            Assert.NotNull(Check(bad).Refusal);
+        }
+
+        // Other new methods are not admitted by this workspace-only vertical yet.
+        Assert.NotNull(Check(Build(change: header => header.Method = RoutedMethod.ReadNodeFile)).Refusal);
+    }
+
+    [Fact]
     public void ACallSignedByAnUnknownKeyIsRefusedBeforeParsing()
     {
         // N1-7 and the "verify before parse" mutant: a header that is not even a protobuf, signed by an unknown key or not at all, fails at

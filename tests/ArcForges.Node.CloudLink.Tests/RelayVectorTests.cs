@@ -25,7 +25,12 @@ public sealed class RelayVectorTests
     public void TheVendoredVectorsAreTheContractsFileOfTheCohortThisRepositoryUses()
     {
         var manifest = FakeCenterConformanceTests.VendoredManifest("relay-vectors", 1, "e67a6b089a7270ab771a97c27aeba92c5d3b0469");
-        Assert.Equal(ChannelContract.Cohort, manifest.GetProperty("contractsCohort").GetString());
+        // The published 450.1 producer (de3dba76266e89654be9b4d29d097d525a281c6a) carries this
+        // exact historical fixture (SHA-256 8b6f1fb333a6aad96c32467b77148894ed0fce04d54fc9603c7b8c620fdec899).
+        // Its existing relay field numbers are unchanged; the remaining tests exercise every golden
+        // signature and frame with the 450.1 codecs. Do not relabel the historical 437.1 provenance.
+        Assert.Equal("1.0.0-ci.437.1", manifest.GetProperty("contractsCohort").GetString());
+        Assert.Equal("1.0.0-ci.450.1", ChannelContract.Cohort);
         Assert.Equal("af-ctr-05-relay-vectors.v1", Root.GetProperty("schemaVersion").GetString());
         var version = typeof(RelayFrame).Assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
             .Cast<System.Reflection.AssemblyInformationalVersionAttribute>().Single().InformationalVersion;
@@ -121,6 +126,28 @@ public sealed class RelayVectorTests
         Assert.Null(RelaySignatures.AssertionInput(Change(assertion, a => a.ExpiresAt = new Instant { UnixSeconds = a.IssuedAt.UnixSeconds + 121, Nanos = a.IssuedAt.Nanos }), Audience));
         Assert.Null(RelaySignatures.AssertionInput(Change(assertion, a => a.LocalOrigin = ArcForges.Contracts.Node.V1.Origin.Unspecified), Audience));
         Assert.Null(RelaySignatures.AssertionInput(Change(assertion, a => a.RelayingNodeId = new Id { Value = ByteString.CopyFrom(new byte[16]) }), Audience));
+    }
+
+    [Fact]
+    public void WorkspaceRelayAssertionsBindTheCommandIdOnlyForMutations()
+    {
+        var vector = Root.GetProperty("relayAssertions").EnumerateArray().Single(entry => entry.GetProperty("id").GetString() == "submit-own-node-human");
+        var original = RelayAssertion.Parser.ParseFrom(Hex(vector, "assertion"));
+        foreach (var method in new[] { RoutedMethod.RegisterNodeWorkspace, RoutedMethod.UnregisterNodeWorkspace,
+            RoutedMethod.ListNodeWorkspaces, RoutedMethod.GetNodeWorkspace })
+        {
+            var mutation = method is RoutedMethod.RegisterNodeWorkspace or RoutedMethod.UnregisterNodeWorkspace;
+            var valid = Change(original, assertion =>
+            {
+                assertion.Method = method;
+                assertion.CommandId = mutation ? original.CommandId.Clone() : null;
+            });
+            Assert.NotNull(RelaySignatures.AssertionInput(valid, Audience));
+            valid.CommandId = mutation ? null : original.CommandId.Clone();
+            Assert.Null(RelaySignatures.AssertionInput(valid, Audience));
+        }
+
+        Assert.Null(RelaySignatures.AssertionInput(Change(original, assertion => assertion.Method = RoutedMethod.WriteNodeFile), Audience));
     }
 
     [Fact]

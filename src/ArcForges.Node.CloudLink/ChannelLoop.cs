@@ -864,7 +864,8 @@ internal sealed class ChannelLoop : IAsyncDisposable
             var code = answer.Error is { } error ? error.Category.ToString().ToUpperInvariant() + "/" + error.Code : answer.HandlerCode;
             await _log.CompleteAsync(verified!.LogId, decision, code, answer.TaskId, answer.Risk,
                 decision == RoutedCallDecision.Executed ? SHA256.HashData(answer.Response!.Span) : null,
-                decision == RoutedCallDecision.Executed ? answer.Response!.Length : null).ConfigureAwait(false);
+                decision == RoutedCallDecision.Executed ? answer.Response!.Length : null,
+                fileWorkspace: (int)verified.Header.Method is >= 9 and <= 20, workspaceId: answer.WorkspaceId).ConfigureAwait(false);
             await session.Client.SendAsync(new RelayFrame { CallResult = result }, session.Token).ConfigureAwait(false);
             _nodeLog.Info("cloud.channel.call_answered", new LogField("method", (int)verified.Header.Method), new LogField("decision", (int)decision));
         }

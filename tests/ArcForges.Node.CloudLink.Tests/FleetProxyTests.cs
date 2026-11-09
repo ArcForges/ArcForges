@@ -203,5 +203,134 @@ public sealed class FleetProxyTests
         Assert.Empty(center.CallsOf("ListNodes"));
     }
 
+    [Fact(Timeout = 60000)]
+    public async Task WorkspaceProxyBindsEachMethodAndRejectsMismatchedCommandIdsBeforeSending()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        var ct = TestContext.Current.CancellationToken;
+        // The local RPC, caller classification, nonce and signatures are real; replies below are a scripted center,
+        // so this test does not establish center authorization or target workspace behavior.
+        await using var center = await FakeCenter.StartAsync();
+        center.ScriptedFleet = true;
+        await using var node = await CloudNode.Create(center.Endpoint.Url).StartAsync();
+        var nodeId = node.Runtime.NodeId.ToArray();
+        var credentials = center.Issue(nodeId);
+        byte[] publicKey;
+        using (var key = NodeKeyStores.ForTestDataRoot(node.DataRoot).Load(nodeId, center.Endpoint.Origin)
+            ?? NodeKeyStores.ForTestDataRoot(node.DataRoot).Create(nodeId, center.Endpoint.Origin, TimeProvider.System))
+        {
+            publicKey = key.PublicKey;
+            center.CommandKeys.Add(center.Channel.CommandPublicKey);
+            center.Channel.RegisterNodeKey(credentials.AccessToken, publicKey);
+            await node.Cloud.AdoptAsync(credentials, center.Endpoint);
+        }
+
+        await center.Channel.ProvedAsync();
+        await Eventually.TrueAsync(() => node.Cloud.Status().Relay == RelayState.Connected, "the node channel is connected");
+        await using var human = await node.ChannelAsync(Origin.Human);
+        var fleet = new FleetService.FleetServiceClient(human.CallInvoker);
+        var target = new Id { Value = ByteString.CopyFrom(nodeId) };
+        var forged = new RoutedCaller { Kind = CallerKind.NodeRelay, RelayingNodeId = CommandIds.New(), LocalOrigin = Origin.Agent };
+        var meta = CloudNode.Command();
+        var register = new WorkspaceServiceRegisterWorkspaceRequest { Meta = meta.Clone(), Path = "/test/workspace" }.ToByteString();
+        center.Script("RegisterNodeWorkspace", Reply(new FleetServiceRegisterNodeWorkspaceResponse
+        {
+            Meta = new ResponseMeta(),
+            Value = new FleetServiceRegisterNodeWorkspaceValue { NodeId = target, Response = ByteString.CopyFrom([1]) },
+        }));
+        var registered = await fleet.RegisterNodeWorkspaceAsync(new FleetServiceRegisterNodeWorkspaceRequest
+        {
+            Meta = meta,
+            NodeId = target,
+            Caller = forged,
+            Request = register,
+        }, cancellationToken: ct);
+        Assert.NotNull(registered.Value);
+
+        var removeMeta = CloudNode.Command();
+        var unregister = new WorkspaceServiceUnregisterWorkspaceRequest { Meta = removeMeta.Clone(), WorkspaceId = CommandIds.New() }.ToByteString();
+        center.Script("UnregisterNodeWorkspace", Reply(new FleetServiceUnregisterNodeWorkspaceResponse
+        {
+            Meta = new ResponseMeta(),
+            Value = new FleetServiceUnregisterNodeWorkspaceValue { NodeId = target, Response = ByteString.CopyFrom([1]) },
+        }));
+        Assert.NotNull((await fleet.UnregisterNodeWorkspaceAsync(new FleetServiceUnregisterNodeWorkspaceRequest
+        {
+            Meta = removeMeta,
+            NodeId = target,
+            Caller = forged,
+            Request = unregister,
+        }, cancellationToken: ct)).Value);
+
+        var readMeta = new RequestMeta { CorrelationId = CommandIds.New() };
+        var list = new WorkspaceServiceListWorkspacesRequest { Meta = readMeta.Clone() }.ToByteString();
+        center.Script("ListNodeWorkspaces", Reply(new FleetServiceListNodeWorkspacesResponse
+        {
+            Meta = new ResponseMeta(),
+            Value = new FleetServiceListNodeWorkspacesValue { NodeId = target, Response = ByteString.CopyFrom([1]) },
+        }));
+        Assert.NotNull((await fleet.ListNodeWorkspacesAsync(new FleetServiceListNodeWorkspacesRequest
+        {
+            Meta = readMeta,
+            NodeId = target,
+            Caller = forged,
+            Request = list,
+        }, cancellationToken: ct)).Value);
+
+        var get = new WorkspaceServiceGetWorkspaceRequest { Meta = readMeta.Clone(), WorkspaceId = CommandIds.New() }.ToByteString();
+        center.Script("GetNodeWorkspace", Reply(new FleetServiceGetNodeWorkspaceResponse
+        {
+            Meta = new ResponseMeta(),
+            Value = new FleetServiceGetNodeWorkspaceValue { NodeId = target, Response = ByteString.CopyFrom([1]) },
+        }));
+        Assert.NotNull((await fleet.GetNodeWorkspaceAsync(new FleetServiceGetNodeWorkspaceRequest
+        {
+            Meta = readMeta,
+            NodeId = target,
+            Caller = forged,
+            Request = get,
+        }, cancellationToken: ct)).Value);
+
+        var sentRegister = FleetServiceRegisterNodeWorkspaceRequest.Parser.ParseFrom(FakeCenter.Payload(Assert.Single(center.CallsOf("RegisterNodeWorkspace")).Body));
+        var sentUnregister = FleetServiceUnregisterNodeWorkspaceRequest.Parser.ParseFrom(FakeCenter.Payload(Assert.Single(center.CallsOf("UnregisterNodeWorkspace")).Body));
+        var sentList = FleetServiceListNodeWorkspacesRequest.Parser.ParseFrom(FakeCenter.Payload(Assert.Single(center.CallsOf("ListNodeWorkspaces")).Body));
+        var sentGet = FleetServiceGetNodeWorkspaceRequest.Parser.ParseFrom(FakeCenter.Payload(Assert.Single(center.CallsOf("GetNodeWorkspace")).Body));
+        var checks = new[]
+        {
+            (sentRegister.Caller, sentRegister.RelayAssertion, register, RoutedMethod.RegisterNodeWorkspace, meta.CommandId),
+            (sentUnregister.Caller, sentUnregister.RelayAssertion, unregister, RoutedMethod.UnregisterNodeWorkspace, removeMeta.CommandId),
+            (sentList.Caller, sentList.RelayAssertion, list, RoutedMethod.ListNodeWorkspaces, (Id?)null),
+            (sentGet.Caller, sentGet.RelayAssertion, get, RoutedMethod.GetNodeWorkspace, (Id?)null),
+        };
+        foreach (var (caller, signedBytes, payload, method, command) in checks)
+        {
+            var signed = RelayAssertion.Parser.ParseFrom(signedBytes);
+            Assert.Equal(Origin.Human, caller.LocalOrigin);
+            Assert.Equal(target, caller.RelayingNodeId);
+            Assert.Equal(method, signed.Method);
+            Assert.Equal(target, signed.TargetNodeId);
+            Assert.Equal(command, signed.CommandId);
+            Assert.Equal(SHA256.HashData(payload.Span), signed.RequestSha256.ToByteArray());
+            Assert.True(FakeChannelPeer.Verify(publicKey, RelaySignatures.AssertionInput(signed, center.Endpoint)!, signed.Signature.ToByteArray()));
+        }
+
+        var mismatch = await fleet.RegisterNodeWorkspaceAsync(new FleetServiceRegisterNodeWorkspaceRequest
+        {
+            Meta = CloudNode.Command(),
+            NodeId = target,
+            Request = register,
+        }, cancellationToken: ct);
+        Assert.Equal("invalid_argument", mismatch.Error.Code);
+        var unexpectedReadCommand = await fleet.GetNodeWorkspaceAsync(new FleetServiceGetNodeWorkspaceRequest
+        {
+            Meta = CloudNode.Command(),
+            NodeId = target,
+            Request = get,
+        }, cancellationToken: ct);
+        Assert.Equal("invalid_argument", unexpectedReadCommand.Error.Code);
+        Assert.Single(center.CallsOf("RegisterNodeWorkspace"));
+        Assert.Single(center.CallsOf("GetNodeWorkspace"));
+    }
+
     private static FakeFault.Raw Reply(IMessage response) => new([.. FakeCenter.DataFrame(response), .. FakeCenter.TrailerFrame(0, null)]);
 }

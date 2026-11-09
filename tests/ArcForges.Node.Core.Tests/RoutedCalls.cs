@@ -101,7 +101,8 @@ internal sealed class RoutedCalls(InProcessNode node)
             };
             var code = answer.Error is { } error ? error.Category.ToString().ToUpperInvariant() + "/" + error.Code : answer.HandlerCode;
             await Log.CompleteAsync(logId, decision, code, answer.TaskId, answer.Risk,
-                answer.Response is { } response ? SHA256.HashData(response.Span) : null, answer.Response?.Length);
+                answer.Response is { } response ? SHA256.HashData(response.Span) : null, answer.Response?.Length,
+                fileWorkspace: (int)method is >= 9 and <= 20, workspaceId: answer.WorkspaceId);
         }
 
         return (answer, logId);

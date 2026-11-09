@@ -145,9 +145,17 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
     private const string Service = "arcforges.node.v1.TaskService";
     private readonly ConcurrentDictionary<string, CenterCaller> _inFlight = new(StringComparer.Ordinal);
     private TaskServiceHandler? _tasks;
+    private WorkspaceServiceHandler? _workspaces;
 
-    /// <summary>Binds the TaskService the calls run in (the host builds it after the cloud link); until then every call is refused.</summary>
-    public void Bind(TaskServiceHandler tasks) => Volatile.Write(ref _tasks, tasks ?? throw new ArgumentNullException(nameof(tasks)));
+    /// <summary>Binds the actual handlers built by the host after the cloud link.</summary>
+    public void Bind(TaskServiceHandler tasks, WorkspaceServiceHandler workspaces)
+    {
+        Volatile.Write(ref _workspaces, workspaces ?? throw new ArgumentNullException(nameof(workspaces)));
+        Volatile.Write(ref _tasks, tasks ?? throw new ArgumentNullException(nameof(tasks)));
+    }
+
+    // Lets in-process tests coordinate an actual policy update between native preparation and the writer.
+    internal WorkspaceServiceHandler? WorkspaceHandlerForTests => Volatile.Read(ref _workspaces);
 
     /// <inheritdoc />
     public async Task<RoutedAnswer?> DispatchAsync(VerifiedCall call, IRoutedLink link, CancellationToken cancellationToken)
@@ -179,6 +187,21 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
             return null;
         }
 
+        var workspaces = Volatile.Read(ref _workspaces);
+        if (IsWorkspace(method) && workspaces is null)
+        {
+            try
+            {
+                await WriteRefusalAuditAsync(actor, method, operation, "enforcement_unavailable", PermissionDecision.Deny, null, null,
+                    fleetEntry: true).ConfigureAwait(false);
+                return Executed(method, null, NodeErrors.EnforcementUnavailable("workspace_service_unavailable"), null, risk);
+            }
+            catch (CommandQueueFullException)
+            {
+                return Executed(method, null, NodeErrors.Overloaded(node.Clock.GetUtcNow()), null, risk);
+            }
+        }
+
         var center = header.Caller;
         if (CenterRouting.Shape(center) is { } shape)
         {
@@ -193,13 +216,33 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
         }
         catch (InvalidProtocolBufferException)
         {
-            return Executed(method, null, NodeErrors.InvalidArgument("request: a node.v1 TaskService request of the routed method"), null, risk);
+            if (IsWorkspace(method))
+            {
+                await WriteRefusalAuditAsync(actor, method, operation, "invalid_argument", PermissionDecision.Deny, null, null).ConfigureAwait(false);
+            }
+
+            return Executed(method, null, NodeErrors.InvalidArgument("request: a node.v1 request of the routed method"), null, risk);
         }
 
-        var mutation = method is RoutedMethod.SubmitNodeTask or RoutedMethod.CancelNodeTask;
+        var mutation = method is RoutedMethod.SubmitNodeTask or RoutedMethod.CancelNodeTask or
+            RoutedMethod.RegisterNodeWorkspace or RoutedMethod.UnregisterNodeWorkspace;
         if (mutation && (meta?.CommandId is not { } inner || header.CommandId is null || !inner.Value.Span.SequenceEqual(header.CommandId.Value.Span)))
         {
-            return Executed(method, meta, NodeErrors.InvalidArgument("meta.command_id: equals the routed call's command ID"), TaskIdOf(request), risk);
+            if (IsWorkspace(method))
+            {
+                await WriteRefusalAuditAsync(actor, method, operation, "invalid_argument", PermissionDecision.Deny, null, null,
+                    workspaceId: WorkspaceIdOf(request)).ConfigureAwait(false);
+            }
+
+            return Executed(method, meta, NodeErrors.InvalidArgument("meta.command_id: equals the routed call's command ID"),
+                TaskIdOf(request), risk, WorkspaceIdOf(request));
+        }
+
+        if ((method is RoutedMethod.ListNodeWorkspaces or RoutedMethod.GetNodeWorkspace) && meta?.CommandId is not null)
+        {
+            await WriteRefusalAuditAsync(actor, method, operation, "invalid_argument", PermissionDecision.Deny, null, null,
+                workspaceId: WorkspaceIdOf(request)).ConfigureAwait(false);
+            return Executed(method, meta, NodeErrors.InvalidArgument("meta.command_id: absent for a workspace read"), null, risk, WorkspaceIdOf(request));
         }
 
         // A stop or an ending link takes precedence over an in-progress or recorded replay (decisions B-2/B-3).
@@ -232,7 +275,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
                     : Executed(method, meta, NodeErrors.CommandInProgress(), TaskIdOf(request), risk);
             }
 
-            var recorded = node.Store.Read(reader => Recorded(reader, header.CommandId!.Value.Span, MethodName(method), digest, center));
+            var recorded = node.Store.Read(reader => Recorded(reader, header.CommandId!.Value.Span, ServiceOf(method), MethodName(method), digest, center));
             if (recorded is not null)
             {
                 if (!link.Usable)
@@ -258,7 +301,14 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
         var expires = ProtoTime.ToDateTimeOffset(header.ExpiresAt)!.Value;
         if (!CallVerifier.StillValid(expires, node.Clock.GetUtcNow()))
         {
-            return new RoutedAnswer(RoutedOutcome.Expired, null, RoutedRefusals.ExpiredBeforeEffect(Correlation()), TaskIdOf(request), risk);
+            if (IsWorkspace(method))
+            {
+                await WriteRefusalAuditAsync(actor, method, operation, "expired_before_effect", PermissionDecision.Deny, null, null,
+                    workspaceId: WorkspaceIdOf(request)).ConfigureAwait(false);
+            }
+
+            return new RoutedAnswer(RoutedOutcome.Expired, null, RoutedRefusals.ExpiredBeforeEffect(Correlation()), TaskIdOf(request), risk,
+                WorkspaceId: WorkspaceIdOf(request));
         }
 
         var lifetime = ProtoTime.ToDateTimeOffset(header.Deadline)!.Value - ProtoTime.ToDateTimeOffset(header.IssuedAt)!.Value;
@@ -273,20 +323,20 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
         var policy = node.Store.Read(PolicyRules.Current).Document;
         if (CenterRouting.Refusal(center, node.NodeId.Span, policy.CenterRouted) is { } reason)
         {
-            return await AuditedRefusalAsync(caller.Actor, method, meta, operation, reason, risk, TaskIdOf(request)).ConfigureAwait(false);
+            return await AuditedRefusalAsync(caller.Actor, method, meta, operation, reason, risk, TaskIdOf(request), WorkspaceIdOf(request)).ConfigureAwait(false);
         }
 
         // The routed column narrowed by the caller's cells and the REMOTE overrides; a cancel is decided by its gate once its task is read.
         if (method != RoutedMethod.CancelNodeTask && tasks.Api.Decide(caller, operation) is { Decision: not PermissionDecision.Allow } verdict)
         {
             var denied = verdict.Source.StartsWith("policy permissions[", StringComparison.Ordinal) ? "permission_override" : "denied";
-            return await AuditedRefusalAsync(caller.Actor, method, meta, operation, denied, risk, TaskIdOf(request)).ConfigureAwait(false);
+            return await AuditedRefusalAsync(caller.Actor, method, meta, operation, denied, risk, TaskIdOf(request), WorkspaceIdOf(request)).ConfigureAwait(false);
         }
 
         var slot = key is not null && _inFlight.TryAdd(key, center.Clone());
         try
         {
-            var (response, error) = await RunAsync(tasks, method, caller, request, cancellationToken).ConfigureAwait(false);
+            var (response, error) = await RunAsync(tasks, workspaces, method, caller, request, cancellationToken).ConfigureAwait(false);
             if (response.CalculateSize() > ResultSigner.MaxPayloadBytes)
             {
                 // A valid FULL view can exceed the wire limit. Report an existing bounded internal failure, never a truncated success.
@@ -302,7 +352,8 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
                 var approved = error?.Code == "approval_required";
                 await WriteRefusalAuditAsync(caller.Actor, method, context.Operation ?? operation, context.Reason ?? "denied",
                     approved ? PermissionDecision.Approval : PermissionDecision.Deny,
-                    approved ? answer.Error?.Details?.State?.Resource?.Id?.Value.ToByteArray() : null, TaskIdOf(request)).ConfigureAwait(false);
+                    approved ? answer.Error?.Details?.State?.Resource?.Id?.Value.ToByteArray() : null, TaskIdOf(request),
+                    workspaceId: WorkspaceIdOf(request)).ConfigureAwait(false);
             }
 
             return answer;
@@ -338,7 +389,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
     /// or the outcome of its executed approval; or an approval of it that is APPROVED (executing). The caller is the recorded outcome's
     /// transactionally associated requester, or the approval's requester; another caller takes the normal policy path.
     /// </summary>
-    private static RecordedCommand? Recorded(StoreReader reader, ReadOnlySpan<byte> commandId, string method, byte[] digest, CenterCaller caller)
+    private static RecordedCommand? Recorded(StoreReader reader, ReadOnlySpan<byte> commandId, string service, string method, byte[] digest, CenterCaller caller)
     {
         var id = commandId.ToArray();
         if (!RoutedCommandOwnership.MayUse(reader, id, caller))
@@ -365,7 +416,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
         {
             command.Parameters.AddWithValue("$id", id);
             using var row = command.ExecuteReader();
-            if (row.Read() && row.GetInt64(3) > reader.NowMicroseconds && !row.IsDBNull(2) && row.GetString(0) == Service + "/" + method
+            if (row.Read() && row.GetInt64(3) > reader.NowMicroseconds && !row.IsDBNull(2) && row.GetString(0) == service + "/" + method
                 && ((byte[])row.GetValue(1)).AsSpan().SequenceEqual(digest))
             {
                 outcome = (byte[])row.GetValue(2);
@@ -383,13 +434,18 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
         RoutedMethod.WaitNodeTask => Pair(TaskServiceWaitTaskRequest.Parser.ParseFrom(payload), request => request.Meta),
         RoutedMethod.ReadNodeTaskOutput => Pair(TaskServiceReadTaskOutputRequest.Parser.ParseFrom(payload), request => request.Meta),
         RoutedMethod.CancelNodeTask => Pair(TaskServiceCancelTaskRequest.Parser.ParseFrom(payload), request => request.Meta),
-        _ => throw new ArgumentOutOfRangeException(nameof(method), "The verifier admits the six routed methods only."),
+        RoutedMethod.RegisterNodeWorkspace => Pair(WorkspaceServiceRegisterWorkspaceRequest.Parser.ParseFrom(payload), request => request.Meta),
+        RoutedMethod.UnregisterNodeWorkspace => Pair(WorkspaceServiceUnregisterWorkspaceRequest.Parser.ParseFrom(payload), request => request.Meta),
+        RoutedMethod.ListNodeWorkspaces => Pair(WorkspaceServiceListWorkspacesRequest.Parser.ParseFrom(payload), request => request.Meta),
+        RoutedMethod.GetNodeWorkspace => Pair(WorkspaceServiceGetWorkspaceRequest.Parser.ParseFrom(payload), request => request.Meta),
+        _ => throw new ArgumentOutOfRangeException(nameof(method), "The verifier admits the routed task and workspace methods only."),
     };
 
     private static (IMessage, RequestMeta?) Pair<T>(T request, Func<T, RequestMeta?> meta)
         where T : IMessage => (request, meta(request));
 
-    private static async Task<(IMessage Response, ArcError? Error)> RunAsync(TaskServiceHandler tasks, RoutedMethod method, Caller caller, IMessage request,
+    private static async Task<(IMessage Response, ArcError? Error)> RunAsync(TaskServiceHandler tasks, WorkspaceServiceHandler? workspaces,
+        RoutedMethod method, Caller caller, IMessage request,
         CancellationToken cancellationToken)
     {
         switch (method)
@@ -409,9 +465,23 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
             case RoutedMethod.ReadNodeTaskOutput:
                 var read = await tasks.ReadTaskOutput(caller, (TaskServiceReadTaskOutputRequest)request, cancellationToken).ConfigureAwait(false);
                 return (read, read.Error);
-            default:
+            case RoutedMethod.CancelNodeTask:
                 var cancelled = await tasks.CancelTask(caller, (TaskServiceCancelTaskRequest)request, cancellationToken).ConfigureAwait(false);
                 return (cancelled, cancelled.Error);
+            case RoutedMethod.RegisterNodeWorkspace:
+                var registered = await workspaces!.RegisterAsync(caller, (WorkspaceServiceRegisterWorkspaceRequest)request, cancellationToken).ConfigureAwait(false);
+                return (registered, registered.Error);
+            case RoutedMethod.UnregisterNodeWorkspace:
+                var unregistered = await workspaces!.UnregisterAsync(caller, (WorkspaceServiceUnregisterWorkspaceRequest)request, cancellationToken).ConfigureAwait(false);
+                return (unregistered, unregistered.Error);
+            case RoutedMethod.ListNodeWorkspaces:
+                var listedWorkspaces = await workspaces!.ListAsync(caller, (WorkspaceServiceListWorkspacesRequest)request, cancellationToken).ConfigureAwait(false);
+                return (listedWorkspaces, listedWorkspaces.Error);
+            case RoutedMethod.GetNodeWorkspace:
+                var gotWorkspace = await workspaces!.GetAsync(caller, (WorkspaceServiceGetWorkspaceRequest)request, cancellationToken).ConfigureAwait(false);
+                return (gotWorkspace, gotWorkspace.Error);
+            default:
+                throw new ArgumentOutOfRangeException(nameof(method));
         }
     }
 
@@ -423,6 +493,8 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
     private RoutedAnswer Answer(IMessage response, ArcError? error, RoutedContext context, IMessage request, string operation, int risk)
     {
         var taskId = TaskIdOf(request) ?? (response is TaskServiceSubmitTaskResponse { Value.TaskId: { } created } ? created.Value.ToByteArray() : null);
+        var workspaceId = WorkspaceIdOf(request) ?? (response is WorkspaceServiceRegisterWorkspaceResponse { Value.Workspace.WorkspaceId: { } added }
+            ? added.Value.ToByteArray() : null);
         if (error is { Category: ErrorCategory.Authorization })
         {
             var stated = context.Operation ?? operation;
@@ -433,7 +505,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
                 "command_pattern_denied" => RoutedRefusals.Authorization("command_pattern_denied", stated, context.Reason ?? "agents.allowed_command_patterns", correlation),
                 _ => RoutedRefusals.Policy(stated, context.Reason ?? "denied", correlation),
             };
-            return new RoutedAnswer(RoutedOutcome.RefusedByPolicy, null, closed, taskId, risk);
+            return new RoutedAnswer(RoutedOutcome.RefusedByPolicy, null, closed, taskId, risk, WorkspaceId: workspaceId);
         }
 
         if (error is { Category: ErrorCategory.Internal })
@@ -442,10 +514,10 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
             error.Retry = new RetryAdvice { Mode = RetryMode.Never };
         }
 
-        return new RoutedAnswer(RoutedOutcome.Executed, response.ToByteString(), null, taskId, risk, Code(error));
+        return new RoutedAnswer(RoutedOutcome.Executed, response.ToByteString(), null, taskId, risk, Code(error), workspaceId);
     }
 
-    private static RoutedAnswer Executed(RoutedMethod method, RequestMeta? meta, ArcError error, byte[]? taskId, int risk)
+    private static RoutedAnswer Executed(RoutedMethod method, RequestMeta? meta, ArcError error, byte[]? taskId, int risk, byte[]? workspaceId = null)
     {
         var responseMeta = ApiCommands.Meta(meta);
         IMessage response = method switch
@@ -455,9 +527,13 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
             RoutedMethod.ListNodeTasks => new TaskServiceListTasksResponse { Meta = responseMeta, Error = error },
             RoutedMethod.WaitNodeTask => new TaskServiceWaitTaskResponse { Meta = responseMeta, Error = error },
             RoutedMethod.ReadNodeTaskOutput => new TaskServiceReadTaskOutputResponse { Meta = responseMeta, Error = error },
+            RoutedMethod.RegisterNodeWorkspace => new WorkspaceServiceRegisterWorkspaceResponse { Meta = responseMeta, Error = error },
+            RoutedMethod.UnregisterNodeWorkspace => new WorkspaceServiceUnregisterWorkspaceResponse { Meta = responseMeta, Error = error },
+            RoutedMethod.ListNodeWorkspaces => new WorkspaceServiceListWorkspacesResponse { Meta = responseMeta, Error = error },
+            RoutedMethod.GetNodeWorkspace => new WorkspaceServiceGetWorkspaceResponse { Meta = responseMeta, Error = error },
             _ => new TaskServiceCancelTaskResponse { Meta = responseMeta, Error = error },
         };
-        return new RoutedAnswer(RoutedOutcome.Executed, response.ToByteString(), null, taskId, risk, Code(error));
+        return new RoutedAnswer(RoutedOutcome.Executed, response.ToByteString(), null, taskId, risk, Code(error), workspaceId);
     }
 
     /// <summary>A recorded outcome, replayed byte for byte (Q-5): the stored bytes are the answer.</summary>
@@ -468,7 +544,14 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
             var oversized = NodeErrors.Internal(node.Clock.GetUtcNow());
             oversized.Effect = EffectCertainty.Unknown;
             oversized.Retry = new RetryAdvice { Mode = RetryMode.Never };
-            var meta = request is TaskServiceSubmitTaskRequest submit ? submit.Meta : ((TaskServiceCancelTaskRequest)request).Meta;
+            var meta = request switch
+            {
+                TaskServiceSubmitTaskRequest submit => submit.Meta,
+                TaskServiceCancelTaskRequest cancel => cancel.Meta,
+                WorkspaceServiceRegisterWorkspaceRequest register => register.Meta,
+                WorkspaceServiceUnregisterWorkspaceRequest unregister => unregister.Meta,
+                _ => null,
+            };
             return Executed(method, meta, oversized, TaskIdOf(request), risk);
         }
 
@@ -480,26 +563,39 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
             error = submitted.Error;
             taskId ??= submitted.Value?.TaskId?.Value.ToByteArray();
         }
-        else
+        else if (method == RoutedMethod.CancelNodeTask)
         {
             error = TaskServiceCancelTaskResponse.Parser.ParseFrom(outcome).Error;
         }
+        else
+        {
+            error = method == RoutedMethod.RegisterNodeWorkspace
+                ? WorkspaceServiceRegisterWorkspaceResponse.Parser.ParseFrom(outcome).Error
+                : WorkspaceServiceUnregisterWorkspaceResponse.Parser.ParseFrom(outcome).Error;
+        }
 
-        return new RoutedAnswer(RoutedOutcome.Executed, ByteString.CopyFrom(outcome), null, taskId, risk, Code(error));
+        var workspaceId = WorkspaceIdOf(request);
+        if (method == RoutedMethod.RegisterNodeWorkspace)
+        {
+            workspaceId = WorkspaceServiceRegisterWorkspaceResponse.Parser.ParseFrom(outcome).Value?.Workspace?.WorkspaceId?.Value.ToByteArray();
+        }
+
+        return new RoutedAnswer(RoutedOutcome.Executed, ByteString.CopyFrom(outcome), null, taskId, risk, Code(error), workspaceId);
     }
 
-    private RoutedAnswer Refused(string operation, string reason, int risk, byte[]? taskId = null) =>
-        new(RoutedOutcome.RefusedByPolicy, null, RoutedRefusals.Policy(operation, reason, Correlation()), taskId, risk);
+    private RoutedAnswer Refused(string operation, string reason, int risk, byte[]? taskId = null, byte[]? workspaceId = null) =>
+        new(RoutedOutcome.RefusedByPolicy, null, RoutedRefusals.Policy(operation, reason, Correlation()), taskId, risk, WorkspaceId: workspaceId);
 
     private Id Correlation() => CommandIds.New(node.Clock);
 
     private async Task<RoutedAnswer> AuditedRefusalAsync(ActorRef actor, RoutedMethod method, RequestMeta? meta, string operation, string reason,
-        int risk, byte[]? taskId)
+        int risk, byte[]? taskId, byte[]? workspaceId = null)
     {
         try
         {
-            await WriteRefusalAuditAsync(actor, method, operation, reason, PermissionDecision.Deny, null, taskId, fleetEntry: true).ConfigureAwait(false);
-            return Refused(operation, reason, risk, taskId);
+            await WriteRefusalAuditAsync(actor, method, operation, reason, PermissionDecision.Deny, null, taskId, fleetEntry: true,
+                workspaceId: workspaceId).ConfigureAwait(false);
+            return Refused(operation, reason, risk, taskId, workspaceId);
         }
         catch (CommandQueueFullException)
         {
@@ -508,10 +604,20 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
     }
 
     private Task<int> WriteRefusalAuditAsync(ActorRef actor, RoutedMethod method, string operation, string reason, PermissionDecision decision,
-        byte[]? approvalId, byte[]? taskId, bool fleetEntry = false) => node.Processor.ExecuteAsync(context =>
+        byte[]? approvalId, byte[]? taskId, bool fleetEntry = false, byte[]? workspaceId = null) => node.Processor.ExecuteAsync(context =>
     {
-        AuditLog.Append(context.Transaction, actor, operation + (fleetEntry ? " FleetService." : " TaskService.") + MethodName(method), "task", taskId ?? [], decision,
-            approvalId ?? [], "denied: " + reason);
+        if (method is RoutedMethod.RegisterNodeWorkspace or RoutedMethod.UnregisterNodeWorkspace or
+            RoutedMethod.ListNodeWorkspaces or RoutedMethod.GetNodeWorkspace)
+        {
+            AuditLog.AppendFileWorkspace(context.Transaction, actor,
+                operation + (fleetEntry ? " FleetService." + method : " WorkspaceService." + MethodName(method)),
+                workspaceId, null, null, decision, "denied: " + reason, null);
+        }
+        else
+        {
+            AuditLog.Append(context.Transaction, actor, operation + (fleetEntry ? " FleetService." : " TaskService.") + MethodName(method), "task", taskId ?? [], decision,
+                approvalId ?? [], "denied: " + reason);
+        }
         return 0;
     }, CommitDurability.Full);
 
@@ -525,6 +631,19 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
         _ => null,
     } is { Length: 16 } task ? task : null;
 
+    private static bool IsWorkspace(RoutedMethod method) =>
+        method is RoutedMethod.RegisterNodeWorkspace or RoutedMethod.UnregisterNodeWorkspace or
+            RoutedMethod.ListNodeWorkspaces or RoutedMethod.GetNodeWorkspace;
+
+    private static string ServiceOf(RoutedMethod method) => IsWorkspace(method) ? "arcforges.node.v1.WorkspaceService" : Service;
+
+    private static byte[]? WorkspaceIdOf(IMessage request) => request switch
+    {
+        WorkspaceServiceUnregisterWorkspaceRequest { WorkspaceId: { } id } => id.Value.ToByteArray(),
+        WorkspaceServiceGetWorkspaceRequest { WorkspaceId: { } id } => id.Value.ToByteArray(),
+        _ => null,
+    } is { Length: 16 } workspace ? workspace : null;
+
     private static string MethodName(RoutedMethod method) => method switch
     {
         RoutedMethod.SubmitNodeTask => "SubmitTask",
@@ -532,13 +651,17 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
         RoutedMethod.ListNodeTasks => "ListTasks",
         RoutedMethod.WaitNodeTask => "WaitTask",
         RoutedMethod.ReadNodeTaskOutput => "ReadTaskOutput",
+        RoutedMethod.RegisterNodeWorkspace => "RegisterWorkspace",
+        RoutedMethod.UnregisterNodeWorkspace => "UnregisterWorkspace",
+        RoutedMethod.ListNodeWorkspaces => "ListWorkspaces",
+        RoutedMethod.GetNodeWorkspace => "GetWorkspace",
         _ => "CancelTask",
     };
 
     /// <summary>The risk class for <c>routed_call_log.risk</c>: Submit high (3), Cancel medium (2), the reads low (1).</summary>
     private static int Risk(RoutedMethod method) => method switch
     {
-        RoutedMethod.SubmitNodeTask => 3,
+        RoutedMethod.SubmitNodeTask or RoutedMethod.RegisterNodeWorkspace or RoutedMethod.UnregisterNodeWorkspace => 3,
         RoutedMethod.CancelNodeTask => 2,
         _ => 1,
     };

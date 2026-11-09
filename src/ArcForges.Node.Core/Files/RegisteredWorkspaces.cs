@@ -125,7 +125,9 @@ internal sealed class RegisteredWorkspaces
             var existing = FindByIdentity(transaction, native.Platform, native.Bytes);
             if (existing is not null)
             {
-                return VerifiedDuplicate(existing, canonical, opened.RootIdentity, native, cancellationToken);
+                var duplicate = VerifiedDuplicate(existing, canonical, opened.RootIdentity, native, cancellationToken);
+                beforeEffect?.Invoke();
+                return duplicate;
             }
 
             if (prepared.Legacy is not { } legacy)
@@ -248,7 +250,11 @@ internal sealed class RegisteredWorkspaces
     }
 
     /// <summary>Holds a verified opened root and an in-process use lease until disposal.</summary>
-    internal RegisteredWorkspaceUse OpenForUse(ReadOnlySpan<byte> id, CancellationToken cancellationToken = default)
+    internal RegisteredWorkspaceUse OpenForUse(ReadOnlySpan<byte> id, CancellationToken cancellationToken = default) =>
+        OpenForUse(id, beforeUse: null, cancellationToken);
+
+    /// <summary>Rechecks application authority inside the same write transaction immediately before the usage update.</summary>
+    internal RegisteredWorkspaceUse OpenForUse(ReadOnlySpan<byte> id, Action<StoreTransaction>? beforeUse, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var key = CopyId(id);
@@ -266,6 +272,7 @@ internal sealed class RegisteredWorkspaces
                     var row = FindById(transaction, key) ?? throw new RegisteredWorkspaceException("workspace_not_found");
                     root = OpenVerified(row);
                     cancellationToken.ThrowIfCancellationRequested();
+                    beforeUse?.Invoke(transaction);
                     if (transaction.Execute("""
                         UPDATE workspace SET last_used_at = max(last_used_at, $now), rev = rev + 1
                         WHERE workspace_id = $id AND kind = 1 AND state = 2 AND removed_at IS NULL;

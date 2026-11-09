@@ -54,6 +54,29 @@ public sealed class WorkspaceCommandTransactionTests
     }
 
     [Fact(Timeout = 120_000)]
+    public async Task DuplicateRegistrationRechecksBeforeReturningAndRecordingAReceipt()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var node = await InProcessNode.Create().StartAsync();
+        var manager = new RegisteredWorkspaces(node.Runtime.Store);
+        var path = Directory.CreateDirectory(Path.Combine(node.Root, "duplicate")).FullName;
+        var existing = manager.RegisterFromVerifiedHuman(path, cancellationToken: Ct);
+        using var prepared = manager.PrepareRegistration(path, cancellationToken: Ct);
+        var id = Tasks.Meta().CommandId.Value.ToByteArray();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => node.Runtime.Processor.ExecuteIdempotentAsync(id,
+            "WorkspaceService/RegisterWorkspace", SHA256.HashData("duplicate"u8), Origin.Human, command =>
+            {
+                _ = manager.RegisterPreparedFromVerifiedHuman(command.Transaction, prepared,
+                    beforeEffect: () => throw new InvalidOperationException("pre-effect refused"), cancellationToken: Ct);
+                return Array.Empty<byte>();
+            }));
+        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar(
+            "SELECT count(*) FROM command_dedup WHERE command_id=$id;", ("$id", id))));
+        Assert.Equal(existing.Id, manager.Get(existing.Id, Ct).Id);
+        Assert.Equal(1L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM workspace WHERE removed_at IS NULL;")));
+    }
+
+    [Fact(Timeout = 120_000)]
     public async Task UseLeaseAndQueuedUnregisterHaveOneLockOrderAndRealReceipt()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();

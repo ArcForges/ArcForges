@@ -51,13 +51,18 @@ public sealed class ChannelConformanceTests
     public void TheVendoredChannelCapturesAreTheManifestsBytesOfTheCohortThisRepositoryUses()
     {
         var root = FakeCenterConformanceTests.VendoredManifest("channel-exchanges", 18, SourceCommit);
-        Assert.Equal(ChannelContract.Cohort, root.GetProperty("contractsCohort").GetString());
+        // These are the immutable 437.1 real-center captures. The 450.1 relay schema appends
+        // routed methods without changing the captured field numbers; the frame and peer tests below
+        // exercise the old exchanges through the current codec rather than relabelling their source.
+        const string capturedCohort = "1.0.0-ci.437.1";
+        Assert.Equal(capturedCohort, root.GetProperty("contractsCohort").GetString());
+        Assert.Equal("1.0.0-ci.450.1", ChannelContract.Cohort);
         var cases = root.GetProperty("files").EnumerateArray().Select(file => file.GetProperty("file").GetString()!).ToList();
         Assert.Equal(Expected.Keys.Concat(Answered).Select(name => "NodeChannel-" + name + ".json").Order(StringComparer.Ordinal), cases);
         foreach (var name in Expected.Keys.Concat(Answered))
         {
             var capture = Load(name);
-            Assert.Equal(ChannelContract.Cohort, capture.GetProperty("contractsCohort").GetString());
+            Assert.Equal(capturedCohort, capture.GetProperty("contractsCohort").GetString());
             Assert.Equal(2, capture.GetProperty("schemaVersion").GetInt32());
             Assert.Equal("NodeChannel", capture.GetProperty("method").GetString());
         }
