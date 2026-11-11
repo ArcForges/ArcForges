@@ -135,6 +135,18 @@ internal sealed partial class WorkspaceWriteGuard : IDisposable
         }
     }
 
+    /// <summary>Rejects Linux targets whose supported bounded metadata cannot be preserved by this writer.</summary>
+    internal void CheckLinuxWritePreservation()
+    {
+        if (!OperatingSystem.IsLinux()) throw new WorkspacePreservationUnavailableException();
+        lock (_sync)
+        {
+            CheckLocked();
+            _ = LinuxPreservedMetadata.Capture(_file!);
+            CheckLocked();
+        }
+    }
+
     /// <summary>
     /// Hashes the whole bounded existing file through the guarded handle and compares a precondition. This method has
     /// no filesystem effects; a match alone is insufficient to authorize or safely execute a later mutation.
@@ -205,6 +217,51 @@ internal sealed partial class WorkspaceWriteGuard : IDisposable
             CheckLocked();
             return checked((int)_file!.DangerousGetHandle());
         }
+    }
+
+    // Component-only seam: transfers the existing open description to an owned test peer without authorizing an effect.
+    // Production handoff additionally needs peer authentication, an exact one-use capability and worker lifetime tracking.
+    internal void SendLinuxGuardForTests(System.Net.Sockets.Socket peer)
+    {
+        if (!OperatingSystem.IsLinux()) throw new WorkspacePathException("file_guard_unavailable");
+        lock (_sync)
+        {
+            CheckLocked();
+            LinuxDescriptorTransfer.Send(peer, [_file!]);
+        }
+    }
+
+    /// <summary>
+    /// Transfers only the three already checked open descriptions to a challenge-sealed peer. The peer still requires
+    /// committed operation authority before effects. Each guard stays live until the coordinator observes adoption.
+    /// </summary>
+    internal static void TransferLinuxToOwnedPeer(LinuxOwnedPeer peer, SafeFileHandle root, WorkspaceWriteGuard target,
+        WorkspaceWriteGuard original, WorkspaceWriteGuard intended)
+    {
+        ArgumentNullException.ThrowIfNull(peer);
+        ArgumentNullException.ThrowIfNull(root);
+        ArgumentNullException.ThrowIfNull(target);
+        ArgumentNullException.ThrowIfNull(original);
+        ArgumentNullException.ThrowIfNull(intended);
+        if (!OperatingSystem.IsLinux() || ReferenceEquals(target, original) || ReferenceEquals(target, intended) ||
+            ReferenceEquals(original, intended) || target._privateStage || !original._privateStage || !intended._privateStage)
+            throw new WorkspacePathException("file_guard_unavailable");
+        lock (target._sync)
+            lock (original._sync)
+                lock (intended._sync)
+                {
+                    target.CheckLocked();
+                    original.CheckLocked();
+                    intended.CheckLocked();
+                    peer.SendDescriptorsOnce([root, target._file!, original._file!, intended._file!]);
+                }
+    }
+
+    /// <summary>Closes the node's copy after the owned peer has adopted the shared open description.</summary>
+    internal void CloseLocalAfterLinuxHandoff()
+    {
+        if (!OperatingSystem.IsLinux()) throw new WorkspacePathException("file_guard_unavailable");
+        lock (_sync) CloseLocked("file_guard_transferred");
     }
 
     /// <summary>Reads the actual whole checked file through the held guard without changing it.</summary>

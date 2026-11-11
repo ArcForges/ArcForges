@@ -50,7 +50,7 @@ public sealed class StageTerminalMigrationTests
             }, CommitDurability.Full);
         }
 
-        using (var current = root.Open(clock))
+        using (var current = root.Open(clock, new MigrationPlan(StoreMigrations.Released.Steps.Take(9))))
         {
             Assert.Equal(8, current.Opening.MigratedFrom);
             Assert.Equal(9, current.Metadata.SchemaVersion);

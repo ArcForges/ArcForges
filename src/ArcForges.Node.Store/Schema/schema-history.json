@@ -77,6 +77,14 @@
       "sha256": "d5fdf34cd8cecf948f0930b1a8c82485f40a053d52d3f678d6208287e7f996b5",
       "source": "AF-CTR-06 durable pre-effect orphan stage fencing and recovery; local author candidate.",
       "addedBy": "AF-CTR-06"
+    },
+    {
+      "version": 10,
+      "minReaderVersion": 1,
+      "file": "0010-schema-step-10.sql",
+      "sha256": "0bd608717f99fe0f0504ccc8d2b7ce4ed2dfb545f658c7c87d085adf644ad0d9",
+      "source": "AF-CTR-06 persistent Linux effect-worker lifetime fence; local author candidate.",
+      "addedBy": "AF-CTR-06"
     }
   ]
 }

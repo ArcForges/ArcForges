@@ -96,6 +96,47 @@ public sealed class WorkspaceGuardedMutationTests
         Assert.Equal(partiallyWritten, File.ReadAllBytes(moved));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void CapturedParentChainRejectsReplacementEvenWhenTheTargetIsTheSameObject(bool replaceAncestor)
+    {
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "Linux parent-relative native traversal.");
+        var directory = Directory.CreateTempSubdirectory("arcforges-parent-chain-");
+        try
+        {
+            var a = Directory.CreateDirectory(Path.Combine(directory.FullName, "a")).FullName;
+            var b = Directory.CreateDirectory(Path.Combine(a, "b")).FullName;
+            var target = Path.Combine(b, "target");
+            File.WriteAllText(target, "same exact target");
+            using var root = WorkspacePath.OpenRoot(directory.FullName);
+            var selected = root.OpenExistingWriteGuardWithNames("a/b/target", TestContext.Current.CancellationToken);
+            using var guard = selected.Guard;
+            selected.CheckNames();
+            var original = guard.ObjectIdentity;
+            if (replaceAncestor)
+            {
+                var moved = Path.Combine(directory.FullName, "old-a");
+                Directory.Move(a, moved);
+                Directory.CreateDirectory(a);
+                Directory.Move(Path.Combine(moved, "b"), b);
+            }
+            else
+            {
+                var moved = Path.Combine(a, "old-b");
+                Directory.Move(b, moved);
+                Directory.CreateDirectory(b);
+                File.Move(Path.Combine(moved, "target"), target);
+            }
+            Assert.True(original.SameObject(root.InspectEntry("a/b/target").Identity));
+            var failure = Assert.Throws<WorkspacePathException>(selected.CheckNames);
+            Assert.Equal("directory_identity_changed", failure.Reason);
+            guard.Dispose();
+            Assert.Equal("same exact target", File.ReadAllText(target));
+        }
+        finally { directory.Delete(recursive: true); }
+    }
+
     private sealed class Fixture : IDisposable
     {
         private readonly DirectoryInfo _directory = Directory.CreateTempSubdirectory("arcforges-guarded-mutation-");

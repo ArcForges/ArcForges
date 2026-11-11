@@ -103,6 +103,9 @@ internal sealed class RoutedContext(IRoutedLink link, NodeLifecycle lifecycle, D
         return left > TimeSpan.Zero ? left : TimeSpan.Zero;
     }
 
+    /// <summary>The exclusive signature-expiry boundary used by a native file-effect worker.</summary>
+    public long FileExpiryMicroseconds => StoreTime.ToMicroseconds(expiresAt + CallVerifier.Skew);
+
     /// <summary>The file operation budget also includes time since this verified call was received.</summary>
     public TimeSpan RemainingFileOperation()
     {

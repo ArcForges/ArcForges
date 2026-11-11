@@ -268,6 +268,9 @@ internal interface IRoutedLink
 
     /// <summary>True once the node's stop began (<see cref="CloudLinkService.BeginStop"/>).</summary>
     bool Stopping { get; }
+
+    /// <summary>Signals promptly when this session begins ending, before a best-effort close frame is sent.</summary>
+    CancellationToken EffectEnding => CancellationToken.None;
 }
 
 /// <summary>

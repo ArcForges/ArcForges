@@ -1049,6 +1049,10 @@ internal sealed class ChannelLoop : IAsyncDisposable
 
         public CancellationToken Token { get; } = cancel.Token;
 
+        private readonly CancellationTokenSource _effectsEnding = new();
+
+        public CancellationToken EffectsEnding => _effectsEnding.Token;
+
         public long Generation { get; set; } = ticket.Generation;
 
         public bool Accepted { get; set; }
@@ -1061,7 +1065,11 @@ internal sealed class ChannelLoop : IAsyncDisposable
         public bool Ending
         {
             get => Volatile.Read(ref _ending);
-            set => Volatile.Write(ref _ending, value);
+            set
+            {
+                Volatile.Write(ref _ending, value);
+                if (value) EndEffects();
+            }
         }
 
         private bool _ending;
@@ -1070,8 +1078,15 @@ internal sealed class ChannelLoop : IAsyncDisposable
 
         public CallTasks Calls { get; } = new();
 
+        private void EndEffects()
+        {
+            try { _effectsEnding.Cancel(); }
+            catch (ObjectDisposedException) { }
+        }
+
         public void Cancel()
         {
+            EndEffects();
             try
             {
                 cancel.Cancel();
@@ -1081,7 +1096,11 @@ internal sealed class ChannelLoop : IAsyncDisposable
             }
         }
 
-        public void Dispose() => cancel.Dispose();
+        public void Dispose()
+        {
+            _effectsEnding.Dispose();
+            cancel.Dispose();
+        }
     }
 
     /// <summary>The link of one session's call (decisions B-3): usable while the session is not ending or cancelled and the link gives a binding.</summary>
@@ -1090,6 +1109,8 @@ internal sealed class ChannelLoop : IAsyncDisposable
         public bool Usable => !session.Ending && !session.Token.IsCancellationRequested && loop._host.Binding() is not null;
 
         public bool Stopping => loop._host.Stopping;
+
+        public CancellationToken EffectEnding => session.EffectsEnding;
     }
 
     /// <summary>The call tasks of one connection (awaited before the connection's key is disposed).</summary>

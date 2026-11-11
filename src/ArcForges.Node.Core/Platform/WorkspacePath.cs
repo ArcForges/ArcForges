@@ -330,14 +330,45 @@ internal sealed partial class WorkspacePath : IDisposable
     internal WorkspaceWriteGuard OpenExistingWriteGuard(string path) => OpenExistingWriteGuard(path, afterMetadataOpen: null);
 
     // The callback only coordinates races on real test-owned filesystem objects.
-    internal WorkspaceWriteGuard OpenExistingWriteGuard(string path, Action? afterMetadataOpen)
+    internal WorkspaceWriteGuard OpenExistingWriteGuard(string path, Action? afterMetadataOpen) =>
+        OpenExistingWriteGuard(path, afterMetadataOpen, captured: null);
+
+    /// <summary>Opens the target from a retained checked parent chain and captures it for later name revalidation.</summary>
+    internal WorkspaceGuardedSelection OpenExistingWriteGuardWithNames(string path, CancellationToken cancellationToken)
+    {
+        var captured = new List<(string Name, WorkspaceObjectIdentity Identity)>();
+        var guard = OpenExistingWriteGuard(path, afterMetadataOpen: null, captured);
+        try
+        {
+            var check = CreateMutationNameCheck(path, guard.ObjectIdentity, captured, cancellationToken);
+            check();
+            var parent = captured.Count == 0 ? RootIdentity : captured[^1].Identity;
+            return new WorkspaceGuardedSelection(guard, parent, check);
+        }
+        catch
+        {
+            guard.Dispose();
+            throw;
+        }
+    }
+
+    private WorkspaceWriteGuard OpenExistingWriteGuard(string path, Action? afterMetadataOpen,
+        List<(string Name, WorkspaceObjectIdentity Identity)>? captured)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         var parts = Components(path);
         SafeFileHandle file;
         if (OperatingSystem.IsLinux())
         {
-            using var metadata = LinuxOpenAt2(RootHandle, string.Join('/', parts), noCrossMount: true);
+            var parent = RootHandle;
+            for (var index = 0; index < parts.Length - 1; index++)
+            {
+                using var component = LinuxOpenAt2(parent, parts[index], noCrossMount: true);
+                CheckVolume(component, _linuxFileSystemUuid);
+                parent = Retain(_directories, LinuxReopenChecked(component, directory: true, _linuxFileSystemUuid, afterMetadataOpen: null));
+                captured?.Add((string.Join('/', parts.AsSpan(0, index + 1).ToArray()), Identity(parent)));
+            }
+            using var metadata = LinuxOpenAt2(parent, parts[^1], noCrossMount: true);
             CheckVolume(metadata, _linuxFileSystemUuid);
             if (HasPrivateStageFiles) RefusePrivateStageFile(LinuxIdentity(metadata, _linuxFileSystemUuid));
             try
@@ -361,9 +392,10 @@ internal sealed partial class WorkspacePath : IDisposable
         else if (OperatingSystem.IsWindows())
         {
             var parent = RootHandle;
-            foreach (var component in parts.AsSpan(0, parts.Length - 1))
+            for (var index = 0; index < parts.Length - 1; index++)
             {
-                parent = RetainCheckedDirectory(OpenChild(parent, component, directory: true));
+                parent = RetainCheckedDirectory(OpenChild(parent, parts[index], directory: true));
+                captured?.Add((string.Join('/', parts.AsSpan(0, index + 1).ToArray()), Identity(parent)));
             }
 
             // This first open requests metadata only, before any data-open of a possible special/reparse object.

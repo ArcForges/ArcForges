@@ -84,7 +84,7 @@ public sealed class MigrationPlan
 public static class StoreMigrations
 {
     /// <summary>The schema version this binary writes; it reads stores whose <c>min_reader_version</c> is at most this.</summary>
-    public const int SupportedSchemaVersion = 9;
+    public const int SupportedSchemaVersion = 10;
 
     /// <summary>The released steps, loaded from the embedded <c>Schema/*.sql</c> resources.</summary>
     public static MigrationPlan Released { get; } = new([
@@ -115,6 +115,9 @@ public static class StoreMigrations
 
         // AF-CTR-06: durable fence for private stages abandoned before target effects.
         Load(9, 1, "0009-schema-step-9.sql"),
+
+        // AF-CTR-06: keep target holds until a recorded Linux effect worker has actually ended.
+        Load(10, 1, "0010-schema-step-10.sql"),
     ]);
 
     private static StoreMigration Load(int version, int minReaderVersion, string name)

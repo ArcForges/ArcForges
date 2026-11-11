@@ -98,8 +98,10 @@ internal sealed partial class FileServiceHandler
         var limit = routed.RemainingFileOperation();
         if (limit <= TimeSpan.Zero) throw new OperationCanceledException(cancellationToken);
         var started = node.Clock.GetTimestamp();
+        var linuxDeadline = OperatingSystem.IsLinux()
+            ? checked(LinuxFatalDeadline.MonotonicNanoseconds() + limit.Ticks * 100) : 0;
         using var deadline = new CancellationTokenSource(limit, node.Clock);
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token, node.Stopping, routed.Link.EffectEnding);
         var token = linked.Token;
         var lease = new MutationLease();
         Task<MutationPreparation>? preparation = null;
@@ -151,12 +153,44 @@ internal sealed partial class FileServiceHandler
             if (AfterPreparationForTests is { } afterPreparation) await afterPreparation().ConfigureAwait(false);
             if (Expired(started, limit, token)) throw new OperationCanceledException(token);
 
-            // PREPARED committed before this second transaction can write the target.
-            Task<byte[]> effect;
+            LinuxFileEffectBinding? linuxBinding = null;
+            if (OperatingSystem.IsLinux())
+            {
+                try
+                {
+                    lease.Worker = await LinuxFileEffectController.StartAsync(node.Settings.TestMode, token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)
+                {
+                    // No worker was given an operation or descriptor: this is a proven pre-effect refusal.
+                    var refusal = node.Processor.ExecuteAsync(command => FileMutationJournal.CompleteKnownGuardUnavailable(
+                        command.Transaction, request.Kind, request.Meta!.CommandId.Value.Span, caller.CenterCaller!, raw), CommitDurability.Full);
+                    var result = await refusal.WaitAsync(token).ConfigureAwait(false);
+                    if (Expired(started, limit, token)) throw new OperationCanceledException(token);
+                    return result;
+                }
+                var registration = node.Processor.ExecuteAsync(command => RegisterLinuxWorker(command.Transaction, caller,
+                    request, raw, lease, linuxDeadline, started, limit, token), CommitDurability.Full);
+                LinuxWorkerRegistration registered;
+                try { registered = await registration.WaitAsync(token).ConfigureAwait(false); }
+                catch (OperationCanceledException)
+                {
+                    ownsLease = false;
+                    _ = ObserveMutationAndDisposeAsync(registration, lease);
+                    throw;
+                }
+                if (registered.Refusal is not null) return registered.Refusal;
+                linuxBinding = registered.Binding ?? throw new InvalidOperationException("The worker operation was not registered.");
+            }
+
+            // PREPARED and the Linux worker fence committed before this transaction can permit a target effect.
+            Task<byte[]?> effect;
             try
             {
-                effect = node.Processor.ExecuteAsync(command => ApplyMutation(command.Transaction, caller, request, raw, lease, started, limit, token),
-                    CommitDurability.Full);
+                effect = node.Processor.ExecuteAsync(command => OperatingSystem.IsLinux()
+                    ? ApplyLinuxMutation(command.Transaction, caller, request, raw, lease, linuxBinding!, started, limit, token)
+                    : ApplyMutation(command.Transaction, caller, request, raw, lease, started, limit, token), CommitDurability.Full);
             }
             catch (CommandQueueFullException)
             {
@@ -214,7 +248,9 @@ internal sealed partial class FileServiceHandler
         {
             CheckWriteCandidateAuthority(transaction, caller);
             CheckBudget();
-            return FileMutationJournal.Prepare(transaction, intent, raw) switch
+            var reservation = FileMutationJournal.Prepare(transaction, intent, raw);
+            if (reservation == FileJournalPreparation.Prepared) lease.Intent = intent;
+            return reservation switch
             {
                 FileJournalPreparation.Prepared => new MutationPreparation(true),
                 FileJournalPreparation.Conflict => Refuse(Error(ErrorCategory.Conflict, "command_id_reused", "command_id_reused", correlation)),
@@ -275,9 +311,10 @@ internal sealed partial class FileServiceHandler
             }
             CheckWriteCandidateAuthority(transaction, caller);
             CheckBudget();
-            // Linux remains unavailable until its lease coordinator is proven. A new AGENT-owned target also waits
-            // for durable per-creation ownership markers; this internal candidate does not claim unattended ownership.
-            if (!OperatingSystem.IsWindows())
+            // The Linux helper currently covers existing guarded objects only. Creation and unattended ownership
+            // remain refused until their separate native and durable ownership protocols are connected.
+            if (!OperatingSystem.IsWindows() && !(OperatingSystem.IsLinux() && request.HasExpectedSha256 &&
+                LinuxFileEffectController.IsHostProcess()))
                 return Refuse(Error(ErrorCategory.Resource, "enforcement_unavailable", "file_guard_unavailable", correlation));
             if (!request.HasExpectedSha256 && caller.CellsOrigin == Origin.Agent)
                 return Refuse(Error(ErrorCategory.Resource, "enforcement_unavailable", "file_ownership_unavailable", correlation));
@@ -304,7 +341,15 @@ internal sealed partial class FileServiceHandler
                     parentId.Bytes, null, null, null, null, stage.Length, stage.Sha256.ToArray(), stage.Identity.Bytes);
                 return Reserve(absentIntent);
             }
-            lease.Guard = lease.Use.Root.OpenExistingWriteGuard(path);
+            if (OperatingSystem.IsLinux())
+            {
+                var guardedSelection = lease.Use.Root.OpenExistingWriteGuardWithNames(path, token);
+                lease.Guard = guardedSelection.Guard;
+                lease.ParentIdentity = guardedSelection.ParentIdentity;
+                lease.CheckNames = guardedSelection.CheckNames;
+                lease.Guard.CheckLinuxWritePreservation();
+            }
+            else lease.Guard = lease.Use.Root.OpenExistingWriteGuard(path);
             using var original = lease.Guard.ReadForMutation(token);
             observed = new FileAuditMetadata
             {
@@ -335,10 +380,11 @@ internal sealed partial class FileServiceHandler
             if (lease.Stages is null)
                 return Refuse(Error(ErrorCategory.Resource, "enforcement_unavailable", "file_stage_capacity", correlation));
             AfterStageBeforeJournalForTests?.Invoke();
+            lease.CheckNames?.Invoke();
             var slash = path.LastIndexOf('/');
-            var parent = lease.Use.Root.OpenDirectory(slash < 0 ? "" : path[..slash]);
+            var parent = lease.ParentIdentity ?? WorkspacePath.Identity(lease.Use.Root.OpenDirectory(slash < 0 ? "" : path[..slash]));
             var rootIdentity = RegisteredWorkspaces.RootIdentity.Encode(lease.Use.Root.RootIdentity);
-            var parentIdentity = RegisteredWorkspaces.RootIdentity.Encode(WorkspacePath.Identity(parent));
+            var parentIdentity = RegisteredWorkspaces.RootIdentity.Encode(parent);
             var targetIdentity = RegisteredWorkspaces.RootIdentity.Encode(lease.Guard.ObjectIdentity, directory: false);
             var originalStage = lease.Stages.Original ?? throw new InvalidOperationException("An existing file needs a preimage stage.");
             var intent = new FileJournalIntent(request.Kind, request.Meta.CommandId.Value.ToByteArray(),
@@ -366,6 +412,14 @@ internal sealed partial class FileServiceHandler
                 _ => Refuse(Error(ErrorCategory.Validation, "invalid_argument", "content: invalid_utf8", correlation)),
             };
         }
+        catch (WorkspacePreservationUnavailableException)
+        {
+            return Refuse(Error(ErrorCategory.Resource, "enforcement_unavailable", "file_guard_unavailable", correlation));
+        }
+        catch (WorkspacePathException exception) when (exception.Reason == "file_guard_unavailable")
+        {
+            return Refuse(Error(ErrorCategory.Resource, "enforcement_unavailable", "file_guard_unavailable", correlation));
+        }
         catch (WorkspacePathException exception) when (exception.Reason == "file_too_large")
         {
             return Refuse(TooLargeFile("file_existing_bytes", "4194304", correlation));
@@ -373,6 +427,89 @@ internal sealed partial class FileServiceHandler
         catch (Exception exception) when (exception is RegisteredWorkspaceException or WorkspacePathException or UnauthorizedAccessException or IOException)
         {
             return Refuse(Failure(exception, correlation));
+        }
+    }
+
+    private LinuxWorkerRegistration RegisterLinuxWorker(StoreTransaction transaction, Caller caller, MutationRequest request, byte[] raw,
+        MutationLease lease, long linuxDeadline, long started, TimeSpan limit, CancellationToken token)
+    {
+        if (!OperatingSystem.IsLinux()) throw new InvalidOperationException("The Linux worker is unavailable.");
+        if (Expired(started, limit, token)) throw new OperationCanceledException(token);
+        try { CheckWriteCandidateAuthority(transaction, caller); }
+        catch (FilePolicyException)
+        {
+            return new LinuxWorkerRegistration(null, FileMutationJournal.CompleteKnownAuthorityRefusal(transaction, request.Kind,
+                request.Meta!.CommandId.Value.Span, caller.CenterCaller!, raw, approvalUnavailable: false));
+        }
+        catch (FileApprovalNotImplementedException)
+        {
+            return new LinuxWorkerRegistration(null, FileMutationJournal.CompleteKnownAuthorityRefusal(transaction, request.Kind,
+                request.Meta!.CommandId.Value.Span, caller.CenterCaller!, raw, approvalUnavailable: true));
+        }
+        if (Expired(started, limit, token)) throw new OperationCanceledException(token);
+        // Take the monotonic point first so the expiry conversion cannot extend the signed validity window.
+        var beforeSample = LinuxFatalDeadline.MonotonicNanoseconds();
+        var sample = RoutedFileValidationTime.Sample(transaction);
+        if (!sample.Healthy) throw new RoutedAbortException(RoutedAbort.ClockUncertain);
+        var expiry = caller.Routed!.FileExpiryMicroseconds;
+        if (sample.BoundaryMicroseconds >= expiry) throw new RoutedAbortException(RoutedAbort.Expired);
+        var untilExpiry = checked((expiry - sample.BoundaryMicroseconds) * 1_000);
+        var effectDeadline = Math.Min(linuxDeadline, checked(beforeSample + untilExpiry));
+        var binding = FileEffectWorker.BindPreparedChild(transaction, lease.Intent!, raw, lease.Worker!.SealedWorker,
+            effectDeadline, expiry);
+        return new LinuxWorkerRegistration(binding, null);
+    }
+
+    private byte[]? ApplyLinuxMutation(StoreTransaction transaction, Caller caller, MutationRequest request, byte[] raw,
+        MutationLease lease, LinuxFileEffectBinding binding, long started, TimeSpan limit, CancellationToken token)
+    {
+        if (!OperatingSystem.IsLinux()) throw new InvalidOperationException("The Linux worker is unavailable.");
+        var worker = lease.Worker ?? throw new InvalidOperationException("The owned worker is unavailable.");
+        var guard = lease.Guard ?? throw new InvalidOperationException("The guarded target is unavailable.");
+        var original = lease.Stages?.Original ?? throw new InvalidOperationException("The original stage is unavailable.");
+        var intended = lease.Stages.Intended;
+        var root = lease.Use?.Root ?? throw new InvalidOperationException("The workspace is unavailable.");
+        try
+        {
+            var checkNames = lease.CheckNames ?? throw new InvalidOperationException("The captured parent chain is unavailable.");
+            void BeforeEffect()
+            {
+                BeforeMutationEffectForTests?.Invoke();
+                if (Expired(started, limit, token)) throw new OperationCanceledException(token);
+                CheckWriteCandidateAuthority(transaction, caller);
+                if (Expired(started, limit, token)) throw new OperationCanceledException(token);
+            }
+            BeforeEffect();
+            var result = worker.Execute(binding, root, guard, original, intended, BeforeEffect, checkNames, token);
+            if (!FileEffectWorker.MarkEndedIfObserved(transaction, request.Meta!.CommandId.Value.Span))
+                return FileMutationJournal.MarkUnknown(transaction, request.Meta.CommandId.Value.Span);
+            var replacements = request.Kind == FileOperationKind.Edit ? request.ExpectedOccurrences : (uint?)null;
+            return FileMutationJournal.CompleteVerifiedEffect(transaction, request.Meta.CommandId.Value.Span, raw,
+                result.Size, result.Sha256, replacements);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)
+        {
+            worker.Stop();
+            if (!worker.PossibleEffect && worker.WaitForActualExit(2000) &&
+                FileEffectWorker.MarkEndedIfObserved(transaction, request.Meta!.CommandId.Value.Span))
+            {
+                if (exception is RoutedAbortException or OperationCanceledException) throw;
+                if (exception is FilePolicyException)
+                    return FileMutationJournal.CompleteKnownAuthorityRefusal(transaction, request.Kind,
+                        request.Meta.CommandId.Value.Span, caller.CenterCaller!, raw, approvalUnavailable: false);
+                if (exception is FileApprovalNotImplementedException)
+                    return FileMutationJournal.CompleteKnownAuthorityRefusal(transaction, request.Kind,
+                        request.Meta.CommandId.Value.Span, caller.CenterCaller!, raw, approvalUnavailable: true);
+                if (exception is WorkspacePathException native && native.Reason is
+                    "hash_mismatch" or "file_identity_changed" or "directory_identity_changed" or "root_changed")
+                    return FileMutationJournal.CompleteKnownTargetChanged(transaction, request.Kind,
+                        request.Meta.CommandId.Value.Span, caller.CenterCaller!, raw, native.Reason);
+                return FileMutationJournal.CompleteKnownGuardUnavailable(transaction, request.Kind,
+                    request.Meta.CommandId.Value.Span, caller.CenterCaller!, raw);
+            }
+            // A permission may have reached the worker, or its actual termination is not established.
+            var uncertain = FileMutationJournal.MarkUnknown(transaction, request.Meta!.CommandId.Value.Span);
+            return exception is RoutedAbortException or OperationCanceledException ? null : uncertain;
         }
     }
 
@@ -508,15 +645,31 @@ internal sealed partial class FileServiceHandler
 
     private sealed record MutationPreparation(bool Ready, byte[]? Response = null, string? PolicyReason = null, bool NeedsApproval = false);
 
+    private sealed record LinuxWorkerRegistration(LinuxFileEffectBinding? Binding, byte[]? Refusal);
+
     private sealed class MutationLease : IDisposable
     {
         internal RegisteredWorkspaceUse? Use { get; set; }
         internal WorkspaceWriteGuard? Guard { get; set; }
         internal WorkspaceCreatedTarget? Created { get; set; }
         internal WorkspaceObjectIdentity? ParentIdentity { get; set; }
+        internal Action? CheckNames { get; set; }
         internal WorkspaceStagePair? Stages { get; set; }
+        internal FileJournalIntent? Intent { get; set; }
+        internal LinuxFileEffectController? Worker { get; set; }
 
         public void Dispose()
+        {
+            if (OperatingSystem.IsLinux() && Worker is { } worker)
+            {
+                Worker = null;
+                worker.Shutdown(DisposeResources);
+                return;
+            }
+            DisposeResources();
+        }
+
+        private void DisposeResources()
         {
             try { Stages?.Dispose(); }
             finally

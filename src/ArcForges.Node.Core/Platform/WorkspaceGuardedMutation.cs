@@ -46,6 +46,14 @@ internal sealed partial class WorkspacePath
             stagedObject.SameObject(target.ObjectIdentity))
             throw new WorkspacePathException("file_guard_unavailable");
 
+        var checkNames = PrepareMutationNameCheck(path, target.ObjectIdentity, cancellationToken);
+        return target.ApplyStage(intended, expectedSha256, checkNames, afterFirstEffect, beforeEachEffect, cancellationToken);
+    }
+
+    /// <summary>Captures the checked directory chain for repeated name/identity observations without performing an effect.</summary>
+    internal Action PrepareMutationNameCheck(string path, WorkspaceObjectIdentity target, CancellationToken cancellationToken)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
         // Retain each checked directory through the effect and compare those identities again from the checked root.
         // This observes replacement; it is not the strict namespace lock needed by cleanup.
         var parts = Components(path);
@@ -60,7 +68,13 @@ internal sealed partial class WorkspacePath
             parents.Add((prefix, identity));
         }
 
-        void CheckNames()
+        return CreateMutationNameCheck(path, target, parents, cancellationToken);
+    }
+
+    private Action CreateMutationNameCheck(string path, WorkspaceObjectIdentity target,
+        IReadOnlyList<(string Name, WorkspaceObjectIdentity Identity)> parents, CancellationToken cancellationToken)
+    {
+        return () =>
         {
             cancellationToken.ThrowIfCancellationRequested();
             var root = Identity(RootHandle);
@@ -76,15 +90,15 @@ internal sealed partial class WorkspacePath
 
             var entry = InspectEntry(path);
             if (entry.Kind != WorkspaceEntryType.File || entry.Identity.Links != 1 ||
-                !target.ObjectIdentity.SameObject(entry.Identity))
+                !target.SameObject(entry.Identity))
                 throw new WorkspacePathException("file_identity_changed");
-        }
-
-        return target.ApplyStage(intended, expectedSha256, CheckNames, afterFirstEffect, beforeEachEffect, cancellationToken);
+        };
     }
 }
 
 internal sealed record WorkspaceGuardedMutationResult(long Size, byte[] Sha256);
+
+internal sealed record WorkspaceGuardedSelection(WorkspaceWriteGuard Guard, WorkspaceObjectIdentity ParentIdentity, Action CheckNames);
 
 internal sealed partial class WorkspaceWriteGuard
 {

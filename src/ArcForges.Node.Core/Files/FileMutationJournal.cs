@@ -50,6 +50,7 @@ internal enum FileJournalAcknowledgment
     NotFound,
     DigestMismatch,
     InvalidState,
+    WorkerNotEnded,
 }
 
 /// <summary>
@@ -222,6 +223,12 @@ internal static partial class FileMutationJournal
             return FileJournalAcknowledgment.InvalidState;
         }
 
+        if (!FileEffectWorker.MarkEndedIfObserved(transaction, commandId))
+        {
+            Audit(PermissionDecision.Deny, "refused: file_worker_not_ended");
+            return FileJournalAcknowledgment.WorkerNotEnded;
+        }
+
         if (transaction.Execute("""
             UPDATE file_operation_journal SET held = 0, acknowledged = 1, updated_at = max(updated_at, $now)
             WHERE command_id = $id AND phase = 3 AND held = 1 AND acknowledged = 0;
@@ -308,7 +315,7 @@ internal static partial class FileMutationJournal
         path?.WorkspaceId?.Value.Span.SequenceEqual(intent.WorkspaceId) == true &&
         path.HasPath && string.Equals(path.Path, intent.RelativePath, StringComparison.Ordinal);
 
-    private static CenterCaller Sanitize(CenterCaller caller)
+    internal static CenterCaller Sanitize(CenterCaller caller)
     {
         static Id? Copy(Id? id) => id is null ? null : new Id { Value = ByteString.CopyFrom(id.Value.Span) };
         var result = new CenterCaller { Kind = caller.Kind, AccountId = Copy(caller.AccountId) };

@@ -126,6 +126,7 @@ internal sealed class LocalFileOperationHandler(NodeRuntime node, ClientSessions
                     {
                         FileJournalAcknowledgment.NotFound => NodeErrors.NotFound("file_operation", request.OperationCommandId.Value.Span),
                         FileJournalAcknowledgment.DigestMismatch => DigestMismatch(),
+                        FileJournalAcknowledgment.WorkerNotEnded => NodeErrors.InvalidArgument("operation.worker: worker termination is not established"),
                         _ => NodeErrors.InvalidArgument("operation.state: UNKNOWN and held required"),
                     });
                 }

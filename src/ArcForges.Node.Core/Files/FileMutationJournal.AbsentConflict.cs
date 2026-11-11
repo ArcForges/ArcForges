@@ -102,6 +102,10 @@ internal static partial class FileMutationJournal
             (error.Equals(AuthorityRefusal(row, approvalUnavailable: false)) ||
              error.Equals(AuthorityRefusal(row, approvalUnavailable: true))))
             return error.Clone();
+        if (NodeShapes.IsValid(error) && error.Equals(GuardUnavailable(row)))
+            return error.Clone();
+        foreach (var reason in new[] { "hash_mismatch", "file_identity_changed", "directory_identity_changed", "root_changed" })
+            if (NodeShapes.IsValid(error) && error.Equals(TargetChanged(row, reason))) return error.Clone();
         foreach (var reason in Enum.GetValues<ApprovedFileRefusal>())
         {
             if (NodeShapes.IsValid(error) && error.Equals(ApprovedRefusal(row, reason)))

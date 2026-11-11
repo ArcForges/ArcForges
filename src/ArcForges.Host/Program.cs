@@ -27,7 +27,7 @@ internal static class Program
         // exact opt-in is set (16-testing-strategy section 1, item 2; 02 section 4). Production processes are unaffected.
         var options = args.TakeWhile(argument => argument != "--");
         NodeSecretStores.ApplyTestModeTripwire(options.Contains(NodeLocations.TestModeOption, StringComparer.Ordinal));
-        if (args.Length >= 2 && args[0] == "node" && args[1] is "exec-wrap" or "signal" or "exec-launch" or "exec-stop" or "exit-record" or "guard")
+        if (args.Length >= 2 && args[0] == "node" && args[1] is "exec-wrap" or "signal" or "exec-launch" or "exec-stop" or "exit-record" or "guard" or "file-effect-worker" or "file-effect-selftest")
         {
             return Task.FromResult(RunHelperRole(args[1], args[2..]));
         }
@@ -55,6 +55,11 @@ internal static class Program
                 "exec-stop" => ExecStopRole.Run(args),
                 "exit-record" => ExitRecordRole.Run(args),
                 "guard" => RunGuard(args),
+                "file-effect-worker" when args.Length == 0 => LinuxFileEffectWorker.Run(testMode: false),
+                "file-effect-worker" when args.Length == 1 && args[0] == NodeLocations.TestModeOption => LinuxFileEffectWorker.Run(testMode: true),
+                "file-effect-worker" => Unsupported(role, "takes no arguments other than --test-mode"),
+                "file-effect-selftest" when args.Length == 1 && args[0] == NodeLocations.TestModeOption => LinuxWorkerBootstrapSelfTest.Run(),
+                "file-effect-selftest" => Unsupported(role, "requires --test-mode"),
                 _ => Unsupported(role, "a Windows helper role"),
             };
         }

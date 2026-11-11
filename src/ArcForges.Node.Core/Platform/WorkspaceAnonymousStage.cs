@@ -48,7 +48,12 @@ internal sealed class WorkspaceAnonymousStage : WorkspaceMutationStage
 
     internal override void CheckIntact() => _guard.CheckIntact();
 
+    internal WorkspaceWriteGuard GuardForLinuxHandoff => _guard;
+
     internal int DescriptorForTests() => _guard.AnonymousDescriptorForTests();
+
+    // Component-only transfer to an owned test peer; this does not authorize a target effect.
+    internal void SendLinuxGuardForTests(System.Net.Sockets.Socket peer) => _guard.SendLinuxGuardForTests(peer);
 
     public override void Dispose() => _guard.Dispose();
 }
