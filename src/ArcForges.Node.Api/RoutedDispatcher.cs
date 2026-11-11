@@ -224,7 +224,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
             if (IsFileWorkspace(selected))
             {
                 RoutedFileErrors.Complete(error, selectedMeta, header.CallId, node.Clock);
-                if ((selected is RoutedMethod.ReadNodeFile or RoutedMethod.SearchNodeFiles or RoutedMethod.ListNodeDirectory) && error.Category == ErrorCategory.Internal)
+                if ((selected is RoutedMethod.ReadNodeFile or RoutedMethod.SearchNodeFiles or RoutedMethod.ListNodeDirectory or RoutedMethod.GetNodeFileOperation) && error.Category == ErrorCategory.Internal)
                 {
                     ReadInternalFailure(error);
                 }
@@ -314,7 +314,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
                 TaskIdOf(request), risk, WorkspaceIdOf(request));
         }
 
-        if ((method is RoutedMethod.ReadNodeFile or RoutedMethod.SearchNodeFiles or RoutedMethod.ListNodeDirectory or RoutedMethod.ListNodeWorkspaces or RoutedMethod.GetNodeWorkspace) && meta?.CommandId is not null)
+        if ((method is RoutedMethod.ReadNodeFile or RoutedMethod.SearchNodeFiles or RoutedMethod.ListNodeDirectory or RoutedMethod.GetNodeFileOperation or RoutedMethod.ListNodeWorkspaces or RoutedMethod.GetNodeWorkspace) && meta?.CommandId is not null)
         {
             await WriteRefusalAuditAsync(actor, method, operation, "invalid_argument", PermissionDecision.Deny, null, null,
                 workspaceId: WorkspaceIdOf(request), path: AuditPathOf(request)).ConfigureAwait(false);
@@ -580,6 +580,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
 
     private static (IMessage Request, RequestMeta? Meta) Parse(RoutedMethod method, ByteString payload) => method switch
     {
+        RoutedMethod.GetNodeFileOperation => Pair(FileServiceGetFileOperationRequest.Parser.ParseFrom(payload), request => request.Meta),
         RoutedMethod.ReadNodeFile => Pair(FileServiceReadFileRequest.Parser.ParseFrom(payload), request => request.Meta),
         RoutedMethod.ListNodeDirectory => Pair(FileServiceListDirectoryRequest.Parser.ParseFrom(payload), request => request.Meta),
         RoutedMethod.SearchNodeFiles => Pair(FileServiceSearchFilesRequest.Parser.ParseFrom(payload), request => request.Meta),
@@ -605,6 +606,9 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
     {
         switch (method)
         {
+            case RoutedMethod.GetNodeFileOperation:
+                var operation = await files!.GetFileOperationAsync(caller, (FileServiceGetFileOperationRequest)request, cancellationToken).ConfigureAwait(false);
+                return (operation, operation.Error);
             case RoutedMethod.ReadNodeFile:
                 var file = await files!.ReadAsync(caller, (FileServiceReadFileRequest)request, cancellationToken).ConfigureAwait(false);
                 return (file, file.Error);
@@ -658,7 +662,9 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
     {
         var taskId = TaskIdOf(request) ?? (response is TaskServiceSubmitTaskResponse { Value.TaskId: { } created } ? created.Value.ToByteArray() : null);
         var workspaceId = WorkspaceIdOf(request) ?? (response is WorkspaceServiceRegisterWorkspaceResponse { Value.Workspace.WorkspaceId: { } added }
-            ? added.Value.ToByteArray() : null);
+            ? added.Value.ToByteArray() : null) ??
+            (response is FileServiceGetFileOperationResponse { Value.Operation.WorkspacePath.WorkspaceId: { } statusWorkspace }
+                ? statusWorkspace.Value.ToByteArray() : null);
         if (error is { Category: ErrorCategory.Authorization })
         {
             var stated = context.Operation ?? operation;
@@ -674,7 +680,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
 
         if (error is { Category: ErrorCategory.Internal })
         {
-            if (request is FileServiceReadFileRequest or FileServiceSearchFilesRequest or FileServiceListDirectoryRequest)
+            if (request is FileServiceReadFileRequest or FileServiceSearchFilesRequest or FileServiceListDirectoryRequest or FileServiceGetFileOperationRequest)
             {
                 ReadInternalFailure(error);
             }
@@ -705,6 +711,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
 
         IMessage response = method switch
         {
+            RoutedMethod.GetNodeFileOperation => new FileServiceGetFileOperationResponse { Meta = responseMeta, Error = error },
             RoutedMethod.ReadNodeFile => new FileServiceReadFileResponse { Meta = responseMeta, Error = error },
             RoutedMethod.ListNodeDirectory => new FileServiceListDirectoryResponse { Meta = responseMeta, Error = error },
             RoutedMethod.SearchNodeFiles => new FileServiceSearchFilesResponse { Meta = responseMeta, Error = error },
@@ -851,11 +858,11 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
         method is RoutedMethod.RegisterNodeWorkspace or RoutedMethod.UnregisterNodeWorkspace or
             RoutedMethod.ListNodeWorkspaces or RoutedMethod.GetNodeWorkspace;
 
-    private static bool IsFile(RoutedMethod method) => method is RoutedMethod.ReadNodeFile or RoutedMethod.SearchNodeFiles or RoutedMethod.ListNodeDirectory;
+    private static bool IsFile(RoutedMethod method) => method is RoutedMethod.ReadNodeFile or RoutedMethod.SearchNodeFiles or RoutedMethod.ListNodeDirectory or RoutedMethod.GetNodeFileOperation;
 
     private static bool IsFileWorkspace(RoutedMethod method) => IsFile(method) || IsWorkspace(method);
 
-    private static bool IsFileWorkspaceMethod(IMessage request) => request is FileServiceReadFileRequest or FileServiceSearchFilesRequest or FileServiceListDirectoryRequest or
+    private static bool IsFileWorkspaceMethod(IMessage request) => request is FileServiceReadFileRequest or FileServiceSearchFilesRequest or FileServiceListDirectoryRequest or FileServiceGetFileOperationRequest or
         WorkspaceServiceRegisterWorkspaceRequest or WorkspaceServiceUnregisterWorkspaceRequest or
         WorkspaceServiceListWorkspacesRequest or WorkspaceServiceGetWorkspaceRequest;
 
@@ -874,6 +881,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
 
     private static string MethodName(RoutedMethod method) => method switch
     {
+        RoutedMethod.GetNodeFileOperation => "GetFileOperation",
         RoutedMethod.ReadNodeFile => "ReadFile",
         RoutedMethod.ListNodeDirectory => "ListDirectory",
         RoutedMethod.SearchNodeFiles => "SearchFiles",

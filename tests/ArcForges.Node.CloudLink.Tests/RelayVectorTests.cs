@@ -133,7 +133,7 @@ public sealed class RelayVectorTests
     {
         var vector = Root.GetProperty("relayAssertions").EnumerateArray().Single(entry => entry.GetProperty("id").GetString() == "submit-own-node-human");
         var original = RelayAssertion.Parser.ParseFrom(Hex(vector, "assertion"));
-        foreach (var method in new[] { RoutedMethod.ReadNodeFile, RoutedMethod.SearchNodeFiles, RoutedMethod.ListNodeDirectory, RoutedMethod.RegisterNodeWorkspace, RoutedMethod.UnregisterNodeWorkspace,
+        foreach (var method in new[] { RoutedMethod.ReadNodeFile, RoutedMethod.SearchNodeFiles, RoutedMethod.ListNodeDirectory, RoutedMethod.GetNodeFileOperation, RoutedMethod.RegisterNodeWorkspace, RoutedMethod.UnregisterNodeWorkspace,
             RoutedMethod.ListNodeWorkspaces, RoutedMethod.GetNodeWorkspace })
         {
             var mutation = method is RoutedMethod.RegisterNodeWorkspace or RoutedMethod.UnregisterNodeWorkspace;

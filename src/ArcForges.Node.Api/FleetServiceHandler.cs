@@ -640,6 +640,61 @@ internal sealed class FleetServiceHandler(NodeRuntime node, ClientSessions sessi
             ? response : Fail(NodeErrors.Internal(node.Clock.GetUtcNow()));
     }
 
+    public override async Task<FleetServiceGetNodeFileOperationResponse> GetNodeFileOperation(
+        FleetServiceGetNodeFileOperationRequest request, ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var forwarded = request.Clone();
+        var correlation = Validation.RequiredId(request.Meta?.CorrelationId, "correlation_id") is null
+            ? request.Meta!.CorrelationId.Clone() : CommandIds.New(node.Clock);
+        var meta = ApiCommands.Meta(request.Meta);
+        meta.CorrelationId = correlation.Clone();
+        FleetServiceGetNodeFileOperationResponse Fail(ArcError error)
+        {
+            RoutedFileErrors.Complete(error, request.Meta, correlation, node.Clock);
+            return new FleetServiceGetNodeFileOperationResponse { Meta = meta, Error = error };
+        }
+
+        var invalid = Validation.RequiredId(forwarded.NodeId, "node_id") ?? Payload(forwarded.HasRequest, forwarded.Request, 245760);
+        FileServiceGetFileOperationRequest? inner = null;
+        if (invalid is null && request.Meta?.CorrelationId is { } suppliedCorrelation)
+        {
+            invalid = Validation.RequiredId(suppliedCorrelation, "meta.correlation_id");
+        }
+
+        if (invalid is null)
+        {
+            try
+            {
+                inner = FileServiceGetFileOperationRequest.Parser.ParseFrom(forwarded.Request);
+                if (forwarded.Meta?.CommandId is not null || inner.Meta?.CommandId is not null)
+                {
+                    invalid = NodeErrors.InvalidArgument("meta.command_id: absent for an operation status");
+                }
+            }
+            catch (InvalidProtocolBufferException)
+            {
+                invalid = NodeErrors.InvalidArgument("request: invalid node request bytes");
+            }
+        }
+
+        if (invalid is not null)
+        {
+            return Fail(invalid);
+        }
+
+        var response = await ForwardAsync(context, correlation, RoutedMethod.GetNodeFileOperation, forwarded.NodeId, null,
+            _ => SHA256.HashData(forwarded.Request.Span),
+            (caller, assertion, client, options) =>
+            {
+                forwarded.Caller = caller;
+                forwarded.RelayAssertion = assertion;
+                return client.GetNodeFileOperationAsync(forwarded, options).ResponseAsync;
+            }, answer => answer.Error, answer => answer.Value is not null, Fail).ConfigureAwait(false);
+        return RoutedFileResponseValidation.GetFileOperation(response, forwarded.NodeId, inner!)
+            ? response : Fail(NodeErrors.Internal(node.Clock.GetUtcNow()));
+    }
+
     private static ArcError? Payload(bool present, ByteString bytes, int maximum) =>
         !present || bytes.Length == 0 || bytes.Length > maximum ? NodeErrors.InvalidArgument("request: required within the routed size limit") : null;
 
@@ -702,7 +757,7 @@ internal sealed class FleetServiceHandler(NodeRuntime node, ClientSessions sessi
 
             var maximum = method == RoutedMethod.WaitNodeTask ? TimeSpan.FromSeconds(55) :
                 method == RoutedMethod.ReadNodeTaskOutput ? TimeSpan.FromSeconds(30) :
-                method is RoutedMethod.ReadNodeFile or RoutedMethod.SearchNodeFiles or RoutedMethod.ListNodeDirectory or RoutedMethod.RegisterNodeWorkspace or RoutedMethod.UnregisterNodeWorkspace or
+                method is RoutedMethod.ReadNodeFile or RoutedMethod.SearchNodeFiles or RoutedMethod.ListNodeDirectory or RoutedMethod.GetNodeFileOperation or RoutedMethod.RegisterNodeWorkspace or RoutedMethod.UnregisterNodeWorkspace or
                     RoutedMethod.ListNodeWorkspaces or RoutedMethod.GetNodeWorkspace ? TimeSpan.FromSeconds(15) : TimeSpan.FromSeconds(10);
             var answer = await cloud.ForwardRelayAsync(signed,
                 (client, options) => send(caller, signed.Assertion.ToByteString(), client, options), left < maximum ? left : maximum, context.CancellationToken)

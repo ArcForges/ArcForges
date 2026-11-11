@@ -581,5 +581,106 @@ public sealed class FleetProxyTests
         Assert.Equal(2, center.CallsOf("ListNodeWorkspaces").Count);
     }
 
+    [Fact(Timeout = 60000)]
+    public async Task StatusProxySignsExactRequestAndChecksTheReturnedOperation()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var center = await FakeCenter.StartAsync();
+        center.ScriptedFleet = true;
+        await using var node = await CloudNode.Create(center.Endpoint.Url).StartAsync();
+        var nodeId = node.Runtime.NodeId.ToArray();
+        var credentials = center.Issue(nodeId);
+        byte[] publicKey;
+        using (var key = NodeKeyStores.ForTestDataRoot(node.DataRoot).Load(nodeId, center.Endpoint.Origin)
+            ?? NodeKeyStores.ForTestDataRoot(node.DataRoot).Create(nodeId, center.Endpoint.Origin, TimeProvider.System))
+        {
+            publicKey = key.PublicKey;
+            center.CommandKeys.Add(center.Channel.CommandPublicKey);
+            center.Channel.RegisterNodeKey(credentials.AccessToken, publicKey);
+            await node.Cloud.AdoptAsync(credentials, center.Endpoint);
+        }
+
+        await center.Channel.ProvedAsync();
+        await Eventually.TrueAsync(() => node.Cloud.Status().Relay == RelayState.Connected, "the node channel is connected");
+        await using var local = await node.ChannelAsync(Origin.Script);
+        var fleet = new FleetService.FleetServiceClient(local.CallInvoker);
+        var target = new Id { Value = ByteString.CopyFrom(nodeId) };
+        var correlation = CommandIds.New();
+        var command = CommandIds.New();
+        var originalCorrelation = CommandIds.New();
+        var request = new FileServiceGetFileOperationRequest
+        {
+            Meta = new RequestMeta { CorrelationId = correlation },
+            OperationCommandId = command,
+        };
+        var operation = new FileOperation
+        {
+            CommandId = command.Clone(),
+            Kind = FileOperationKind.Write,
+            State = FileOperationState.Unknown,
+            RequestSha256 = ByteString.CopyFrom(new byte[32]),
+            CreatedAt = ProtoTime.ToInstant(DateTimeOffset.UtcNow),
+            UpdatedAt = ProtoTime.ToInstant(DateTimeOffset.UtcNow),
+            Held = true,
+            Acknowledged = false,
+            WorkspacePath = new FilePath { WorkspaceId = CommandIds.New(), Path = "target" },
+            Error = new ArcError
+            {
+                Category = ErrorCategory.Execution,
+                Code = "operation_failed",
+                MessageKey = "error.execution.operation_failed",
+                Retry = new RetryAdvice { Mode = RetryMode.Never },
+                Effect = EffectCertainty.Unknown,
+                CorrelationId = originalCorrelation,
+                Details = new ErrorDetails { State = new StateFailure { State = "file", Reason = "file_outcome_unknown" } },
+            },
+        };
+        var inner = new FileServiceGetFileOperationResponse
+        {
+            Meta = new ResponseMeta { CorrelationId = correlation.Clone() },
+            Value = new FileServiceGetFileOperationValue { Operation = operation },
+        };
+        var outer = new FleetServiceGetNodeFileOperationResponse
+        {
+            Meta = new ResponseMeta { CorrelationId = correlation.Clone() },
+            Value = new FleetServiceGetNodeFileOperationValue { NodeId = target.Clone(), Response = inner.ToByteString() },
+        };
+        center.Script("GetNodeFileOperation", Reply(outer));
+        var sentRequest = new FleetServiceGetNodeFileOperationRequest
+        {
+            Meta = new RequestMeta { CorrelationId = correlation.Clone() },
+            NodeId = target.Clone(),
+            Request = request.ToByteString(),
+            Caller = new RoutedCaller { Kind = CallerKind.NodeRelay, RelayingNodeId = CommandIds.New(), LocalOrigin = Origin.Human },
+        };
+        Assert.True(RoutedFileResponseValidation.GetFileOperation(outer, target, request));
+        var response = await fleet.GetNodeFileOperationAsync(sentRequest, cancellationToken: ct);
+        Assert.True(response.Value is not null, $"status proxy result: {response.Error?.Category}/{response.Error?.Code}; center calls={center.CallsOf("GetNodeFileOperation").Count}");
+        Assert.Equal(inner.ToByteString(), response.Value.Response);
+        var forwarded = FleetServiceGetNodeFileOperationRequest.Parser.ParseFrom(
+            FakeCenter.Payload(Assert.Single(center.CallsOf("GetNodeFileOperation")).Body));
+        var assertion = RelayAssertion.Parser.ParseFrom(forwarded.RelayAssertion);
+        Assert.Equal(Origin.Script, forwarded.Caller.LocalOrigin);
+        Assert.Equal(target, forwarded.Caller.RelayingNodeId);
+        Assert.Equal(RoutedMethod.GetNodeFileOperation, assertion.Method);
+        Assert.Equal(target, assertion.TargetNodeId);
+        Assert.Null(assertion.CommandId);
+        Assert.Equal(request.ToByteString(), forwarded.Request);
+        Assert.Equal(SHA256.HashData(forwarded.Request.Span), assertion.RequestSha256.ToByteArray());
+        Assert.True(FakeChannelPeer.Verify(publicKey, RelaySignatures.AssertionInput(assertion, center.Endpoint)!, assertion.Signature.ToByteArray()));
+
+        var invalid = sentRequest.Clone();
+        invalid.Meta.CommandId = CommandIds.New();
+        Assert.Equal("invalid_argument", (await fleet.GetNodeFileOperationAsync(invalid, cancellationToken: ct)).Error.Code);
+        Assert.Single(center.CallsOf("GetNodeFileOperation"));
+
+        operation.CommandId = CommandIds.New();
+        outer.Value.Response = inner.ToByteString();
+        center.Script("GetNodeFileOperation", Reply(outer));
+        var rejected = await fleet.GetNodeFileOperationAsync(sentRequest, cancellationToken: ct);
+        Assert.Equal("internal", rejected.Error.Code);
+        Assert.Null(rejected.Value);
+    }
+
     private static FakeFault.Raw Reply(IMessage response) => new([.. FakeCenter.DataFrame(response), .. FakeCenter.TrailerFrame(0, null)]);
 }

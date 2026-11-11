@@ -93,7 +93,7 @@ internal static class RelaySignatures
         ArgumentNullException.ThrowIfNull(center);
         var method = assertion.HasMethod ? (int)assertion.Method : 0;
         var origin = assertion.HasLocalOrigin ? (int)assertion.LocalOrigin : 0;
-        if ((method is < 1 or > 9) && method is not (12 or 13) && (method is < 17 or > 20) || origin is < 1 or > 3)
+        if ((method is < 1 or > 9) && method is not (12 or 13 or 16) && (method is < 17 or > 20) || origin is < 1 or > 3)
         {
             return null;
         }
@@ -330,7 +330,7 @@ internal sealed record RelayAssertionFields
     /// <summary>The local caller's client session at this node.</summary>
     public required Id LocalSessionId { get; init; }
 
-    /// <summary>The routed method (existing 1..8 or implemented workspace 17..20).</summary>
+    /// <summary>The routed method (existing tasks, implemented file reads/status or workspace 17..20).</summary>
     public required RoutedMethod Method { get; init; }
 
     /// <summary>SHA-256 of the request bytes (relay.proto RelayAssertion.request_sha256).</summary>

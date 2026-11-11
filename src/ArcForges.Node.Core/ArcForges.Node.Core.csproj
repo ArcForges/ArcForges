@@ -27,5 +27,6 @@
     <PackageReference Include="ArcForges.Contracts.Foundation" NoWarn="NU1608" />
     <InternalsVisibleTo Include="ArcForges.Node.Api" />
     <InternalsVisibleTo Include="ArcForges.Node.Core.Tests" />
+    <InternalsVisibleTo Include="ArcForges.Node.CloudLink.Tests" />
   </ItemGroup>
 </Project>
