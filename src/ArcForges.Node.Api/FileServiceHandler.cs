@@ -29,6 +29,9 @@ internal sealed partial class FileServiceHandler(NodeRuntime node) : IDisposable
 
     internal Action? AfterNativeReadForTests { get; set; }
 
+    // A test holds the real writer transaction after the private-stage identity snapshot, before native I/O.
+    internal Action? AfterWorkspaceSnapshotForTests { get; set; }
+
     internal async Task<FileServiceReadFileResponse> ReadAsync(Caller caller, FileServiceReadFileRequest request,
         CancellationToken cancellationToken)
     {
@@ -146,6 +149,7 @@ internal sealed partial class FileServiceHandler(NodeRuntime node) : IDisposable
             CheckAuthority(transaction, caller);
             CheckBudget();
             using var use = _workspaces.OpenForUse(transaction, workspace, beforeUse: selected => CheckAuthority(selected, caller), token);
+            AfterWorkspaceSnapshotForTests?.Invoke();
             CheckBudget();
             var selected = use.Root.InspectEntry(path);
             if (selected.Kind == WorkspaceEntryType.Directory)

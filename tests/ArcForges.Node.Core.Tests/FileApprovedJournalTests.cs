@@ -4,12 +4,14 @@ using System.Text;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
+using ArcForges.Contracts.Relay.V1;
 using ArcForges.Node.Core.Files;
 using ArcForges.Node.Core.Platform;
 using ArcForges.Node.Core.Security;
 using ArcForges.Node.Store;
 using Google.Protobuf;
 using NodeFilePath = ArcForges.Contracts.Node.V1.FilePath;
+using NodeShapes = ArcForges.Contracts.Node.Shapes.ContractShapeValidation;
 
 namespace ArcForges.Node.Core.Tests;
 
@@ -21,7 +23,8 @@ public sealed class FileApprovedJournalTests
     {
         var ct = TestContext.Current.CancellationToken;
         await using var node = await InProcessNode.Create().StartAsync();
-        var caller = new RoutedCalls(node).Relay(Origin.Script);
+        var routed = new RoutedCalls(node);
+        var caller = routed.Relay(Origin.Script);
         var rootPath = Directory.CreateDirectory(Path.Combine(node.Root, "approved-journal")).FullName;
         var registered = new RegisteredWorkspaces(node.Runtime.Store).RegisterFromVerifiedHuman(rootPath, cancellationToken: ct);
         var body = Encoding.UTF8.GetBytes("owned-approved-stage-body-e3308");
@@ -95,6 +98,53 @@ public sealed class FileApprovedJournalTests
         Assert.Equal(FileOperationState.Unknown, operation.State);
         Assert.True(operation.Held);
         Assert.Equal(SHA256.HashData(raw), operation.RequestSha256.ToByteArray());
+
+        // The real local endpoint checks the peer's HUMAN classification; no stage location enters the routed reply.
+        var query = new FileServiceGetFileOperationRequest
+        {
+            Meta = new RequestMeta { CorrelationId = CommandIds.New() },
+            OperationCommandId = request.Meta.CommandId.Clone(),
+        };
+        await using var humanClient = await node.ChannelAsync(helloAsHuman: true);
+        await using var scriptClient = await node.ChannelAsync();
+        var local = await humanClient.Files.GetFileOperationAsync(query, cancellationToken: ct);
+        Assert.True(NodeShapes.IsValid(local)); // Real published 450.1 validator, including warning metadata.
+        Assert.Null(local.Error);
+        var warning = Assert.Single(local.Meta.Warnings);
+        var parts = warning.Split(':', 4);
+        Assert.Equal("arcforges.file-stage.v1", parts[0]);
+        Assert.Equal("2", parts[1]);
+        Assert.Equal("confirmed", parts[2]);
+        Assert.Equal(Path.Combine(rootPath, "stage"), Encoding.UTF8.GetString(Convert.FromBase64String(parts[3])));
+        // Contract check only: the maximal synthetic absolute path need not exist on the host filesystem.
+        var pathRoot = Path.GetPathRoot(rootPath)!;
+        var maximumPath = pathRoot + new string('x', 4096 - Encoding.UTF8.GetByteCount(pathRoot));
+        Assert.Equal(4096, Encoding.UTF8.GetByteCount(maximumPath));
+        var edge = local.Clone();
+        edge.Meta.Warnings.Clear();
+        edge.Meta.Warnings.Add(PrivateStageLocations.ToWarning(new PrivateStageLocation(1, maximumPath, true, true)));
+        edge.Meta.Warnings.Add(PrivateStageLocations.ToWarning(new PrivateStageLocation(2, maximumPath, false, false)));
+        Assert.True(NodeShapes.IsValid(edge));
+        var denied = await scriptClient.Files.GetFileOperationAsync(query, cancellationToken: ct);
+        Assert.Equal("permission_denied", denied.Error.Code);
+        Assert.Empty(denied.Meta.Warnings);
+        var remote = await routed.CallAsync(caller, RoutedMethod.GetNodeFileOperation, query.ToByteArray());
+        var remoteResponse = FileServiceGetFileOperationResponse.Parser.ParseFrom(remote.Answer!.Response);
+        Assert.True(NodeShapes.IsValid(remoteResponse));
+        Assert.Null(remoteResponse.Error);
+        Assert.Empty(remoteResponse.Meta.Warnings);
+
+        var stagePath = Path.Combine(rootPath, "stage");
+        var moved = Path.Combine(rootPath, "moved-stage");
+        File.Move(stagePath, moved);
+        File.WriteAllText(stagePath, "owned replacement");
+        var replaced = await humanClient.Files.GetFileOperationAsync(query, cancellationToken: ct);
+        Assert.True(NodeShapes.IsValid(replaced));
+        Assert.Contains(":last-known:", Assert.Single(replaced.Meta.Warnings), StringComparison.Ordinal);
+        Assert.Equal("owned replacement", File.ReadAllText(stagePath));
+        File.Delete(stagePath); // This exact replacement is a test-owned fixture.
+        File.Move(moved, stagePath);
+
         Assert.Equal(FileJournalAcknowledgment.DigestMismatch, node.Runtime.Store.Write(t =>
             FileMutationJournal.AcknowledgeFromVerifiedHuman(t, intent.CommandId, new byte[32], human), CommitDurability.Full));
         Assert.True(node.Runtime.Store.Read(r => PrivateStageRegistry.HasWorkspaceHold(r, registered.Id)));

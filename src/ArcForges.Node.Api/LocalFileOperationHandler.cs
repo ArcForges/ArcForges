@@ -59,9 +59,13 @@ internal sealed class LocalFileOperationHandler(NodeRuntime node, ClientSessions
             AuditLog.AppendFileWorkspace(command.Transaction, caller.Actor, "file.show FileService.GetFileOperation",
                 path?.WorkspaceId?.Value.ToByteArray(), null, path?.Path, operation is null ? PermissionDecision.Deny : PermissionDecision.Allow,
                 operation is null ? "refused: not_found" : "shown", null);
-            return operation;
+            var warnings = operation is null or { State: FileOperationState.Unknown }
+                ? PrivateStageLocations.ForVerifiedHuman(command.Transaction, request.OperationCommandId.Value.Span, context.CancellationToken)
+                    .Select(PrivateStageLocations.ToWarning).ToArray()
+                : Array.Empty<string>();
+            return (Operation: operation, Warnings: warnings);
         }, CommitDurability.Full);
-        FileOperation? value;
+        (FileOperation? Operation, string[] Warnings) value;
         try
         {
             value = await pending.WaitAsync(context.CancellationToken).ConfigureAwait(false);
@@ -72,8 +76,9 @@ internal sealed class LocalFileOperationHandler(NodeRuntime node, ClientSessions
             throw;
         }
 
-        return value is null ? Failure(NodeErrors.NotFound("file_operation", request.OperationCommandId.Value.Span)) :
-            new FileServiceGetFileOperationResponse { Meta = meta, Value = new FileServiceGetFileOperationValue { Operation = value } };
+        meta.Warnings.Add(value.Warnings);
+        if (value.Operation is null) return Failure(NodeErrors.NotFound("file_operation", request.OperationCommandId.Value.Span));
+        return new FileServiceGetFileOperationResponse { Meta = meta, Value = new FileServiceGetFileOperationValue { Operation = value.Operation } };
     }
 
     public override async Task<FileServiceAcknowledgeFileOperationResponse> AcknowledgeFileOperation(

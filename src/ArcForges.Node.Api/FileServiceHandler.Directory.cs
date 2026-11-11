@@ -128,6 +128,7 @@ internal sealed partial class FileServiceHandler
             CheckAuthority(transaction, caller);
             CheckBudget();
             using var use = _workspaces.OpenForUse(transaction, workspace, beforeUse: value => CheckAuthority(value, caller), token);
+            AfterWorkspaceSnapshotForTests?.Invoke();
             CheckBudget();
             var page = _queries.ListDirectory(use.Root, workspace, DirectoryCallerBinding(caller.CenterCaller!), path,
                 request.HasPageSize ? checked((int)request.PageSize) : 100, request.HasCursor ? request.Cursor : null, token);
