@@ -44,6 +44,9 @@ internal sealed partial class WorkspacePath : IDisposable
     private readonly List<SafeFileHandle> _directories = [];
     private readonly List<SafeFileHandle> _files = [];
     private SafeFileHandle? _rootHandle;
+    private SafeFileHandle? _windowsRootParent;
+    private string? _windowsRootName;
+    private string? _windowsDriveRoot;
     private byte[]? _linuxFileSystemUuid;
     private bool _disposed;
 
@@ -109,9 +112,12 @@ internal sealed partial class WorkspacePath : IDisposable
             }
             else if (OperatingSystem.IsWindows())
             {
+                owner._windowsDriveRoot = root;
                 current = Retain(owner._directories, WindowsRoot(root));
                 foreach (var component in parts)
                 {
+                    owner._windowsRootParent = current;
+                    owner._windowsRootName = component;
                     current = Retain(owner._directories, OpenChild(current, component, directory: true));
                 }
             }
@@ -211,12 +217,36 @@ internal sealed partial class WorkspacePath : IDisposable
 
         if (OperatingSystem.IsWindows())
         {
-            var source = parts.Length == 0 ? RootHandle : OpenDirectory(path);
+            SafeFileHandle? parent;
+            SafeFileHandle source;
+            string? name;
+            if (parts.Length == 0)
+            {
+                parent = _windowsRootParent;
+                name = _windowsRootName;
+                source = RootHandle;
+            }
+            else
+            {
+                parent = RootHandle;
+                foreach (var component in parts.AsSpan(0, parts.Length - 1))
+                {
+                    parent = RetainCheckedDirectory(OpenChild(parent, component, directory: true));
+                }
+
+                name = parts[^1];
+                source = RetainCheckedDirectory(OpenChild(parent, name, directory: true));
+            }
+
+            // A second root-relative open has its own enumeration position. Keep the source and each parent open
+            // without delete sharing, and accept the new handle only if it names the same checked object and volume.
             var expected = Identity(source);
-            var reopened = ReOpenFile(source, 0x00100081, 3, 0x02200000);
+            var reopened = parent is null
+                ? WindowsRoot(_windowsDriveRoot ?? throw new WorkspacePathException("path_enforcement_unavailable"))
+                : OpenChild(parent, name ?? throw new WorkspacePathException("path_enforcement_unavailable"), directory: true);
             try
             {
-                if (reopened.IsInvalid || !expected.SameObject(Identity(reopened)))
+                if (!expected.SameObject(Identity(reopened)))
                 {
                     throw new WorkspacePathException("directory_identity_changed");
                 }

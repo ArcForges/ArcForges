@@ -141,6 +141,57 @@ public sealed partial class WorkspacePathTests
 
 
     [Fact(Timeout = 30_000)]
+    [Trait("env", "windows-real")]
+    public void WindowsEnumerationReopensTheHeldDirectoryAndRejectsJunctions()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows native directory handles");
+        using var fixture = new OwnedDirectory();
+        var root = Directory.CreateDirectory(Path.Combine(fixture.Path, "root")).FullName;
+        var nested = Directory.CreateDirectory(Path.Combine(root, "nested")).FullName;
+        var outside = Directory.CreateDirectory(Path.Combine(fixture.Path, "outside")).FullName;
+        var junction = Path.Combine(root, "jump");
+        File.WriteAllText(Path.Combine(nested, "inside.txt"), "checked content");
+        File.WriteAllText(Path.Combine(outside, "outside.txt"), "outside marker");
+        Run(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe"),
+            ["/d", "/c", "mklink", "/J", junction, outside]);
+
+        using (var workspace = WorkspacePath.OpenRoot(root))
+        {
+            using var rootAgain = workspace.OpenDirectoryForEnumeration("");
+            Assert.True(workspace.RootIdentity.SameObject(WorkspacePath.Identity(rootAgain)));
+            var nestedAnchor = workspace.OpenDirectory("nested");
+            using var nestedAgain = workspace.OpenDirectoryForEnumeration("nested");
+            Assert.True(WorkspacePath.Identity(nestedAnchor).SameObject(WorkspacePath.Identity(nestedAgain)));
+
+            var rootNames = WorkspaceDirectoryEntries.Read(workspace, "", 100, TestContext.Current.CancellationToken).Names;
+            Assert.Contains("nested", rootNames);
+            Assert.Contains("jump", rootNames);
+            Assert.Equal(rootNames, WorkspaceDirectoryEntries.Read(workspace, "", 100, TestContext.Current.CancellationToken).Names);
+            var names = WorkspaceDirectoryEntries.Read(workspace, "nested", 100, TestContext.Current.CancellationToken).Names;
+            Assert.Equal(["inside.txt"], names);
+            Assert.Equal(names, WorkspaceDirectoryEntries.Read(workspace, "nested", 100, TestContext.Current.CancellationToken).Names);
+            Assert.Throws<WorkspacePathException>(() => workspace.OpenDirectoryForEnumeration("jump"));
+
+            var rootMove = Record.Exception(() => Directory.Move(root, Path.Combine(fixture.Path, "moved-root")));
+            var nestedMove = Record.Exception(() => Directory.Move(nested, Path.Combine(root, "moved-nested")));
+            Assert.True(rootMove is IOException or UnauthorizedAccessException);
+            Assert.True(nestedMove is IOException or UnauthorizedAccessException);
+            Assert.Equal("outside marker", File.ReadAllText(Path.Combine(outside, "outside.txt")));
+        }
+
+        // The retained handles are released by disposal; removing the junction never traverses its target.
+        Directory.Delete(junction);
+        Directory.Move(nested, Path.Combine(root, "moved-nested"));
+        Directory.Move(root, Path.Combine(fixture.Path, "moved-root"));
+        Assert.Equal("outside marker", File.ReadAllText(Path.Combine(outside, "outside.txt")));
+
+        // A workspace may be the drive root, which has no parent component to reopen relative to.
+        using var drive = WorkspacePath.OpenRoot(Path.GetPathRoot(fixture.Path)!);
+        using var driveAgain = drive.OpenDirectoryForEnumeration("");
+        Assert.True(drive.RootIdentity.SameObject(WorkspacePath.Identity(driveAgain)));
+    }
+
+    [Fact(Timeout = 30_000)]
     public void AnOpenedFileIsReadByHandleAfterACompetingNameReplacement()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
