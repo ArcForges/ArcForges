@@ -50,7 +50,7 @@ public sealed class CallVerifierTests
             Assert.NotNull(Check(bad).Refusal);
         }
 
-        // File reads and directory pages admit no command ID; later file mutations are still refused.
+        // File reads admit no command ID; writes and edits require it.
         foreach (var method in new[] { RoutedMethod.ReadNodeFile, RoutedMethod.SearchNodeFiles, RoutedMethod.ListNodeDirectory, RoutedMethod.GetNodeFileOperation })
         {
             Assert.Null(Check(Build(lifetime: TimeSpan.FromSeconds(35), change: header => header.Method = method)).Refusal);
@@ -60,7 +60,15 @@ public sealed class CallVerifierTests
                 header.CommandId = CommandIds.New();
             })).Refusal);
         }
-        Assert.NotNull(Check(Build(lifetime: TimeSpan.FromSeconds(35), change: header => header.Method = RoutedMethod.WriteNodeFile)).Refusal);
+        foreach (var method in new[] { RoutedMethod.WriteNodeFile, RoutedMethod.EditNodeFile })
+        {
+            Assert.Null(Check(Build(lifetime: TimeSpan.FromSeconds(35), change: header =>
+            {
+                header.Method = method;
+                header.CommandId = CommandIds.New();
+            })).Refusal);
+            Assert.NotNull(Check(Build(lifetime: TimeSpan.FromSeconds(35), change: header => header.Method = method)).Refusal);
+        }
     }
 
     [Fact]

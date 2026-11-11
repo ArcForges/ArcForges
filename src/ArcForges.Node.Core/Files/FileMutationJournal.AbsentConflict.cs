@@ -75,6 +75,10 @@ internal static partial class FileMutationJournal
         if (row.ExpectedAbsent && row.Kind == FileOperationKind.Write && NodeShapes.IsValid(error) &&
             error.Equals(ExpectedAbsentConflict(row)))
             return error.Clone();
+        if (NodeShapes.IsValid(error) &&
+            (error.Equals(AuthorityRefusal(row, approvalUnavailable: false)) ||
+             error.Equals(AuthorityRefusal(row, approvalUnavailable: true))))
+            return error.Clone();
         return ReadKnownExistingFileTooLarge(row, error);
     }
 }

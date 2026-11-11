@@ -301,6 +301,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
         }
 
         var mutation = method is RoutedMethod.SubmitNodeTask or RoutedMethod.CancelNodeTask or
+            RoutedMethod.WriteNodeFile or RoutedMethod.EditNodeFile or
             RoutedMethod.RegisterNodeWorkspace or RoutedMethod.UnregisterNodeWorkspace;
         if (mutation && (meta?.CommandId is not { } inner || header.CommandId is null || !inner.Value.Span.SequenceEqual(header.CommandId.Value.Span)))
         {
@@ -399,7 +400,9 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
 
         var raw = call.Payload.ToByteArray();
         var digest = PayloadDigest.Compute(raw);
-        var key = mutation ? Convert.ToHexString(header.CommandId!.Value.Span) : null;
+        // New file mutations use the journal's original-caller and SHA-256-of-exact-raw-bytes binding, not the
+        // legacy PayloadDigest or its in-flight caller-class shortcut. Their writer serializes the journal/effect.
+        var key = mutation && !IsFileMutation(method) ? Convert.ToHexString(header.CommandId!.Value.Span) : null;
 
         // Decisions B-2: the same caller's duplicate is answered before anything that would assert DID_NOT_HAPPEN.
         if (key is not null)
@@ -456,22 +459,56 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
             RawRequest = raw,
             Routed = context,
         };
-        var policy = node.Store.Read(PolicyRules.Current).Document;
-        if (CenterRouting.Refusal(center, node.NodeId.Span, policy.CenterRouted) is { } reason)
+        if (!IsFileMutation(method))
         {
-            return await AuditedRefusalAsync(caller.Actor, method, meta, operation, reason, risk, TaskIdOf(request), WorkspaceIdOf(request), header.CallId, AuditPathOf(request)).ConfigureAwait(false);
-        }
+            var policy = node.Store.Read(PolicyRules.Current).Document;
+            if (CenterRouting.Refusal(center, node.NodeId.Span, policy.CenterRouted) is { } reason)
+            {
+                return await AuditedRefusalAsync(caller.Actor, method, meta, operation, reason, risk, TaskIdOf(request), WorkspaceIdOf(request), header.CallId, AuditPathOf(request)).ConfigureAwait(false);
+            }
 
-        // The routed column narrowed by the caller's cells and the REMOTE overrides; a cancel is decided by its gate once its task is read.
-        if (method != RoutedMethod.CancelNodeTask && tasks.Api.Decide(caller, operation) is { Decision: not PermissionDecision.Allow } verdict)
-        {
-            var denied = verdict.Source.StartsWith("policy permissions[", StringComparison.Ordinal) ? "permission_override" : "denied";
-            return await AuditedRefusalAsync(caller.Actor, method, meta, operation, denied, risk, TaskIdOf(request), WorkspaceIdOf(request), header.CallId, AuditPathOf(request)).ConfigureAwait(false);
+            // The routed column narrowed by the caller's cells and the REMOTE overrides; a cancel is decided by its gate once its task is read.
+            if (method != RoutedMethod.CancelNodeTask && tasks.Api.Decide(caller, operation) is { Decision: not PermissionDecision.Allow } verdict)
+            {
+                var denied = verdict.Source.StartsWith("policy permissions[", StringComparison.Ordinal) ? "permission_override" : "denied";
+                return await AuditedRefusalAsync(caller.Actor, method, meta, operation, denied, risk, TaskIdOf(request), WorkspaceIdOf(request), header.CallId, AuditPathOf(request)).ConfigureAwait(false);
+            }
         }
+        // File mutations recheck policy and the link in their FULL transaction. A matching recorded outcome takes
+        // precedence over current effect permission, without weakening caller or raw-request binding.
 
         var slot = key is not null && _inFlight.TryAdd(key, center.Clone());
         try
         {
+            if (IsFileMutation(method))
+            {
+                var outcome = method == RoutedMethod.WriteNodeFile
+                    ? await files!.WriteExistingCandidateAsync(caller, cancellationToken).ConfigureAwait(false)
+                    : await files!.EditExistingCandidateAsync(caller, cancellationToken).ConfigureAwait(false);
+                // A pending/unaudited outcome is not a signed result.
+                if (outcome is null || outcome.Length > ResultSigner.MaxPayloadBytes) return null;
+                IMessage parsed;
+                ArcError? mutationError;
+                if (method == RoutedMethod.WriteNodeFile)
+                {
+                    var written = FileServiceWriteFileResponse.Parser.ParseFrom(outcome);
+                    parsed = written;
+                    mutationError = written.Error;
+                }
+                else
+                {
+                    var edited = FileServiceEditFileResponse.Parser.ParseFrom(outcome);
+                    parsed = edited;
+                    mutationError = edited.Error;
+                }
+
+                // A fresh policy refusal was audited inside the same transaction. Recorded results otherwise retain
+                // the original serialized bytes and correlation, including on a later call with a different call ID.
+                if (mutationError is { Category: ErrorCategory.Authorization } && context.Reason is not null)
+                    return Answer(parsed, mutationError, context, request, meta, operation, risk);
+                return new RoutedAnswer(RoutedOutcome.Executed, ByteString.CopyFrom(outcome), null, null, risk, Code(mutationError), WorkspaceIdOf(request));
+            }
+
             var (response, error) = await RunAsync(tasks, workspaces, files, method, caller, request, cancellationToken).ConfigureAwait(false);
             if (response.CalculateSize() > ResultSigner.MaxPayloadBytes)
             {
@@ -581,6 +618,8 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
     private static (IMessage Request, RequestMeta? Meta) Parse(RoutedMethod method, ByteString payload) => method switch
     {
         RoutedMethod.GetNodeFileOperation => Pair(FileServiceGetFileOperationRequest.Parser.ParseFrom(payload), request => request.Meta),
+        RoutedMethod.WriteNodeFile => Pair(FileServiceWriteFileRequest.Parser.ParseFrom(payload), request => request.Meta),
+        RoutedMethod.EditNodeFile => Pair(FileServiceEditFileRequest.Parser.ParseFrom(payload), request => request.Meta),
         RoutedMethod.ReadNodeFile => Pair(FileServiceReadFileRequest.Parser.ParseFrom(payload), request => request.Meta),
         RoutedMethod.ListNodeDirectory => Pair(FileServiceListDirectoryRequest.Parser.ParseFrom(payload), request => request.Meta),
         RoutedMethod.SearchNodeFiles => Pair(FileServiceSearchFilesRequest.Parser.ParseFrom(payload), request => request.Meta),
@@ -712,6 +751,8 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
         IMessage response = method switch
         {
             RoutedMethod.GetNodeFileOperation => new FileServiceGetFileOperationResponse { Meta = responseMeta, Error = error },
+            RoutedMethod.WriteNodeFile => new FileServiceWriteFileResponse { Meta = responseMeta, Error = error },
+            RoutedMethod.EditNodeFile => new FileServiceEditFileResponse { Meta = responseMeta, Error = error },
             RoutedMethod.ReadNodeFile => new FileServiceReadFileResponse { Meta = responseMeta, Error = error },
             RoutedMethod.ListNodeDirectory => new FileServiceListDirectoryResponse { Meta = responseMeta, Error = error },
             RoutedMethod.SearchNodeFiles => new FileServiceSearchFilesResponse { Meta = responseMeta, Error = error },
@@ -825,6 +866,8 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
         var path = request switch
         {
             FileServiceReadFileRequest { Path: { HasPath: true } selected } => selected,
+            FileServiceWriteFileRequest { Path: { HasPath: true } selected } => selected,
+            FileServiceEditFileRequest { Path: { HasPath: true } selected } => selected,
             FileServiceListDirectoryRequest { Path: { HasPath: true } selected } => selected,
             FileServiceSearchFilesRequest { Path: { HasPath: true } selected } => selected,
             _ => null,
@@ -858,11 +901,14 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
         method is RoutedMethod.RegisterNodeWorkspace or RoutedMethod.UnregisterNodeWorkspace or
             RoutedMethod.ListNodeWorkspaces or RoutedMethod.GetNodeWorkspace;
 
-    private static bool IsFile(RoutedMethod method) => method is RoutedMethod.ReadNodeFile or RoutedMethod.SearchNodeFiles or RoutedMethod.ListNodeDirectory or RoutedMethod.GetNodeFileOperation;
+    private static bool IsFileMutation(RoutedMethod method) => method is RoutedMethod.WriteNodeFile or RoutedMethod.EditNodeFile;
+
+    private static bool IsFile(RoutedMethod method) => IsFileMutation(method) ||
+        method is RoutedMethod.ReadNodeFile or RoutedMethod.SearchNodeFiles or RoutedMethod.ListNodeDirectory or RoutedMethod.GetNodeFileOperation;
 
     private static bool IsFileWorkspace(RoutedMethod method) => IsFile(method) || IsWorkspace(method);
 
-    private static bool IsFileWorkspaceMethod(IMessage request) => request is FileServiceReadFileRequest or FileServiceSearchFilesRequest or FileServiceListDirectoryRequest or FileServiceGetFileOperationRequest or
+    private static bool IsFileWorkspaceMethod(IMessage request) => request is FileServiceReadFileRequest or FileServiceWriteFileRequest or FileServiceEditFileRequest or FileServiceSearchFilesRequest or FileServiceListDirectoryRequest or FileServiceGetFileOperationRequest or
         WorkspaceServiceRegisterWorkspaceRequest or WorkspaceServiceUnregisterWorkspaceRequest or
         WorkspaceServiceListWorkspacesRequest or WorkspaceServiceGetWorkspaceRequest;
 
@@ -872,6 +918,8 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
     private static byte[]? WorkspaceIdOf(IMessage request) => request switch
     {
         FileServiceReadFileRequest { Path.WorkspaceId: { } id } => id.Value.ToByteArray(),
+        FileServiceWriteFileRequest { Path.WorkspaceId: { } id } => id.Value.ToByteArray(),
+        FileServiceEditFileRequest { Path.WorkspaceId: { } id } => id.Value.ToByteArray(),
         FileServiceListDirectoryRequest { Path.WorkspaceId: { } id } => id.Value.ToByteArray(),
         FileServiceSearchFilesRequest { Path.WorkspaceId: { } id } => id.Value.ToByteArray(),
         WorkspaceServiceUnregisterWorkspaceRequest { WorkspaceId: { } id } => id.Value.ToByteArray(),
@@ -882,6 +930,8 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
     private static string MethodName(RoutedMethod method) => method switch
     {
         RoutedMethod.GetNodeFileOperation => "GetFileOperation",
+        RoutedMethod.WriteNodeFile => "WriteFile",
+        RoutedMethod.EditNodeFile => "EditFile",
         RoutedMethod.ReadNodeFile => "ReadFile",
         RoutedMethod.ListNodeDirectory => "ListDirectory",
         RoutedMethod.SearchNodeFiles => "SearchFiles",
@@ -900,7 +950,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
     /// <summary>The risk class for <c>routed_call_log.risk</c>: Submit high (3), Cancel medium (2), the reads low (1).</summary>
     private static int Risk(RoutedMethod method) => method switch
     {
-        RoutedMethod.SubmitNodeTask or RoutedMethod.RegisterNodeWorkspace or RoutedMethod.UnregisterNodeWorkspace => 3,
+        RoutedMethod.SubmitNodeTask or RoutedMethod.WriteNodeFile or RoutedMethod.EditNodeFile or RoutedMethod.RegisterNodeWorkspace or RoutedMethod.UnregisterNodeWorkspace => 3,
         RoutedMethod.CancelNodeTask => 2,
         _ => 1,
     };

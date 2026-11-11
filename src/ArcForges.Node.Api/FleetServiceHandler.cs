@@ -16,7 +16,7 @@ namespace ArcForges.Node.Api;
 
 /// <summary>
 /// The restricted local FleetService proxy. It derives the caller and local session from the actual LocalRpc connection, signs a fresh
-/// channel nonce over the original request bytes, and forwards the eight AF-CTR-05 and four AF-CTR-06 workspace methods through the node's bound center transport.
+/// channel nonce over the original request bytes, and forwards supported fleet methods through the node's bound center transport.
 /// All other FleetService methods retain the generated UNIMPLEMENTED implementation.
 /// </summary>
 internal sealed class FleetServiceHandler(NodeRuntime node, ClientSessions sessions, CloudLinkService cloud) : FleetService.FleetServiceBase
@@ -416,6 +416,122 @@ internal sealed class FleetServiceHandler(NodeRuntime node, ClientSessions sessi
             ? response : Fail(NodeErrors.Internal(node.Clock.GetUtcNow()));
     }
 
+
+    public override async Task<FleetServiceWriteNodeFileResponse> WriteNodeFile(FleetServiceWriteNodeFileRequest request, ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var forwarded = request.Clone();
+        var correlation = Validation.RequiredId(request.Meta?.CorrelationId, "correlation_id") is null
+            ? request.Meta!.CorrelationId.Clone() : CommandIds.New(node.Clock);
+        var meta = ApiCommands.Meta(request.Meta);
+        meta.CorrelationId = correlation.Clone();
+        FleetServiceWriteNodeFileResponse Fail(ArcError error)
+        {
+            RoutedFileErrors.Complete(error, request.Meta, correlation, node.Clock);
+            return new FleetServiceWriteNodeFileResponse { Meta = meta, Error = error };
+        }
+
+        var invalid = Validation.RequiredId(forwarded.NodeId, "node_id") ?? Payload(forwarded.HasRequest, forwarded.Request, 245760);
+        FileServiceWriteFileRequest? inner = null;
+        if (invalid is null && request.Meta?.CorrelationId is { } suppliedCorrelation)
+        {
+            invalid = Validation.RequiredId(suppliedCorrelation, "meta.correlation_id");
+        }
+
+        Id? command = null;
+        if (invalid is null)
+        {
+            try
+            {
+                inner = FileServiceWriteFileRequest.Parser.ParseFrom(forwarded.Request);
+                command = inner.Meta?.CommandId;
+                invalid = Validation.CommandId(forwarded.Meta) ?? Validation.RequiredId(command, "request.meta.command_id");
+                if (invalid is null && !command!.Equals(forwarded.Meta.CommandId))
+                {
+                    invalid = NodeErrors.InvalidArgument("meta.command_id must equal the inner request command_id");
+                }
+            }
+            catch (InvalidProtocolBufferException)
+            {
+                invalid = NodeErrors.InvalidArgument("request: invalid node request bytes");
+            }
+        }
+
+        if (invalid is not null)
+        {
+            return Fail(invalid);
+        }
+
+        var response = await ForwardAsync(context, correlation, RoutedMethod.WriteNodeFile, forwarded.NodeId, command,
+            _ => SHA256.HashData(forwarded.Request.Span),
+            (caller, assertion, client, options) =>
+            {
+                forwarded.Caller = caller;
+                forwarded.RelayAssertion = assertion;
+                return client.WriteNodeFileAsync(forwarded, options).ResponseAsync;
+            }, answer => answer.Error, answer => answer.Value is not null, Fail).ConfigureAwait(false);
+        return RoutedFileResponseValidation.Write(response, forwarded.NodeId, inner!)
+            ? response : Fail(NodeErrors.Internal(node.Clock.GetUtcNow()));
+    }
+
+
+    public override async Task<FleetServiceEditNodeFileResponse> EditNodeFile(FleetServiceEditNodeFileRequest request, ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var forwarded = request.Clone();
+        var correlation = Validation.RequiredId(request.Meta?.CorrelationId, "correlation_id") is null
+            ? request.Meta!.CorrelationId.Clone() : CommandIds.New(node.Clock);
+        var meta = ApiCommands.Meta(request.Meta);
+        meta.CorrelationId = correlation.Clone();
+        FleetServiceEditNodeFileResponse Fail(ArcError error)
+        {
+            RoutedFileErrors.Complete(error, request.Meta, correlation, node.Clock);
+            return new FleetServiceEditNodeFileResponse { Meta = meta, Error = error };
+        }
+
+        var invalid = Validation.RequiredId(forwarded.NodeId, "node_id") ?? Payload(forwarded.HasRequest, forwarded.Request, 245760);
+        FileServiceEditFileRequest? inner = null;
+        if (invalid is null && request.Meta?.CorrelationId is { } suppliedCorrelation)
+        {
+            invalid = Validation.RequiredId(suppliedCorrelation, "meta.correlation_id");
+        }
+
+        Id? command = null;
+        if (invalid is null)
+        {
+            try
+            {
+                inner = FileServiceEditFileRequest.Parser.ParseFrom(forwarded.Request);
+                command = inner.Meta?.CommandId;
+                invalid = Validation.CommandId(forwarded.Meta) ?? Validation.RequiredId(command, "request.meta.command_id");
+                if (invalid is null && !command!.Equals(forwarded.Meta.CommandId))
+                {
+                    invalid = NodeErrors.InvalidArgument("meta.command_id must equal the inner request command_id");
+                }
+            }
+            catch (InvalidProtocolBufferException)
+            {
+                invalid = NodeErrors.InvalidArgument("request: invalid node request bytes");
+            }
+        }
+
+        if (invalid is not null)
+        {
+            return Fail(invalid);
+        }
+
+        var response = await ForwardAsync(context, correlation, RoutedMethod.EditNodeFile, forwarded.NodeId, command,
+            _ => SHA256.HashData(forwarded.Request.Span),
+            (caller, assertion, client, options) =>
+            {
+                forwarded.Caller = caller;
+                forwarded.RelayAssertion = assertion;
+                return client.EditNodeFileAsync(forwarded, options).ResponseAsync;
+            }, answer => answer.Error, answer => answer.Value is not null, Fail).ConfigureAwait(false);
+        return RoutedFileResponseValidation.Edit(response, forwarded.NodeId, inner!)
+            ? response : Fail(NodeErrors.Internal(node.Clock.GetUtcNow()));
+    }
+
     public override async Task<FleetServiceRegisterNodeWorkspaceResponse> RegisterNodeWorkspace(FleetServiceRegisterNodeWorkspaceRequest request, ServerCallContext context)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -757,7 +873,7 @@ internal sealed class FleetServiceHandler(NodeRuntime node, ClientSessions sessi
 
             var maximum = method == RoutedMethod.WaitNodeTask ? TimeSpan.FromSeconds(55) :
                 method == RoutedMethod.ReadNodeTaskOutput ? TimeSpan.FromSeconds(30) :
-                method is RoutedMethod.ReadNodeFile or RoutedMethod.SearchNodeFiles or RoutedMethod.ListNodeDirectory or RoutedMethod.GetNodeFileOperation or RoutedMethod.RegisterNodeWorkspace or RoutedMethod.UnregisterNodeWorkspace or
+                method is RoutedMethod.ReadNodeFile or RoutedMethod.WriteNodeFile or RoutedMethod.EditNodeFile or RoutedMethod.SearchNodeFiles or RoutedMethod.ListNodeDirectory or RoutedMethod.GetNodeFileOperation or RoutedMethod.RegisterNodeWorkspace or RoutedMethod.UnregisterNodeWorkspace or
                     RoutedMethod.ListNodeWorkspaces or RoutedMethod.GetNodeWorkspace ? TimeSpan.FromSeconds(15) : TimeSpan.FromSeconds(10);
             var answer = await cloud.ForwardRelayAsync(signed,
                 (client, options) => send(caller, signed.Assertion.ToByteString(), client, options), left < maximum ? left : maximum, context.CancellationToken)

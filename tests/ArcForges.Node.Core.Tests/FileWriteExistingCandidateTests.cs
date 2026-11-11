@@ -179,11 +179,19 @@ public sealed class FileWriteExistingCandidateTests
 
         var script = calls.Relay(Origin.Script);
         var pendingApproval = Request(SHA256.HashData(unrelated), intended);
-        var pendingError = await Record.ExceptionAsync(async () => await Invoke(pendingApproval, script));
-        Assert.IsAssignableFrom<NotSupportedException>(pendingError); // Real approval remains unfinished; no fabricated decision.
+        var pendingReply = FileServiceWriteFileResponse.Parser.ParseFrom(await Invoke(pendingApproval, script));
+        Assert.True(NodeShapes.IsValid(pendingReply));
+        Assert.Equal(ErrorCategory.Resource, pendingReply.Error.Category);
+        Assert.Equal("enforcement_unavailable", pendingReply.Error.Code);
+        Assert.Equal("file_approval_unavailable", pendingReply.Error.Details.State.Reason);
+        Assert.Equal(EffectCertainty.DidNotHappen, pendingReply.Error.Effect);
+        Assert.Equal(RetryMode.Never, pendingReply.Error.Retry.Mode);
+        Assert.Equal(pendingApproval.Meta.CorrelationId, pendingReply.Error.CorrelationId);
         Assert.Equal(unrelated, File.ReadAllBytes(path));
         Assert.Equal(0L, node.Runtime.Store.Read(r => r.Scalar("SELECT count(*) FROM file_operation_journal WHERE command_id = $id;",
             ("$id", pendingApproval.Meta.CommandId.Value.ToByteArray()))));
+        Assert.Equal(0L, node.Runtime.Store.Read(r => r.Scalar("SELECT count(*) FROM approval WHERE command_id = $id;",
+            ("$id", pendingApproval.Meta.CommandId.Value.ToByteArray())))); // No approval has been manufactured.
         var agent = calls.Relay(Origin.Agent);
         var deniedRequest = Request(SHA256.HashData(unrelated), intended);
         var denied = FileServiceWriteFileResponse.Parser.ParseFrom(await Invoke(deniedRequest, agent));

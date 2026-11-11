@@ -180,6 +180,7 @@ internal sealed class FakeChannelPeer(FakeCenter center)
         var callId = spec.CallId ?? CommandIds.New();
         var payload = spec.Payload;
         var commanded = spec.Method is RoutedMethod.SubmitNodeTask or RoutedMethod.CancelNodeTask or
+            RoutedMethod.WriteNodeFile or RoutedMethod.EditNodeFile or
             RoutedMethod.RegisterNodeWorkspace or RoutedMethod.UnregisterNodeWorkspace;
         CallHeader? header = null;
         byte[] headerBytes;

@@ -17,14 +17,15 @@ namespace ArcForges.Node.Api;
 
 internal sealed partial class FileServiceHandler
 {
-    // This isolated candidate is not routed or advertised until approval, creation, failure settlement and other
-    // platform paths are complete. It executes the real guarded existing-file protocol for an authorized caller.
+    // The routed mutation path remains unadvertised until approval, settlement and both native platform paths are complete.
+    // It executes the guarded existing-file protocol only for an authorized caller.
     private readonly FileStageBudget _writeStageBudget = new();
 
     // Test-only callbacks coordinate a real competing create and an interruption after the actual creation effect.
     internal Action? BeforeCreateForTests { get; set; }
     internal Action? AfterCreateForTests { get; set; }
     internal Action? BeforeMutationEffectForTests { get; set; }
+    internal Func<Task>? AfterPreparationForTests { get; set; }
 
     internal Task<byte[]?> WriteExistingCandidateAsync(Caller caller, CancellationToken cancellationToken)
     {
@@ -125,6 +126,7 @@ internal sealed partial class FileServiceHandler
             }
 
             if (!prepared.Ready) return prepared.Response;
+            if (AfterPreparationForTests is { } afterPreparation) await afterPreparation().ConfigureAwait(false);
             if (Expired(started, limit, token)) throw new OperationCanceledException(token);
 
             // PREPARED committed before this second transaction can write the target.
@@ -305,6 +307,11 @@ internal sealed partial class FileServiceHandler
         {
             return Refuse(Error(ErrorCategory.Authorization, "permission_denied", PermissionMatrix.FileWrite, correlation), refusal.Reason);
         }
+        catch (FileApprovalNotImplementedException)
+        {
+            // This remains an honest pre-effect refusal until the real durable HUMAN approval path is implemented.
+            return Refuse(Error(ErrorCategory.Resource, "enforcement_unavailable", "file_approval_unavailable", correlation));
+        }
         catch (WorkspaceFileEditException failure)
         {
             return failure.Reason switch
@@ -338,7 +345,20 @@ internal sealed partial class FileServiceHandler
         }
 
         if (Expired(started, limit, token)) throw new OperationCanceledException(token);
-        CheckWriteCandidateAuthority(transaction, caller);
+        try
+        {
+            CheckWriteCandidateAuthority(transaction, caller);
+        }
+        catch (FilePolicyException)
+        {
+            return FileMutationJournal.CompleteKnownAuthorityRefusal(transaction, request.Kind,
+                request.Meta!.CommandId.Value.Span, caller.CenterCaller!, raw, approvalUnavailable: false);
+        }
+        catch (FileApprovalNotImplementedException)
+        {
+            return FileMutationJournal.CompleteKnownAuthorityRefusal(transaction, request.Kind,
+                request.Meta!.CommandId.Value.Span, caller.CenterCaller!, raw, approvalUnavailable: true);
+        }
         if (Expired(started, limit, token)) throw new OperationCanceledException(token);
         if (!request.HasExpectedSha256)
         {
@@ -419,7 +439,7 @@ internal sealed partial class FileServiceHandler
         }
     }
 
-    // The candidate is not callable through a public route; an actual approval cannot be inferred from this exception.
+    // An actual approval cannot be inferred from this exception.
     private sealed class FileApprovalNotImplementedException() : NotSupportedException("Durable file approval is not implemented.");
 
     private static ArcError TooLargeFile(string name, string maximum, Id correlation) => new()

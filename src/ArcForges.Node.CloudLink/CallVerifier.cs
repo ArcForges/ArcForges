@@ -242,8 +242,8 @@ internal sealed class CallVerifier(RoutedCallLog log, TimeProvider clock)
         }
 
         var method = (int)header.Method;
-        if (((method is < 1 or > 6) && method is not (9 or 12 or 13 or 16) && (method is < 17 or > 20))
-            || (header.CommandId is not null) != (method is 1 or 6 or 17 or 18))
+        if (((method is < 1 or > 6) && method is not (9 or 10 or 11 or 12 or 13 or 16) && (method is < 17 or > 20))
+            || (header.CommandId is not null) != (method is 1 or 6 or 10 or 11 or 17 or 18))
         {
             return (null, Refuse("method"));
         }
@@ -285,8 +285,8 @@ internal sealed class CallVerifier(RoutedCallLog log, TimeProvider clock)
         }
 
         var method = (int)header.Method;
-        if ((method is not (9 or 12 or 13 or 16) && method is < 17 or > 20) ||
-            (header.CommandId is not null) != (method is 17 or 18))
+        if ((method is not (9 or 10 or 11 or 12 or 13 or 16) && method is < 17 or > 20) ||
+            (header.CommandId is not null) != (method is 10 or 11 or 17 or 18))
         {
             return null;
         }
