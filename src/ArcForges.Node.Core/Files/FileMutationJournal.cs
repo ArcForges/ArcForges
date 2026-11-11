@@ -375,11 +375,14 @@ internal static partial class FileMutationJournal
         };
         if (row.State == FileOperationState.Unknown)
         {
+            EnsureUnknownOutcome(row);
             operation.Error = UnknownError(row);
         }
         else if (row.State == FileOperationState.Completed)
         {
-            operation.Mutation = CompletedResult(row);
+            var (mutation, error) = CompletedResult(row);
+            if (error is not null) operation.Error = error;
+            else operation.Mutation = mutation!;
         }
         return operation;
     }

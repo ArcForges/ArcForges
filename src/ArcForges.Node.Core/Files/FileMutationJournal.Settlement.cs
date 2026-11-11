@@ -132,7 +132,11 @@ internal static partial class FileMutationJournal
     {
         if (FindExisting(reader, kind, commandId, caller, transmitted) != FileJournalPreparation.Existing)
             return null;
-        return ReadRow(reader, commandId)?.Outcome?.ToArray();
+        var row = ReadRow(reader, commandId) ?? throw new InvalidDataException("The file journal disappeared.");
+        if (row.State == FileOperationState.Completed) _ = CompletedResult(row);
+        else if (row.State == FileOperationState.Unknown) EnsureUnknownOutcome(row);
+        else if (row.Outcome is not null) throw new InvalidDataException("A prepared journal has an outcome.");
+        return row.Outcome?.ToArray();
     }
 
     private static ActorRef Actor(JournalRow row) => new()
@@ -168,35 +172,52 @@ internal static partial class FileMutationJournal
         return edit.ToByteArray();
     }
 
-    private static FileMutationResult CompletedResult(JournalRow row)
+    private static void EnsureUnknownOutcome(JournalRow row)
+    {
+        var expected = UnknownOutcome(row);
+        if (row.Outcome is null || !CryptographicOperations.FixedTimeEquals(row.Outcome, expected))
+            throw new InvalidDataException("The recorded uncertain outcome does not match its journal.");
+    }
+
+    private static (FileMutationResult? Mutation, ArcError? Error) CompletedResult(JournalRow row)
     {
         if (row.Outcome is null) throw new InvalidDataException("A completed file operation has no outcome.");
         FileMutationResult? result;
         ResponseMeta? meta;
+        ArcError? error;
+        FileAuditMetadata? audit;
         if (row.Kind == FileOperationKind.Write)
         {
             var response = FileServiceWriteFileResponse.Parser.ParseFrom(row.Outcome);
-            if (!NodeShapes.IsValid(response) || response.Value is null)
-                throw new InvalidDataException("Invalid completed write outcome.");
-            result = response.Value.Result;
+            if (!NodeShapes.IsValid(response)) throw new InvalidDataException("Invalid completed write outcome.");
+            result = response.Value?.Result;
             meta = response.Meta;
+            error = response.Error;
+            audit = response.Audit;
             if (result?.HasReplacements == true) throw new InvalidDataException("A write cannot report replacements.");
         }
         else
         {
             var response = FileServiceEditFileResponse.Parser.ParseFrom(row.Outcome);
-            if (!NodeShapes.IsValid(response) || response.Value is null)
-                throw new InvalidDataException("Invalid completed edit outcome.");
-            result = response.Value.Result;
+            if (!NodeShapes.IsValid(response)) throw new InvalidDataException("Invalid completed edit outcome.");
+            result = response.Value?.Result;
             meta = response.Meta;
-            if (result?.HasReplacements != true || result.Replacements is < 1 or > 1000)
+            error = response.Error;
+            audit = response.Audit;
+            if (result is not null && (!result.HasReplacements || result.Replacements is < 1 or > 1000))
                 throw new InvalidDataException("An edit needs its actual replacement count.");
         }
+        if (meta?.CorrelationId?.Value.Span.SequenceEqual(row.Correlation) != true)
+            throw new InvalidDataException("The completed outcome correlation does not match its journal.");
+        if (error is not null)
+        {
+            if (result is not null || audit is not null) throw new InvalidDataException("Invalid known file refusal.");
+            return (null, ReadKnownExistingFileTooLarge(row, error));
+        }
         if (result?.CommandId?.Value.Span.SequenceEqual(row.CommandId) != true ||
-            meta?.CorrelationId?.Value.Span.SequenceEqual(row.Correlation) != true ||
             !result.HasSizeBytes || result.SizeBytes != (ulong)row.IntendedSize ||
             !result.HasSha256 || !CryptographicOperations.FixedTimeEquals(result.Sha256.Span, row.IntendedSha256))
             throw new InvalidDataException("The completed outcome does not match its file intent.");
-        return result.Clone();
+        return (result.Clone(), null);
     }
 }
