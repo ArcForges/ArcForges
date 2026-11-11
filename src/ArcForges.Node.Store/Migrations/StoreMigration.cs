@@ -84,7 +84,7 @@ public sealed class MigrationPlan
 public static class StoreMigrations
 {
     /// <summary>The schema version this binary writes; it reads stores whose <c>min_reader_version</c> is at most this.</summary>
-    public const int SupportedSchemaVersion = 6;
+    public const int SupportedSchemaVersion = 7;
 
     /// <summary>The released steps, loaded from the embedded <c>Schema/*.sql</c> resources.</summary>
     public static MigrationPlan Released { get; } = new([
@@ -106,6 +106,9 @@ public static class StoreMigrations
 
         // AF-CTR-06: durable time floor and protected retention for file/workspace receipts and audit.
         Load(6, 1, "0006-schema-step-6.sql"),
+
+        // AF-CTR-06: metadata-only file effect journal and protected recovery holds.
+        Load(7, 1, "0007-schema-step-7.sql"),
     ]);
 
     private static StoreMigration Load(int version, int minReaderVersion, string name)

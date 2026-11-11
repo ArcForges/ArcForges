@@ -69,6 +69,8 @@ public sealed class CommandLineTests
     [InlineData("run --node build-box -- /bin/echo ok")]
     [InlineData("run --local -- /bin/echo ok")]
     [InlineData("tasks")]
+    [InlineData("file-operation show 01m4zrxnr8e7d81pn7xnwfqw14")]
+    [InlineData("file-operation acknowledge 01m4zrxnr8e7d81pn7xnwfqw14 --digest 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")]
     [InlineData("tasks list --local")]
     [InlineData("tasks show 01m4zr --node build-box")]
     [InlineData("tasks wait 01m4zr --node build-box")]
@@ -99,6 +101,35 @@ public sealed class CommandLineTests
         Assert.Equal(ExitCodes.Usage, exit);
         Assert.StartsWith("error: ", error.ToString(), StringComparison.Ordinal);
         Assert.Equal(string.Empty, output.ToString());
+    }
+
+    [Fact]
+    public void RecoveryDisplayEscapesControlCharactersAndKeepsTheEffectUnknown()
+    {
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        var cli = new Cli(new CliOutput(output, error, json: false, quiet: false, color: false, verbose: false, width: 120), false, null, false);
+        var operation = new FileOperation
+        {
+            CommandId = CommandIds.New(),
+            WorkspacePath = new FilePath { WorkspaceId = CommandIds.New(), Path = "part/evil\n\u001b[31m\u202e.txt" },
+            RequestSha256 = ByteString.CopyFrom(Enumerable.Repeat((byte)0x2a, 32).ToArray()),
+            Kind = FileOperationKind.Write,
+            State = FileOperationState.Unknown,
+            Held = true,
+            Acknowledged = false,
+        };
+
+        FileOperationCommands.Render(cli, operation);
+        var text = output.ToString();
+        Assert.Contains(IdText.Format(operation.CommandId), text, StringComparison.Ordinal);
+        Assert.Contains(IdText.Format(operation.WorkspacePath.WorkspaceId), text, StringComparison.Ordinal);
+        Assert.Contains(@"part/evil\u000a\u001b[31m\u202e.txt", text, StringComparison.Ordinal);
+        Assert.DoesNotContain('\u001b', text);
+        Assert.DoesNotContain('\u202e', text);
+        Assert.Contains("effect is UNKNOWN", text, StringComparison.Ordinal);
+        Assert.Contains("other handles may retain it", text, StringComparison.Ordinal);
+        Assert.Contains("2a2a2a2a", text, StringComparison.Ordinal);
     }
 
     [Fact]

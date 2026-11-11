@@ -421,9 +421,12 @@ internal sealed class RegisteredWorkspaces
         }
     }
 
-    private static bool IsReferenced(StoreReader reader, byte[] id) => Convert.ToInt64(reader.Scalar("""
-        SELECT EXISTS(SELECT 1 FROM task WHERE workspace_id = $id AND state IN (1, 2, 3, 4, 5, 6));
-        """, ("$id", id)), System.Globalization.CultureInfo.InvariantCulture) != 0;
+    private static bool IsReferenced(StoreReader reader, byte[] id) =>
+        Convert.ToInt64(reader.Scalar("""
+            SELECT EXISTS(SELECT 1 FROM task WHERE workspace_id = $id AND state IN (1, 2, 3, 4, 5, 6));
+            """, ("$id", id)), System.Globalization.CultureInfo.InvariantCulture) != 0 ||
+        (reader.Scalar("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'file_operation_journal';") is not null &&
+            FileMutationJournal.HasWorkspaceHold(reader, id));
 
     internal sealed record LegacyRoot(string Id, string Path, long Revision, int Kind, int State);
 
@@ -791,6 +794,23 @@ internal sealed class RegisteredWorkspaces
             }
 
             throw new RegisteredWorkspaceException("workspace_identity_invalid");
+        }
+
+        // An O_TMPFILE stage has zero links but is identified through its held native descriptor. The handle, not
+        // this metadata, supplies access; after a crash no reopening or recovery of the anonymous bytes is asserted.
+        internal static RootIdentity EncodeAnonymousLinux(WorkspaceObjectIdentity identity)
+        {
+            if (!OperatingSystem.IsLinux() || !identity.IsFile || identity.Links != 0 || identity.InstanceToken.Length != 32 ||
+                identity.CreatedNanoseconds >= 1_000_000_000)
+                throw new RegisteredWorkspaceException("workspace_identity_invalid");
+
+            var bytes = new byte[53];
+            bytes[0] = 1;
+            BinaryPrimitives.WriteUInt64BigEndian(bytes.AsSpan(1, 8), identity.Volume);
+            BinaryPrimitives.WriteUInt64BigEndian(bytes.AsSpan(9, 8), identity.Created);
+            BinaryPrimitives.WriteUInt32BigEndian(bytes.AsSpan(17, 4), identity.CreatedNanoseconds);
+            identity.InstanceToken.Span.CopyTo(bytes.AsSpan(21));
+            return new RootIdentity(2, bytes);
         }
 
         internal static void ValidateEncoding(int platform, byte[] bytes)

@@ -53,6 +53,14 @@
       "sha256": "b6ed828c2608c530ee2e1d6527253f54fb44570bd00bf8489d9e0944d72ad5ea",
       "source": "AF-CTR-06 implementation of 06a section 6 persistent validation time and retention safety; local author candidate.",
       "addedBy": "AF-CTR-06"
+    },
+    {
+      "version": 7,
+      "minReaderVersion": 1,
+      "file": "0007-schema-step-7.sql",
+      "sha256": "8f6ecfcbf1eeba3aeaad19c49bcb3393c3400dd82f2526c047d3c866995b4f63",
+      "source": "AF-CTR-06 06a section 6 metadata-only file journal and recovery hold; local author candidate.",
+      "addedBy": "AF-CTR-06"
     }
   ]
 }

@@ -18,6 +18,7 @@ public sealed class RoutedFileRetentionMigrationTests
         using var root = new TemporaryDataRoot();
         var clock = new WallStepClock();
         var oldPlan = new MigrationPlan(StoreMigrations.Released.Steps.Take(5));
+        var step6 = new MigrationPlan(StoreMigrations.Released.Steps.Take(6));
         var commandId = StoreIds.NewUuid7(clock);
         var unrelatedId = StoreIds.NewUuid7(clock);
         var callId = StoreIds.NewUuid7(clock);
@@ -47,7 +48,7 @@ public sealed class RoutedFileRetentionMigrationTests
         }
 
         clock.Offset = TimeSpan.FromDays(730);
-        using (var upgraded = root.Open(clock))
+        using (var upgraded = root.Open(clock, step6))
         {
             Assert.Equal(5, upgraded.Opening.MigratedFrom);
             Assert.Equal(6, upgraded.Metadata.SchemaVersion);
@@ -80,7 +81,7 @@ public sealed class RoutedFileRetentionMigrationTests
         }
 
         clock.Offset = TimeSpan.Zero;
-        using var restarted = root.Open(clock);
+        using var restarted = root.Open(clock, step6);
         var ran = false;
         var replay = restarted.Commands.Execute(commandId, Register, digest, Origin.Remote, _ =>
         {
@@ -94,6 +95,28 @@ public sealed class RoutedFileRetentionMigrationTests
         Assert.Equal("command_id_reused", conflict.Error?.Code);
         Assert.Equal(1L, restarted.Read(r => r.Scalar("SELECT count(*) FROM file_workspace_audit;")));
         Assert.Equal(1L, restarted.Read(r => r.Scalar("SELECT count(*) FROM routed_file_call_log WHERE call_id = $call;", ("$call", callId))));
+    }
+
+    [Fact]
+    public void LocalAcknowledgmentReceiptCannotBePrunedByAForwardThenBackwardWallStep()
+    {
+        using var root = new TemporaryDataRoot();
+        var clock = new WallStepClock();
+        using var store = root.Open(clock);
+        const string acknowledgment = "arcforges.node.v1.FileService/AcknowledgeFileOperation";
+        var commandId = StoreIds.NewUuid7(clock);
+        byte[] digest = [.. Enumerable.Repeat((byte)0x54, 32)];
+        byte[] outcome = [4, 5, 6];
+        store.Commands.Execute(commandId, acknowledgment, digest, Origin.Human, _ => outcome);
+
+        clock.Offset = TimeSpan.FromDays(3);
+        Assert.Equal(0, store.Write(RoutedFileRetention.Prune, CommitDurability.Full));
+        Assert.True(store.Read(r => RoutedFileRetention.IsHeld(r, commandId)));
+        clock.Offset = TimeSpan.Zero;
+        Assert.Equal(0, store.Write(RoutedFileRetention.Prune, CommitDurability.Full));
+        var repeated = store.Commands.Execute(commandId, acknowledgment, digest, Origin.Human, _ => throw new InvalidOperationException());
+        Assert.True(repeated.Replayed);
+        Assert.Equal(outcome, repeated.Outcome!.Value.ToArray());
     }
 
     [Fact]

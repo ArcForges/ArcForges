@@ -69,8 +69,8 @@ public static class RoutedFileRetention
     }
 
     /// <summary>
-    /// Releases only elapsed workspace receipts, verified-call logs and file audit whose persisted validation floor and
-    /// real elapsed time both establish expiry. Other file commands remain held until their journal recovery is available.
+    /// Releases elapsed workspace and local acknowledgment receipts, verified-call logs and file audit whose persisted
+    /// validation floor and real elapsed time both establish expiry. File-effect commands remain held for journal recovery.
     /// </summary>
     public static int Prune(StoreTransaction transaction)
     {
@@ -100,7 +100,8 @@ public static class RoutedFileRetention
             SELECT d.command_id, h.process_epoch, h.monotonic_start FROM command_dedup d
             JOIN routed_file_command_retention h ON h.command_id = d.command_id
             WHERE d.expires_at <= $now AND d.outcome IS NOT NULL AND h.delete_permitted = 0 AND d.method IN
-              ('arcforges.node.v1.WorkspaceService/RegisterWorkspace', 'arcforges.node.v1.WorkspaceService/UnregisterWorkspace')
+              ('arcforges.node.v1.WorkspaceService/RegisterWorkspace', 'arcforges.node.v1.WorkspaceService/UnregisterWorkspace',
+               'arcforges.node.v1.FileService/AcknowledgeFileOperation')
             ORDER BY d.expires_at LIMIT 256;
             """))
         {
@@ -114,7 +115,7 @@ public static class RoutedFileRetention
             if (!Elapsed(epoch, start, CommandDeduplication.Window)) continue;
             transaction.Execute("UPDATE routed_file_command_retention SET delete_permitted = 1 WHERE command_id = $id;", ("$id", id));
             if (transaction.Execute("DELETE FROM command_dedup WHERE command_id = $id;", ("$id", id)) != 1)
-                throw new InvalidOperationException("The elapsed workspace receipt could not be removed safely.");
+                throw new InvalidOperationException("The elapsed metadata receipt could not be removed safely.");
             removed++;
         }
 

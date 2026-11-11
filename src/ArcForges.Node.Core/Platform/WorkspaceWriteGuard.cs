@@ -21,31 +21,41 @@ internal sealed class WorkspaceWriteGuard : IDisposable
     private readonly object _sync = new();
     private readonly WorkspaceObjectIdentity _identity;
     private readonly bool _linux;
+    private readonly uint _expectedLinks;
+    private readonly bool _privateStage;
     private readonly long _started;
     private SafeFileHandle? _file;
     private Timer? _expiry;
     private string _closedReason = "file_guard_closed";
 
-    private WorkspaceWriteGuard(SafeFileHandle file, WorkspaceObjectIdentity identity, bool linux)
+    private WorkspaceWriteGuard(SafeFileHandle file, WorkspaceObjectIdentity identity, bool linux, bool privateStage)
     {
         _file = file;
         _identity = identity;
         _linux = linux;
+        _privateStage = privateStage;
+        _expectedLinks = privateStage ? 0u : 1u;
         _started = Stopwatch.GetTimestamp();
         _expiry = new Timer(static state => ((WorkspaceWriteGuard)state!).Expire(), this, Lifetime, Timeout.InfiniteTimeSpan);
     }
 
     /// <summary>Acquires the native guard on this same verified handle; ownership transfers only on success.</summary>
-    internal static WorkspaceWriteGuard Acquire(SafeFileHandle file)
+    internal static WorkspaceWriteGuard Acquire(SafeFileHandle file) => Acquire(file, privateStage: false);
+
+    /// <summary>Guards a previously created unnamed Linux object; it has no name and must have no links.</summary>
+    internal static WorkspaceWriteGuard AcquireAnonymousStage(SafeFileHandle file) => Acquire(file, privateStage: true);
+
+    private static WorkspaceWriteGuard Acquire(SafeFileHandle file, bool privateStage)
     {
         ArgumentNullException.ThrowIfNull(file);
         var identity = WorkspacePath.Identity(file);
-        if (!identity.IsFile || identity.Links != 1)
+        var linux = OperatingSystem.IsLinux();
+        if (!identity.IsFile || identity.Links != (privateStage ? 0u : 1u) ||
+            privateStage && (!linux || (identity.Mode & 0x3f) != 0))
         {
             throw new WorkspacePathException("file_identity_changed");
         }
 
-        var linux = OperatingSystem.IsLinux();
         if (linux)
         {
             WorkspacePath.RequireLinuxLeaseBreakTime();
@@ -70,7 +80,7 @@ internal sealed class WorkspaceWriteGuard : IDisposable
             throw new WorkspacePathException("file_guard_unavailable");
         }
 
-        var guard = new WorkspaceWriteGuard(file, identity, linux);
+        var guard = new WorkspaceWriteGuard(file, identity, linux, privateStage);
         try
         {
             if (linux)
@@ -107,7 +117,10 @@ internal sealed class WorkspaceWriteGuard : IDisposable
     /// Hashes the whole bounded existing file through the guarded handle and compares a precondition. This method has
     /// no filesystem effects; a match alone is insufficient to authorize or safely execute a later mutation.
     /// </summary>
-    internal bool MatchesExpectedHash(ReadOnlySpan<byte> expected, CancellationToken cancellationToken)
+    internal bool MatchesExpectedHash(ReadOnlySpan<byte> expected, CancellationToken cancellationToken) =>
+        MatchesExpectedContent(expected, expectedLength: null, cancellationToken);
+
+    internal bool MatchesExpectedContent(ReadOnlySpan<byte> expected, long? expectedLength, CancellationToken cancellationToken)
     {
         if (expected.Length != 32)
         {
@@ -123,6 +136,11 @@ internal sealed class WorkspaceWriteGuard : IDisposable
             if (length < 0 || length > MaximumExpectedBytes)
             {
                 throw new WorkspacePathException("file_too_large");
+            }
+
+            if (expectedLength is not null && length != expectedLength.Value)
+            {
+                return false;
             }
 
             using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
@@ -153,6 +171,17 @@ internal sealed class WorkspaceWriteGuard : IDisposable
             cancellationToken.ThrowIfCancellationRequested();
             var digest = hash.GetHashAndReset();
             return CryptographicOperations.FixedTimeEquals(expected, digest);
+        }
+    }
+
+    // Allows a native component test to open the exact anonymous object from a separate process.
+    internal int AnonymousDescriptorForTests()
+    {
+        lock (_sync)
+        {
+            if (!_privateStage || !_linux) throw new InvalidOperationException("Not a Linux anonymous stage.");
+            CheckLocked();
+            return checked((int)_file!.DangerousGetHandle());
         }
     }
 
@@ -199,7 +228,7 @@ internal sealed class WorkspaceWriteGuard : IDisposable
             throw;
         }
 
-        if (!actual.IsFile || actual.Links != 1 || !_identity.SameObject(actual))
+        if (!actual.IsFile || actual.Links != _expectedLinks || _privateStage && (actual.Mode & 0x3f) != 0 || !_identity.SameObject(actual))
         {
             CloseLocked("file_identity_changed");
             throw new WorkspacePathException(_closedReason);
