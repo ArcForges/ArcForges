@@ -248,7 +248,7 @@ internal sealed partial class FileServiceHandler
         {
             CheckWriteCandidateAuthority(transaction, caller);
             CheckBudget();
-            var reservation = FileMutationJournal.Prepare(transaction, intent, raw);
+            var reservation = FileMutationJournal.Prepare(transaction, intent, raw, lease.Use!.Root);
             if (reservation == FileJournalPreparation.Prepared) lease.Intent = intent;
             return reservation switch
             {

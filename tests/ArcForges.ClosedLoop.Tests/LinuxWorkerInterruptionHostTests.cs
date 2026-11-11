@@ -60,8 +60,11 @@ public sealed partial class LinuxWorkerInterruptionHostTests
             LocalOrigin = Origin.Human,
             LocalSessionId = CommandIds.New(),
         };
-        var root = Directory.CreateDirectory(Path.Combine(node.Root, "interrupted-workspace")).FullName;
+        var outerRoot = Directory.CreateDirectory(Path.Combine(node.Root, "interrupted-parent")).FullName;
+        var root = Directory.CreateDirectory(Path.Combine(outerRoot, "child")).FullName;
         var target = Path.Combine(root, "target.txt");
+        var independent = Path.Combine(root, "independent.txt");
+        File.WriteAllText(independent, "independent-before");
         var original = Enumerable.Repeat((byte)'x', 4_194_304).ToArray();
         "FINDME"u8.CopyTo(original);
         File.WriteAllBytes(target, original);
@@ -89,6 +92,10 @@ public sealed partial class LinuxWorkerInterruptionHostTests
         try
         {
             // A fresh signed registration after pidfd_open binds the already-owned Host and its verified channel.
+            var registerOuter = new WorkspaceServiceRegisterWorkspaceRequest { Meta = Command(), Path = outerRoot, Name = "worker-outer" };
+            var (_, outerRegistration) = await Invoke(RoutedMethod.RegisterNodeWorkspace, registerOuter, registerOuter.Meta.CommandId);
+            var outer = WorkspaceServiceRegisterWorkspaceResponse.Parser.ParseFrom(outerRegistration);
+            Assert.Null(outer.Error);
             var register = new WorkspaceServiceRegisterWorkspaceRequest { Meta = Command(), Path = root, Name = "worker-stop" };
             var (_, registration) = await Invoke(RoutedMethod.RegisterNodeWorkspace, register, register.Meta.CommandId);
             var registered = WorkspaceServiceRegisterWorkspaceResponse.Parser.ParseFrom(registration);
@@ -182,6 +189,36 @@ public sealed partial class LinuxWorkerInterruptionHostTests
             Assert.Equal("operation_failed", replay.Error.Code);
             Assert.Equal(EffectCertainty.Unknown, replay.Error.Effect);
             Assert.Equal(afterWorker, File.ReadAllBytes(target));
+
+            // The same actual target is selected through an independently registered ancestor, not a string alias.
+            var alias = new FileServiceWriteFileRequest
+            {
+                Meta = Command(),
+                Path = new NodeFilePath { WorkspaceId = outer.Value.Workspace.WorkspaceId.Clone(), Path = "child/target.txt" },
+                ExpectedSha256 = ByteString.CopyFrom(SHA256.HashData(afterWorker)),
+                Data = ByteString.CopyFromUtf8("after-explicit-human-ack"),
+            };
+            var (_, aliasBytes) = await Invoke(RoutedMethod.WriteNodeFile, alias, alias.Meta.CommandId);
+            var aliasRefusal = FileServiceWriteFileResponse.Parser.ParseFrom(aliasBytes);
+            Assert.Equal("invalid_state", aliasRefusal.Error.Code);
+            Assert.Equal("file_recovery_pending", aliasRefusal.Error.Details.State.Reason);
+            Assert.Equal(EffectCertainty.DidNotHappen, aliasRefusal.Error.Effect);
+            Assert.Equal(afterWorker, File.ReadAllBytes(target));
+
+            // A separate existing file in the same directory can really be written while the first target stays held.
+            var other = new FileServiceWriteFileRequest
+            {
+                Meta = Command(),
+                Path = new NodeFilePath { WorkspaceId = registered.Value.Workspace.WorkspaceId.Clone(), Path = "independent.txt" },
+                ExpectedSha256 = ByteString.CopyFrom(SHA256.HashData("independent-before"u8)),
+                Data = ByteString.CopyFromUtf8("independent-after"),
+            };
+            var (_, otherBytes) = await Invoke(RoutedMethod.WriteNodeFile, other, other.Meta.CommandId);
+            var otherResult = FileServiceWriteFileResponse.Parser.ParseFrom(otherBytes);
+            Assert.Null(otherResult.Error);
+            Assert.Equal("independent-after", File.ReadAllText(independent));
+            Assert.Equal(afterWorker, File.ReadAllBytes(target));
+
             var acknowledgment = new FileServiceAcknowledgeFileOperationRequest
             {
                 Meta = Command(),
@@ -200,6 +237,10 @@ public sealed partial class LinuxWorkerInterruptionHostTests
             var (_, afterAckReplay) = await Invoke(RoutedMethod.EditNodeFile, edit, edit.Meta.CommandId);
             Assert.Equal(replayBytes, afterAckReplay);
             Assert.Equal(afterWorker, File.ReadAllBytes(target));
+            var (_, afterAckAliasBytes) = await Invoke(RoutedMethod.WriteNodeFile, alias, alias.Meta.CommandId);
+            var afterAckAlias = FileServiceWriteFileResponse.Parser.ParseFrom(afterAckAliasBytes);
+            Assert.Null(afterAckAlias.Error);
+            Assert.Equal("after-explicit-human-ack", File.ReadAllText(target));
             Assert.Empty(connection.UnverifiedResults);
             Console.WriteLine("owned-node-pid=" + host.Id.ToString(System.Globalization.CultureInfo.InvariantCulture) +
                 " worker-pid=" + observation.Pid.ToString(System.Globalization.CultureInfo.InvariantCulture) +

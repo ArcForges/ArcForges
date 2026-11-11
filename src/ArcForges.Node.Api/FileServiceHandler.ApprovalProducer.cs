@@ -169,8 +169,6 @@ internal sealed partial class FileServiceHandler
                     return new MutationPreparation(false); // A producer or recovery still owns this exact reservation.
                 return Refuse(Error(ErrorCategory.Conflict, "command_id_reused", "command_id_reused", correlation));
             }
-            if (FileMutationJournal.HasWorkspaceHold(transaction, workspace))
-                return Refuse(Error(ErrorCategory.State, "invalid_state", "file_recovery_pending", correlation));
             // Linux staging awaits the dedicated exact-FD lease-break coordinator; do not use a check/write gap.
             if (!OperatingSystem.IsWindows())
                 return Refuse(Error(ErrorCategory.Resource, "enforcement_unavailable", "file_guard_unavailable", correlation));
@@ -221,6 +219,12 @@ internal sealed partial class FileServiceHandler
                 catch (WorkspacePathException missing) when (missing.Reason == "native_2") { }
                 lease.IntendedBytes = request.Data.ToByteArray();
             }
+            var checkedParent = RegisteredWorkspaces.RootIdentity.Encode(lease.ParentIdentity!.Value);
+            var checkedTarget = lease.Target is null ? null :
+                RegisteredWorkspaces.RootIdentity.Encode(lease.Target.ObjectIdentity, directory: false);
+            if (FileMutationJournal.HasTargetHold(transaction, checkedParent.Platform, checkedParent.Bytes, checkedTarget?.Bytes,
+                path, lease.Use.Root))
+                return Refuse(Error(ErrorCategory.State, "invalid_state", "file_recovery_pending", correlation));
             CheckStageApprovalAuthority(transaction, caller, started, limit, token);
             var tag = Convert.ToHexStringLower(id);
             lease.OriginalName = ".arcforges-stage-" + tag + "-1";

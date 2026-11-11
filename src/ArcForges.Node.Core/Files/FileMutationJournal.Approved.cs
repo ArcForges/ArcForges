@@ -51,7 +51,7 @@ internal static partial class FileMutationJournal
             return (ApprovedFilePreparation.Expired, plan);
         if (transaction.Scalar("SELECT outcome FROM command_dedup WHERE command_id = $id;", ("$id", intent.CommandId)) is not null)
             return (ApprovedFilePreparation.Conflict, plan);
-        if (HasWorkspaceHold(transaction, intent.WorkspaceId))
+        if (HasTargetHold(transaction, intent.IdentityPlatform, intent.ParentIdentity, intent.TargetIdentity, intent.RelativePath, root))
             return (ApprovedFilePreparation.WorkspaceHeld, plan);
         cancellationToken.ThrowIfCancellationRequested();
         PrivateStageApproval.CheckTarget(intent, root, target, cancellationToken);

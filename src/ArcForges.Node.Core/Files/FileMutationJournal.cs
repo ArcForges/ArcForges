@@ -70,7 +70,8 @@ internal static partial class FileMutationJournal
     /// Reserves a command and records its checked metadata together in one FULL transaction. The digest covers the exact
     /// received request bytes, including RequestMeta, not a reserialized message or the legacy PayloadDigest.
     /// </summary>
-    internal static FileJournalPreparation Prepare(StoreTransaction transaction, FileJournalIntent intent, ReadOnlySpan<byte> transmitted)
+    internal static FileJournalPreparation Prepare(StoreTransaction transaction, FileJournalIntent intent, ReadOnlySpan<byte> transmitted,
+        WorkspacePath? selectedRoot = null)
     {
         RequireFull(transaction);
         ArgumentNullException.ThrowIfNull(intent);
@@ -87,7 +88,7 @@ internal static partial class FileMutationJournal
             """, ("$id", intent.CommandId), ("$now", transaction.NowMicroseconds)) is not null)
             return FileJournalPreparation.Conflict;
 
-        if (HasWorkspaceHold(transaction, intent.WorkspaceId))
+        if (HasTargetHold(transaction, intent.IdentityPlatform, intent.ParentIdentity, intent.TargetIdentity, intent.RelativePath, selectedRoot))
         {
             return FileJournalPreparation.WorkspaceHeld;
         }
