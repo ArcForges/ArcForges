@@ -19,12 +19,13 @@ internal sealed partial class FileServiceHandler
 {
     // The routed mutation path remains unadvertised until approval, settlement and both native platform paths are complete.
     // It executes the guarded existing-file protocol only for an authorized caller.
-    private readonly FileStageBudget _writeStageBudget = new();
+    private readonly FileStageBudget _writeStageBudget = node.FileStages;
 
     // Test-only callbacks coordinate a real competing create and an interruption after the actual creation effect.
     internal Action? BeforeCreateForTests { get; set; }
     internal Action? AfterCreateForTests { get; set; }
     internal Action? BeforeMutationEffectForTests { get; set; }
+    internal Action? AfterStageBeforeJournalForTests { get; set; }
     internal Func<Task>? AfterPreparationForTests { get; set; }
 
     internal Task<byte[]?> WriteExistingCandidateAsync(Caller caller, CancellationToken cancellationToken)
@@ -248,13 +249,13 @@ internal sealed partial class FileServiceHandler
             lease.Use = _workspaces.OpenForUse(transaction, workspace, beforeUse: selectedTx =>
                 CheckWriteCandidateAuthority(selectedTx, caller), token);
             CheckBudget();
-            var durableStages = PrivateStageRegistry.Usage(transaction);
             if (!request.HasExpectedSha256)
             {
-                lease.Stages = WorkspaceStagePair.TryCreate(lease.Use.Root, _writeStageBudget, original: null, request.Data.Memory, token,
-                    durableStages.Mutations, durableStages.Bytes);
+                lease.Stages = WorkspaceStagePair.TryCreateForCommand(lease.Use.Root, _writeStageBudget, transaction,
+                    request.Meta.CommandId.Value.Memory, original: null, request.Data.Memory, token);
                 if (lease.Stages is null)
                     return Refuse(Error(ErrorCategory.Resource, "enforcement_unavailable", "file_stage_capacity", correlation));
+                AfterStageBeforeJournalForTests?.Invoke();
                 var slashAt = path.LastIndexOf('/');
                 var parentHandle = lease.Use.Root.OpenDirectory(slashAt < 0 ? "" : path[..slashAt]);
                 var rootId = RegisteredWorkspaces.RootIdentity.Encode(lease.Use.Root.RootIdentity);
@@ -291,12 +292,13 @@ internal sealed partial class FileServiceHandler
             var intended = edit is null ? request.Data.ToByteArray() : edit.Bytes.ToArray();
             try
             {
-                lease.Stages = WorkspaceStagePair.TryCreate(lease.Use.Root, _writeStageBudget, original.Bytes, intended, token,
-                durableStages.Mutations, durableStages.Bytes);
+                lease.Stages = WorkspaceStagePair.TryCreateForCommand(lease.Use.Root, _writeStageBudget, transaction,
+                    request.Meta.CommandId.Value.Memory, original.Bytes, intended, token);
             }
             finally { CryptographicOperations.ZeroMemory(intended); }
             if (lease.Stages is null)
                 return Refuse(Error(ErrorCategory.Resource, "enforcement_unavailable", "file_stage_capacity", correlation));
+            AfterStageBeforeJournalForTests?.Invoke();
             var slash = path.LastIndexOf('/');
             var parent = lease.Use.Root.OpenDirectory(slash < 0 ? "" : path[..slash]);
             var rootIdentity = RegisteredWorkspaces.RootIdentity.Encode(lease.Use.Root.RootIdentity);

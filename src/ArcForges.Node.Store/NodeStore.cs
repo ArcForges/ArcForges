@@ -468,18 +468,22 @@ public sealed class NodeStore : IDisposable
         // private-stage capacity semantics. Refuse that draft while the database is still open read-only; neither
         // migrate it by pretending its version matches nor adopt or delete its potentially retained stages.
         if (version >= 8 && plan.LatestVersion >= 8 && minimum <= plan.LatestVersion &&
-            plan.Steps[7].Sql.Contains("ctr06-stage-active-v2", StringComparison.Ordinal))
+            plan.Steps[7].Sql.Contains("ctr06-stage-combined-v3", StringComparison.Ordinal))
         {
             var hasLayout = Convert.ToInt64(Scalar(connection, """
                 SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name = 'file_private_stage_layout';
                 """), CultureInfo.InvariantCulture) == 1;
             var hasGuards = Convert.ToInt64(Scalar(connection, """
                 SELECT count(*) FROM sqlite_schema WHERE type = 'trigger' AND name IN
-                  ('tr_file_private_stage_capacity', 'tr_file_private_stage_reactivate_capacity');
-                """), CultureInfo.InvariantCulture) == 2;
-            if (!hasLayout || !hasGuards || !string.Equals(Convert.ToString(Scalar(connection,
+                  ('tr_file_private_stage_capacity', 'tr_file_private_stage_reactivate_capacity',
+                   'tr_file_journal_stage_capacity', 'tr_file_journal_stage_reactivate_capacity');
+                """), CultureInfo.InvariantCulture) == 4;
+            var hasCapacityView = Convert.ToInt64(Scalar(connection, """
+                SELECT count(*) FROM sqlite_schema WHERE type = 'view' AND name = 'file_stage_capacity_totals';
+                """), CultureInfo.InvariantCulture) == 1;
+            if (!hasLayout || !hasGuards || !hasCapacityView || !string.Equals(Convert.ToString(Scalar(connection,
                 "SELECT layout FROM file_private_stage_layout WHERE singleton = 1;"), CultureInfo.InvariantCulture),
-                "ctr06-stage-active-v2", StringComparison.Ordinal))
+                "ctr06-stage-combined-v3", StringComparison.Ordinal))
             {
                 throw new StoreIncompatibleException("The node store has an unrecognized private-stage draft layout; it was not changed.");
             }

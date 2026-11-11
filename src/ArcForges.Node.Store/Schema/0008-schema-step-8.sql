@@ -4,9 +4,9 @@
 -- Identifies this unmerged draft layout on open; it is not a user-provided authorization marker.
 CREATE TABLE file_private_stage_layout (
   singleton INTEGER NOT NULL PRIMARY KEY CHECK (singleton = 1),
-  layout TEXT NOT NULL CHECK (layout = 'ctr06-stage-active-v2')
+  layout TEXT NOT NULL CHECK (layout = 'ctr06-stage-combined-v3')
 ) STRICT;
-INSERT INTO file_private_stage_layout (singleton, layout) VALUES (1, 'ctr06-stage-active-v2');
+INSERT INTO file_private_stage_layout (singleton, layout) VALUES (1, 'ctr06-stage-combined-v3');
 
 CREATE TABLE file_private_stage_reservation (
   command_id BLOB NOT NULL PRIMARY KEY REFERENCES command_dedup (command_id) CHECK (length(command_id) = 16),
@@ -65,18 +65,70 @@ BEGIN
   SELECT RAISE(IGNORE);
 END;
 
--- A terminal reservation may release its active slot, but retained bytes remain charged until safe disposition.
+-- Count a command once while it is active. Charge every retained named reservation, plus every held journal
+-- stage whose exact platform, slot, native identity and size are not already represented by that reservation.
+-- A shared command ID alone never proves two allocations are the same object.
+CREATE VIEW file_stage_capacity_totals AS
+SELECT
+  (SELECT count(*) FROM file_private_stage_reservation WHERE active = 1) +
+  (SELECT count(*) FROM file_operation_journal j WHERE j.held = 1 AND NOT EXISTS
+    (SELECT 1 FROM file_private_stage_reservation r WHERE r.command_id = j.command_id AND r.active = 1)) AS active_mutations,
+  COALESCE((SELECT sum(reserved_bytes) FROM file_private_stage_reservation), 0) +
+  COALESCE((SELECT sum((CASE WHEN j.original_size IS NULL OR EXISTS
+     (SELECT 1 FROM file_private_stage_object o WHERE o.command_id = j.command_id AND o.slot = 1
+      AND o.identity_platform = j.identity_platform AND o.native_identity = j.original_stage_identity
+      AND o.expected_size = j.original_size) THEN 0 ELSE j.original_size END) +
+    (CASE WHEN j.intended_size IS NULL OR EXISTS
+     (SELECT 1 FROM file_private_stage_object o WHERE o.command_id = j.command_id AND o.slot = 2
+      AND o.identity_platform = j.identity_platform AND o.native_identity = j.intended_stage_identity
+      AND o.expected_size = j.intended_size) THEN 0 ELSE j.intended_size END)) FROM file_operation_journal j WHERE j.held = 1), 0) AS reserved_bytes;
+
+-- Older compatible writers cannot bypass the same durable active and byte limits.
 CREATE TRIGGER tr_file_private_stage_capacity BEFORE INSERT ON file_private_stage_reservation
-WHEN (NEW.active = 1 AND (SELECT count(*) FROM file_private_stage_reservation WHERE active = 1) >= 64) OR
-     NEW.reserved_bytes > 268435456 - COALESCE((SELECT sum(reserved_bytes) FROM file_private_stage_reservation), 0)
+WHEN (NEW.active = 1 AND NOT EXISTS
+       (SELECT 1 FROM file_operation_journal j WHERE j.command_id = NEW.command_id AND j.held = 1) AND
+       (SELECT active_mutations FROM file_stage_capacity_totals) >= 64) OR
+     NEW.reserved_bytes > 268435456 - (SELECT reserved_bytes FROM file_stage_capacity_totals)
 BEGIN
   SELECT RAISE(ABORT, 'file_stage_capacity');
 END;
 
--- Compatible earlier writers may not reactivate a retained item past the same active limit.
 CREATE TRIGGER tr_file_private_stage_reactivate_capacity BEFORE UPDATE OF active ON file_private_stage_reservation
-WHEN OLD.active = 0 AND NEW.active = 1 AND
-     (SELECT count(*) FROM file_private_stage_reservation WHERE active = 1) >= 64
+WHEN OLD.active = 0 AND NEW.active = 1 AND NOT EXISTS
+       (SELECT 1 FROM file_operation_journal j WHERE j.command_id = NEW.command_id AND j.held = 1) AND
+       (SELECT active_mutations FROM file_stage_capacity_totals) >= 64
+BEGIN
+  SELECT RAISE(ABORT, 'file_stage_capacity');
+END;
+
+CREATE TRIGGER tr_file_journal_stage_capacity BEFORE INSERT ON file_operation_journal
+WHEN NEW.held = 1 AND
+     ((NOT EXISTS (SELECT 1 FROM file_private_stage_reservation r WHERE r.command_id = NEW.command_id AND r.active = 1) AND
+       (SELECT active_mutations FROM file_stage_capacity_totals) >= 64) OR
+      ((CASE WHEN NEW.original_size IS NULL OR EXISTS
+     (SELECT 1 FROM file_private_stage_object o WHERE o.command_id = NEW.command_id AND o.slot = 1
+      AND o.identity_platform = NEW.identity_platform AND o.native_identity = NEW.original_stage_identity
+      AND o.expected_size = NEW.original_size) THEN 0 ELSE NEW.original_size END) +
+    (CASE WHEN NEW.intended_size IS NULL OR EXISTS
+     (SELECT 1 FROM file_private_stage_object o WHERE o.command_id = NEW.command_id AND o.slot = 2
+      AND o.identity_platform = NEW.identity_platform AND o.native_identity = NEW.intended_stage_identity
+      AND o.expected_size = NEW.intended_size) THEN 0 ELSE NEW.intended_size END)) > 268435456 - (SELECT reserved_bytes FROM file_stage_capacity_totals))
+BEGIN
+  SELECT RAISE(ABORT, 'file_stage_capacity');
+END;
+
+CREATE TRIGGER tr_file_journal_stage_reactivate_capacity BEFORE UPDATE OF held ON file_operation_journal
+WHEN OLD.held = 0 AND NEW.held = 1 AND
+     ((NOT EXISTS (SELECT 1 FROM file_private_stage_reservation r WHERE r.command_id = NEW.command_id AND r.active = 1) AND
+       (SELECT active_mutations FROM file_stage_capacity_totals) >= 64) OR
+      ((CASE WHEN NEW.original_size IS NULL OR EXISTS
+     (SELECT 1 FROM file_private_stage_object o WHERE o.command_id = NEW.command_id AND o.slot = 1
+      AND o.identity_platform = NEW.identity_platform AND o.native_identity = NEW.original_stage_identity
+      AND o.expected_size = NEW.original_size) THEN 0 ELSE NEW.original_size END) +
+    (CASE WHEN NEW.intended_size IS NULL OR EXISTS
+     (SELECT 1 FROM file_private_stage_object o WHERE o.command_id = NEW.command_id AND o.slot = 2
+      AND o.identity_platform = NEW.identity_platform AND o.native_identity = NEW.intended_stage_identity
+      AND o.expected_size = NEW.intended_size) THEN 0 ELSE NEW.intended_size END)) > 268435456 - (SELECT reserved_bytes FROM file_stage_capacity_totals))
 BEGIN
   SELECT RAISE(ABORT, 'file_stage_capacity');
 END;

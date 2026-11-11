@@ -26,19 +26,7 @@ internal static partial class PrivateStageRegistry
     private const int MaximumRequestBytes = 245_760;
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
-    internal static (int Mutations, long Bytes) Usage(StoreReader reader)
-    {
-        ArgumentNullException.ThrowIfNull(reader);
-        if (!HasSchema(reader)) return (0, 0);
-        using var command = reader.CreateCommand("SELECT COALESCE(sum(active), 0), COALESCE(sum(reserved_bytes), 0) FROM file_private_stage_reservation;");
-        using var row = command.ExecuteReader();
-        if (!row.Read()) throw new InvalidDataException("Private stage capacity is unavailable.");
-        var count = row.GetInt64(0);
-        var bytes = row.GetInt64(1);
-        if (count is < 0 or > FileStageBudget.MaximumMutations || bytes is < 0 or > FileStageBudget.MaximumBytes)
-            throw new InvalidDataException("Private stage capacity is invalid.");
-        return (checked((int)count), bytes);
-    }
+    internal static (int Mutations, long Bytes) Usage(StoreReader reader) => FileStageCapacity.Durable(reader);
 
     internal static bool HasWorkspaceHold(StoreReader reader, ReadOnlySpan<byte> workspaceId)
     {
@@ -154,11 +142,13 @@ internal static partial class PrivateStageRegistry
             SELECT 1 FROM workspace WHERE workspace_id = $id AND kind = 1 AND state = 2 AND removed_at IS NULL;
             """, ("$id", workspaceId.ToArray())) is null)
             throw new InvalidOperationException("The registered workspace is unavailable.");
-        var durable = Usage(transaction);
-        var transient = transientBudget.Snapshot();
-        if (transient.Active >= FileStageBudget.MaximumMutations - durable.Mutations ||
-            transient.Bytes > FileStageBudget.MaximumBytes - durable.Bytes ||
-            bytes > FileStageBudget.MaximumBytes - durable.Bytes - transient.Bytes)
+        // An anonymous lease or an earlier journal for this command cannot be reinterpreted as a new named stage.
+        if (transientBudget.HasCommand(commandId) || transaction.Scalar(
+            "SELECT 1 FROM command_dedup WHERE command_id = $id;", ("$id", commandId.ToArray())) is not null)
+            return PrivateStageReservationResult.Conflict;
+        var combined = transientBudget.CombinedUsage(transaction);
+        if (combined.Active >= FileStageBudget.MaximumMutations || combined.Bytes > FileStageBudget.MaximumBytes ||
+            bytes > FileStageBudget.MaximumBytes - combined.Bytes)
             return PrivateStageReservationResult.Capacity;
         var decision = CommandDeduplication.Begin(transaction, commandId, method, digest, Origin.Remote);
         if (decision.Status != DedupStatus.Execute) return PrivateStageReservationResult.Conflict;

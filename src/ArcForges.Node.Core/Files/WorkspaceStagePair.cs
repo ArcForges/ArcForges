@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using ArcForges.Node.Core.Platform;
+using ArcForges.Node.Store;
 
 namespace ArcForges.Node.Core.Files;
 
@@ -34,14 +35,35 @@ internal sealed class WorkspaceStagePair : IDisposable
         ArgumentNullException.ThrowIfNull(budget);
         cancellationToken.ThrowIfCancellationRequested();
         var reservation = budget.TryReserve(original?.Length ?? 0, intended.Length, durableMutations, durableBytes);
+        return Create(root, reservation, original, intended, beforeCreateForTests: null, cancellationToken);
+    }
+
+    /// <summary>Reserves against the combined durable and in-process ledger for this exact command.</summary>
+    internal static WorkspaceStagePair? TryCreateForCommand(WorkspacePath root, FileStageBudget budget, StoreReader reader,
+        ReadOnlyMemory<byte> commandId, ReadOnlyMemory<byte>? original, ReadOnlyMemory<byte> intended, CancellationToken cancellationToken,
+        Action? beforeCreateForTests = null)
+    {
+        ArgumentNullException.ThrowIfNull(root);
+        ArgumentNullException.ThrowIfNull(budget);
+        ArgumentNullException.ThrowIfNull(reader);
+        cancellationToken.ThrowIfCancellationRequested();
+        var reservation = budget.TryReserveCommand(reader, commandId.Span, original?.Length ?? 0, intended.Length);
+        return Create(root, reservation, original, intended, beforeCreateForTests, cancellationToken);
+    }
+
+    private static WorkspaceStagePair? Create(WorkspacePath root, FileStageBudget.Lease? reservation,
+        ReadOnlyMemory<byte>? original, ReadOnlyMemory<byte> intended, Action? beforeCreateForTests, CancellationToken cancellationToken)
+    {
         if (reservation is null) return null;
         WorkspaceAnonymousStage? before = null;
         WorkspaceAnonymousStage? after = null;
         try
         {
+            beforeCreateForTests?.Invoke();
             if (original is { } bytes) before = root.CreateAnonymousStage(bytes.Span, cancellationToken);
             after = root.CreateAnonymousStage(intended.Span, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
+            reservation.BindStages(before?.Identity, after.Identity);
             return new WorkspaceStagePair(reservation, before, after);
         }
         catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)

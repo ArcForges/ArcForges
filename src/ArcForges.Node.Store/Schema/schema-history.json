@@ -66,8 +66,8 @@
       "version": 8,
       "minReaderVersion": 1,
       "file": "0008-schema-step-8.sql",
-      "sha256": "4fef24c0f287f6b7ab57a6ca36235381f0cb798b6d2ea4ccf2c12c67d01430b4",
-      "source": "AF-CTR-06 private stage identity, active mutation and retained byte accounting; unmerged local author candidate, not approval delivery.",
+      "sha256": "143cc644c1bdc8c079973ebf1cbeb186e4ef42370a68f3ecad5d0039d2ed935f",
+      "source": "AF-CTR-06 private stage identity, combined held journal and retained byte accounting; unmerged local author candidate, not approval delivery.",
       "addedBy": "AF-CTR-06"
     }
   ]

@@ -69,14 +69,16 @@ public sealed class PrivateStageMigrationTests
         Assert.Equal(1L, older.Read(r => r.Scalar("SELECT count(*) FROM workspace WHERE removed_at IS NULL;")));
         Assert.Equal(1L, older.Read(r => r.Scalar("SELECT count(*) FROM file_private_stage_object;")));
     }
-    [Fact]
-    public void AnEarlierUnreleasedStageDraftIsRefusedReadOnlyWithoutAdoptingItsFiles()
+    [Theory]
+    [InlineData("0008-unreleased-stage-draft.sql", "914525bd869cb374ba947d7e47e72b311630e4dc7471b2737b3fbbeef773734d")]
+    [InlineData("0008-unreleased-stage-active-v2.sql", "4fef24c0f287f6b7ab57a6ca36235381f0cb798b6d2ea4ccf2c12c67d01430b4")]
+    public void AnEarlierUnreleasedStageDraftIsRefusedReadOnlyWithoutAdoptingItsFiles(string fixture, string expectedHash)
     {
         using var root = new TemporaryDataRoot();
         var clock = new ManualClock();
-        var oldSql = File.ReadAllText(Repository.PathOf("tests/ArcForges.Node.Store.Tests/Fixtures/0008-unreleased-stage-draft.sql"));
-        var oldStep = new StoreMigration(8, 1, "0008-unreleased-stage-draft.sql", oldSql);
-        Assert.Equal("914525bd869cb374ba947d7e47e72b311630e4dc7471b2737b3fbbeef773734d", oldStep.Sha256);
+        var oldSql = File.ReadAllText(Repository.PathOf("tests/ArcForges.Node.Store.Tests/Fixtures/" + fixture));
+        var oldStep = new StoreMigration(8, 1, fixture, oldSql);
+        Assert.Equal(expectedHash, oldStep.Sha256);
         var oldPlan = new MigrationPlan([.. StoreMigrations.Released.Steps.Take(7), oldStep]);
         var workspace = StoreIds.NewUuid7(clock);
         var command = StoreIds.NewUuid7(clock);

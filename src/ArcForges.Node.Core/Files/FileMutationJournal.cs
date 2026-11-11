@@ -91,19 +91,12 @@ internal static partial class FileMutationJournal
             return FileJournalPreparation.WorkspaceHeld;
         }
 
-        using (var capacity = transaction.CreateCommand("""
-            SELECT COALESCE(sum(held), 0), COALESCE(sum(COALESCE(original_size, 0) + COALESCE(intended_size, 0)), 0)
-            FROM file_operation_journal WHERE delete_permitted = 0;
-            """))
-        using (var row = capacity.ExecuteReader())
-        {
-            _ = row.Read();
-            // Conservative until stage-disposition is implemented: retained evidence continues to count.
-            if (row.GetInt64(0) >= MaximumActive || row.GetInt64(1) + (intent.OriginalSize ?? 0) + intent.IntendedSize > MaximumStageBytes)
-            {
-                return FileJournalPreparation.Capacity;
-            }
-        }
+        // Persistent named reservations and held journals use one command-aware stage ledger. The native stage
+        // lease is also charged in the node runtime until the actual handles close.
+        var capacity = FileStageCapacity.Durable(transaction);
+        var newBytes = checked((intent.OriginalSize ?? 0) + intent.IntendedSize);
+        if (capacity.Active >= MaximumActive || newBytes > MaximumStageBytes - capacity.Bytes)
+            return FileJournalPreparation.Capacity;
 
         var method = intent.Kind == FileOperationKind.Write
             ? "arcforges.node.v1.FileService/WriteFile" : "arcforges.node.v1.FileService/EditFile";
