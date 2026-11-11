@@ -217,14 +217,21 @@ public sealed class WorkspaceFileReaderTests
 
     [Fact(Timeout = 30_000)]
     [Trait("env", "linux-real")]
-    public void SameLengthContentChangeDuringReadIsNotReportedAsStable()
+    public void SameLengthObservedContentChangeDuringReadIsNotReportedAsStable()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         Assert.SkipUnless(OperatingSystem.IsLinux(), "Linux competing write while the read handle is open");
         using var fixture = new OwnedDirectory();
         var path = Path.Combine(fixture.Path, "file.bin");
-        File.WriteAllBytes(path, new byte[32_768]);
+        var original = new byte[32_768];
+        File.WriteAllBytes(path, original);
+
+        // A real earlier mtime makes this write observable even when both writes occur within one filesystem clock tick.
+        File.SetLastWriteTimeUtc(path, File.GetLastWriteTimeUtc(path).AddDays(-1));
         using var root = WorkspacePath.OpenRoot(fixture.Path);
+        using var observed = root.OpenRead("file.bin");
+        var before = WorkspacePath.FileStamp(observed);
+        WorkspaceFileStamp? after = null;
         var changed = false;
         var failure = Assert.Throws<WorkspaceReadException>(() => WorkspaceFileReader.Read(root, "file.bin", 0, 32_768, phase =>
         {
@@ -233,13 +240,89 @@ public sealed class WorkspaceFileReaderTests
                 using var writer = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.ReadWrite);
                 writer.WriteByte(42);
                 writer.Flush(flushToDisk: true);
+                after = WorkspacePath.FileStamp(observed);
                 changed = true;
             }
         }, TestContext.Current.CancellationToken));
         Assert.True(changed);
+        Assert.NotNull(after);
+        Assert.NotEqual((before.Modification, before.ModificationNanoseconds), (after.Value.Modification, after.Value.ModificationNanoseconds));
         Assert.Equal("file_changed_while_reading", failure.Reason);
         Assert.Equal(32_768, failure.ObservedBytes);
+        Assert.Equal(SHA256.HashData(original), failure.ObservedSha256!.Value.ToArray());
         Assert.Equal(32_768, new FileInfo(path).Length);
+        Assert.Equal(42, File.ReadAllBytes(path)[0]);
+    }
+
+    [Fact(Timeout = 30_000)]
+    [Trait("env", "linux-real")]
+    public void ConcurrentSameLengthWritePreservesActualReadBytesOrReturnsAnObservedConflict()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "Linux competing write while the read handle is open");
+        using var fixture = new OwnedDirectory();
+        var path = Path.Combine(fixture.Path, "file.bin");
+        File.WriteAllBytes(path, new byte[32_768]);
+        using var root = WorkspacePath.OpenRoot(fixture.Path);
+        using var observed = root.OpenRead("file.bin");
+        var before = WorkspacePath.FileStamp(observed);
+        WorkspaceFileStamp? after = null;
+        var changed = false;
+        WorkspaceRead? result = null;
+        WorkspaceReadException? failure = null;
+        try
+        {
+            result = WorkspaceFileReader.Read(root, "file.bin", 0, 32_768, phase =>
+            {
+                if (!changed && phase == WorkspaceReadCheckpoint.AfterBytesRead)
+                {
+                    using var writer = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.ReadWrite);
+                    writer.WriteByte(17);
+                    writer.Position = 16_384;
+                    writer.WriteByte(42);
+                    writer.Flush(flushToDisk: true);
+                    after = WorkspacePath.FileStamp(observed);
+                    changed = true;
+                }
+            }, TestContext.Current.CancellationToken);
+        }
+        catch (WorkspaceReadException exception)
+        {
+            failure = exception;
+        }
+
+        Assert.True(changed);
+        Assert.NotNull(after);
+        var expectedRead = new byte[32_768];
+        expectedRead[16_384] = 42;
+        var final = File.ReadAllBytes(path);
+        Assert.Equal(32_768, final.Length);
+        Assert.Equal(17, final[0]);
+        Assert.Equal(42, final[16_384]);
+        Assert.NotEqual(expectedRead, final);
+
+        var stampChanged = before != after.Value;
+        TestContext.Current.TestOutputHelper?.WriteLine($"Actual held metadata changed: {stampChanged}; reader refused: {failure is not null}");
+        if (stampChanged)
+        {
+            Assert.NotNull(failure);
+        }
+
+        if (failure is not null)
+        {
+            Assert.Equal("file_changed_while_reading", failure.Reason);
+            Assert.Equal(32_768, failure.ObservedBytes);
+            Assert.Equal(SHA256.HashData(expectedRead), failure.ObservedSha256!.Value.ToArray());
+        }
+        else
+        {
+            Assert.NotNull(result);
+            Assert.Equal(before, after.Value);
+            Assert.Equal(expectedRead, result.Bytes.ToArray());
+            Assert.Equal(SHA256.HashData(expectedRead), result.Sha256.ToArray());
+            Assert.Equal(32_768UL, result.NextOffset);
+            Assert.True(result.Eof);
+        }
     }
 
     [Fact(Timeout = 30_000)]
