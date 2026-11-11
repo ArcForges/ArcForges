@@ -13,7 +13,7 @@ namespace ArcForges.Node.Core.Platform;
 /// be connected to file effects without the remaining access, resource, recovery and authorization checks in the design.
 /// A lease observation does not establish the separate scheduling or namespace guarantees required for an effect.
 /// </summary>
-internal sealed class WorkspaceAnonymousStage : IDisposable
+internal sealed class WorkspaceAnonymousStage : WorkspaceMutationStage
 {
     private readonly WorkspaceWriteGuard _guard;
     private readonly byte[] _hash;
@@ -26,18 +26,18 @@ internal sealed class WorkspaceAnonymousStage : IDisposable
         _hash = hash;
     }
 
-    internal RegisteredWorkspaces.RootIdentity Identity { get; }
+    internal override RegisteredWorkspaces.RootIdentity Identity { get; }
 
-    internal WorkspaceObjectIdentity ObjectIdentity => _guard.ObjectIdentity;
+    internal override WorkspaceObjectIdentity ObjectIdentity => _guard.ObjectIdentity;
 
-    internal long Length { get; }
+    internal override long Length { get; }
 
-    internal ReadOnlyMemory<byte> Sha256 => _hash;
+    internal override ReadOnlyMemory<byte> Sha256 => _hash;
 
     /// <summary>Rehashes the exact held object with its guard and verifies its length.</summary>
     internal bool Verify(CancellationToken cancellationToken) => _guard.MatchesExpectedContent(_hash, Length, cancellationToken);
 
-    internal WorkspaceGuardedContent ReadVerified(CancellationToken cancellationToken)
+    internal override WorkspaceGuardedContent ReadVerified(CancellationToken cancellationToken)
     {
         var content = _guard.ReadForMutation(cancellationToken);
         if (content.Bytes.Length == Length && CryptographicOperations.FixedTimeEquals(content.Sha256.Span, _hash))
@@ -46,11 +46,11 @@ internal sealed class WorkspaceAnonymousStage : IDisposable
         throw new WorkspacePathException("file_identity_changed");
     }
 
-    internal void CheckIntact() => _guard.CheckIntact();
+    internal override void CheckIntact() => _guard.CheckIntact();
 
     internal int DescriptorForTests() => _guard.AnonymousDescriptorForTests();
 
-    public void Dispose() => _guard.Dispose();
+    public override void Dispose() => _guard.Dispose();
 }
 
 internal sealed partial class WorkspacePath

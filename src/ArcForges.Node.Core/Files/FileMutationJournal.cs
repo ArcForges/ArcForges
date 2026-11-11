@@ -75,7 +75,7 @@ internal static partial class FileMutationJournal
         ArgumentNullException.ThrowIfNull(intent);
         var found = FindExisting(transaction, intent.Kind, intent.CommandId, intent.Caller, transmitted);
         if (found is not null) return found.Value;
-        Validate(intent, transmitted);
+        ValidateIntent(intent, transmitted);
         var digest = SHA256.HashData(transmitted);
         var caller = Sanitize(intent.Caller);
 
@@ -233,6 +233,11 @@ internal static partial class FileMutationJournal
             WHERE command_id = $id AND phase = 3 AND held = 1 AND acknowledged = 0;
             """, ("$id", commandId.ToArray()), ("$now", transaction.NowMicroseconds)) != 1)
             throw new InvalidOperationException("The file journal hold changed during acknowledgment.");
+        // Retain the named stage and its identity, but an explicit HUMAN acknowledgment releases its workspace hold.
+        // Capacity remains charged until safe disposition; this update never deletes or changes any file.
+        if (PrivateStageRegistry.HasSchema(transaction))
+            transaction.Execute("UPDATE file_private_stage_reservation SET active = 0 WHERE command_id = $id AND active = 1;",
+                ("$id", commandId.ToArray()));
         Audit(PermissionDecision.Allow, "acknowledged: file_outcome_unknown");
         return FileJournalAcknowledgment.Acknowledged;
     }
@@ -248,7 +253,7 @@ internal static partial class FileMutationJournal
             throw new InvalidOperationException("The file journal requires synchronous=FULL.");
     }
 
-    private static void Validate(FileJournalIntent intent, ReadOnlySpan<byte> transmitted)
+    internal static void ValidateIntent(FileJournalIntent intent, ReadOnlySpan<byte> transmitted)
     {
         StoreIds.Validate(intent.CommandId, nameof(intent.CommandId));
         StoreIds.Validate(intent.CorrelationId, nameof(intent.CorrelationId));

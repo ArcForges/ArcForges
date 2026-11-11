@@ -61,6 +61,14 @@
       "sha256": "8f6ecfcbf1eeba3aeaad19c49bcb3393c3400dd82f2526c047d3c866995b4f63",
       "source": "AF-CTR-06 06a section 6 metadata-only file journal and recovery hold; local author candidate.",
       "addedBy": "AF-CTR-06"
+    },
+    {
+      "version": 8,
+      "minReaderVersion": 1,
+      "file": "0008-schema-step-8.sql",
+      "sha256": "914525bd869cb374ba947d7e47e72b311630e4dc7471b2737b3fbbeef773734d",
+      "source": "AF-CTR-06 private stage identity and bounded reservation metadata; local author candidate, not approval delivery.",
+      "addedBy": "AF-CTR-06"
     }
   ]
 }

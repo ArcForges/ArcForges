@@ -25,16 +25,16 @@ internal sealed class WorkspacePreservationUnavailableException()
 internal sealed partial class WorkspacePath
 {
     internal WorkspaceGuardedMutationResult ApplyExistingGuardedStage(string path, WorkspaceWriteGuard target,
-        WorkspaceAnonymousStage intended, ReadOnlySpan<byte> expectedSha256, CancellationToken cancellationToken) =>
+        WorkspaceMutationStage intended, ReadOnlySpan<byte> expectedSha256, CancellationToken cancellationToken) =>
         ApplyExistingGuardedStage(path, target, intended, expectedSha256, afterFirstEffect: null, cancellationToken);
 
     // Callback is a test seam for coordinating a real namespace change after the first actual write.
     internal WorkspaceGuardedMutationResult ApplyExistingGuardedStage(string path, WorkspaceWriteGuard target,
-        WorkspaceAnonymousStage intended, ReadOnlySpan<byte> expectedSha256, Action? afterFirstEffect, CancellationToken cancellationToken) =>
+        WorkspaceMutationStage intended, ReadOnlySpan<byte> expectedSha256, Action? afterFirstEffect, CancellationToken cancellationToken) =>
         ApplyExistingGuardedStage(path, target, intended, expectedSha256, afterFirstEffect, beforeEachEffect: null, cancellationToken);
 
     internal WorkspaceGuardedMutationResult ApplyExistingGuardedStage(string path, WorkspaceWriteGuard target,
-        WorkspaceAnonymousStage intended, ReadOnlySpan<byte> expectedSha256, Action? afterFirstEffect, Action? beforeEachEffect,
+        WorkspaceMutationStage intended, ReadOnlySpan<byte> expectedSha256, Action? afterFirstEffect, Action? beforeEachEffect,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(target);
@@ -94,7 +94,7 @@ internal sealed partial class WorkspaceWriteGuard
     /// Reads and hashes the exact still-held stage, checks the original before the first effect, writes/truncates/flushes
     /// this same guarded target handle and rehashes it. Names are checked immediately before and after; no effect uses a name.
     /// </summary>
-    internal WorkspaceGuardedMutationResult ApplyStage(WorkspaceAnonymousStage stage, ReadOnlySpan<byte> expectedSha256,
+    internal WorkspaceGuardedMutationResult ApplyStage(WorkspaceMutationStage stage, ReadOnlySpan<byte> expectedSha256,
         Action checkNames, Action? afterFirstEffect, Action? beforeEachEffect, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(stage);

@@ -130,6 +130,13 @@ internal sealed partial class WorkspaceFileQueries : IDisposable
                 continue;
             }
 
+            if (root.IsPrivateStageFile(metadata.Identity))
+            {
+                if (scan.Value.VisitedEntries == 1)
+                    throw new WorkspaceQueryException("file_access_denied", scan.PartialAudit());
+                continue;
+            }
+
             if (metadata.Kind == WorkspaceEntryType.Directory)
             {
                 var remaining = MaximumEntries - checked((int)scan.Value.VisitedEntries) - pending.Count;
@@ -563,15 +570,16 @@ internal sealed partial class WorkspaceFileQueries : IDisposable
         }
 
         var names = WorkspaceDirectoryEntries.Read(root, path, MaximumEntries, cancellationToken);
-        var entries = new SnapshotEntry[names.Names.Count];
+        var entries = new List<SnapshotEntry>(names.Names.Count);
         long charge = 512;
-        for (var index = 0; index < entries.Length; index++)
+        for (var index = 0; index < names.Names.Count; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var name = names.Names[index];
             var child = path.Length == 0 ? name : path + "/" + name;
             var metadata = root.InspectEntry(child);
-            entries[index] = new SnapshotEntry(name, metadata);
+            if (root.IsPrivateStageFile(metadata.Identity)) continue;
+            entries.Add(new SnapshotEntry(name, metadata));
             // Conservative managed-memory accounting includes record/array/token/name overhead.
             charge = checked(charge + 512 + name.Length * 2 + metadata.Identity.InstanceToken.Length * 2);
             if (charge > MaximumSnapshotBytes)
@@ -586,7 +594,7 @@ internal sealed partial class WorkspaceFileQueries : IDisposable
             throw new WorkspaceQueryException("directory_changed");
         }
 
-        return new DirectoryView(directory, entries, names.Truncated, charge);
+        return new DirectoryView(directory, entries.ToArray(), names.Truncated, charge);
     }
 
     private static bool SameDirectory(DirectoryView first, DirectoryView second)

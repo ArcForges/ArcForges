@@ -2,8 +2,8 @@
 namespace ArcForges.Node.Core.Files;
 
 /// <summary>
-/// In-process reservations for private file staging. A future coordinator must reserve before creating either stage,
-/// retain the lease until its actual handles are disposed, and separately account for any named durable stages on restart.
+/// In-process reservations for private file staging. A coordinator reserves before creating either stage,
+/// retains the lease until its actual handles are disposed, and supplies the committed named-stage usage on restart.
 /// This class neither creates nor disposes a filesystem object and is not an approval or journal implementation.
 /// </summary>
 internal sealed class FileStageBudget
@@ -15,8 +15,10 @@ internal sealed class FileStageBudget
     private int _active;
     private long _bytes;
 
-    internal Lease? TryReserve(long originalBytes, long intendedBytes)
+    internal Lease? TryReserve(long originalBytes, long intendedBytes, int durableMutations = 0, long durableBytes = 0)
     {
+        if (durableMutations is < 0 or > MaximumMutations || durableBytes is < 0 or > MaximumBytes)
+            throw new InvalidDataException("The durable stage budget is inconsistent.");
         if (originalBytes is < 0 or > MaximumFileBytes)
             throw new ArgumentOutOfRangeException(nameof(originalBytes), "Each stage must have a bounded nonnegative length.");
         if (intendedBytes is < 0 or > MaximumFileBytes)
@@ -24,7 +26,8 @@ internal sealed class FileStageBudget
         var charge = checked(originalBytes + intendedBytes);
         lock (_gate)
         {
-            if (_active >= MaximumMutations || charge > MaximumBytes - _bytes) return null;
+            if (_active >= MaximumMutations - durableMutations || _bytes > MaximumBytes - durableBytes ||
+                charge > MaximumBytes - durableBytes - _bytes) return null;
             _active++;
             _bytes += charge;
             return new Lease(this, charge);

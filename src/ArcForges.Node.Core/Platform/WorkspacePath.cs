@@ -283,7 +283,18 @@ internal sealed partial class WorkspacePath : IDisposable
         {
             using var metadata = LinuxOpenAt2(RootHandle, string.Join('/', parts), noCrossMount: true);
             CheckVolume(metadata, _linuxFileSystemUuid);
-            return Retain(_files, LinuxReopenChecked(metadata, directory: false, _linuxFileSystemUuid, afterMetadataOpen));
+            if (_privateStageFiles.Length != 0) RefusePrivateStageFile(LinuxIdentity(metadata, _linuxFileSystemUuid));
+            var reopened = LinuxReopenChecked(metadata, directory: false, _linuxFileSystemUuid, afterMetadataOpen);
+            try
+            {
+                if (_privateStageFiles.Length != 0) RefusePrivateStageFile(Identity(reopened));
+                return Retain(_files, reopened);
+            }
+            catch
+            {
+                reopened.Dispose();
+                throw;
+            }
         }
 
         var parent = RootHandle;
@@ -296,6 +307,7 @@ internal sealed partial class WorkspacePath : IDisposable
         try
         {
             var identity = Identity(file);
+            RefusePrivateStageFile(identity);
             if (!identity.IsFile || identity.Links != 1)
             {
                 throw new WorkspacePathException(identity.Links != 1 ? "file_hard_link" : "file_not_regular");
@@ -327,9 +339,19 @@ internal sealed partial class WorkspacePath : IDisposable
         {
             using var metadata = LinuxOpenAt2(RootHandle, string.Join('/', parts), noCrossMount: true);
             CheckVolume(metadata, _linuxFileSystemUuid);
+            if (_privateStageFiles.Length != 0) RefusePrivateStageFile(LinuxIdentity(metadata, _linuxFileSystemUuid));
             try
             {
                 file = LinuxReopenChecked(metadata, directory: false, _linuxFileSystemUuid, afterMetadataOpen, writable: true);
+                try
+                {
+                    if (_privateStageFiles.Length != 0) RefusePrivateStageFile(Identity(file));
+                }
+                catch
+                {
+                    file.Dispose();
+                    throw;
+                }
             }
             catch (WorkspacePathException exception) when (exception.Reason is "native_11" or "native_26")
             {
@@ -357,6 +379,7 @@ internal sealed partial class WorkspacePath : IDisposable
 
             using var metadata = metadataHandle;
             var before = Identity(metadata);
+            RefusePrivateStageFile(before);
             if (!before.IsFile || before.Links != 1)
             {
                 throw new WorkspacePathException(before.Links != 1 ? "file_hard_link" : "file_not_regular");
@@ -376,6 +399,8 @@ internal sealed partial class WorkspacePath : IDisposable
             {
                 var held = Identity(metadata);
                 var actual = Identity(file);
+                RefusePrivateStageFile(held);
+                RefusePrivateStageFile(actual);
                 if (!held.IsFile || held.Links != 1 || !actual.IsFile || actual.Links != 1 ||
                     !before.SameObject(held) || !held.SameObject(actual))
                 {

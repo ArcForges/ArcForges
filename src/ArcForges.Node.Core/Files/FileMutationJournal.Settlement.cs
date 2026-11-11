@@ -46,6 +46,12 @@ internal static partial class FileMutationJournal
                 throw new ArgumentException("The replacement count must match the original edit request.", nameof(replacements));
         }
 
+        return CompleteCheckedEffect(transaction, row, resultingSize, resultingSha256, replacements);
+    }
+
+    private static byte[] CompleteCheckedEffect(StoreTransaction transaction, JournalRow row, long resultingSize,
+        ReadOnlySpan<byte> resultingSha256, uint? replacements)
+    {
         var result = new FileMutationResult
         {
             CommandId = new Id { Value = ByteString.CopyFrom(row.CommandId) },
@@ -97,6 +103,10 @@ internal static partial class FileMutationJournal
             """, ("$now", transaction.NowMicroseconds), ("$id", row.CommandId)) != 1)
             throw new InvalidOperationException("The file intent changed during settlement.");
         CommandDeduplication.Complete(transaction, row.CommandId, outcome);
+        // A terminal named stage remains retained and charged, but no longer holds the workspace open.
+        if (PrivateStageRegistry.HasSchema(transaction))
+            transaction.Execute("UPDATE file_private_stage_reservation SET active = 0 WHERE command_id = $id AND active = 1;",
+                ("$id", row.CommandId));
         AuditLog.AppendFileWorkspace(transaction, Actor(row), row.Kind == FileOperationKind.Write
             ? "file.write FileService.WriteFile" : "file.edit FileService.EditFile",
             row.WorkspaceId, null, row.Path, PermissionDecision.Allow, "completed", audit);

@@ -37,7 +37,7 @@ internal sealed partial class WorkspacePath
     /// itself is an effect. The intended stage is rehashed and guarded before that effect.
     /// </summary>
     internal WorkspaceCreatedTarget CreateWindowsNewTarget(string path, WorkspaceObjectIdentity preparedParent,
-        WorkspaceAnonymousStage intended, CancellationToken cancellationToken)
+        WorkspaceMutationStage intended, CancellationToken cancellationToken)
     {
         if (!OperatingSystem.IsWindows()) throw new WorkspacePathException("file_guard_unavailable");
         return CreateWindowsNewTarget(path, preparedParent, intended, afterChecks: null, cancellationToken);
@@ -45,11 +45,11 @@ internal sealed partial class WorkspacePath
 
     // The callback coordinates a real competing create in a test-owned directory; production passes null.
     internal WorkspaceCreatedTarget CreateWindowsNewTarget(string path, WorkspaceObjectIdentity preparedParent,
-        WorkspaceAnonymousStage intended, Action? afterChecks, CancellationToken cancellationToken) =>
+        WorkspaceMutationStage intended, Action? afterChecks, CancellationToken cancellationToken) =>
         CreateWindowsNewTarget(path, preparedParent, intended, afterChecks, beforeEffect: null, cancellationToken);
 
     internal unsafe WorkspaceCreatedTarget CreateWindowsNewTarget(string path, WorkspaceObjectIdentity preparedParent,
-        WorkspaceAnonymousStage intended, Action? afterChecks, Action? beforeEffect, CancellationToken cancellationToken)
+        WorkspaceMutationStage intended, Action? afterChecks, Action? beforeEffect, CancellationToken cancellationToken)
     {
         if (!OperatingSystem.IsWindows()) throw new WorkspacePathException("file_guard_unavailable");
         ArgumentNullException.ThrowIfNull(intended);

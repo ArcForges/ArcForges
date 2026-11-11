@@ -248,9 +248,11 @@ internal sealed partial class FileServiceHandler
             lease.Use = _workspaces.OpenForUse(transaction, workspace, beforeUse: selectedTx =>
                 CheckWriteCandidateAuthority(selectedTx, caller), token);
             CheckBudget();
+            var durableStages = PrivateStageRegistry.Usage(transaction);
             if (!request.HasExpectedSha256)
             {
-                lease.Stages = WorkspaceStagePair.TryCreate(lease.Use.Root, _writeStageBudget, original: null, request.Data.Memory, token);
+                lease.Stages = WorkspaceStagePair.TryCreate(lease.Use.Root, _writeStageBudget, original: null, request.Data.Memory, token,
+                    durableStages.Mutations, durableStages.Bytes);
                 if (lease.Stages is null)
                     return Refuse(Error(ErrorCategory.Resource, "enforcement_unavailable", "file_stage_capacity", correlation));
                 var slashAt = path.LastIndexOf('/');
@@ -287,7 +289,11 @@ internal sealed partial class FileServiceHandler
                 ? WorkspaceFileEdit.Plan(original.Bytes.Span, request.ExpectedSha256.Span, request.OldText!, request.NewText!,
                     request.ExpectedOccurrences, token) : null;
             var intended = edit is null ? request.Data.ToByteArray() : edit.Bytes.ToArray();
-            try { lease.Stages = WorkspaceStagePair.TryCreate(lease.Use.Root, _writeStageBudget, original.Bytes, intended, token); }
+            try
+            {
+                lease.Stages = WorkspaceStagePair.TryCreate(lease.Use.Root, _writeStageBudget, original.Bytes, intended, token,
+                durableStages.Mutations, durableStages.Bytes);
+            }
             finally { CryptographicOperations.ZeroMemory(intended); }
             if (lease.Stages is null)
                 return Refuse(Error(ErrorCategory.Resource, "enforcement_unavailable", "file_stage_capacity", correlation));

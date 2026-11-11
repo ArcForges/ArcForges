@@ -271,6 +271,7 @@ internal sealed class RegisteredWorkspaces
                     cancellationToken.ThrowIfCancellationRequested();
                     var row = FindById(transaction, key) ?? throw new RegisteredWorkspaceException("workspace_not_found");
                     root = OpenVerified(row);
+                    root.ProtectPrivateStageFiles(PrivateStageRegistry.LoadIdentities(transaction));
                     cancellationToken.ThrowIfCancellationRequested();
                     beforeUse?.Invoke(transaction);
                     if (transaction.Execute("""
@@ -329,6 +330,7 @@ internal sealed class RegisteredWorkspaces
                 cancellationToken.ThrowIfCancellationRequested();
                 var row = FindById(transaction, key) ?? throw new RegisteredWorkspaceException("workspace_not_found");
                 root = OpenVerified(row);
+                root.ProtectPrivateStageFiles(PrivateStageRegistry.LoadIdentities(transaction));
                 cancellationToken.ThrowIfCancellationRequested();
                 beforeUse?.Invoke(transaction);
                 if (transaction.Execute("""
@@ -426,7 +428,7 @@ internal sealed class RegisteredWorkspaces
             SELECT EXISTS(SELECT 1 FROM task WHERE workspace_id = $id AND state IN (1, 2, 3, 4, 5, 6));
             """, ("$id", id)), System.Globalization.CultureInfo.InvariantCulture) != 0 ||
         (reader.Scalar("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'file_operation_journal';") is not null &&
-            FileMutationJournal.HasWorkspaceHold(reader, id));
+            FileMutationJournal.HasWorkspaceHold(reader, id)) || PrivateStageRegistry.HasWorkspaceHold(reader, id);
 
     internal sealed record LegacyRoot(string Id, string Path, long Revision, int Kind, int State);
 

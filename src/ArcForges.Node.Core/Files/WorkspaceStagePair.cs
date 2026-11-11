@@ -28,12 +28,12 @@ internal sealed class WorkspaceStagePair : IDisposable
 
     /// <summary>Reserves both sizes before creating either native stage. Null means the current in-process budget is exhausted.</summary>
     internal static WorkspaceStagePair? TryCreate(WorkspacePath root, FileStageBudget budget, ReadOnlyMemory<byte>? original,
-        ReadOnlyMemory<byte> intended, CancellationToken cancellationToken)
+        ReadOnlyMemory<byte> intended, CancellationToken cancellationToken, int durableMutations = 0, long durableBytes = 0)
     {
         ArgumentNullException.ThrowIfNull(root);
         ArgumentNullException.ThrowIfNull(budget);
         cancellationToken.ThrowIfCancellationRequested();
-        var reservation = budget.TryReserve(original?.Length ?? 0, intended.Length);
+        var reservation = budget.TryReserve(original?.Length ?? 0, intended.Length, durableMutations, durableBytes);
         if (reservation is null) return null;
         WorkspaceAnonymousStage? before = null;
         WorkspaceAnonymousStage? after = null;

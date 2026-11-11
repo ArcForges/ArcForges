@@ -30,13 +30,13 @@ internal sealed partial class WorkspaceWriteGuard : IDisposable
     private string _closedReason = "file_guard_closed";
 
     private WorkspaceWriteGuard(SafeFileHandle file, WorkspaceObjectIdentity identity, bool linux, bool privateStage,
-        Action<SafeFileHandle>? verifyPrivateSecurity)
+        uint expectedLinks, Action<SafeFileHandle>? verifyPrivateSecurity)
     {
         _file = file;
         _identity = identity;
         _linux = linux;
         _privateStage = privateStage;
-        _expectedLinks = privateStage && linux ? 0u : 1u;
+        _expectedLinks = expectedLinks;
         _verifyPrivateSecurity = verifyPrivateSecurity;
         _started = Stopwatch.GetTimestamp();
         _expiry = new Timer(static state => ((WorkspaceWriteGuard)state!).Expire(), this, Lifetime, Timeout.InfiniteTimeSpan);
@@ -56,13 +56,24 @@ internal sealed partial class WorkspaceWriteGuard : IDisposable
         return Acquire(file, privateStage: true, verifySecurity);
     }
 
-    private static WorkspaceWriteGuard Acquire(SafeFileHandle file, bool privateStage, Action<SafeFileHandle>? verifySecurity = null)
+    /// <summary>Guards a linked Linux private stage and rechecks its actual owner and restrictive mode.</summary>
+    internal static WorkspaceWriteGuard AcquireLinuxNamedPrivateStage(SafeFileHandle file, Action<SafeFileHandle> verifySecurity)
+    {
+        if (!OperatingSystem.IsLinux()) throw new WorkspacePathException("file_guard_unavailable");
+        ArgumentNullException.ThrowIfNull(verifySecurity);
+        return Acquire(file, privateStage: true, verifySecurity, expectedLinks: 1);
+    }
+
+    private static WorkspaceWriteGuard Acquire(SafeFileHandle file, bool privateStage, Action<SafeFileHandle>? verifySecurity = null,
+        uint? expectedLinks = null)
     {
         ArgumentNullException.ThrowIfNull(file);
         var identity = WorkspacePath.Identity(file);
         var linux = OperatingSystem.IsLinux();
-        if (!identity.IsFile || identity.Links != (privateStage && linux ? 0u : 1u) ||
-            privateStage && (linux ? (identity.Mode & 0x3f) != 0 : !OperatingSystem.IsWindows() || verifySecurity is null))
+        var links = expectedLinks ?? (privateStage && linux ? 0u : 1u);
+        if (!identity.IsFile || identity.Links != links ||
+            privateStage && (linux ? (identity.Mode & 0x3f) != 0 || links == 1 && verifySecurity is null
+                : !OperatingSystem.IsWindows() || verifySecurity is null))
         {
             throw new WorkspacePathException("file_identity_changed");
         }
@@ -91,7 +102,7 @@ internal sealed partial class WorkspaceWriteGuard : IDisposable
             throw new WorkspacePathException("file_guard_unavailable");
         }
 
-        var guard = new WorkspaceWriteGuard(file, identity, linux, privateStage, verifySecurity);
+        var guard = new WorkspaceWriteGuard(file, identity, linux, privateStage, links, verifySecurity);
         try
         {
             if (linux)
@@ -190,7 +201,7 @@ internal sealed partial class WorkspaceWriteGuard : IDisposable
     {
         lock (_sync)
         {
-            if (!_privateStage || !_linux) throw new InvalidOperationException("Not a Linux anonymous stage.");
+            if (!_privateStage || !_linux || _expectedLinks != 0) throw new InvalidOperationException("Not a Linux anonymous stage.");
             CheckLocked();
             return checked((int)_file!.DangerousGetHandle());
         }
