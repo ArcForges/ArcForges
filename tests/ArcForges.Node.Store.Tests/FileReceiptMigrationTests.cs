@@ -160,7 +160,8 @@ public sealed class FileReceiptMigrationTests
         {
             using var root = new TemporaryDataRoot();
             var clock = new ManualClock();
-            using var store = root.Open(clock);
+            // Exercise the historical schema-3 identity/release mechanics without granting early production retention.
+            using var store = root.Open(clock, new MigrationPlan(StoreMigrations.Released.Steps.Take(5)));
             store.Write(t => t.Execute("PRAGMA recursive_triggers = " + (recursive ? "ON" : "OFF") + ";"));
             foreach (var first in new[] { "routed_call_log", "routed_file_call_log" })
             {
@@ -200,7 +201,8 @@ public sealed class FileReceiptMigrationTests
         {
             using var root = new TemporaryDataRoot();
             var clock = new ManualClock();
-            using var store = root.Open(clock);
+            // Exercise the historical schema-3 identity/release mechanics without granting early production retention.
+            using var store = root.Open(clock, new MigrationPlan(StoreMigrations.Released.Steps.Take(5)));
             store.Write(t => t.Execute("PRAGMA recursive_triggers = " + (recursive ? "ON" : "OFF") + ";"));
             foreach (var table in new[] { "routed_call_log", "routed_file_call_log" })
             {
@@ -296,7 +298,8 @@ public sealed class FileReceiptMigrationTests
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         using var root = new TemporaryDataRoot();
         var clock = new ManualClock();
-        using var store = root.Open(clock);
+        // Exercise the historical schema-3 identity/release mechanics without granting early production retention.
+        using var store = root.Open(clock, new MigrationPlan(StoreMigrations.Released.Steps.Take(5)));
         foreach (var table in new[] { "routed_call_log", "routed_file_call_log" })
         {
             var id = StoreIds.NewUuid7(clock);

@@ -286,7 +286,7 @@ internal sealed partial class FileServiceHandler(NodeRuntime node) : IDisposable
                 throw new FilePolicyException("denied");
             }
 
-            caller.Routed.BeforeEffect();
+            caller.Routed.BeforeEffect(reader);
         }
         catch (FilePolicyException)
         {

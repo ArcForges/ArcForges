@@ -20,12 +20,15 @@ public enum CommitDurability
 /// </summary>
 public class StoreReader
 {
-    internal StoreReader(SqliteConnection connection, SqliteTransaction? transaction, TimeProvider clock)
+    internal StoreReader(SqliteConnection connection, SqliteTransaction? transaction, TimeProvider clock, RoutedFileRetentionProcess? fileRetention = null)
     {
         Connection = connection;
         Transaction = transaction;
         Clock = clock;
+        FileRetention = fileRetention;
     }
+
+    internal RoutedFileRetentionProcess? FileRetention { get; }
 
     /// <summary>The store's clock.</summary>
     public TimeProvider Clock { get; }
@@ -78,8 +81,9 @@ public class StoreReader
 /// <summary>One write transaction of the single writer (node-store.md section 1).</summary>
 public sealed class StoreTransaction : StoreReader
 {
-    internal StoreTransaction(SqliteConnection connection, SqliteTransaction transaction, TimeProvider clock, CommitDurability durability)
-        : base(connection, transaction, clock) => Durability = durability;
+    internal StoreTransaction(SqliteConnection connection, SqliteTransaction transaction, TimeProvider clock, CommitDurability durability,
+        RoutedFileRetentionProcess? fileRetention = null)
+        : base(connection, transaction, clock, fileRetention) => Durability = durability;
 
     /// <summary>How this transaction commits.</summary>
     public CommitDurability Durability { get; }

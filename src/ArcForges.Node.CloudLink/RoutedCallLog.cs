@@ -7,7 +7,7 @@ namespace ArcForges.Node.CloudLink;
 internal interface IRoutedCallStore
 {
     /// <summary>Runs <paramref name="write"/> in one store transaction of the single writer and returns its result after the commit.</summary>
-    Task<long> WriteAsync(Func<StoreTransaction, long> write);
+    Task<long> WriteAsync(Func<StoreTransaction, long> write, CommitDurability durability = CommitDurability.Normal);
 }
 
 /// <summary>The final decision of a verified call (node-store.md section 2a, <c>routed_call_log.decision</c>).</summary>
@@ -109,11 +109,34 @@ internal sealed class RoutedCallLog(IRoutedCallStore store, TimeProvider clock)
                   VALUES ($at, $frame, 5, $call, $kid, $method, $caller, $command, $request, $size)
                   RETURNING log_id;
                   """;
-            return (long)transaction.Scalar(sql, ("$at", now), ("$frame", row.FrameSha256), ("$call", row.CallId), ("$kid", row.Kid),
+            var logId = (long)transaction.Scalar(sql, ("$at", now), ("$frame", row.FrameSha256), ("$call", row.CallId), ("$kid", row.Kid),
                 ("$method", row.Method), ("$caller", row.Caller), ("$command", (object?)row.CommandId ?? DBNull.Value),
                 ("$request", row.RequestSha256), ("$size", row.RequestSize))!;
-        }).ConfigureAwait(false);
+            if (row.Method is >= 9 and <= 20)
+            {
+                RoutedFileRetention.MarkCall(transaction, logId);
+            }
+
+            return logId;
+        }, row.Method is >= 9 and <= 20 ? CommitDurability.Full : CommitDurability.Normal).ConfigureAwait(false);
         return id == 0 ? null : id;
+    }
+
+    /// <summary>Advances the durable file validation floor; an unhealthy clock records a bounded, unsigned refusal and returns no result.</summary>
+    public Task<long> ObserveFileTimeAsync(byte[] frameSha256)
+    {
+        ArgumentNullException.ThrowIfNull(frameSha256);
+        return store.WriteAsync(transaction =>
+        {
+            var sample = RoutedFileValidationTime.Advance(transaction);
+            if (!sample.Healthy)
+            {
+                InsertRefusal(transaction, StoreTime.NowMicroseconds(clock), frameSha256, "clock_unavailable", "INTERNAL/internal");
+                return long.MinValue;
+            }
+
+            return sample.BoundaryMicroseconds;
+        }, CommitDurability.Full);
     }
 
     /// <summary>Records a frame refused at verification: its digest, the failed step and <c>CATEGORY/code</c>; nothing it names.</summary>
@@ -195,9 +218,9 @@ internal sealed class RoutedCallLog(IRoutedCallStore store, TimeProvider clock)
 internal sealed class ProcessorRoutedCallStore(ArcForges.Node.Core.CommandProcessor processor) : IRoutedCallStore
 {
     /// <inheritdoc />
-    public Task<long> WriteAsync(Func<StoreTransaction, long> write)
+    public Task<long> WriteAsync(Func<StoreTransaction, long> write, CommitDurability durability = CommitDurability.Normal)
     {
         ArgumentNullException.ThrowIfNull(write);
-        return processor.ExecuteAsync(context => write(context.Transaction));
+        return processor.ExecuteAsync(context => write(context.Transaction), durability);
     }
 }

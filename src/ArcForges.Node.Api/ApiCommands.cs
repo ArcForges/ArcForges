@@ -526,7 +526,7 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
         {
             command.Parameters.AddWithValue("$id", id.Value.ToByteArray());
             using var row = command.ExecuteReader();
-            recorded = row.Read() && row.GetInt64(3) > reader.NowMicroseconds && !row.IsDBNull(2) && row.GetString(0) == method
+            recorded = row.Read() && (row.GetInt64(3) > reader.NowMicroseconds || RoutedFileRetention.IsHeld(reader, id.Value.Span)) && !row.IsDBNull(2) && row.GetString(0) == method
                 && ((byte[])row.GetValue(1)).AsSpan().SequenceEqual(digest);
         }
 

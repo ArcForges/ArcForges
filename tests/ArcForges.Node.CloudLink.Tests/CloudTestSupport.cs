@@ -482,5 +482,6 @@ internal static class Eventually
 internal sealed class DirectRoutedCallStore(NodeStore store) : IRoutedCallStore
 {
     /// <inheritdoc />
-    public Task<long> WriteAsync(Func<StoreTransaction, long> write) => Task.FromResult(store.Write(write));
+    public Task<long> WriteAsync(Func<StoreTransaction, long> write, CommitDurability durability = CommitDurability.Normal) =>
+        Task.FromResult(store.Write(write, durability));
 }

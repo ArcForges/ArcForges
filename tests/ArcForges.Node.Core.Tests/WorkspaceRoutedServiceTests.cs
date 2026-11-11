@@ -80,6 +80,11 @@ public sealed class WorkspaceRoutedServiceTests
         Assert.NotNull(registered.Audit);
         var id = registered.Value.Workspace.WorkspaceId;
         Assert.Equal(id.Value.ToByteArray(), first.Answer.WorkspaceId);
+        Assert.Equal(1L, node.Runtime.Store.Read(reader => reader.Scalar("""
+            SELECT count(*) FROM audit_log a JOIN routed_file_audit_retention h ON h.audit_seq = a.seq
+            WHERE a.target_kind = 'routed_command_owner' AND a.remote_command_id = $id
+              AND length(h.process_epoch) = 16 AND h.monotonic_start IS NOT NULL AND h.delete_permitted = 0;
+            """, ("$id", meta.CommandId.Value.ToByteArray()))));
         foreach (var origin in RefusedOrigins)
         {
             var deniedRemove = new WorkspaceServiceUnregisterWorkspaceRequest { Meta = Tasks.Meta(), WorkspaceId = id };

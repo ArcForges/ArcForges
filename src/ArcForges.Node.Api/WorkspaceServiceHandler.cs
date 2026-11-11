@@ -408,7 +408,7 @@ internal sealed class WorkspaceServiceHandler(NodeRuntime node) : IDisposable
                 throw new WorkspacePolicyException("denied");
             }
 
-            caller.Routed.BeforeEffect();
+            caller.Routed.BeforeEffect(reader);
         }
         catch (WorkspacePolicyException)
         {

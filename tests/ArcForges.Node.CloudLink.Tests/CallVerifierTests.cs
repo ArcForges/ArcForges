@@ -359,6 +359,7 @@ public sealed class CallVerifierTests
 
     private sealed class ThrowingStore : IRoutedCallStore
     {
-        public Task<long> WriteAsync(Func<ArcForges.Node.Store.StoreTransaction, long> write) => throw new InvalidOperationException("No write in this test.");
+        public Task<long> WriteAsync(Func<ArcForges.Node.Store.StoreTransaction, long> write,
+            ArcForges.Node.Store.CommitDurability durability = ArcForges.Node.Store.CommitDurability.Normal) => throw new InvalidOperationException("No write in this test.");
     }
 }

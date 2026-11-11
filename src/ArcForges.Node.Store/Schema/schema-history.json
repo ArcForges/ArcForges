@@ -45,6 +45,14 @@
       "sha256": "6c079237df3d11351bbc61145ff7b705b1db75160066b38a4ee6c1be81cc7363",
       "source": "AF-CTR-06 implementation of 06a section 1 invalidated workspace catalogue cursors; additive triggers include compatible older writers.",
       "addedBy": "AF-CTR-06"
+    },
+    {
+      "version": 6,
+      "minReaderVersion": 1,
+      "file": "0006-schema-step-6.sql",
+      "sha256": "b6ed828c2608c530ee2e1d6527253f54fb44570bd00bf8489d9e0944d72ad5ea",
+      "source": "AF-CTR-06 implementation of 06a section 6 persistent validation time and retention safety; local author candidate.",
+      "addedBy": "AF-CTR-06"
     }
   ]
 }

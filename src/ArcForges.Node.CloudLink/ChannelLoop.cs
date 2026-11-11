@@ -807,7 +807,14 @@ internal sealed class ChannelLoop : IAsyncDisposable
                 return;
             }
 
-            verified = verified! with { ReceivedAt = receivedAt };
+            if (verified is null)
+            {
+                // A file/workspace validation clock discontinuity was durably audited. Do not sign an invented outcome.
+                _nodeLog.Warning("cloud.channel.call_dropped", new LogField("step", "clock_unavailable"));
+                return;
+            }
+
+            verified = verified with { ReceivedAt = receivedAt };
 
             // Decisions B-3 (N1 review A C-N1, B N-12): the verification may have waited on a key refresh, so the link's state is read again
             // after it and immediately before the dispatch; a link switched off, signed out or ending drops the call (its row stays pending:

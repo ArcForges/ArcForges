@@ -655,7 +655,7 @@ public static class NodeHost
                     var removed = await node.Processor.ExecuteAsync(context =>
                         EventJournal.Prune(context.Transaction) + Notifications.Prune(context.Transaction) + Jobs.Prune(context.Transaction)
                         + Approvals.Expire(context) + Approvals.Prune(context.Transaction) + AuditLog.Prune(context.Transaction)
-                        + RoutedCallLog.Prune(context.Transaction)).ConfigureAwait(false);
+                        + RoutedCallLog.Prune(context.Transaction) + RoutedFileRetention.Prune(context.Transaction), CommitDurability.Full).ConfigureAwait(false);
                     var commands = node.Store.Commands.PurgeExpired();
 
                     // Sealed secret values past storage.secret_retention_hours (04 section 2) and kept temporary directories of failed attempts.

@@ -112,6 +112,7 @@ public sealed class NodeStore : IDisposable
     private readonly Lock _writerGate = new();
     private readonly SqliteConnection _writer;
     private readonly TimeProvider _clock;
+    private readonly RoutedFileRetentionProcess? _fileRetention;
     private bool _writing;
     private bool _disposed;
 
@@ -122,6 +123,7 @@ public sealed class NodeStore : IDisposable
         _writer = writer;
         _clock = clock;
         Metadata = metadata;
+        _fileRetention = metadata.SchemaVersion >= 6 ? new RoutedFileRetentionProcess(_clock) : null;
         Opening = opening;
         Commands = new CommandDeduplication(this);
         Environments = new EnvSnapshots(this);
@@ -258,7 +260,7 @@ public sealed class NodeStore : IDisposable
             try
             {
                 T result = default!;
-                InTransaction(_writer, durability, transaction => result = action(new StoreTransaction(_writer, transaction, _clock, durability)));
+                InTransaction(_writer, durability, transaction => result = action(new StoreTransaction(_writer, transaction, _clock, durability, _fileRetention)));
                 return result;
             }
             finally
@@ -289,7 +291,7 @@ public sealed class NodeStore : IDisposable
         Pragma(connection, string.Create(CultureInfo.InvariantCulture, $"PRAGMA busy_timeout={BusyTimeoutMilliseconds};"));
         Pragma(connection, "PRAGMA query_only=ON;");
         using var transaction = connection.BeginTransaction(deferred: true);
-        var result = action(new StoreReader(connection, transaction, _clock));
+        var result = action(new StoreReader(connection, transaction, _clock, _fileRetention));
         transaction.Commit();
         return result;
     }

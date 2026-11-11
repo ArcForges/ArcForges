@@ -12,6 +12,7 @@ public sealed class WorkspaceInventoryMigrationTests
         using var root = new TemporaryDataRoot();
         var clock = new ManualClock();
         var oldPlan = new MigrationPlan(StoreMigrations.Released.Steps.Take(4));
+        var stepFive = new MigrationPlan(StoreMigrations.Released.Steps.Take(5));
         byte[] id = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
         using (var old = root.Open(clock, oldPlan))
         {
@@ -21,7 +22,7 @@ public sealed class WorkspaceInventoryMigrationTests
                 """, ("$id", id)));
         }
 
-        using (var current = root.Open(clock))
+        using (var current = root.Open(clock, stepFive))
         {
             Assert.Equal(4, current.Opening.MigratedFrom);
             Assert.Equal(5, current.Metadata.SchemaVersion);
@@ -42,7 +43,7 @@ public sealed class WorkspaceInventoryMigrationTests
             older.Write(transaction => transaction.Execute("UPDATE workspace SET state = 3 WHERE workspace_id = $id;", ("$id", id)));
         }
 
-        using var reopened = root.Open(clock);
+        using var reopened = root.Open(clock, stepFive);
         Assert.Equal(2L, reopened.Read(reader => reader.Scalar("SELECT revision FROM workspace_inventory_revision WHERE singleton = 1;")));
         Assert.Equal(3L, reopened.Read(reader => reader.Scalar("SELECT state FROM workspace WHERE workspace_id = $id;", ("$id", id))));
     }

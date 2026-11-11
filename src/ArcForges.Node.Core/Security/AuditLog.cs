@@ -79,6 +79,7 @@ public static class AuditLog
             INSERT INTO file_workspace_audit (audit_seq, workspace_id, attempt_id, path)
             VALUES ($seq, $workspace, $attempt, $path);
             """, ("$seq", seq), ("$workspace", workspaceId), ("$attempt", attemptId), ("$path", path));
+        RoutedFileRetention.MarkAudit(transaction, seq);
         if (observations is not null)
         {
             foreach (var item in observations)

@@ -24,6 +24,9 @@ internal enum RoutedAbort
 
     /// <summary>Past <c>expires_at</c> plus the 120 s skew (Plan PN-15): answered EXPIRED (decision 4).</summary>
     Expired,
+
+    /// <summary>The file/workspace wall and monotonic clocks do not establish a safe validation time.</summary>
+    ClockUncertain,
 }
 
 /// <summary>Thrown inside a routed call's effect transaction when <see cref="RoutedContext.BeforeEffect"/> fails: nothing is stored.</summary>
@@ -57,7 +60,7 @@ internal sealed class RoutedAbortException : Exception
 /// The context of one center-routed call on its way through a TaskService body (AF-CTR-05 N2b): the link it arrived on, its expiry, its
 /// wait budget on the local monotonic clock, and the closed operation and reason of a refusal the body made (the dispatcher signs it).
 /// </summary>
-internal sealed class RoutedContext(IRoutedLink link, NodeLifecycle lifecycle, DateTimeOffset expiresAt, TimeSpan lifetime, TimeProvider clock, long receivedAt, Id callId)
+internal sealed class RoutedContext(IRoutedLink link, NodeLifecycle lifecycle, DateTimeOffset expiresAt, TimeSpan lifetime, TimeProvider clock, long receivedAt, Id callId, bool fileWorkspace)
 {
     /// <summary>The margin a routed answer keeps before the call's deadline.</summary>
     public static readonly TimeSpan Margin = TimeSpan.FromSeconds(1);
@@ -125,9 +128,33 @@ internal sealed class RoutedContext(IRoutedLink link, NodeLifecycle lifecycle, D
     }
 
     /// <summary>Also requires a still-valid expiry immediately before a new effect.</summary>
-    public void BeforeEffect()
+    public void BeforeEffect() => BeforeEffect(null);
+
+    /// <summary>Rechecks file/workspace time against the store snapshot or its FULL effect transaction.</summary>
+    public void BeforeEffect(StoreReader? reader)
     {
         BeforeReplay();
+        if (fileWorkspace)
+        {
+            if (reader is null)
+            {
+                throw new RoutedAbortException(RoutedAbort.ClockUncertain);
+            }
+
+            var sample = reader is StoreTransaction { Durability: CommitDurability.Full } transaction
+                ? RoutedFileValidationTime.Advance(transaction) : RoutedFileValidationTime.Sample(reader);
+            if (!sample.Healthy)
+            {
+                throw new RoutedAbortException(RoutedAbort.ClockUncertain);
+            }
+
+            if (!CallVerifier.StillValid(expiresAt, StoreTime.FromMicroseconds(sample.BoundaryMicroseconds)))
+            {
+                throw new RoutedAbortException(RoutedAbort.Expired);
+            }
+            return;
+        }
+
         if (!CallVerifier.StillValid(expiresAt, clock.GetUtcNow()))
         {
             throw new RoutedAbortException(RoutedAbort.Expired);
@@ -305,6 +332,71 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
             return ExecutedHere(method, meta, NodeErrors.NodeStopping(node.Clock.GetUtcNow()), TaskIdOf(request), risk);
         }
 
+        var expires = ProtoTime.ToDateTimeOffset(header.ExpiresAt)!.Value;
+        var lifetime = ProtoTime.ToDateTimeOffset(header.Deadline)!.Value - ProtoTime.ToDateTimeOffset(header.IssuedAt)!.Value;
+        var context = new RoutedContext(link, node.Lifecycle, expires, lifetime, node.Clock,
+            call.ReceivedAt ?? node.Clock.GetTimestamp(), header.CallId, IsFileWorkspace(method));
+
+        async Task<RoutedAnswer?> FileTimeAbortAsync(RoutedAbortException abort)
+        {
+            if (abort.Kind is not (RoutedAbort.ClockUncertain or RoutedAbort.Expired) || !link.Usable)
+            {
+                return null;
+            }
+
+            Task<RoutedFileTimeSample>? pending = null;
+            try
+            {
+                // Commit the observed boundary and the content-free refusal before any verified refusal is sent.
+                pending = node.Processor.ExecuteAsync(command =>
+                {
+                    var sample = RoutedFileValidationTime.Advance(command.Transaction);
+                    AuditLog.AppendFileWorkspace(command.Transaction, actor, operation + " routed.time", WorkspaceIdOf(request), null,
+                        AuditPathOf(request), PermissionDecision.Deny, abort.Kind == RoutedAbort.Expired ? "refused: expired_before_effect" : "refused: clock_unavailable", null);
+                    return sample;
+                }, CommitDurability.Full);
+                var remaining = context.RemainingFileOperation();
+                if (remaining <= TimeSpan.Zero)
+                {
+                    _ = pending.ContinueWith(static task => _ = task.Exception, CancellationToken.None,
+                        TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+                    return null;
+                }
+
+                var sample = await pending.WaitAsync(remaining, cancellationToken).ConfigureAwait(false);
+                if (!sample.Healthy || abort.Kind != RoutedAbort.Expired ||
+                    CallVerifier.StillValid(expires, StoreTime.FromMicroseconds(sample.BoundaryMicroseconds)) || !link.Usable)
+                {
+                    return null;
+                }
+
+                return new RoutedAnswer(RoutedOutcome.Expired, null, RoutedRefusals.ExpiredBeforeEffect(RoutedFileErrors.Correlation(meta, header.CallId)),
+                    TaskIdOf(request), risk, WorkspaceId: WorkspaceIdOf(request));
+            }
+            catch (Exception exception) when (exception is not OutOfMemoryException)
+            {
+                // No verified reply is sent if the clock/audit transaction cannot be established in time.
+                if (pending is not null)
+                {
+                    _ = pending.ContinueWith(static task => _ = task.Exception, CancellationToken.None,
+                        TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+                }
+                return null;
+            }
+        }
+
+        if (IsFileWorkspace(method))
+        {
+            try
+            {
+                node.Store.Read(reader => { context.BeforeEffect(reader); return 0; });
+            }
+            catch (RoutedAbortException abort)
+            {
+                return await FileTimeAbortAsync(abort).ConfigureAwait(false);
+            }
+        }
+
         var raw = call.Payload.ToByteArray();
         var digest = PayloadDigest.Compute(raw);
         var key = mutation ? Convert.ToHexString(header.CommandId!.Value.Span) : null;
@@ -347,21 +439,16 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
             }
         }
 
-        var expires = ProtoTime.ToDateTimeOffset(header.ExpiresAt)!.Value;
         if (!CallVerifier.StillValid(expires, node.Clock.GetUtcNow()))
         {
             if (IsFileWorkspace(method))
             {
-                await WriteRefusalAuditAsync(actor, method, operation, "expired_before_effect", PermissionDecision.Deny, null, null,
-                    workspaceId: WorkspaceIdOf(request), path: AuditPathOf(request)).ConfigureAwait(false);
+                return await FileTimeAbortAsync(new RoutedAbortException(RoutedAbort.Expired)).ConfigureAwait(false);
             }
 
-            return new RoutedAnswer(RoutedOutcome.Expired, null, RoutedRefusals.ExpiredBeforeEffect(IsFileWorkspace(method) ? RoutedFileErrors.Correlation(meta, header.CallId) : Correlation()), TaskIdOf(request), risk,
+            return new RoutedAnswer(RoutedOutcome.Expired, null, RoutedRefusals.ExpiredBeforeEffect(Correlation()), TaskIdOf(request), risk,
                 WorkspaceId: WorkspaceIdOf(request));
         }
-
-        var lifetime = ProtoTime.ToDateTimeOffset(header.Deadline)!.Value - ProtoTime.ToDateTimeOffset(header.IssuedAt)!.Value;
-        var context = new RoutedContext(link, node.Lifecycle, expires, lifetime, node.Clock, call.ReceivedAt ?? node.Clock.GetTimestamp(), header.CallId);
         var caller = new Caller(Origin.Remote, ClientKind.Unspecified, null, centerCaller: center.Clone())
         {
             CellsOrigin = CenterRouting.CellsOrigin(center, node.NodeId.Span),
@@ -425,6 +512,11 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
         }
         catch (RoutedAbortException abort)
         {
+            if (IsFileWorkspace(method) && abort.Kind is RoutedAbort.ClockUncertain or RoutedAbort.Expired)
+            {
+                return await FileTimeAbortAsync(abort).ConfigureAwait(false);
+            }
+
             return abort.Kind switch
             {
                 RoutedAbort.Dropped => null,
@@ -476,7 +568,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
         {
             command.Parameters.AddWithValue("$id", id);
             using var row = command.ExecuteReader();
-            if (row.Read() && row.GetInt64(3) > reader.NowMicroseconds && !row.IsDBNull(2) && row.GetString(0) == service + "/" + method
+            if (row.Read() && (row.GetInt64(3) > reader.NowMicroseconds || RoutedFileRetention.IsHeld(reader, id)) && !row.IsDBNull(2) && row.GetString(0) == service + "/" + method
                 && ((byte[])row.GetValue(1)).AsSpan().SequenceEqual(digest))
             {
                 outcome = (byte[])row.GetValue(2);
