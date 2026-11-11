@@ -93,7 +93,7 @@ internal static class RelaySignatures
         ArgumentNullException.ThrowIfNull(center);
         var method = assertion.HasMethod ? (int)assertion.Method : 0;
         var origin = assertion.HasLocalOrigin ? (int)assertion.LocalOrigin : 0;
-        if ((method is < 1 or > 9) && (method is < 17 or > 20) || origin is < 1 or > 3)
+        if ((method is < 1 or > 9) && method is not (12 or 13) && (method is < 17 or > 20) || origin is < 1 or > 3)
         {
             return null;
         }

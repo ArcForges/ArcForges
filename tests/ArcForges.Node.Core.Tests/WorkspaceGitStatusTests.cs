@@ -186,6 +186,9 @@ public sealed class WorkspaceGitStatusTests
         await fixture.GitAsync(["config", "--local", "filter.synthetic.clean", command], ct);
         await fixture.GitAsync(["config", "--local", "filter.synthetic.required", "true"], ct);
         File.WriteAllText(Path.Combine(fixture.Root, ".gitattributes"), "file filter=synthetic\n");
+        // The preceding fsmonitor status can mark the unchanged file clean in the index. Change it so the
+        // native Git oracle must actually run the configured clean filter when staging this file.
+        File.AppendAllText(Path.Combine(fixture.Root, "file"), "changed\n");
         await fixture.GitAsync(["add", "file"], ct);
         Assert.True(File.Exists(marker)); // The test Git oracle really invokes this configured clean filter.
         File.Delete(marker);
@@ -277,8 +280,10 @@ public sealed class WorkspaceGitStatusTests
         File.WriteAllText(Path.Combine(fixture.Root, "file"), "content\n");
         await fixture.GitAsync(["add", "file"], ct);
         await fixture.GitAsync(["commit", "-qm", "initial"], ct);
-        var head = Path.Combine(fixture.Root, ".git", "HEAD");
-        var original = File.ReadAllBytes(head);
+        // Windows opens HEAD without write sharing, so mutate already-observed config after that handle closes;
+        // on Linux also exercise an actual concurrent change to the HEAD handle currently being read.
+        var observed = Path.Combine(fixture.Root, ".git", OperatingSystem.IsWindows() ? "config" : "HEAD");
+        var original = File.ReadAllBytes(observed);
         var changed = false;
         var sources = IsolatedSources with
         {
@@ -286,7 +291,15 @@ public sealed class WorkspaceGitStatusTests
         {
             if (path == ".git/HEAD" && !changed)
             {
-                File.WriteAllText(head, "ref: refs/heads/substituted\n");
+                if (OperatingSystem.IsWindows())
+                {
+                    File.AppendAllText(observed, "\n# changed after observation\n");
+                }
+                else
+                {
+                    File.WriteAllText(observed, "ref: refs/heads/substituted\n");
+                }
+
                 changed = true;
             }
         }
@@ -296,7 +309,7 @@ public sealed class WorkspaceGitStatusTests
         Assert.True(changed);
         Assert.Equal(GitStatusQuality.Unknown, result!.Quality);
         Assert.False(result.HasDirty);
-        File.WriteAllBytes(head, original);
+        File.WriteAllBytes(observed, original);
         await CompareAsync(fixture, root, ct);
     }
 
@@ -310,6 +323,27 @@ public sealed class WorkspaceGitStatusTests
         using var cancelled = new CancellationTokenSource();
         cancelled.Cancel();
         await Assert.ThrowsAsync<OperationCanceledException>(() => WorkspaceGitStatus.ObserveAsync(root, IsolatedSources, cancelled.Token));
+    }
+
+    [Fact]
+    public void FixtureCleanupHandlesReadOnlyFilesOnlyWithinItsOwnRoot()
+    {
+        using var other = new Repository();
+        var outside = Path.Combine(other.Root, "outside");
+        File.WriteAllText(outside, "outside");
+        File.SetAttributes(outside, File.GetAttributes(outside) | FileAttributes.ReadOnly);
+        using var fixture = new Repository();
+        var path = Path.Combine(fixture.Root, "read-only");
+        File.WriteAllText(path, "test-owned");
+        File.SetAttributes(path, File.GetAttributes(path) | FileAttributes.ReadOnly);
+        var root = fixture.Directory;
+
+        fixture.Dispose();
+
+        Assert.False(System.IO.Directory.Exists(root));
+        Assert.True(File.Exists(outside));
+        Assert.True((File.GetAttributes(outside) & FileAttributes.ReadOnly) != 0);
+        Assert.Equal("outside", File.ReadAllText(outside));
     }
 
     private static async Task CompareAsync(Repository fixture, WorkspacePath root, CancellationToken token)
@@ -408,6 +442,54 @@ public sealed class WorkspaceGitStatusTests
             return executable!;
         }
 
-        public void Dispose() => _directory.Delete(recursive: true);
+        public void Dispose()
+        {
+            var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(_directory.FullName));
+            var temp = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath()));
+            var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            if (!string.Equals(Path.GetDirectoryName(root), temp, comparison) ||
+                !Path.GetFileName(root).StartsWith("arcforges-git-status-", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException("Refusing to clean a directory outside this test fixture.");
+            }
+
+            if (!System.IO.Directory.Exists(root))
+            {
+                return;
+            }
+
+            if ((File.GetAttributes(root) & FileAttributes.ReparsePoint) != 0)
+            {
+                throw new InvalidOperationException("Refusing to clean a replaced test fixture.");
+            }
+
+            if (OperatingSystem.IsWindows())
+            {
+                // Git creates read-only objects. Only clear that bit on actual files in this owned root;
+                // do not traverse reparse points or change a similarly named file outside the fixture.
+                var options = new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint };
+                foreach (var file in System.IO.Directory.EnumerateFiles(root, "*", options))
+                {
+                    var full = Path.GetFullPath(file);
+                    if (!full.StartsWith(root + Path.DirectorySeparatorChar, comparison))
+                    {
+                        throw new InvalidOperationException("Refusing to change a file outside this test fixture.");
+                    }
+
+                    var attributes = File.GetAttributes(full);
+                    if ((attributes & FileAttributes.ReparsePoint) != 0)
+                    {
+                        throw new InvalidOperationException("Refusing to change a reparse point.");
+                    }
+
+                    if ((attributes & FileAttributes.ReadOnly) != 0)
+                    {
+                        File.SetAttributes(full, attributes & ~FileAttributes.ReadOnly);
+                    }
+                }
+            }
+
+            System.IO.Directory.Delete(root, recursive: true);
+        }
     }
 }

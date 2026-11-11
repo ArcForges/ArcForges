@@ -37,6 +37,14 @@
       "sha256": "0fccd9e85fdfe3bd44fb7a1923aeda1da312204b1288fe194aeeb9dc95c618bc",
       "source": "AF-CTR-06 implementation of 06a section 6 metadata-only audit; Design data-schema companion pending independent review.",
       "addedBy": "AF-CTR-06"
+    },
+    {
+      "version": 5,
+      "minReaderVersion": 1,
+      "file": "0005-schema-step-5.sql",
+      "sha256": "6c079237df3d11351bbc61145ff7b705b1db75160066b38a4ee6c1be81cc7363",
+      "source": "AF-CTR-06 implementation of 06a section 1 invalidated workspace catalogue cursors; additive triggers include compatible older writers.",
+      "addedBy": "AF-CTR-06"
     }
   ]
 }

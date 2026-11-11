@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Security.Cryptography;
+using System.Text;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
@@ -19,10 +20,14 @@ namespace ArcForges.Node.Api;
 /// Target-node workspace operations for already verified center callers. Mutations and their exact response, requester
 /// ownership and content-free audit share the node's FULL SQLite transaction. This class is not a local submission endpoint.
 /// </summary>
-internal sealed class WorkspaceServiceHandler(NodeRuntime node)
+internal sealed class WorkspaceServiceHandler(NodeRuntime node) : IDisposable
 {
     private const string Service = "arcforges.node.v1.WorkspaceService";
+    private static readonly UTF8Encoding StrictUtf8 = new(false, true);
     private readonly RegisteredWorkspaces _workspaces = new(node.Store);
+    private readonly byte[] _pageKey = RandomNumberGenerator.GetBytes(32);
+
+    public void Dispose() => CryptographicOperations.ZeroMemory(_pageKey);
 
     // A test may coordinate real policy changes after preparation; production never sets this callback.
     internal Func<CancellationToken, Task>? AfterPrepareForTests { get; set; }
@@ -38,6 +43,39 @@ internal sealed class WorkspaceServiceHandler(NodeRuntime node)
         {
             meta.CorrelationId = responseRouting.Correlation(request.Meta);
         }
+        try
+        {
+            if (request.HasPath && StrictUtf8.GetByteCount(request.Path) > 4096)
+            {
+                var bounded = request.Clone();
+                bounded.Path = OperatingSystem.IsWindows() ? @"C:\x" : "/x";
+                if (NodeShapes.IsValid(bounded))
+                {
+                    var correlation = caller.Routed?.Correlation(request.Meta) ?? throw new InvalidOperationException("A workspace registration requires a routed caller.");
+                    var error = new ArcError
+                    {
+                        Category = ErrorCategory.Resource,
+                        Code = "too_large",
+                        MessageKey = "error.resource.too_large",
+                        Effect = EffectCertainty.DidNotHappen,
+                        Retry = new RetryAdvice { Mode = RetryMode.Never },
+                        CorrelationId = correlation,
+                        Details = new ErrorDetails
+                        {
+                            Limit = new LimitFailure { LimitName = "workspace_root_path_bytes", Maximum = new ArcForges.Contracts.Foundation.V1.Decimal { Value = "4096" } },
+                        },
+                    };
+                    await AuditRefusalAsync(caller, PermissionMatrix.WorkspaceRegister, "RegisterWorkspace", null, null, error.Code).ConfigureAwait(false);
+                    return new WorkspaceServiceRegisterWorkspaceResponse { Meta = meta, Error = error };
+                }
+            }
+        }
+        catch (EncoderFallbackException)
+        {
+            await AuditRefusalAsync(caller, PermissionMatrix.WorkspaceRegister, "RegisterWorkspace", null, null, "invalid_argument").ConfigureAwait(false);
+            return new WorkspaceServiceRegisterWorkspaceResponse { Meta = meta, Error = NodeErrors.InvalidArgument("path: utf8") };
+        }
+
         if (!NodeShapes.IsValid(request))
         {
             var error = NodeErrors.InvalidArgument("workspace registration request");
@@ -103,7 +141,7 @@ internal sealed class WorkspaceServiceHandler(NodeRuntime node)
 
                     var id = response.Value?.Workspace?.WorkspaceId?.Value.ToByteArray();
                     AuditLog.AppendFileWorkspace(command.Transaction, caller.Actor, "workspace.register WorkspaceService.RegisterWorkspace",
-                        id, null, response.Value?.Workspace?.RootPath, PermissionDecision.Allow,
+                        id, null, response.Value?.Workspace?.RootPath, response.Error is null ? PermissionDecision.Allow : PermissionDecision.Deny,
                         response.Error is null ? "registered" : "refused: " + response.Error.Code, response.Audit);
                     return response;
                 }).ConfigureAwait(false);
@@ -146,7 +184,8 @@ internal sealed class WorkspaceServiceHandler(NodeRuntime node)
                 }
 
                 AuditLog.AppendFileWorkspace(command.Transaction, caller.Actor, "workspace.unregister WorkspaceService.UnregisterWorkspace",
-                    id, null, null, PermissionDecision.Allow, response.Error is null ? "unregistered" : "refused: " + response.Error.Code, null);
+                    id, null, null, response.Error is null ? PermissionDecision.Allow : PermissionDecision.Deny,
+                    response.Error is null ? "unregistered" : "refused: " + response.Error.Code, null);
                 return response;
             }, id).ConfigureAwait(false);
     }
@@ -169,15 +208,25 @@ internal sealed class WorkspaceServiceHandler(NodeRuntime node)
         try
         {
             node.Store.Read(reader => { CheckAuthority(reader, caller, PermissionMatrix.WorkspaceRead); return 0; });
-            _ = _workspaces.Get(id, cancellationToken);
+            var workspace = node.Store.Read(reader => WorkspaceCatalog.Get(reader, id))
+                ?? throw new RegisteredWorkspaceException("workspace_not_found");
             if (BeforeReadUseForTests is { } coordinate) await coordinate(cancellationToken).ConfigureAwait(false);
-            using var use = _workspaces.OpenForUse(id,
-                transaction => CheckAuthority(transaction, caller, PermissionMatrix.WorkspaceRead), cancellationToken);
-            var summary = await WorkspaceGitStatus.ObserveAsync(use.Root, cancellationToken).ConfigureAwait(false);
-            var record = _workspaces.Get(id, cancellationToken);
-            var workspace = Projection(record, summary);
+            if (workspace.Kind == WorkspaceKind.Registered)
+            {
+                using var use = _workspaces.OpenForUse(id,
+                    transaction => CheckAuthority(transaction, caller, PermissionMatrix.WorkspaceRead), cancellationToken);
+                workspace.Git = await WorkspaceGitStatus.ObserveAsync(use.Root, cancellationToken).ConfigureAwait(false);
+                var record = _workspaces.Get(id, cancellationToken);
+                workspace.LastUsedAt = ProtoTime.ToInstant(StoreTime.FromMicroseconds(record.LastUsedAt));
+            }
+            else
+            {
+                // A non-registered record is not a registered root and has no registration identity to reopen.
+                workspace.Git = new GitStatusSummary { Quality = GitStatusQuality.Unknown };
+            }
+
             var audit = WorkspaceAuditMetadata.ForRecords([workspace]);
-            await AuditSuccessAsync(caller, "GetWorkspace", id, record.RootPath, audit).ConfigureAwait(false);
+            await AuditSuccessAsync(caller, "GetWorkspace", id, workspace.RootPath, audit).ConfigureAwait(false);
             return new WorkspaceServiceGetWorkspaceResponse { Meta = meta, Value = new WorkspaceServiceGetWorkspaceValue { Workspace = workspace }, Audit = audit };
         }
         catch (WorkspacePolicyException refusal)
@@ -211,8 +260,9 @@ internal sealed class WorkspaceServiceHandler(NodeRuntime node)
             (byte)request.Kinds.Aggregate(0, (bits, kind) => bits | (1 << ((int)kind - 1)));
         var limit = request.Page is { HasLimit: true } page ? page.Limit : 100;
         byte[]? after = null;
-        if (request.Page is { HasCursor: true, Cursor.Length: > 0 } requested &&
-            !WorkspacePageBuilder.TryCursor(requested.Cursor, node.NodeId.Span, kinds, out after))
+        long cursorRevision = -1;
+        if (request.Page is { HasCursor: true } requested &&
+            !WorkspacePageBuilder.TryCursor(requested.Cursor, node.NodeId.Span, kinds, _pageKey, out after, out cursorRevision))
         {
             await AuditRefusalAsync(caller, PermissionMatrix.WorkspaceRead, "ListWorkspaces", null, null, "invalid_cursor").ConfigureAwait(false);
             return new WorkspaceServiceListWorkspacesResponse { Meta = meta, Error = NodeErrors.InvalidCursor() };
@@ -221,19 +271,15 @@ internal sealed class WorkspaceServiceHandler(NodeRuntime node)
         try
         {
             node.Store.Read(reader => { CheckAuthority(reader, caller, PermissionMatrix.WorkspaceRead); return 0; });
-            if ((kinds & 6) != 0 && node.Store.Read(reader => reader.Scalar(
-                "SELECT 1 FROM workspace WHERE removed_at IS NULL AND kind <> 1 LIMIT 1;")) is not null)
+            var pageData = node.Store.Read(reader => WorkspaceCatalog.ReadPage(reader, limit, kinds, after));
+            if (after is not null && cursorRevision != pageData.Revision)
             {
-                var unsupported = NodeErrors.EnforcementUnavailable("workspace_kind_projection");
-                await AuditRefusalAsync(caller, PermissionMatrix.WorkspaceRead, "ListWorkspaces", null, null, unsupported.Code).ConfigureAwait(false);
-                return new WorkspaceServiceListWorkspacesResponse { Meta = meta, Error = unsupported };
+                throw new WorkspaceInventoryChangedException();
             }
 
-            var pageData = (kinds & 1) != 0 ? _workspaces.List(limit, after, cancellationToken) :
-                new RegisteredWorkspacePage([], null);
-            var projected = new List<Workspace>(pageData.Workspaces.Count);
+            var projected = new List<Workspace>(pageData.Records.Count);
             var remaining = false;
-            foreach (var record in pageData.Workspaces)
+            foreach (var workspace in pageData.Records)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 if (projected.Count > 0 && caller.Routed is { } routed && routed.Remaining() < TimeSpan.FromSeconds(2.25))
@@ -243,27 +289,45 @@ internal sealed class WorkspaceServiceHandler(NodeRuntime node)
                 }
 
                 if (BeforeReadUseForTests is { } coordinate) await coordinate(cancellationToken).ConfigureAwait(false);
-                using var use = _workspaces.OpenForUse(record.Id,
-                    transaction => CheckAuthority(transaction, caller, PermissionMatrix.WorkspaceRead), cancellationToken);
-                var summary = await WorkspaceGitStatus.ObserveAsync(use.Root, cancellationToken).ConfigureAwait(false);
-                projected.Add(Projection(_workspaces.Get(record.Id, cancellationToken), summary));
+                if (workspace.Kind == WorkspaceKind.Registered)
+                {
+                    try
+                    {
+                        // A catalogue page always retains the recorded registration. Only a verified root may
+                        // be inspected for Git; an unavailable or replaced root is explicitly UNKNOWN.
+                        using var use = _workspaces.OpenForUse(workspace.WorkspaceId.Value.Span,
+                            transaction => CheckAuthority(transaction, caller, PermissionMatrix.WorkspaceRead), cancellationToken);
+                        workspace.Git = await WorkspaceGitStatus.ObserveAsync(use.Root, cancellationToken).ConfigureAwait(false);
+                        var record = _workspaces.Get(workspace.WorkspaceId.Value.Span, cancellationToken);
+                        workspace.LastUsedAt = ProtoTime.ToInstant(StoreTime.FromMicroseconds(record.LastUsedAt));
+                    }
+                    catch (Exception exception) when (exception is RegisteredWorkspaceException or WorkspacePathException or UnauthorizedAccessException)
+                    {
+                        workspace.Git = new GitStatusSummary { Quality = GitStatusQuality.Unknown };
+                    }
+                }
+                else
+                {
+                    workspace.Git = new GitStatusSummary { Quality = GitStatusQuality.Unknown };
+                }
+
+                projected.Add(workspace);
             }
 
-            var response = WorkspacePageBuilder.Build(meta, projected, remaining || pageData.NextAfter is not null,
-                node.NodeId.Span, kinds);
-            await AuditSuccessAsync(caller, "ListWorkspaces", null, null, response.Audit).ConfigureAwait(false);
+            var response = WorkspacePageBuilder.Build(meta, projected, remaining || pageData.More,
+                node.NodeId.Span, kinds, pageData.Revision, _pageKey);
+            await AuditSuccessAsync(caller, "ListWorkspaces", null, null, response.Audit, pageData.Revision).ConfigureAwait(false);
             return response;
+        }
+        catch (WorkspaceInventoryChangedException)
+        {
+            await AuditRefusalAsync(caller, PermissionMatrix.WorkspaceRead, "ListWorkspaces", null, null, "invalid_cursor").ConfigureAwait(false);
+            return new WorkspaceServiceListWorkspacesResponse { Meta = meta, Error = NodeErrors.InvalidCursor() };
         }
         catch (WorkspacePolicyException refusal)
         {
             await PolicyRefusalAsync(caller, PermissionMatrix.WorkspaceRead, "ListWorkspaces", null, refusal.Reason).ConfigureAwait(false);
             return new WorkspaceServiceListWorkspacesResponse { Meta = meta, Error = NodeErrors.PermissionDenied(PermissionMatrix.WorkspaceRead) };
-        }
-        catch (Exception exception) when (exception is RegisteredWorkspaceException or WorkspacePathException or UnauthorizedAccessException)
-        {
-            var error = Failure(exception, null);
-            await AuditRefusalAsync(caller, PermissionMatrix.WorkspaceRead, "ListWorkspaces", null, null, error.Code).ConfigureAwait(false);
-            return new WorkspaceServiceListWorkspacesResponse { Meta = meta, Error = error };
         }
     }
 
@@ -356,10 +420,17 @@ internal sealed class WorkspaceServiceHandler(NodeRuntime node)
         }
     }
 
-    private Task<int> AuditSuccessAsync(Caller caller, string method, byte[]? id, string? path, FileAuditMetadata metadata) =>
+    private Task<int> AuditSuccessAsync(Caller caller, string method, byte[]? id, string? path, FileAuditMetadata metadata, long? inventoryRevision = null) =>
         node.Processor.ExecuteAsync(command =>
         {
             CheckAuthority(command.Transaction, caller, PermissionMatrix.WorkspaceRead);
+            if (inventoryRevision is { } expected)
+            {
+                if (command.Transaction.Scalar("SELECT revision FROM workspace_inventory_revision WHERE singleton = 1;") is not long actual || actual != expected)
+                {
+                    throw new WorkspaceInventoryChangedException();
+                }
+            }
             AuditLog.AppendFileWorkspace(command.Transaction, caller.Actor, "workspace.read WorkspaceService." + method, id, null, path,
                 PermissionDecision.Allow, "read", metadata);
             return 0;
@@ -394,6 +465,12 @@ internal sealed class WorkspaceServiceHandler(NodeRuntime node)
 
     private static ArcError Failure(Exception exception, byte[]? id)
     {
+        if (exception is RegisteredWorkspaceException { Reason: "workspace_root_unavailable", InnerException: WorkspacePathException native } &&
+            native.Reason is "native_2" or "native_3" or "native_20" or "root_not_directory")
+        {
+            return ClosedError(ErrorCategory.Conflict, "file_changed", "workspace_root_changed");
+        }
+
         var reason = exception switch
         {
             RegisteredWorkspaceException registered => registered.Reason,
@@ -427,7 +504,16 @@ internal sealed class WorkspaceServiceHandler(NodeRuntime node)
             return ClosedError(ErrorCategory.Conflict, "file_changed", reason);
         }
 
-        return ClosedError(ErrorCategory.State, "file_access_denied", reason);
+        var closed = reason switch
+        {
+            "file_hard_link" or "file_metadata_unavailable" or "path_link_or_special" or "mount_crossing" or
+            "canonical_path_unavailable" or "case_semantics_unavailable" or "directory_entry_invalid" or
+            "directory_enumeration_failed" or "directory_enumeration_unavailable" or "file_guard_unavailable" or
+            "path_enforcement_unavailable" or "identity_filesystem_unavailable" or "identity_handle_unavailable" or
+            "identity_unavailable" or "identity_unavailable_or_reparse" or "procfs_unavailable" or "root_not_supported" => reason,
+            _ => "file_access_denied",
+        };
+        return ClosedError(ErrorCategory.State, "file_access_denied", closed);
     }
 
     private static ArcError ClosedError(ErrorCategory category, string code, string reason) => new()
@@ -439,6 +525,8 @@ internal sealed class WorkspaceServiceHandler(NodeRuntime node)
         Retry = new RetryAdvice { Mode = RetryMode.Never },
         Details = new ErrorDetails { State = new StateFailure { State = "file", Reason = reason } },
     };
+
+    private sealed class WorkspaceInventoryChangedException : Exception;
 
     private sealed class WorkspacePolicyException(string reason) : Exception(reason)
     {

@@ -16,7 +16,7 @@ using NodeShapes = ArcForges.Contracts.Node.Shapes.ContractShapeValidation;
 namespace ArcForges.Node.Api;
 
 /// <summary>Read-only target-node file operation for an already verified center caller.</summary>
-internal sealed class FileServiceHandler(NodeRuntime node)
+internal sealed partial class FileServiceHandler(NodeRuntime node) : IDisposable
 {
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
     private readonly RegisteredWorkspaces _workspaces = new(node.Store);

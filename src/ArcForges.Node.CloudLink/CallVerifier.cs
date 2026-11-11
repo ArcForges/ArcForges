@@ -57,7 +57,7 @@ internal sealed record CallRefusal(string Step, string Code, Id? CallId)
 /// (<c>center_mismatch</c>); the target node (<c>target_mismatch</c>); the account, the caller's included (<c>account_mismatch</c>); the
 /// windows: <c>issued_at &lt;= now + 120 s</c> (<c>not_yet_valid</c>), <c>expires_at + 120 s &gt; now</c> (<c>STATE/expired</c>), and at
 /// most 300 s of lifetime with the deadline inside it (<c>lifetime</c>); the request size and SHA-256 (<c>request_digest</c>); the method
-/// 1..6 or workspace 17..20, with command IDs exactly for mutations (<c>method</c>); the frame's call ID (<c>call_id_mismatch</c>); the contract's own
+/// the implemented task, file and workspace methods, with command IDs exactly for mutations (<c>method</c>); the frame's call ID (<c>call_id_mismatch</c>); the contract's own
 /// validator as a backstop (<c>header_shape</c>);</item>
 /// <item>the call ID is not already logged (<c>call_replayed</c>, also after a restart), and the pending row is written in the same step.</item>
 /// </list>
@@ -216,7 +216,7 @@ internal sealed class CallVerifier(RoutedCallLog log, TimeProvider clock)
         }
 
         var method = (int)header.Method;
-        if (((method is < 1 or > 6) && method != 9 && (method is < 17 or > 20))
+        if (((method is < 1 or > 6) && method is not (9 or 12 or 13) && (method is < 17 or > 20))
             || (header.CommandId is not null) != (method is 1 or 6 or 17 or 18))
         {
             return (null, Refuse("method"));

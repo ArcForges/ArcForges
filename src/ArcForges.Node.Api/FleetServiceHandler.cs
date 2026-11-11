@@ -308,6 +308,114 @@ internal sealed class FleetServiceHandler(NodeRuntime node, ClientSessions sessi
             ? response : Fail(NodeErrors.Internal(node.Clock.GetUtcNow()));
     }
 
+    public override async Task<FleetServiceListNodeDirectoryResponse> ListNodeDirectory(FleetServiceListNodeDirectoryRequest request, ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var forwarded = request.Clone();
+        var correlation = Validation.RequiredId(request.Meta?.CorrelationId, "correlation_id") is null
+            ? request.Meta!.CorrelationId.Clone() : CommandIds.New(node.Clock);
+        var meta = ApiCommands.Meta(request.Meta);
+        meta.CorrelationId = correlation.Clone();
+        FleetServiceListNodeDirectoryResponse Fail(ArcError error)
+        {
+            RoutedFileErrors.Complete(error, request.Meta, correlation, node.Clock);
+            return new FleetServiceListNodeDirectoryResponse { Meta = meta, Error = error };
+        }
+
+        var invalid = Validation.RequiredId(forwarded.NodeId, "node_id") ?? Payload(forwarded.HasRequest, forwarded.Request, 245760);
+        FileServiceListDirectoryRequest? inner = null;
+        if (invalid is null && request.Meta?.CorrelationId is { } suppliedCorrelation)
+        {
+            invalid = Validation.RequiredId(suppliedCorrelation, "meta.correlation_id");
+        }
+
+        if (invalid is null)
+        {
+            try
+            {
+                inner = FileServiceListDirectoryRequest.Parser.ParseFrom(forwarded.Request);
+                if (forwarded.Meta?.CommandId is not null || inner.Meta?.CommandId is not null)
+                {
+                    invalid = NodeErrors.InvalidArgument("meta.command_id: absent for a file read");
+                }
+            }
+            catch (InvalidProtocolBufferException)
+            {
+                invalid = NodeErrors.InvalidArgument("request: invalid node request bytes");
+            }
+        }
+
+        if (invalid is not null)
+        {
+            return Fail(invalid);
+        }
+
+        var response = await ForwardAsync(context, correlation, RoutedMethod.ListNodeDirectory, forwarded.NodeId, null,
+            _ => SHA256.HashData(forwarded.Request.Span),
+            (caller, assertion, client, options) =>
+            {
+                forwarded.Caller = caller;
+                forwarded.RelayAssertion = assertion;
+                return client.ListNodeDirectoryAsync(forwarded, options).ResponseAsync;
+            }, answer => answer.Error, answer => answer.Value is not null, Fail).ConfigureAwait(false);
+        return RoutedFileResponseValidation.Directory(response, forwarded.NodeId, inner!)
+            ? response : Fail(NodeErrors.Internal(node.Clock.GetUtcNow()));
+    }
+
+    public override async Task<FleetServiceSearchNodeFilesResponse> SearchNodeFiles(FleetServiceSearchNodeFilesRequest request, ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var forwarded = request.Clone();
+        var correlation = Validation.RequiredId(request.Meta?.CorrelationId, "correlation_id") is null
+            ? request.Meta!.CorrelationId.Clone() : CommandIds.New(node.Clock);
+        var meta = ApiCommands.Meta(request.Meta);
+        meta.CorrelationId = correlation.Clone();
+        FleetServiceSearchNodeFilesResponse Fail(ArcError error)
+        {
+            RoutedFileErrors.Complete(error, request.Meta, correlation, node.Clock);
+            return new FleetServiceSearchNodeFilesResponse { Meta = meta, Error = error };
+        }
+
+        var invalid = Validation.RequiredId(forwarded.NodeId, "node_id") ?? Payload(forwarded.HasRequest, forwarded.Request, 245760);
+        FileServiceSearchFilesRequest? inner = null;
+        if (invalid is null && request.Meta?.CorrelationId is { } suppliedCorrelation)
+        {
+            invalid = Validation.RequiredId(suppliedCorrelation, "meta.correlation_id");
+        }
+
+        if (invalid is null)
+        {
+            try
+            {
+                inner = FileServiceSearchFilesRequest.Parser.ParseFrom(forwarded.Request);
+                if (forwarded.Meta?.CommandId is not null || inner.Meta?.CommandId is not null)
+                {
+                    invalid = NodeErrors.InvalidArgument("meta.command_id: absent for a file read");
+                }
+            }
+            catch (InvalidProtocolBufferException)
+            {
+                invalid = NodeErrors.InvalidArgument("request: invalid node request bytes");
+            }
+        }
+
+        if (invalid is not null)
+        {
+            return Fail(invalid);
+        }
+
+        var response = await ForwardAsync(context, correlation, RoutedMethod.SearchNodeFiles, forwarded.NodeId, null,
+            _ => SHA256.HashData(forwarded.Request.Span),
+            (caller, assertion, client, options) =>
+            {
+                forwarded.Caller = caller;
+                forwarded.RelayAssertion = assertion;
+                return client.SearchNodeFilesAsync(forwarded, options).ResponseAsync;
+            }, answer => answer.Error, answer => answer.Value is not null, Fail).ConfigureAwait(false);
+        return RoutedFileResponseValidation.Search(response, forwarded.NodeId, inner!)
+            ? response : Fail(NodeErrors.Internal(node.Clock.GetUtcNow()));
+    }
+
     public override Task<FleetServiceRegisterNodeWorkspaceResponse> RegisterNodeWorkspace(FleetServiceRegisterNodeWorkspaceRequest request, ServerCallContext context)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -524,7 +632,7 @@ internal sealed class FleetServiceHandler(NodeRuntime node, ClientSessions sessi
 
             var maximum = method == RoutedMethod.WaitNodeTask ? TimeSpan.FromSeconds(55) :
                 method == RoutedMethod.ReadNodeTaskOutput ? TimeSpan.FromSeconds(30) :
-                method is RoutedMethod.ReadNodeFile or RoutedMethod.RegisterNodeWorkspace or RoutedMethod.UnregisterNodeWorkspace or
+                method is RoutedMethod.ReadNodeFile or RoutedMethod.SearchNodeFiles or RoutedMethod.ListNodeDirectory or RoutedMethod.RegisterNodeWorkspace or RoutedMethod.UnregisterNodeWorkspace or
                     RoutedMethod.ListNodeWorkspaces or RoutedMethod.GetNodeWorkspace ? TimeSpan.FromSeconds(15) : TimeSpan.FromSeconds(10);
             var answer = await cloud.ForwardRelayAsync(signed,
                 (client, options) => send(caller, signed.Assertion.ToByteString(), client, options), left < maximum ? left : maximum, context.CancellationToken)

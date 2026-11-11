@@ -332,6 +332,89 @@ public sealed class FleetProxyTests
         Assert.NotNull(read.Value);
         Assert.Equal(nodeResponse.ToByteString(), read.Value.Response);
 
+        var directoryRequest = new FileServiceListDirectoryRequest
+        {
+            Meta = readMeta.Clone(),
+            Path = new FilePath { WorkspaceId = CommandIds.New(), Path = "" },
+            PageSize = 1,
+        }.ToByteString();
+        var directoryDigest = ByteString.CopyFrom(SHA256.HashData("ArcForges directory-list v1\0"u8));
+        var directoryBytes = (ulong)"ArcForges directory-list v1\0"u8.Length;
+        var directoryInner = new FileServiceListDirectoryResponse
+        {
+            Meta = new ResponseMeta { CorrelationId = readMeta.CorrelationId.Clone() },
+            Value = new FileServiceListDirectoryValue
+            {
+                Truncated = false,
+                SnapshotEntries = 0,
+                MetadataDigest = directoryDigest,
+                MetadataBytes = directoryBytes,
+            },
+            Audit = new FileAuditMetadata
+            {
+                Observations = { new FileAuditObservation { Kind = FileAuditKind.DirectoryMetadata, SizeBytes = directoryBytes,
+                    DigestInputBytes = directoryBytes, ItemCount = 0, Sha256 = directoryDigest } },
+            },
+        };
+        center.Script("ListNodeDirectory", Reply(new FleetServiceListNodeDirectoryResponse
+        {
+            Meta = new ResponseMeta { CorrelationId = readMeta.CorrelationId.Clone() },
+            Value = new FleetServiceListNodeDirectoryValue { NodeId = target, Response = directoryInner.ToByteString() },
+        }));
+        var directory = await fleet.ListNodeDirectoryAsync(new FleetServiceListNodeDirectoryRequest
+        {
+            Meta = readMeta,
+            NodeId = target,
+            Caller = forged,
+            Request = directoryRequest,
+        }, cancellationToken: ct);
+        Assert.NotNull(directory.Value);
+        Assert.Equal(directoryInner.ToByteString(), directory.Value.Response);
+
+        var sentDirectory = FleetServiceListNodeDirectoryRequest.Parser.ParseFrom(FakeCenter.Payload(Assert.Single(center.CallsOf("ListNodeDirectory")).Body));
+        var searchRequest = new FileServiceSearchFilesRequest
+        {
+            Meta = readMeta.Clone(),
+            Path = new FilePath { WorkspaceId = CommandIds.New(), Path = "" },
+            Pattern = "not-present",
+            Mode = FileSearchMode.Literal,
+        }.ToByteString();
+        var scanDigest = ByteString.CopyFrom(SHA256.HashData("ArcForges search-scan v1\0"u8));
+        var searchInner = new FileServiceSearchFilesResponse
+        {
+            Meta = new ResponseMeta { CorrelationId = readMeta.CorrelationId.Clone() },
+            Value = new FileServiceSearchFilesValue
+            {
+                VisitedEntries = 1,
+                ScannedBytes = 0,
+                SkippedFiles = 0,
+                Truncated = false,
+                ScanDigest = scanDigest,
+                ScanTranscriptBytes = 25,
+                ScanFileCount = 0,
+            },
+            Audit = new FileAuditMetadata
+            {
+                Observations = { new FileAuditObservation { Kind = FileAuditKind.SearchTranscript, SizeBytes = 0,
+                    DigestInputBytes = 25, ItemCount = 0, Sha256 = scanDigest } },
+            },
+        };
+        center.Script("SearchNodeFiles", Reply(new FleetServiceSearchNodeFilesResponse
+        {
+            Meta = new ResponseMeta { CorrelationId = readMeta.CorrelationId.Clone() },
+            Value = new FleetServiceSearchNodeFilesValue { NodeId = target, Response = searchInner.ToByteString() },
+        }));
+        var searchResult = await fleet.SearchNodeFilesAsync(new FleetServiceSearchNodeFilesRequest
+        {
+            Meta = readMeta,
+            NodeId = target,
+            Caller = forged,
+            Request = searchRequest,
+        }, cancellationToken: ct);
+        Assert.NotNull(searchResult.Value);
+        Assert.Equal(searchInner.ToByteString(), searchResult.Value.Response);
+        var sentSearch = FleetServiceSearchNodeFilesRequest.Parser.ParseFrom(FakeCenter.Payload(Assert.Single(center.CallsOf("SearchNodeFiles")).Body));
+
         var sentRegister = FleetServiceRegisterNodeWorkspaceRequest.Parser.ParseFrom(FakeCenter.Payload(Assert.Single(center.CallsOf("RegisterNodeWorkspace")).Body));
         var sentUnregister = FleetServiceUnregisterNodeWorkspaceRequest.Parser.ParseFrom(FakeCenter.Payload(Assert.Single(center.CallsOf("UnregisterNodeWorkspace")).Body));
         var sentList = FleetServiceListNodeWorkspacesRequest.Parser.ParseFrom(FakeCenter.Payload(Assert.Single(center.CallsOf("ListNodeWorkspaces")).Body));
@@ -344,6 +427,8 @@ public sealed class FleetProxyTests
             (sentList.Caller, sentList.RelayAssertion, list, RoutedMethod.ListNodeWorkspaces, (Id?)null),
             (sentGet.Caller, sentGet.RelayAssertion, get, RoutedMethod.GetNodeWorkspace, (Id?)null),
             (sentRead.Caller, sentRead.RelayAssertion, fileRequest, RoutedMethod.ReadNodeFile, (Id?)null),
+            (sentDirectory.Caller, sentDirectory.RelayAssertion, directoryRequest, RoutedMethod.ListNodeDirectory, (Id?)null),
+            (sentSearch.Caller, sentSearch.RelayAssertion, searchRequest, RoutedMethod.SearchNodeFiles, (Id?)null),
         };
         foreach (var (caller, signedBytes, payload, method, command) in checks)
         {
@@ -378,6 +463,22 @@ public sealed class FleetProxyTests
             Request = fileRequest,
         }, cancellationToken: ct);
         Assert.Equal("invalid_argument", invalidFileRead.Error.Code);
+        var invalidDirectory = await fleet.ListNodeDirectoryAsync(new FleetServiceListNodeDirectoryRequest
+        {
+            Meta = CloudNode.Command(),
+            NodeId = target,
+            Request = directoryRequest,
+        }, cancellationToken: ct);
+        Assert.Equal("invalid_argument", invalidDirectory.Error.Code);
+        var invalidSearch = await fleet.SearchNodeFilesAsync(new FleetServiceSearchNodeFilesRequest
+        {
+            Meta = CloudNode.Command(),
+            NodeId = target,
+            Request = searchRequest,
+        }, cancellationToken: ct);
+        Assert.Equal("invalid_argument", invalidSearch.Error.Code);
+        Assert.Single(center.CallsOf("SearchNodeFiles"));
+        Assert.Single(center.CallsOf("ListNodeDirectory"));
         Assert.Single(center.CallsOf("ReadNodeFile"));
         Assert.Single(center.CallsOf("RegisterNodeWorkspace"));
         Assert.Single(center.CallsOf("GetNodeWorkspace"));

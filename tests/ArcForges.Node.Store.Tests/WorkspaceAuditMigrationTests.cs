@@ -16,6 +16,7 @@ public sealed class WorkspaceAuditMigrationTests
         using var root = new TemporaryDataRoot();
         var clock = new ManualClock();
         var oldPlan = new MigrationPlan(StoreMigrations.Released.Steps.Take(3));
+        var step4Plan = new MigrationPlan(StoreMigrations.Released.Steps.Take(4));
         long auditId;
         using (var old = root.Open(clock, oldPlan))
         {
@@ -25,7 +26,7 @@ public sealed class WorkspaceAuditMigrationTests
                 """, ("$now", transaction.NowMicroseconds))!);
         }
 
-        using (var current = root.Open(clock))
+        using (var current = root.Open(clock, step4Plan))
         {
             Assert.Equal(3, current.Opening.MigratedFrom);
             Assert.Equal(4, current.Metadata.SchemaVersion);
@@ -62,7 +63,7 @@ public sealed class WorkspaceAuditMigrationTests
             oldView.Write(transaction => transaction.Execute("DELETE FROM audit_log WHERE seq=$id;", ("$id", auditId)));
         }
 
-        using var reopened = root.Open(clock);
+        using var reopened = root.Open(clock, step4Plan);
         Assert.Equal(0L, reopened.Read(reader => reader.Scalar("SELECT count(*) FROM file_workspace_audit;")));
         Assert.Equal(0L, reopened.Read(reader => reader.Scalar("SELECT count(*) FROM file_workspace_audit_observation;")));
     }

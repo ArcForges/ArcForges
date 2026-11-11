@@ -1,25 +1,24 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Buffers.Binary;
+using System.Security.Cryptography;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 
 namespace ArcForges.Node.Api;
 
-/// <summary>
-/// Constructs the exact bounded workspace-list envelope from an already verified, ordered page. It does not read the
-/// filesystem, decide permissions or prove Git status; the caller supplies actual projected records for this response.
-/// </summary>
+/// <summary>Constructs a bounded workspace page and a node-, filter- and inventory-generation-bound continuation.</summary>
 internal static class WorkspacePageBuilder
 {
     internal const int MaximumBytes = 131_072;
 
     internal static WorkspaceServiceListWorkspacesResponse Build(ResponseMeta meta, IReadOnlyList<Workspace> records, bool more,
-        ReadOnlySpan<byte> nodeId, byte kinds)
+        ReadOnlySpan<byte> nodeId, byte kinds, long revision, ReadOnlySpan<byte> key)
     {
         ArgumentNullException.ThrowIfNull(meta);
         ArgumentNullException.ThrowIfNull(records);
-        if (records.Count > 500 || records.Count == 0 && more || nodeId.Length != 16 || kinds is 0 or > 7)
+        if (records.Count > 500 || records.Count == 0 && more || nodeId.Length != 16 || kinds is 0 or > 7 || revision < 0 || key.Length != 32)
         {
-            throw new ArgumentException("A workspace page has a node, a kind filter and at most 500 records.");
+            throw new ArgumentException("A workspace page has a node, filter, inventory generation and at most 500 records.");
         }
 
         var response = new WorkspaceServiceListWorkspacesResponse
@@ -43,7 +42,7 @@ internal static class WorkspacePageBuilder
             response.Value.Page.HasMore = hasMore;
             if (hasMore)
             {
-                response.Value.Page.NextCursor = Cursor(nodeId, kinds, id.Value.Span);
+                response.Value.Page.NextCursor = Cursor(nodeId, kinds, revision, key, id.Value.Span);
             }
             else
             {
@@ -63,7 +62,7 @@ internal static class WorkspacePageBuilder
             }
 
             response.Value.Page.HasMore = true;
-            response.Value.Page.NextCursor = Cursor(nodeId, kinds, selected[^1].WorkspaceId.Value.Span);
+            response.Value.Page.NextCursor = Cursor(nodeId, kinds, revision, key, selected[^1].WorkspaceId.Value.Span);
             response.Audit = WorkspaceAuditMetadata.ForRecords(selected);
             if (response.CalculateSize() > MaximumBytes)
             {
@@ -82,35 +81,45 @@ internal static class WorkspacePageBuilder
         return response;
     }
 
-    /// <summary>Decodes only a canonical cursor for this node and the same kind filter.</summary>
-    internal static bool TryCursor(string text, ReadOnlySpan<byte> nodeId, byte kinds, out byte[]? after)
+    /// <summary>Authenticates and decodes a canonical cursor; the caller must compare its generation to its SQLite snapshot.</summary>
+    internal static bool TryCursor(string text, ReadOnlySpan<byte> nodeId, byte kinds, ReadOnlySpan<byte> key, out byte[]? after, out long revision)
     {
         after = null;
-        if (text is null || text.Length != 46 || nodeId.Length != 16 || kinds is 0 or > 7)
+        revision = -1;
+        if (text is null || text.Length != 99 || nodeId.Length != 16 || kinds is 0 or > 7 || key.Length != 32)
         {
             return false;
         }
 
-        Span<byte> bytes = stackalloc byte[34];
-        var encoded = text.Replace('-', '+').Replace('_', '/') + "==";
+        Span<byte> bytes = stackalloc byte[74];
+        var encoded = text.Replace('-', '+').Replace('_', '/') + "=";
         if (!Convert.TryFromBase64String(encoded, bytes, out var written) || written != bytes.Length ||
-            bytes[0] != 1 || bytes[1] != kinds || !bytes.Slice(2, 16).SequenceEqual(nodeId) ||
-            !string.Equals(text, Encode(bytes), StringComparison.Ordinal))
+            bytes[0] != 2 || bytes[1] != kinds || !bytes.Slice(2, 16).SequenceEqual(nodeId) ||
+            !string.Equals(text, Encode(bytes), StringComparison.Ordinal) ||
+            !CryptographicOperations.FixedTimeEquals(HMACSHA256.HashData(key, bytes[..42]), bytes[42..]))
         {
             return false;
         }
 
-        after = bytes[18..].ToArray();
+        revision = BinaryPrimitives.ReadInt64BigEndian(bytes[18..26]);
+        if (revision < 0)
+        {
+            return false;
+        }
+
+        after = bytes[26..42].ToArray();
         return true;
     }
 
-    private static string Cursor(ReadOnlySpan<byte> nodeId, byte kinds, ReadOnlySpan<byte> id)
+    private static string Cursor(ReadOnlySpan<byte> nodeId, byte kinds, long revision, ReadOnlySpan<byte> key, ReadOnlySpan<byte> id)
     {
-        Span<byte> bytes = stackalloc byte[34];
-        bytes[0] = 1;
+        Span<byte> bytes = stackalloc byte[74];
+        bytes[0] = 2;
         bytes[1] = kinds;
         nodeId.CopyTo(bytes[2..18]);
-        id.CopyTo(bytes[18..]);
+        BinaryPrimitives.WriteInt64BigEndian(bytes[18..26], revision);
+        id.CopyTo(bytes[26..42]);
+        HMACSHA256.HashData(key, bytes[..42]).CopyTo(bytes[42..]);
         return Encode(bytes);
     }
 

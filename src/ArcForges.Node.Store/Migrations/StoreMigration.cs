@@ -84,7 +84,7 @@ public sealed class MigrationPlan
 public static class StoreMigrations
 {
     /// <summary>The schema version this binary writes; it reads stores whose <c>min_reader_version</c> is at most this.</summary>
-    public const int SupportedSchemaVersion = 4;
+    public const int SupportedSchemaVersion = 5;
 
     /// <summary>The released steps, loaded from the embedded <c>Schema/*.sql</c> resources.</summary>
     public static MigrationPlan Released { get; } = new([
@@ -100,6 +100,9 @@ public static class StoreMigrations
 
         // AF-CTR-06: bounded file/workspace audit scope and metadata digests, cascading with the existing audit retention.
         Load(4, 1, "0004-schema-step-4.sql"),
+
+        // AF-CTR-06: inventory changes invalidate bounded workspace-list continuation cursors.
+        Load(5, 1, "0005-schema-step-5.sql"),
     ]);
 
     private static StoreMigration Load(int version, int minReaderVersion, string name)

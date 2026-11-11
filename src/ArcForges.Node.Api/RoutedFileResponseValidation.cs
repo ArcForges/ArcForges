@@ -12,7 +12,7 @@ using WireDecimal = ArcForges.Contracts.Foundation.V1.Decimal;
 namespace ArcForges.Node.Api;
 
 /// <summary>Checks a center reply against the original file read without rewriting its inner bytes.</summary>
-internal static class RoutedFileResponseValidation
+internal static partial class RoutedFileResponseValidation
 {
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
@@ -238,6 +238,19 @@ internal static class RoutedFileResponseValidation
         return audit.Observations.Count == 0 ||
             audit.Observations[0] is { Kind: FileAuditKind.ReadBytes, HasSizeBytes: true, HasDigestInputBytes: true, Sha256.Length: 32 } item &&
             item.SizeBytes <= 65_536 && item.DigestInputBytes == item.SizeBytes;
+    }
+
+    private static bool FileMetaMatches(ResponseMeta? meta, RequestMeta? request, ArcError? error)
+    {
+        static bool Valid(Id? id) => id is { Value.Length: 16 } && id.Value.Span.IndexOfAnyExcept((byte)0) >= 0;
+        var expected = request?.CorrelationId;
+        if (meta is not null && (!Valid(meta.CorrelationId) || Valid(expected) && !meta.CorrelationId!.Equals(expected)))
+        {
+            return false;
+        }
+
+        return error is null || Valid(error.CorrelationId) && (!Valid(expected) || error.CorrelationId!.Equals(expected)) &&
+            (meta is null || error.CorrelationId!.Equals(meta.CorrelationId));
     }
 
     private static bool Token(string value) =>

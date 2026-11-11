@@ -5,6 +5,7 @@ using ArcForges.Contracts.Relay.V1;
 using ArcForges.Node.CloudLink;
 using ArcForges.Node.Core.Execution;
 using ArcForges.Node.Core.Scheduling;
+using ArcForges.Node.Platform.Windows;
 
 namespace ArcForges.Node.Core.Tests;
 
@@ -36,9 +37,11 @@ public sealed class WorkspaceSubmitSafetyTests
         var execution = node.Runtime.Execution!;
         Assert.Equal(512, execution.Settings.RetrySafetyRules.Count);
         var firstRealMatch = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var realMatches = 0;
         using var release = new ManualResetEventSlim();
         execution.AfterRetryMatchForTests = index =>
         {
+            Interlocked.Increment(ref realMatches);
             if (index == 0)
             {
                 firstRealMatch.TrySetResult();
@@ -49,14 +52,28 @@ public sealed class WorkspaceSubmitSafetyTests
             }
         };
 
-        // A legal 1 MiB argument vector, with no final z. All 512 real patterns are evaluated.
+        // Exercise the platform's real legal limit, with no final z. Windows rejects argv above 32,766
+        // command-line characters before policy matching; Linux accepts the 1 MiB contract bound.
         var executable = Tasks.TestLoad;
-        var largeArgument = new string('a', 1024 * 1024 - System.Text.Encoding.UTF8.GetByteCount(executable));
+        var argumentLength = OperatingSystem.IsWindows()
+            ? WindowsCommandLine.MaxLength - WindowsCommandLine.Build([executable]).Length - 1
+            : 1024 * 1024 - System.Text.Encoding.UTF8.GetByteCount(executable);
+        var largeArgument = new string('a', argumentLength);
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Equal(WindowsCommandLine.MaxLength, WindowsCommandLine.Build([executable, largeArgument]).Length);
+        }
         var request = new TaskServiceSubmitTaskRequest { Meta = Tasks.Meta(), Spec = Tasks.Argv(node.Root, executable, largeArgument) };
         var pending = script.Tasks.SubmitTaskAsync(request, deadline: DateTime.UtcNow.AddSeconds(90), cancellationToken: Ct).ResponseAsync;
         try
         {
-            await firstRealMatch.Task.WaitAsync(TimeSpan.FromSeconds(20), Ct);
+            var reached = await Task.WhenAny(firstRealMatch.Task, pending).WaitAsync(TimeSpan.FromSeconds(20), Ct);
+            if (reached == pending)
+            {
+                var early = await pending;
+                Assert.Fail($"Submission completed before real retry matching: {early.Error?.Category}/{early.Error?.Code}");
+            }
+
             // Actual second writer transaction commits while a real match operation is paused between rules.
             await Task.Run(() => node.Runtime.Store.Write(transaction => transaction.Execute("""
                 INSERT INTO node_setting (name, value_json, updated_at, rev)
@@ -73,6 +90,7 @@ public sealed class WorkspaceSubmitSafetyTests
         var response = await pending.WaitAsync(TimeSpan.FromSeconds(60), Ct);
         execution.AfterRetryMatchForTests = null;
         Assert.Null(response.Error);
+        Assert.Equal(512, Volatile.Read(ref realMatches));
         Assert.Equal(EffectCertainty.Happened, response.Value.Receipt.Effect);
         var selected = node.Runtime.Store.Read(reader => reader.Scalar("SELECT side_effect FROM task WHERE task_id=$id;",
             ("$id", response.Value.TaskId.Value.ToByteArray())));

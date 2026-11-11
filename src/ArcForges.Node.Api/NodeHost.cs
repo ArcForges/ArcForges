@@ -367,7 +367,7 @@ public static class NodeHost
         };
 
         // AF-CTR-05 N2b: the center-routed dispatcher, bound to the TaskService once the local server builds it.
-        var routed = new RoutedDispatcher(node);
+        using var routed = new RoutedDispatcher(node);
         node.RoutedDispatcher = routed;
         var versionDirectory = options.VersionDirectory
             ?? (options.HelperExecutable is { } helperPath ? Path.GetDirectoryName(Path.GetFullPath(helperPath)) : null)

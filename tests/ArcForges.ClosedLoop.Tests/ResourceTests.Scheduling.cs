@@ -201,8 +201,10 @@ public sealed partial class ResourceTests
         var tasks = new List<Id>();
         for (var index = 0; index < 8; index++)
         {
+            // The scenario measures the operating-system limit, not .NET's lower automatic managed-heap limit.
+            // Lift the GC cap only in this synthetic workload; the attempt and root limits remain unchanged.
             tasks.Add(await SubmitAsync(channel, [TestNode.TestLoad, "mem-ramp", "--target-mb", ramp.ToString(CultureInfo.InvariantCulture), "--step-mb", "64",
-                "--hold-ms", "4000"], memExpected: expected, memCeiling: expected));
+                "--hold-ms", "4000"], memExpected: expected, memCeiling: expected, gcHeapHardLimit: "C0000000"));
         }
 
         var allocator = node.Start(TestNode.TestLoad, ["mem-ramp", "--target-mb", "512", "--step-mb", "64", "--hold-ms", "15000"]);

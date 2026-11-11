@@ -154,7 +154,7 @@ internal sealed class RoutedContext(IRoutedLink link, NodeLifecycle lifecycle, D
 /// Every EXECUTED handler error is either recorded and replayed exactly, or decided before any effect and DID_NOT_HAPPEN, or UNKNOWN
 /// (decisions B-1). A refusal by the policy or the matrix, an approval raised included, is REFUSED_BY_POLICY with closed fields only.
 /// </summary>
-internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
+internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, IDisposable
 {
     private const string Service = "arcforges.node.v1.TaskService";
     private readonly ConcurrentDictionary<string, CenterCaller> _inFlight = new(StringComparer.Ordinal);
@@ -168,6 +168,12 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
         Volatile.Write(ref _files, files ?? throw new ArgumentNullException(nameof(files)));
         Volatile.Write(ref _workspaces, workspaces ?? throw new ArgumentNullException(nameof(workspaces)));
         Volatile.Write(ref _tasks, tasks ?? throw new ArgumentNullException(nameof(tasks)));
+    }
+
+    public void Dispose()
+    {
+        Interlocked.Exchange(ref _files, null)?.Dispose();
+        Interlocked.Exchange(ref _workspaces, null)?.Dispose();
     }
 
     // Lets in-process tests coordinate an actual policy update between native preparation and the writer.
@@ -191,7 +197,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
             if (IsFileWorkspace(selected))
             {
                 RoutedFileErrors.Complete(error, selectedMeta, header.CallId, node.Clock);
-                if (selected == RoutedMethod.ReadNodeFile && error.Category == ErrorCategory.Internal)
+                if ((selected is RoutedMethod.ReadNodeFile or RoutedMethod.SearchNodeFiles or RoutedMethod.ListNodeDirectory) && error.Category == ErrorCategory.Internal)
                 {
                     ReadInternalFailure(error);
                 }
@@ -259,6 +265,14 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
             return ExecutedHere(method, null, NodeErrors.InvalidArgument("request: a node.v1 request of the routed method"), null, risk);
         }
 
+        if (IsFileWorkspace(method) && call.Payload.Length > 245_760)
+        {
+            await WriteRefusalAuditAsync(actor, method, operation, "invalid_argument", PermissionDecision.Deny, null, null,
+                workspaceId: WorkspaceIdOf(request), path: AuditPathOf(request)).ConfigureAwait(false);
+            return ExecutedHere(method, meta, NodeErrors.InvalidArgument("request: serialized payload exceeds 245760 bytes"), null, risk,
+                WorkspaceIdOf(request));
+        }
+
         var mutation = method is RoutedMethod.SubmitNodeTask or RoutedMethod.CancelNodeTask or
             RoutedMethod.RegisterNodeWorkspace or RoutedMethod.UnregisterNodeWorkspace;
         if (mutation && (meta?.CommandId is not { } inner || header.CommandId is null || !inner.Value.Span.SequenceEqual(header.CommandId.Value.Span)))
@@ -273,10 +287,10 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
                 TaskIdOf(request), risk, WorkspaceIdOf(request));
         }
 
-        if ((method is RoutedMethod.ReadNodeFile or RoutedMethod.ListNodeWorkspaces or RoutedMethod.GetNodeWorkspace) && meta?.CommandId is not null)
+        if ((method is RoutedMethod.ReadNodeFile or RoutedMethod.SearchNodeFiles or RoutedMethod.ListNodeDirectory or RoutedMethod.ListNodeWorkspaces or RoutedMethod.GetNodeWorkspace) && meta?.CommandId is not null)
         {
             await WriteRefusalAuditAsync(actor, method, operation, "invalid_argument", PermissionDecision.Deny, null, null,
-                workspaceId: WorkspaceIdOf(request)).ConfigureAwait(false);
+                workspaceId: WorkspaceIdOf(request), path: AuditPathOf(request)).ConfigureAwait(false);
             return ExecutedHere(method, meta, NodeErrors.InvalidArgument("meta.command_id: absent for a read"), null, risk, WorkspaceIdOf(request));
         }
 
@@ -401,7 +415,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
         catch (CommandQueueFullException)
         {
             // A file read cannot claim a recorded refusal while the audit writer cannot admit it. The center observes no verified reply.
-            if (method == RoutedMethod.ReadNodeFile)
+            if (IsFile(method))
             {
                 return null;
             }
@@ -475,6 +489,8 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
     private static (IMessage Request, RequestMeta? Meta) Parse(RoutedMethod method, ByteString payload) => method switch
     {
         RoutedMethod.ReadNodeFile => Pair(FileServiceReadFileRequest.Parser.ParseFrom(payload), request => request.Meta),
+        RoutedMethod.ListNodeDirectory => Pair(FileServiceListDirectoryRequest.Parser.ParseFrom(payload), request => request.Meta),
+        RoutedMethod.SearchNodeFiles => Pair(FileServiceSearchFilesRequest.Parser.ParseFrom(payload), request => request.Meta),
         RoutedMethod.SubmitNodeTask => Pair(TaskServiceSubmitTaskRequest.Parser.ParseFrom(payload), request => request.Meta),
         RoutedMethod.GetNodeTask => Pair(TaskServiceGetTaskRequest.Parser.ParseFrom(payload), request => request.Meta),
         RoutedMethod.ListNodeTasks => Pair(TaskServiceListTasksRequest.Parser.ParseFrom(payload), request => request.Meta),
@@ -500,6 +516,12 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
             case RoutedMethod.ReadNodeFile:
                 var file = await files!.ReadAsync(caller, (FileServiceReadFileRequest)request, cancellationToken).ConfigureAwait(false);
                 return (file, file.Error);
+            case RoutedMethod.ListNodeDirectory:
+                var directory = await files!.ListDirectoryAsync(caller, (FileServiceListDirectoryRequest)request, cancellationToken).ConfigureAwait(false);
+                return (directory, directory.Error);
+            case RoutedMethod.SearchNodeFiles:
+                var search = await files!.SearchAsync(caller, (FileServiceSearchFilesRequest)request, cancellationToken).ConfigureAwait(false);
+                return (search, search.Error);
             case RoutedMethod.SubmitNodeTask:
                 var submitted = await tasks.SubmitTask(caller, (TaskServiceSubmitTaskRequest)request, cancellationToken).ConfigureAwait(false);
                 return (submitted, submitted.Error);
@@ -560,7 +582,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
 
         if (error is { Category: ErrorCategory.Internal })
         {
-            if (request is FileServiceReadFileRequest)
+            if (request is FileServiceReadFileRequest or FileServiceSearchFilesRequest or FileServiceListDirectoryRequest)
             {
                 ReadInternalFailure(error);
             }
@@ -592,6 +614,8 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
         IMessage response = method switch
         {
             RoutedMethod.ReadNodeFile => new FileServiceReadFileResponse { Meta = responseMeta, Error = error },
+            RoutedMethod.ListNodeDirectory => new FileServiceListDirectoryResponse { Meta = responseMeta, Error = error },
+            RoutedMethod.SearchNodeFiles => new FileServiceSearchFilesResponse { Meta = responseMeta, Error = error },
             RoutedMethod.SubmitNodeTask => new TaskServiceSubmitTaskResponse { Meta = responseMeta, Error = error },
             RoutedMethod.GetNodeTask => new TaskServiceGetTaskResponse { Meta = responseMeta, Error = error },
             RoutedMethod.ListNodeTasks => new TaskServiceListTasksResponse { Meta = responseMeta, Error = error },
@@ -699,7 +723,14 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
 
     private static string? AuditPathOf(IMessage request)
     {
-        if (request is not FileServiceReadFileRequest { Path: { HasPath: true } path })
+        var path = request switch
+        {
+            FileServiceReadFileRequest { Path: { HasPath: true } selected } => selected,
+            FileServiceListDirectoryRequest { Path: { HasPath: true } selected } => selected,
+            FileServiceSearchFilesRequest { Path: { HasPath: true } selected } => selected,
+            _ => null,
+        };
+        if (path is null)
         {
             return null;
         }
@@ -728,11 +759,11 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
         method is RoutedMethod.RegisterNodeWorkspace or RoutedMethod.UnregisterNodeWorkspace or
             RoutedMethod.ListNodeWorkspaces or RoutedMethod.GetNodeWorkspace;
 
-    private static bool IsFile(RoutedMethod method) => method == RoutedMethod.ReadNodeFile;
+    private static bool IsFile(RoutedMethod method) => method is RoutedMethod.ReadNodeFile or RoutedMethod.SearchNodeFiles or RoutedMethod.ListNodeDirectory;
 
     private static bool IsFileWorkspace(RoutedMethod method) => IsFile(method) || IsWorkspace(method);
 
-    private static bool IsFileWorkspaceMethod(IMessage request) => request is FileServiceReadFileRequest or
+    private static bool IsFileWorkspaceMethod(IMessage request) => request is FileServiceReadFileRequest or FileServiceSearchFilesRequest or FileServiceListDirectoryRequest or
         WorkspaceServiceRegisterWorkspaceRequest or WorkspaceServiceUnregisterWorkspaceRequest or
         WorkspaceServiceListWorkspacesRequest or WorkspaceServiceGetWorkspaceRequest;
 
@@ -742,6 +773,8 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
     private static byte[]? WorkspaceIdOf(IMessage request) => request switch
     {
         FileServiceReadFileRequest { Path.WorkspaceId: { } id } => id.Value.ToByteArray(),
+        FileServiceListDirectoryRequest { Path.WorkspaceId: { } id } => id.Value.ToByteArray(),
+        FileServiceSearchFilesRequest { Path.WorkspaceId: { } id } => id.Value.ToByteArray(),
         WorkspaceServiceUnregisterWorkspaceRequest { WorkspaceId: { } id } => id.Value.ToByteArray(),
         WorkspaceServiceGetWorkspaceRequest { WorkspaceId: { } id } => id.Value.ToByteArray(),
         _ => null,
@@ -750,6 +783,8 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
     private static string MethodName(RoutedMethod method) => method switch
     {
         RoutedMethod.ReadNodeFile => "ReadFile",
+        RoutedMethod.ListNodeDirectory => "ListDirectory",
+        RoutedMethod.SearchNodeFiles => "SearchFiles",
         RoutedMethod.SubmitNodeTask => "SubmitTask",
         RoutedMethod.GetNodeTask => "GetTask",
         RoutedMethod.ListNodeTasks => "ListTasks",

@@ -50,20 +50,23 @@ public sealed class CallVerifierTests
             Assert.NotNull(Check(bad).Refusal);
         }
 
-        // Read is admitted without a command ID; later file mutations are still refused.
-        Assert.Null(Check(Build(lifetime: TimeSpan.FromSeconds(35), change: header => header.Method = RoutedMethod.ReadNodeFile)).Refusal);
-        Assert.NotNull(Check(Build(lifetime: TimeSpan.FromSeconds(35), change: header =>
+        // File reads and directory pages admit no command ID; later file mutations are still refused.
+        foreach (var method in new[] { RoutedMethod.ReadNodeFile, RoutedMethod.SearchNodeFiles, RoutedMethod.ListNodeDirectory })
         {
-            header.Method = RoutedMethod.ReadNodeFile;
-            header.CommandId = CommandIds.New();
-        })).Refusal);
+            Assert.Null(Check(Build(lifetime: TimeSpan.FromSeconds(35), change: header => header.Method = method)).Refusal);
+            Assert.NotNull(Check(Build(lifetime: TimeSpan.FromSeconds(35), change: header =>
+            {
+                header.Method = method;
+                header.CommandId = CommandIds.New();
+            })).Refusal);
+        }
         Assert.NotNull(Check(Build(lifetime: TimeSpan.FromSeconds(35), change: header => header.Method = RoutedMethod.WriteNodeFile)).Refusal);
     }
 
     [Fact]
     public void FileAndWorkspaceSignedLifetimesRespectTheirSeparateDeadlineAndExpiryBounds()
     {
-        foreach (var method in new[] { RoutedMethod.ReadNodeFile, RoutedMethod.GetNodeWorkspace })
+        foreach (var method in new[] { RoutedMethod.ReadNodeFile, RoutedMethod.SearchNodeFiles, RoutedMethod.ListNodeDirectory, RoutedMethod.GetNodeWorkspace })
         {
             Assert.Null(Check(Build(lifetime: TimeSpan.FromSeconds(35), change: header => header.Method = method)).Refusal);
             Assert.Equal("lifetime", Step(Build(lifetime: TimeSpan.FromSeconds(36), change: header => header.Method = method)));
