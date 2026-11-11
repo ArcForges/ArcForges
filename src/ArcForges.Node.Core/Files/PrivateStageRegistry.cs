@@ -172,6 +172,31 @@ internal static partial class PrivateStageRegistry
     }
 
     /// <summary>
+    /// Checks the durable reservation in the same writer transaction before creating an empty stage. A later producer
+    /// must not create even an empty object after a recovery transaction has fenced or settled its reservation.
+    /// </summary>
+    internal static void RequireActiveUnboundStage(StoreTransaction transaction, ReadOnlySpan<byte> commandId,
+        int slot, WorkspacePath stageDirectory, string name)
+    {
+        RequireFull(transaction);
+        ArgumentNullException.ThrowIfNull(stageDirectory);
+        StoreIds.Validate(commandId, nameof(commandId));
+        if (slot is not (1 or 2) || WorkspacePath.Components(name).Length != 1)
+            throw new ArgumentException("A reserved direct stage name is required.");
+        using var query = transaction.CreateCommand("""
+            SELECT o.stage_path FROM file_private_stage_object o
+            JOIN file_private_stage_reservation r ON r.command_id = o.command_id
+            WHERE o.command_id = $id AND o.slot = $slot AND o.phase = 1 AND r.active = 1;
+            """);
+        query.Parameters.AddWithValue("$id", commandId.ToArray());
+        query.Parameters.AddWithValue("$slot", slot);
+        var path = query.ExecuteScalar() as string;
+        if (!string.Equals(path, Path.Combine(stageDirectory.RootPath, name),
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+            throw new InvalidOperationException("The stage reservation is no longer active and unbound.");
+    }
+
+    /// <summary>
     /// Binds a still-empty held object to its already durable reservation. This permits query exclusion, not writing
     /// stage bytes: a producer must independently prove private security and native exclusion before doing so.
     /// </summary>
@@ -238,7 +263,7 @@ internal static partial class PrivateStageRegistry
     /// </summary>
     internal static void WriteBoundStage(NodeStore store, ReadOnlySpan<byte> commandId, int slot, CenterCaller caller,
         ReadOnlySpan<byte> transmitted, WorkspaceEmptyNamedStage stage, ReadOnlySpan<byte> content,
-        CancellationToken cancellationToken, Action? afterFirstWrite = null)
+        CancellationToken cancellationToken, Action? afterFirstWrite = null, Action<StoreTransaction>? beforeWrite = null)
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(caller);
@@ -291,7 +316,8 @@ internal static partial class PrivateStageRegistry
                 }
 
                 // The checked object ID was committed by a previous FULL transaction before any body is exposed.
-                stage.Guard.WritePrivateNamedStage(body, contentHash, cancellationToken, afterFirstWrite);
+                stage.Guard.WritePrivateNamedStage(body, contentHash, cancellationToken, afterFirstWrite,
+                    beforeEachWrite: () => beforeWrite?.Invoke(transaction));
                 cancellationToken.ThrowIfCancellationRequested();
                 stage.Guard.CheckIntact();
                 if (transaction.Execute("""

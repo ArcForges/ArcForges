@@ -142,7 +142,8 @@ internal static partial class FileMutationJournal
     {
         if (FindExisting(reader, kind, commandId, caller, transmitted) != FileJournalPreparation.Existing)
             return null;
-        var row = ReadRow(reader, commandId) ?? throw new InvalidDataException("The file journal disappeared.");
+        var row = ReadRow(reader, commandId);
+        if (row is null) return PrivateStageTerminal.Replay(reader, kind, commandId, caller, transmitted);
         if (row.State == FileOperationState.Completed) _ = CompletedResult(row);
         else if (row.State == FileOperationState.Unknown) EnsureUnknownOutcome(row);
         else if (row.Outcome is not null) throw new InvalidDataException("A prepared journal has an outcome.");

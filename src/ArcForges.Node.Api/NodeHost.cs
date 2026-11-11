@@ -449,6 +449,13 @@ public static class NodeHost
                 log.Warning("node.file_recovery.pending", new LogField("count", interruptedFiles));
             }
 
+            // The FULL writer fences only unraised reservations without a target journal; active approvals remain.
+            var recoveredStages = await processor.ExecuteAsync(context =>
+                PrivateStageTerminal.RecoverUnraised(context.Transaction) +
+                PrivateStageTerminal.RecoverTerminalApprovals(context.Transaction), CommitDurability.Full).ConfigureAwait(false);
+            if (recoveredStages > 0)
+                log.Warning("node.file_recovery.stages_terminal", new LogField("count", recoveredStages));
+
             foreach (var participant in options.Recovery.Prepend(execution))
             {
                 await participant.RecoverAsync(recovery, processor, node.Stopping).ConfigureAwait(false);
@@ -664,7 +671,8 @@ public static class NodeHost
                     // are pruned (node-store.md).
                     var removed = await node.Processor.ExecuteAsync(context =>
                         EventJournal.Prune(context.Transaction) + Notifications.Prune(context.Transaction) + Jobs.Prune(context.Transaction)
-                        + Approvals.Expire(context) + Approvals.Prune(context.Transaction) + AuditLog.Prune(context.Transaction)
+                        + Approvals.Expire(context) + PrivateStageTerminal.RecoverTerminalApprovals(context.Transaction)
+                        + Approvals.Prune(context.Transaction) + AuditLog.Prune(context.Transaction)
                         + RoutedCallLog.Prune(context.Transaction) + RoutedFileRetention.Prune(context.Transaction), CommitDurability.Full).ConfigureAwait(false);
                     var commands = node.Store.Commands.PurgeExpired();
 

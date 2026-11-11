@@ -25,6 +25,26 @@ internal static partial class FileMutationJournal
         if (FindExisting(transaction, FileOperationKind.Write, commandId, caller, transmitted) != FileJournalPreparation.Existing)
             throw new InvalidOperationException("The original file command and caller do not match.");
         var row = ReadRow(transaction, commandId) ?? throw new InvalidOperationException("The file intent is missing.");
+        return CompleteCheckedAbsentConflict(transaction, row, collision);
+    }
+
+    /// <summary>Records the same real exclusive-create collision for the bound local HUMAN-approved request.</summary>
+    internal static byte[] CompleteApprovedAbsentConflict(StoreTransaction transaction, ReadOnlySpan<byte> approvalId,
+        WorkspaceCreateCollisionException collision)
+    {
+        RequireFull(transaction);
+        ArgumentNullException.ThrowIfNull(collision);
+        var plan = PrivateStageApprovedPlans.Read(transaction, approvalId)
+            ?? throw new InvalidOperationException("The approved file binding is unavailable.");
+        var row = ReadRow(transaction, plan.Intent.CommandId) ?? throw new InvalidOperationException("The file intent is missing.");
+        if (row.Kind != plan.Intent.Kind || !CryptographicOperations.FixedTimeEquals(row.RequestSha256, plan.RequestSha256) ||
+            !CenterRouting.SameFileCaller(row.Caller, plan.Intent.Caller))
+            throw new InvalidOperationException("The collision does not bind the approved request.");
+        return CompleteCheckedAbsentConflict(transaction, row, collision);
+    }
+
+    private static byte[] CompleteCheckedAbsentConflict(StoreTransaction transaction, JournalRow row, WorkspaceCreateCollisionException collision)
+    {
         if (row.State != FileOperationState.Prepared || row.Outcome is not null || !row.Held || row.Acknowledged ||
             !row.ExpectedAbsent || !string.Equals(row.Path, collision.RelativePath, StringComparison.Ordinal))
             throw new InvalidOperationException("Only the matching absent-target intent can record this collision.");
@@ -54,6 +74,9 @@ internal static partial class FileMutationJournal
             """, ("$now", transaction.NowMicroseconds), ("$id", row.CommandId)) != 1)
             throw new InvalidOperationException("The file intent changed during collision settlement.");
         CommandDeduplication.Complete(transaction, row.CommandId, outcome);
+        if (PrivateStageRegistry.HasSchema(transaction))
+            transaction.Execute("UPDATE file_private_stage_reservation SET active = 0 WHERE command_id = $id AND active = 1;",
+                ("$id", row.CommandId));
         AuditLog.AppendFileWorkspace(transaction, Actor(row), "file.write FileService.WriteFile", row.WorkspaceId, null, row.Path,
             PermissionDecision.Deny, "refused: file_changed", null);
         return outcome;

@@ -16,7 +16,8 @@ internal static class PrivateStageProducer
     /// </summary>
     internal static async Task<WorkspaceEmptyNamedStage> CreateBoundAsync(CommandProcessor processor, ReadOnlyMemory<byte> commandId,
         int slot, WorkspacePath workspaceRoot, WorkspacePath stageDirectory, string name, CancellationToken cancellationToken,
-        Action? afterCreateForTests = null, Action? afterBindForTests = null)
+        Action? afterCreateForTests = null, Action? afterBindForTests = null,
+        Action<StoreTransaction>? beforeCreate = null)
     {
         ArgumentNullException.ThrowIfNull(processor);
         ArgumentNullException.ThrowIfNull(workspaceRoot);
@@ -28,6 +29,9 @@ internal static class PrivateStageProducer
         {
             return await processor.ExecuteAsync(command =>
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                beforeCreate?.Invoke(command.Transaction);
+                PrivateStageRegistry.RequireActiveUnboundStage(command.Transaction, stableId, slot, stageDirectory, name);
                 cancellationToken.ThrowIfCancellationRequested();
                 created = stageDirectory.CreateEmptyPrivateNamedStage(name, cancellationToken);
                 afterCreateForTests?.Invoke();

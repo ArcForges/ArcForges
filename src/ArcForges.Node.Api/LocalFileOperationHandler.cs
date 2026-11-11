@@ -59,10 +59,10 @@ internal sealed class LocalFileOperationHandler(NodeRuntime node, ClientSessions
             AuditLog.AppendFileWorkspace(command.Transaction, caller.Actor, "file.show FileService.GetFileOperation",
                 path?.WorkspaceId?.Value.ToByteArray(), null, path?.Path, operation is null ? PermissionDecision.Deny : PermissionDecision.Allow,
                 operation is null ? "refused: not_found" : "shown", null);
-            var warnings = operation is null or { State: FileOperationState.Unknown }
-                ? PrivateStageLocations.ForVerifiedHuman(command.Transaction, request.OperationCommandId.Value.Span, context.CancellationToken)
-                    .Select(PrivateStageLocations.ToWarning).ToArray()
-                : Array.Empty<string>();
+            // Retained named stages can outlive both UNKNOWN and terminal outcomes. Only a verified local HUMAN
+            // receives their checked or last-known locations, regardless of whether safe disposition is available.
+            var warnings = PrivateStageLocations.ForVerifiedHuman(command.Transaction, request.OperationCommandId.Value.Span, context.CancellationToken)
+                .Select(PrivateStageLocations.ToWarning).ToArray();
             return (Operation: operation, Warnings: warnings);
         }, CommitDurability.Full);
         (FileOperation? Operation, string[] Warnings) value;

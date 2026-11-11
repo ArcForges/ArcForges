@@ -33,7 +33,7 @@ public sealed class PrivateStageMigrationTests
             }, CommitDurability.Full);
         }
 
-        using (var current = root.Open(clock))
+        using (var current = root.Open(clock, new MigrationPlan(StoreMigrations.Released.Steps.Take(8))))
         {
             Assert.Equal(7, current.Opening.MigratedFrom);
             Assert.Equal(8, current.Metadata.SchemaVersion);

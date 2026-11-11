@@ -11,7 +11,7 @@ internal sealed partial class WorkspaceWriteGuard
     /// authorization, approval or target-effect guarantee. Failure can leave partial bytes on the owned object.
     /// </summary>
     internal void WritePrivateNamedStage(ReadOnlySpan<byte> bytes, ReadOnlySpan<byte> expectedSha256,
-        CancellationToken cancellationToken, Action? afterFirstWrite = null)
+        CancellationToken cancellationToken, Action? afterFirstWrite = null, Action? beforeEachWrite = null)
     {
         if (bytes.Length > MaximumExpectedBytes || expectedSha256.Length != 32 ||
             !CryptographicOperations.FixedTimeEquals(SHA256.HashData(bytes), expectedSha256))
@@ -30,6 +30,9 @@ internal sealed partial class WorkspaceWriteGuard
                 cancellationToken.ThrowIfCancellationRequested();
                 CheckLocked();
                 var count = Math.Min(65_536, bytes.Length - offset);
+                beforeEachWrite?.Invoke();
+                cancellationToken.ThrowIfCancellationRequested();
+                CheckLocked();
                 RandomAccess.Write(_file!, bytes.Slice(offset, count), offset);
                 offset += count;
                 if (offset == count) afterFirstWrite?.Invoke();

@@ -143,7 +143,7 @@ internal static partial class FileMutationJournal
             CenterRouting.Shape(caller) is not null || transmitted.Length is < 1 or > MaximumRequestBytes)
             throw new ArgumentException("A valid verified command, caller and bounded request are required.");
         var existing = ReadRow(reader, commandId);
-        if (existing is null) return null;
+        if (existing is null) return PrivateStageTerminal.Find(reader, kind, commandId, caller, transmitted);
         return existing.Kind == kind && CryptographicOperations.FixedTimeEquals(existing.RequestSha256, SHA256.HashData(transmitted)) &&
             CenterRouting.SameFileCaller(existing.Caller, caller) ? FileJournalPreparation.Existing : FileJournalPreparation.Conflict;
     }
@@ -176,7 +176,8 @@ internal static partial class FileMutationJournal
         StoreIds.Validate(commandId, nameof(commandId));
         ArgumentNullException.ThrowIfNull(caller);
         var row = ReadRow(reader, commandId);
-        return row is not null && CenterRouting.SameFileCaller(row.Caller, caller) ? ToOperation(row) : null;
+        return row is null ? PrivateStageTerminal.Get(reader, commandId, caller) :
+            CenterRouting.SameFileCaller(row.Caller, caller) ? ToOperation(row) : null;
     }
 
     /// <summary>Reads local metadata only; application code must independently establish local HUMAN authority.</summary>
@@ -185,7 +186,7 @@ internal static partial class FileMutationJournal
         ArgumentNullException.ThrowIfNull(reader);
         StoreIds.Validate(commandId, nameof(commandId));
         var row = ReadRow(reader, commandId);
-        return row is null ? null : ToOperation(row);
+        return row is null ? PrivateStageTerminal.Get(reader, commandId, caller: null) : ToOperation(row);
     }
 
     /// <summary>

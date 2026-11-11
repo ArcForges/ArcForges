@@ -69,6 +69,14 @@
       "sha256": "143cc644c1bdc8c079973ebf1cbeb186e4ef42370a68f3ecad5d0039d2ed935f",
       "source": "AF-CTR-06 private stage identity, combined held journal and retained byte accounting; unmerged local author candidate, not approval delivery.",
       "addedBy": "AF-CTR-06"
+    },
+    {
+      "version": 9,
+      "minReaderVersion": 1,
+      "file": "0009-schema-step-9.sql",
+      "sha256": "d5fdf34cd8cecf948f0930b1a8c82485f40a053d52d3f678d6208287e7f996b5",
+      "source": "AF-CTR-06 durable pre-effect orphan stage fencing and recovery; local author candidate.",
+      "addedBy": "AF-CTR-06"
     }
   ]
 }

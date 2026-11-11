@@ -126,6 +126,27 @@ internal sealed partial class FileServiceHandler
                 routed.MarkAudited();
             }
 
+            if (prepared.NeedsApproval)
+            {
+                // Dispose an earlier anonymous attempt before making a separately durable named approval stage.
+                lease.Dispose();
+                ownsLease = false;
+                var pendingApproval = Task.Run(() => ProduceApprovalAsync(caller, request, raw, started, limit, token));
+                if (AfterApprovalReservationForTests is not null) LastApprovalProducerForTests = pendingApproval;
+                MutationPreparation approval;
+                try { approval = await pendingApproval.WaitAsync(token).ConfigureAwait(false); }
+                catch (OperationCanceledException)
+                {
+                    _ = ObserveApprovalProducerAsync(pendingApproval);
+                    throw;
+                }
+                if (approval.PolicyReason is { } approvalReason)
+                {
+                    routed.Refused(PermissionMatrix.FileWrite, approvalReason);
+                    routed.MarkAudited();
+                }
+                return approval.Response;
+            }
             if (!prepared.Ready) return prepared.Response;
             if (AfterPreparationForTests is { } afterPreparation) await afterPreparation().ConfigureAwait(false);
             if (Expired(started, limit, token)) throw new OperationCanceledException(token);
@@ -233,10 +254,25 @@ internal sealed partial class FileServiceHandler
             if (existing == FileJournalPreparation.Existing)
             {
                 var cached = FileMutationJournal.Replay(transaction, request.Kind, request.Meta.CommandId.Value.Span, caller.CenterCaller, raw);
-                if (cached is not null) Audit(PermissionDecision.Allow, "replayed");
+                if (cached is not null)
+                {
+                    var replayError = request.Kind == FileOperationKind.Write
+                        ? FileServiceWriteFileResponse.Parser.ParseFrom(cached).Error
+                        : FileServiceEditFileResponse.Parser.ParseFrom(cached).Error;
+                    Audit(replayError is null ? PermissionDecision.Allow : PermissionDecision.Deny,
+                        replayError is null ? "replayed" : "replayed: " + replayError.Code);
+                }
                 return new MutationPreparation(false, cached);
             }
 
+            if (PreviousFileApproval(transaction, caller, request, raw, correlation) is { } previous)
+            {
+                if (previous.PolicyReason == "approval_required")
+                    Audit(PermissionDecision.Approval, "refused: approval_required");
+                else if (previous.Response is not null)
+                    Audit(PermissionDecision.Deny, "refused: existing_approval");
+                return previous;
+            }
             CheckWriteCandidateAuthority(transaction, caller);
             CheckBudget();
             // Linux remains unavailable until its lease coordinator is proven. A new AGENT-owned target also waits
@@ -317,8 +353,7 @@ internal sealed partial class FileServiceHandler
         }
         catch (FileApprovalNotImplementedException)
         {
-            // This remains an honest pre-effect refusal until the real durable HUMAN approval path is implemented.
-            return Refuse(Error(ErrorCategory.Resource, "enforcement_unavailable", "file_approval_unavailable", correlation));
+            return new MutationPreparation(false, NeedsApproval: true);
         }
         catch (WorkspaceFileEditException failure)
         {
@@ -471,7 +506,7 @@ internal sealed partial class FileServiceHandler
     private sealed record MutationRequest(FileOperationKind Kind, RequestMeta? Meta, FilePath? Path, bool ShapeValid, string? Limit,
         bool HasExpectedSha256, ByteString ExpectedSha256, ByteString Data, string? OldText, string? NewText, uint ExpectedOccurrences);
 
-    private sealed record MutationPreparation(bool Ready, byte[]? Response = null, string? PolicyReason = null);
+    private sealed record MutationPreparation(bool Ready, byte[]? Response = null, string? PolicyReason = null, bool NeedsApproval = false);
 
     private sealed class MutationLease : IDisposable
     {

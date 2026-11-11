@@ -65,10 +65,11 @@ public sealed class PrivateStageProducerRecoveryTests
         Assert.Equal(1L, node.Runtime.Store.Read(r => r.Scalar("""
             SELECT count(*) FROM file_private_stage_object WHERE phase = 1 AND native_identity IS NULL AND parent_identity IS NULL;
             """)));
+        Assert.Equal((0, (long)body.Length), node.Runtime.Store.Read(PrivateStageRegistry.Usage));
         using (var root = WorkspacePath.OpenRoot(path))
         {
-            // FILE_CREATE/O_EXCL must refuse this unidentifiable name, not open it as the stage or delete it.
-            await Assert.ThrowsAsync<WorkspacePathException>(() => PrivateStageProducer.CreateBoundAsync(
+            // Startup fenced the failed producer before another create; the unidentifiable name is not adopted or removed.
+            await Assert.ThrowsAsync<InvalidOperationException>(() => PrivateStageProducer.CreateBoundAsync(
                 node.Runtime.Processor, id, 2, root, root, "stage", ct));
         }
         Assert.Empty(File.ReadAllBytes(stagePath));
@@ -81,8 +82,12 @@ public sealed class PrivateStageProducerRecoveryTests
         await using var script = await node.ChannelAsync();
         var local = await human.Files.GetFileOperationAsync(query, cancellationToken: ct);
         Assert.True(NodeShapes.IsValid(local));
-        Assert.Equal("not_found", local.Error.Code);
-        Assert.Null(local.Value);
+        Assert.Null(local.Error);
+        Assert.Equal(FileOperationState.Completed, local.Value.Operation.State);
+        Assert.Equal("invalid_state", local.Value.Operation.Error.Code);
+        Assert.Equal("file_preparation_abandoned", local.Value.Operation.Error.Details.State.Reason);
+        Assert.Equal(EffectCertainty.DidNotHappen, local.Value.Operation.Error.Effect);
+        Assert.False(local.Value.Operation.Held);
         var warning = Assert.Single(local.Meta.Warnings).Split(':', 4);
         Assert.Equal("arcforges.file-stage.v1", warning[0]);
         Assert.Equal("2", warning[1]);
@@ -95,8 +100,9 @@ public sealed class PrivateStageProducerRecoveryTests
         var remoteBytes = Assert.IsType<ByteString>(remote.Answer?.Response);
         var remoteResponse = FileServiceGetFileOperationResponse.Parser.ParseFrom(remoteBytes);
         Assert.True(NodeShapes.IsValid(remoteResponse));
-        Assert.NotNull(remoteResponse.Error);
-        Assert.Null(remoteResponse.Value);
+        Assert.Null(remoteResponse.Error);
+        Assert.Equal(FileOperationState.Completed, remoteResponse.Value.Operation.State);
+        Assert.Equal("file_preparation_abandoned", remoteResponse.Value.Operation.Error.Details.State.Reason);
         Assert.Empty(remoteResponse.Meta.Warnings);
         Assert.Equal(-1, remoteBytes.Span.IndexOf(Encoding.UTF8.GetBytes(stagePath)));
         Assert.Empty(File.ReadAllBytes(stagePath));

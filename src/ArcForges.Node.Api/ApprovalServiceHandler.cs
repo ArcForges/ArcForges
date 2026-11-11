@@ -4,6 +4,7 @@ using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Node.Core;
+using ArcForges.Node.Core.Files;
 using ArcForges.Node.Core.Security;
 using ArcForges.Node.Store;
 using Google.Protobuf;
@@ -158,6 +159,7 @@ public sealed class ApprovalServiceHandler : ApprovalService.ApprovalServiceBase
             failure => new ApprovalServiceDecideApprovalResponse { Meta = ApiCommands.Meta(request.Meta), Error = failure }, command =>
             {
                 Approvals.Expire(command);
+                PrivateStageTerminal.RecoverTerminalApprovals(command.Transaction);
                 var current = Approvals.Get(command.Transaction, id);
                 ArcError? error = current?.State switch
                 {
@@ -175,6 +177,8 @@ public sealed class ApprovalServiceHandler : ApprovalService.ApprovalServiceBase
                 if (current!.State == ApprovalState.Pending)
                 {
                     current = Approvals.Decide(command, id, approve, caller.Actor, request.HasComment ? request.Comment : null);
+                    if (!approve && current.View.CommandId is { Value.Length: 16 } original)
+                        PrivateStageTerminal.RecoverTerminalApproval(command.Transaction, original.Value.Span);
                     decided = current;
                 }
 
@@ -223,6 +227,7 @@ public sealed class ApprovalServiceHandler : ApprovalService.ApprovalServiceBase
             failure => new ApprovalServiceCancelApprovalResponse { Meta = ApiCommands.Meta(request.Meta), Error = failure }, command =>
             {
                 Approvals.Expire(command);
+                PrivateStageTerminal.RecoverTerminalApprovals(command.Transaction);
                 var current = Approvals.Get(command.Transaction, id);
                 ArcError? error = null;
                 if (current is null || !Visible(caller, current.View))
@@ -239,13 +244,16 @@ public sealed class ApprovalServiceHandler : ApprovalService.ApprovalServiceBase
                     error = NodeErrors.InvalidState(current.State.ToString().ToUpperInvariant(), "only a PENDING approval can be withdrawn");
                 }
 
-                return error is not null
-                    ? new ApprovalServiceCancelApprovalResponse { Meta = ApiCommands.Meta(request.Meta), Error = error }
-                    : new ApprovalServiceCancelApprovalResponse
-                    {
-                        Meta = ApiCommands.Meta(request.Meta),
-                        Value = new ApprovalServiceCancelApprovalValue { Approval = Approvals.Cancel(command, id, caller.Actor).View },
-                    };
+                if (error is not null)
+                    return new ApprovalServiceCancelApprovalResponse { Meta = ApiCommands.Meta(request.Meta), Error = error };
+                var cancelled = Approvals.Cancel(command, id, caller.Actor);
+                if (cancelled.View.CommandId is { Value.Length: 16 } original)
+                    PrivateStageTerminal.RecoverTerminalApproval(command.Transaction, original.Value.Span);
+                return new ApprovalServiceCancelApprovalResponse
+                {
+                    Meta = ApiCommands.Meta(request.Meta),
+                    Value = new ApprovalServiceCancelApprovalValue { Approval = cancelled.View },
+                };
             }).ConfigureAwait(false);
         return result;
     }
@@ -321,7 +329,9 @@ public sealed class ApprovalServiceHandler : ApprovalService.ApprovalServiceBase
     {
         try
         {
-            await _node.Processor.ExecuteAsync(Approvals.Expire).ConfigureAwait(false);
+            await _node.Processor.ExecuteAsync(command =>
+                Approvals.Expire(command) + PrivateStageTerminal.RecoverTerminalApprovals(command.Transaction),
+                CommitDurability.Full).ConfigureAwait(false);
         }
         catch (CommandQueueFullException)
         {

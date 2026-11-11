@@ -84,7 +84,7 @@ public sealed class MigrationPlan
 public static class StoreMigrations
 {
     /// <summary>The schema version this binary writes; it reads stores whose <c>min_reader_version</c> is at most this.</summary>
-    public const int SupportedSchemaVersion = 8;
+    public const int SupportedSchemaVersion = 9;
 
     /// <summary>The released steps, loaded from the embedded <c>Schema/*.sql</c> resources.</summary>
     public static MigrationPlan Released { get; } = new([
@@ -112,6 +112,9 @@ public static class StoreMigrations
 
         // AF-CTR-06: bounded metadata-only private stage reservations and opened-object identities.
         Load(8, 1, "0008-schema-step-8.sql"),
+
+        // AF-CTR-06: durable fence for private stages abandoned before target effects.
+        Load(9, 1, "0009-schema-step-9.sql"),
     ]);
 
     private static StoreMigration Load(int version, int minReaderVersion, string name)

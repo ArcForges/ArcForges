@@ -81,9 +81,6 @@ internal sealed partial class FileServiceHandler
         if (!OperatingSystem.IsWindows())
             return new ApprovedMutationStart(false, FileMutationJournal.RecordApprovedPreEffectRefusal(transaction,
                 approvalId, ApprovedFileRefusal.EnforcementUnavailable));
-        // Exclusive creation is connected separately; until then leave the approved request pending and unchanged.
-        if (plan.Intent.TargetIdentity is null) return new ApprovedMutationStart(false);
-
         try
         {
             lease.Use = _workspaces.OpenForUse(transaction, plan.Intent.WorkspaceId,
@@ -91,9 +88,18 @@ internal sealed partial class FileServiceHandler
                 {
                     if (!ApprovedWriteAllowed(tx, caller, plan)) throw new FilePolicyException("denied");
                 }, token);
-            lease.Target = lease.Use.Root.OpenExistingWriteGuard(plan.Intent.RelativePath);
-            lease.Original = PrivateStageRegistry.ReopenReadyStage(transaction, plan.Intent.CommandId, 1,
-                plan.Intent.Caller, plan.RequestSha256, token);
+            if (plan.Intent.TargetIdentity is not null)
+            {
+                lease.Target = lease.Use.Root.OpenExistingWriteGuard(plan.Intent.RelativePath);
+                lease.Original = PrivateStageRegistry.ReopenReadyStage(transaction, plan.Intent.CommandId, 1,
+                    plan.Intent.Caller, plan.RequestSha256, token);
+            }
+            else
+            {
+                var slash = plan.Intent.RelativePath.LastIndexOf('/');
+                lease.ParentIdentity = WorkspacePath.Identity(lease.Use.Root.OpenDirectory(
+                    slash < 0 ? "" : plan.Intent.RelativePath[..slash]));
+            }
             lease.Intended = PrivateStageRegistry.ReopenReadyStage(transaction, plan.Intent.CommandId, 2,
                 plan.Intent.Caller, plan.RequestSha256, token);
             var prepared = FileMutationJournal.PrepareApproved(transaction, approvalId, lease.Use.Root, lease.Target,
@@ -144,6 +150,49 @@ internal sealed partial class FileServiceHandler
             if (!time.Healthy) throw new InvalidOperationException("File validation time is unavailable.");
             if (time.BoundaryMicroseconds >= plan.ApprovalExpiresAt) throw new ApprovedFileExpiredException();
             if (!ApprovedWriteAllowed(transaction, caller, plan)) throw new FilePolicyException("denied");
+        }
+
+        if (plan.Intent.TargetIdentity is null)
+        {
+            try
+            {
+                lease.Created = lease.Use!.Root.CreateWindowsNewTarget(plan.Intent.RelativePath, lease.ParentIdentity!.Value,
+                    lease.Intended!, BeforeCreateForTests, BeforeEffect, token);
+            }
+            catch (WorkspaceCreateCollisionException collision)
+            {
+                return FileMutationJournal.CompleteApprovedAbsentConflict(transaction, approvalId, collision);
+            }
+            catch (WorkspaceCreateUncertainException)
+            {
+                return FileMutationJournal.MarkUnknown(transaction, plan.Intent.CommandId);
+            }
+            catch (FilePolicyException)
+            {
+                return FileMutationJournal.CompleteApprovedPreparedRefusal(transaction, approvalId, ApprovedFileRefusal.PolicyDenied);
+            }
+            catch (ApprovedFileExpiredException)
+            {
+                return FileMutationJournal.CompleteApprovedPreparedRefusal(transaction, approvalId, ApprovedFileRefusal.ApprovalExpired);
+            }
+            catch (WorkspacePathException failure) when (failure.Reason is "parent_identity_changed" or "directory_identity_changed" or
+                "root_changed" or "file_identity_changed")
+            {
+                return FileMutationJournal.CompleteApprovedPreparedRefusal(transaction, approvalId, ApprovedFileRefusal.TargetChanged);
+            }
+
+            try
+            {
+                AfterCreateForTests?.Invoke();
+                var created = lease.Use!.Root.ApplyExistingGuardedStage(plan.Intent.RelativePath, lease.Created.Guard,
+                    lease.Intended!, SHA256.HashData(ReadOnlySpan<byte>.Empty), afterFirstEffect: null, beforeEachEffect: BeforeEffect, token);
+                return FileMutationJournal.CompleteApprovedVerifiedEffect(transaction, approvalId, created.Size, created.Sha256, replacements: null);
+            }
+            catch (Exception failure) when (failure is not OutOfMemoryException and not StackOverflowException)
+            {
+                // Exclusive creation itself was an effect, even when no file-content write began.
+                return FileMutationJournal.MarkUnknown(transaction, plan.Intent.CommandId);
+            }
         }
 
         try
@@ -202,6 +251,8 @@ internal sealed partial class FileServiceHandler
     {
         internal RegisteredWorkspaceUse? Use { get; set; }
         internal WorkspaceWriteGuard? Target { get; set; }
+        internal WorkspaceCreatedTarget? Created { get; set; }
+        internal WorkspaceObjectIdentity? ParentIdentity { get; set; }
         internal RecoveredPrivateStage? Original { get; set; }
         internal RecoveredPrivateStage? Intended { get; set; }
 
@@ -214,7 +265,11 @@ internal sealed partial class FileServiceHandler
                 finally
                 {
                     try { Target?.Dispose(); }
-                    finally { Use?.Dispose(); }
+                    finally
+                    {
+                        try { Created?.Dispose(); }
+                        finally { Use?.Dispose(); }
+                    }
                 }
             }
         }
