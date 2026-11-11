@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Security.AccessControl;
 using System.Security.Cryptography;
 using System.Text;
 using ArcForges.Node.Core.Platform;
@@ -73,6 +74,131 @@ public sealed class WorkspaceWindowsStageTests
         Assert.True(before.SameObject(checkedRoot.InspectEntry("child/target").Identity));
         Assert.Equal(intended, File.ReadAllBytes(path));
         Assert.Single(Directory.EnumerateFileSystemEntries(fixture.Root));
+    }
+
+    [Fact]
+    public void ActualGuardedWritePreservesObservedSecurityAttributesAndAlternateStream()
+    {
+        if (!OperatingSystem.IsWindows()) { Assert.Skip("Windows security and alternate streams."); return; }
+        using var fixture = new Fixture();
+        var path = Path.Combine(fixture.Root, "target");
+        var alternate = path + ":af-owned-test";
+        var original = "original synthetic data"u8.ToArray();
+        var intended = "replacement synthetic data"u8.ToArray();
+        var streamBytes = "alternate synthetic marker"u8.ToArray();
+        File.WriteAllBytes(path, original);
+        File.WriteAllBytes(alternate, streamBytes);
+        File.SetAttributes(path, FileAttributes.Archive); // supported case: the operation must retain this existing bit
+        var attributes = File.GetAttributes(path);
+        var created = File.GetCreationTimeUtc(path);
+        var sections = AccessControlSections.Owner | AccessControlSections.Group | AccessControlSections.Access;
+        var security = new FileInfo(path).GetAccessControl(sections).GetSecurityDescriptorBinaryForm();
+        WorkspaceObjectIdentity originalIdentity;
+        using (var root = WorkspacePath.OpenRoot(fixture.Root))
+        using (var target = root.OpenExistingWriteGuard("target"))
+        using (var stage = root.CreateAnonymousStage(intended, TestContext.Current.CancellationToken))
+        {
+            originalIdentity = target.ObjectIdentity;
+            var result = root.ApplyExistingGuardedStage("target", target, stage, SHA256.HashData(original),
+                TestContext.Current.CancellationToken);
+            Assert.Equal(SHA256.HashData(intended), result.Sha256);
+        }
+        using (var checkRoot = WorkspacePath.OpenRoot(fixture.Root))
+            Assert.True(originalIdentity.SameObject(checkRoot.InspectEntry("target").Identity));
+        Assert.Equal(attributes, File.GetAttributes(path));
+        Assert.Equal(created, File.GetCreationTimeUtc(path));
+        Assert.Equal(security, new FileInfo(path).GetAccessControl(sections).GetSecurityDescriptorBinaryForm());
+        Assert.Equal(streamBytes, File.ReadAllBytes(alternate));
+        Assert.Equal(intended, File.ReadAllBytes(path));
+    }
+
+    [Fact]
+    public void MissingArchiveCapabilityRefusesBeforeEffectAndPreservesTheActualFile()
+    {
+        if (!OperatingSystem.IsWindows()) { Assert.Skip("Windows basic file attributes."); return; }
+        using var fixture = new Fixture();
+        var path = Path.Combine(fixture.Root, "target");
+        var alternate = path + ":af-owned-test";
+        var original = "original synthetic data"u8.ToArray();
+        var stream = "alternate synthetic data"u8.ToArray();
+        File.WriteAllBytes(path, original);
+        File.WriteAllBytes(alternate, stream);
+        File.SetAttributes(path, FileAttributes.Normal);
+        var attributes = File.GetAttributes(path);
+        Assert.Equal(FileAttributes.Normal, attributes);
+        using (var root = WorkspacePath.OpenRoot(fixture.Root))
+        using (var target = root.OpenExistingWriteGuard("target"))
+        using (var stage = root.CreateAnonymousStage("replacement"u8, TestContext.Current.CancellationToken))
+        {
+            var failure = Assert.Throws<WorkspaceGuardedMutationException>(() => root.ApplyExistingGuardedStage(
+                "target", target, stage, SHA256.HashData(original), TestContext.Current.CancellationToken));
+            Assert.False(failure.PossibleEffect);
+            Assert.IsType<WorkspacePreservationUnavailableException>(failure.InnerException);
+        }
+        Assert.Equal(attributes, File.GetAttributes(path));
+        Assert.Equal(original, File.ReadAllBytes(path));
+        Assert.Equal(stream, File.ReadAllBytes(alternate));
+    }
+
+    [Fact]
+    public void ReadOnlySetAfterOpeningTheGuardRefusesBeforeEffect()
+    {
+        if (!OperatingSystem.IsWindows()) { Assert.Skip("Windows basic file attributes."); return; }
+        using var fixture = new Fixture();
+        var path = Path.Combine(fixture.Root, "target");
+        var original = "original synthetic data"u8.ToArray();
+        File.WriteAllBytes(path, original);
+        File.SetAttributes(path, FileAttributes.Archive);
+        try
+        {
+            using (var root = WorkspacePath.OpenRoot(fixture.Root))
+            using (var target = root.OpenExistingWriteGuard("target"))
+            using (var stage = root.CreateAnonymousStage("replacement"u8, TestContext.Current.CancellationToken))
+            {
+                File.SetAttributes(path, FileAttributes.Archive | FileAttributes.ReadOnly);
+                var failure = Assert.Throws<WorkspaceGuardedMutationException>(() => root.ApplyExistingGuardedStage(
+                    "target", target, stage, SHA256.HashData(original), TestContext.Current.CancellationToken));
+                Assert.False(failure.PossibleEffect);
+                Assert.IsType<WorkspacePreservationUnavailableException>(failure.InnerException);
+            }
+            Assert.True((File.GetAttributes(path) & FileAttributes.ReadOnly) != 0);
+            Assert.Equal(original, File.ReadAllBytes(path));
+        }
+        finally
+        {
+            File.SetAttributes(path, FileAttributes.Archive); // test-owned fixture cleanup
+        }
+    }
+
+    [Fact]
+    public void ObservedAttributeChangeAfterFirstWriteIsUnknownAndNeverRestoredOver()
+    {
+        if (!OperatingSystem.IsWindows()) { Assert.Skip("Windows basic file attributes."); return; }
+        using var fixture = new Fixture();
+        var path = Path.Combine(fixture.Root, "target");
+        var original = "old-data-000"u8.ToArray();
+        var intended = "new-data-111"u8.ToArray();
+        File.WriteAllBytes(path, original);
+        File.SetAttributes(path, FileAttributes.Archive);
+        try
+        {
+            using (var root = WorkspacePath.OpenRoot(fixture.Root))
+            using (var target = root.OpenExistingWriteGuard("target"))
+            using (var stage = root.CreateAnonymousStage(intended, TestContext.Current.CancellationToken))
+            {
+                var failure = Assert.Throws<WorkspaceGuardedMutationException>(() => root.ApplyExistingGuardedStage(
+                    "target", target, stage, SHA256.HashData(original),
+                    () => File.SetAttributes(path, FileAttributes.Archive | FileAttributes.ReadOnly), TestContext.Current.CancellationToken));
+                Assert.True(failure.PossibleEffect);
+                Assert.IsType<WorkspacePreservationUnavailableException>(failure.InnerException);
+            }
+            Assert.True((File.GetAttributes(path) & FileAttributes.ReadOnly) != 0);
+            Assert.Equal(intended, File.ReadAllBytes(path));
+        }
+        finally
+        {
+            File.SetAttributes(path, FileAttributes.Archive); // test-owned fixture cleanup, after the assertion
+        }
     }
 
     [Fact]

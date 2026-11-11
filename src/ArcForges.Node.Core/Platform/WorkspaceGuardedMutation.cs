@@ -13,6 +13,10 @@ internal sealed class WorkspaceGuardedMutationException(bool possibleEffect, Exc
     internal bool PossibleEffect { get; } = possibleEffect;
 }
 
+/// <summary>A bounded pre-effect capability refusal; a future RPC maps it to RESOURCE/enforcement_unavailable.</summary>
+internal sealed class WorkspacePreservationUnavailableException()
+    : IOException("Safe preservation of file metadata is unavailable.");
+
 /// <summary>
 /// Native building block only. It does not grant authority, make a journal, enforce the complete request deadline,
 /// implement approval, or expose an RPC. Linux F_GETLEASE and write remain separate syscalls; a component success is
@@ -106,11 +110,27 @@ internal sealed partial class WorkspaceWriteGuard
                 cancellationToken.ThrowIfCancellationRequested();
                 stage.CheckIntact();
                 var file = _file!;
+                var originalMode = WorkspacePath.Identity(file).Mode;
+                if (_linux && (originalMode & 0xC00) != 0)
+                    throw new WorkspacePreservationUnavailableException(); // a write can clear setuid/setgid
+                WorkspaceWindowsAttributes? originalWindows = _linux ? null : WorkspacePath.WindowsAttributes(file);
+                // The measured Windows filesystem sets ARCHIVE on write. Do not blindly restore the whole attribute
+                // word: another process may change unrelated bits through a metadata-only handle while share=0 is held.
+                if (originalWindows is { } windows && ((windows.Attributes & 0x20) == 0 || (windows.Attributes & 0x01) != 0))
+                    throw new WorkspacePreservationUnavailableException();
+                void CheckMetadata()
+                {
+                    if (_linux && WorkspacePath.Identity(file).Mode != originalMode ||
+                        originalWindows is { } before && WorkspacePath.WindowsAttributes(file) != before)
+                        throw new WorkspacePreservationUnavailableException();
+                }
+                CheckMetadata();
                 for (var offset = 0; offset < source.Bytes.Length;)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     CheckLocked();
                     stage.CheckIntact();
+                    CheckMetadata();
                     var length = Math.Min(65_536, source.Bytes.Length - offset);
                     possibleEffect = true; // a failing write may still have changed bytes
                     RandomAccess.Write(file, source.Bytes.Span.Slice(offset, length), offset);
@@ -118,11 +138,13 @@ internal sealed partial class WorkspaceWriteGuard
                     offset += length;
                     CheckLocked();
                     stage.CheckIntact();
+                    CheckMetadata();
                 }
 
                 cancellationToken.ThrowIfCancellationRequested();
                 CheckLocked();
                 stage.CheckIntact();
+                CheckMetadata();
                 possibleEffect = true; // length change is itself an effect, including for an empty result
                 RandomAccess.SetLength(file, source.Bytes.Length);
                 if (source.Bytes.Length == 0) afterFirstEffect?.Invoke();
@@ -131,12 +153,14 @@ internal sealed partial class WorkspaceWriteGuard
                 RandomAccess.FlushToDisk(file);
                 CheckLocked();
                 stage.CheckIntact();
+                CheckMetadata();
                 using var result = ReadForMutation(cancellationToken);
                 if (result.Bytes.Length != stage.Length || !CryptographicOperations.FixedTimeEquals(result.Sha256.Span, stage.Sha256.Span))
                     throw new WorkspacePathException("file_identity_changed");
                 checkNames();
                 CheckLocked();
                 stage.CheckIntact();
+                CheckMetadata();
                 cancellationToken.ThrowIfCancellationRequested();
                 return new WorkspaceGuardedMutationResult(result.Bytes.Length, result.Sha256.ToArray());
             }

@@ -42,6 +42,8 @@ public sealed class PermissionTests
         { PermissionMatrix.WorkspaceUnregister, A, D, D, "unregister_node_workspace" },
         { PermissionMatrix.WorkspaceRead, A, A, A, "list_node_workspaces" },
         { PermissionMatrix.FileRead, A, A, A, "read_node_file" },
+        { PermissionMatrix.FileWrite, A, P, D, null },
+        { PermissionMatrix.FileRemove, A, P, D, null },
         { PermissionMatrix.CleanupPlan, A, A, A, null },
         { PermissionMatrix.CleanupExecute, A, P, P, null },
         { PermissionMatrix.ProcessAdopt, A, D, D, null },
