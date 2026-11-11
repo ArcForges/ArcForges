@@ -312,7 +312,12 @@ public sealed class FileMutationJournalTests
     {
         foreach (var file in new[] { database, database + "-wal" })
         {
-            if (File.Exists(file)) Assert.True(File.ReadAllBytes(file).AsSpan().IndexOf(marker) < 0);
+            if (!File.Exists(file)) continue;
+            // SQLite retains a writable handle on Windows. Read the actual live database/WAL without denying that handle's sharing.
+            using var source = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var bytes = new MemoryStream();
+            source.CopyTo(bytes);
+            Assert.True(bytes.GetBuffer().AsSpan(0, checked((int)bytes.Length)).IndexOf(marker) < 0);
         }
     }
 
