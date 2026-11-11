@@ -7,7 +7,7 @@
   <ItemGroup>
     <PackageVersion Include="ArcForges.Build.Policy" Version="1.0.0-ci.138.1" />
     <PackageVersion Include="ArcForges.Contracts.Fleet" Version="1.0.0-ci.437.1" />
-    <PackageVersion Include="ArcForges.Contracts.Foundation" Version="1.0.0-ci.437.1" />
+    <PackageVersion Include="ArcForges.Contracts.Foundation" Version="1.0.0-ci.450.1" />
     <PackageVersion Include="ArcForges.Contracts.Node" Version="1.0.0-ci.437.1" />
     <PackageVersion Include="ArcForges.Contracts.Relay" Version="1.0.0-ci.437.1" />
     <PackageVersion Include="ArcForges.LocalRpc" Version="1.0.0-ci.138.1" />

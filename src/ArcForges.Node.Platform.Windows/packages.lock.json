@@ -43,7 +43,7 @@
       },
       "ArcForges.Contracts.Foundation": {
         "type": "CentralTransitive",
-        "requested": "[1.0.0-ci.437.1, )",
+        "requested": "[1.0.0-ci.450.1, )",
         "resolved": "1.0.0-ci.437.1",
         "contentHash": "TjwmnNZw4qoZcvhzFyvmMC0QabsV2kh87nh2TbX/QvPMKfe1BfNScSIjHO742Oy3EaqGuupJSff7o1eedfxZEA==",
         "dependencies": {

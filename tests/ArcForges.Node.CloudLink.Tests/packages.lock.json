@@ -10,9 +10,9 @@
       },
       "ArcForges.Contracts.Foundation": {
         "type": "Direct",
-        "requested": "[1.0.0-ci.437.1, )",
-        "resolved": "1.0.0-ci.437.1",
-        "contentHash": "TjwmnNZw4qoZcvhzFyvmMC0QabsV2kh87nh2TbX/QvPMKfe1BfNScSIjHO742Oy3EaqGuupJSff7o1eedfxZEA==",
+        "requested": "[1.0.0-ci.450.1, )",
+        "resolved": "1.0.0-ci.450.1",
+        "contentHash": "AWRMQxEnO/decghJo5+2ItOxoLbsJKRvAHxpDasx0P7WhqLYDd3d4ahK7uRJDUhuX4jTpRfLYryGTb1DVtSEUg==",
         "dependencies": {
           "Google.Protobuf": "3.36.1"
         }
@@ -249,7 +249,7 @@
         "type": "Project",
         "dependencies": {
           "ArcForges.CommandLine": "[0.1.0-dev, )",
-          "ArcForges.Contracts.Foundation": "[1.0.0-ci.437.1, )",
+          "ArcForges.Contracts.Foundation": "[1.0.0-ci.450.1, )",
           "ArcForges.Node.Api": "[0.1.0-dev, )"
         }
       },
@@ -259,7 +259,7 @@
       "arcforges.client": {
         "type": "Project",
         "dependencies": {
-          "ArcForges.Contracts.Foundation": "[1.0.0-ci.437.1, )",
+          "ArcForges.Contracts.Foundation": "[1.0.0-ci.450.1, )",
           "ArcForges.Contracts.Node": "[1.0.0-ci.437.1, )",
           "ArcForges.LocalRpc": "[1.0.0-ci.138.1, )"
         }
@@ -287,7 +287,7 @@
         "type": "Project",
         "dependencies": {
           "ArcForges.Contracts.Fleet": "[1.0.0-ci.437.1, )",
-          "ArcForges.Contracts.Foundation": "[1.0.0-ci.437.1, )",
+          "ArcForges.Contracts.Foundation": "[1.0.0-ci.450.1, )",
           "ArcForges.Contracts.Node": "[1.0.0-ci.437.1, )",
           "ArcForges.Contracts.Relay": "[1.0.0-ci.437.1, )",
           "ArcForges.Node.Core": "[0.1.0-dev, )",
@@ -299,7 +299,7 @@
         "type": "Project",
         "dependencies": {
           "ArcForges.Client": "[0.1.0-dev, )",
-          "ArcForges.Contracts.Foundation": "[1.0.0-ci.437.1, )",
+          "ArcForges.Contracts.Foundation": "[1.0.0-ci.450.1, )",
           "ArcForges.Contracts.Node": "[1.0.0-ci.437.1, )",
           "ArcForges.Node.Platform": "[0.1.0-dev, )",
           "ArcForges.Node.Store": "[0.1.0-dev, )",
@@ -330,7 +330,7 @@
       "arcforges.node.store": {
         "type": "Project",
         "dependencies": {
-          "ArcForges.Contracts.Foundation": "[1.0.0-ci.437.1, )",
+          "ArcForges.Contracts.Foundation": "[1.0.0-ci.450.1, )",
           "ArcForges.Contracts.Node": "[1.0.0-ci.437.1, )",
           "ArcForges.Security.Secrets": "[1.0.0-ci.141.1, )",
           "Microsoft.Data.Sqlite": "[10.0.12, )"
