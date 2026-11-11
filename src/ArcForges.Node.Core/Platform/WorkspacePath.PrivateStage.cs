@@ -8,6 +8,8 @@ internal sealed partial class WorkspacePath
 {
     private RegisteredWorkspaces.RootIdentity[] _privateStageFiles = [];
     private bool _privateStageProtectionInstalled;
+    private Func<WorkspaceObjectIdentity, bool>? _privateStageLookup;
+    private bool HasPrivateStageFiles => _privateStageLookup is not null || _privateStageFiles.Length != 0;
 
     /// <summary>
     /// Installs the already durable private-file identities for this workspace use before any data open. Identity,
@@ -33,11 +35,23 @@ internal sealed partial class WorkspacePath
         _privateStageProtectionInstalled = true;
     }
 
+    /// <summary>Installs indexed protection when the complete registry is too large for a bounded snapshot.</summary>
+    internal void ProtectPrivateStageFiles(Func<WorkspaceObjectIdentity, bool> lookup)
+    {
+        ArgumentNullException.ThrowIfNull(lookup);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_privateStageProtectionInstalled) throw new WorkspacePathException("file_access_denied");
+        _privateStageLookup = lookup;
+        _privateStageProtectionInstalled = true;
+    }
+
     /// <summary>Tests the opened native file identity, including a file with a newly added hard link.</summary>
     internal bool IsPrivateStageFile(WorkspaceObjectIdentity identity)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (_privateStageFiles.Length == 0 || !identity.IsFile) return false;
+        if (!identity.IsFile) return false;
+        if (_privateStageLookup is { } lookup) return lookup(identity);
+        if (_privateStageFiles.Length == 0) return false;
         // Link count is not object identity. Matching must still work when a same-user process adds another name.
         var encoded = RegisteredWorkspaces.RootIdentity.Encode(identity with { Links = 1 }, directory: false);
         return _privateStageFiles.Any(item => item.Platform == encoded.Platform &&

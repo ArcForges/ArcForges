@@ -53,6 +53,33 @@ public sealed class PrivateStageRegistryCapacityTests
         Assert.Equal(PrivateStageReservationResult.Reserved, Reserve(final));
         Assert.Equal(PrivateStageReservationResult.Capacity, Reserve(Make(64)));
         Assert.Equal((64, 0L), node.Runtime.Store.Read(PrivateStageRegistry.Usage));
+        // Compatible earlier direct writers cannot bypass the active limit, including by reactivating retained metadata.
+        var direct = Make(100);
+        var directId = direct.Request.Meta.CommandId.Value.ToByteArray();
+        var directFailure = Assert.Throws<SqliteException>(() => node.Runtime.Store.Write(t =>
+        {
+            t.Execute("""
+                INSERT INTO command_dedup (command_id, method, payload_digest, origin, created_at, expires_at)
+                VALUES ($id, 'arcforges.node.v1.FileService/WriteFile', zeroblob(32), 4, 0, 1);
+                """, ("$id", directId));
+            t.Execute("""
+                INSERT INTO file_private_stage_reservation
+                  (command_id, workspace_id, kind, correlation_id, relative_path, expected_absent, request_sha256,
+                   caller, reserved_bytes, created_at)
+                VALUES ($id, $workspace, 1, $correlation, 'direct-target', 1, zeroblob(32), x'01', 0, 0);
+                """, ("$id", directId), ("$workspace", workspace.Id),
+                ("$correlation", direct.Request.Meta.CorrelationId.Value.ToByteArray()));
+        }, CommitDurability.Full));
+        Assert.Equal(19, directFailure.SqliteErrorCode);
+        Assert.Null(node.Runtime.Store.Read(r => r.Scalar("SELECT 1 FROM command_dedup WHERE command_id = $id;", ("$id", directId))));
+        var retainedId = final.Request.Meta.CommandId.Value.ToByteArray();
+        node.Runtime.Store.Write(t => t.Execute("UPDATE file_private_stage_reservation SET active = 0 WHERE command_id = $id;",
+            ("$id", retainedId)), CommitDurability.Full); // Test-owned metadata only; actual HUMAN acknowledgment is covered separately.
+        Assert.Equal(PrivateStageReservationResult.Reserved, Reserve(Make(65)));
+        var reactivation = Assert.Throws<SqliteException>(() => node.Runtime.Store.Write(t => t.Execute(
+            "UPDATE file_private_stage_reservation SET active = 1 WHERE command_id = $id;", ("$id", retainedId)), CommitDurability.Full));
+        Assert.Equal(19, reactivation.SqliteErrorCode);
+        Assert.Equal((64, 0L), node.Runtime.Store.Read(PrivateStageRegistry.Usage));
         Assert.Null(budget.TryReserve(0, 0, durableMutations: 64));
         Assert.Null(budget.TryReserve(1, 0, durableBytes: FileStageBudget.MaximumBytes));
         Assert.Equal("workspace_in_use", Assert.Throws<RegisteredWorkspaceException>(() =>
@@ -60,7 +87,7 @@ public sealed class PrivateStageRegistryCapacityTests
         var failure = Assert.Throws<SqliteException>(() => node.Runtime.Store.Write(t => t.Execute(
             "UPDATE workspace SET removed_at = $now WHERE workspace_id = $id;", ("$now", t.NowMicroseconds), ("$id", workspace.Id))));
         Assert.Equal(19, failure.SqliteErrorCode); // Compatible direct writer cannot bypass the hold.
-        Assert.Equal(64L, node.Runtime.Store.Read(r => r.Scalar("SELECT count(*) FROM file_private_stage_reservation;")));
+        Assert.Equal(65L, node.Runtime.Store.Read(r => r.Scalar("SELECT count(*) FROM file_private_stage_reservation;")));
     }
 
     [Fact(Timeout = 120_000)]
@@ -130,6 +157,10 @@ public sealed class PrivateStageRegistryCapacityTests
         for (var i = 0; i < 32; i++) Assert.Equal(PrivateStageReservationResult.Reserved, Reserve(Make(i, FileStageBudget.MaximumFileBytes)));
         Assert.Equal((32, FileStageBudget.MaximumBytes), node.Runtime.Store.Read(PrivateStageRegistry.Usage));
         var overflow = Make(32, 1);
+        Assert.Equal(PrivateStageReservationResult.Capacity, Reserve(overflow));
+        // Metadata-only capacity fixture: a compatible writer releases active flags, not retained byte accounting.
+        node.Runtime.Store.Write(t => t.Execute("UPDATE file_private_stage_reservation SET active = 0;"), CommitDurability.Full);
+        Assert.Equal((0, FileStageBudget.MaximumBytes), node.Runtime.Store.Read(PrivateStageRegistry.Usage));
         Assert.Equal(PrivateStageReservationResult.Capacity, Reserve(overflow));
         Assert.Null(node.Runtime.Store.Read(r => r.Scalar("SELECT 1 FROM command_dedup WHERE command_id = $id;",
             ("$id", overflow.Request.Meta.CommandId.Value.ToByteArray()))));

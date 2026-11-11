@@ -30,7 +30,7 @@ internal static partial class PrivateStageRegistry
     {
         ArgumentNullException.ThrowIfNull(reader);
         if (!HasSchema(reader)) return (0, 0);
-        using var command = reader.CreateCommand("SELECT count(*), COALESCE(sum(reserved_bytes), 0) FROM file_private_stage_reservation;");
+        using var command = reader.CreateCommand("SELECT COALESCE(sum(active), 0), COALESCE(sum(reserved_bytes), 0) FROM file_private_stage_reservation;");
         using var row = command.ExecuteReader();
         if (!row.Read()) throw new InvalidDataException("Private stage capacity is unavailable.");
         var count = row.GetInt64(0);
@@ -48,25 +48,42 @@ internal static partial class PrivateStageRegistry
             """, ("$id", workspaceId.ToArray())) is not null;
     }
 
-    internal static IReadOnlyList<RegisteredWorkspaces.RootIdentity> LoadIdentities(StoreReader reader)
+    // A small transaction-local snapshot avoids a SQLite lookup for each visited file. A larger registry is never
+    // truncated: callers switch to an indexed lookup by the native identity of every opened candidate instead.
+    internal static IReadOnlyList<RegisteredWorkspaces.RootIdentity>? TryLoadIdentitiesForUse(StoreReader reader)
     {
         ArgumentNullException.ThrowIfNull(reader);
         if (!HasSchema(reader)) return [];
         var result = new List<RegisteredWorkspaces.RootIdentity>();
         using var command = reader.CreateCommand("""
             SELECT identity_platform, native_identity FROM file_private_stage_object
-            WHERE native_identity IS NOT NULL ORDER BY command_id, slot;
+            WHERE native_identity IS NOT NULL ORDER BY command_id, slot LIMIT 129;
             """);
         using var row = command.ExecuteReader();
         while (row.Read())
         {
-            if (result.Count >= FileStageBudget.MaximumMutations * 2 || row.IsDBNull(0) || row.IsDBNull(1))
-                throw new InvalidDataException("Private stage identity registry is invalid.");
+            if (result.Count == 128) return null;
+            if (row.IsDBNull(0) || row.IsDBNull(1)) throw new InvalidDataException("Private stage identity registry is invalid.");
             var identity = new RegisteredWorkspaces.RootIdentity(row.GetInt32(0), (byte[])row.GetValue(1));
             RegisteredWorkspaces.RootIdentity.ValidateEncoding(identity.Platform, identity.Bytes);
             result.Add(identity);
         }
         return result;
+    }
+
+    // Existing small-registry callers may ask for a complete snapshot; never silently omit a retained object.
+    internal static IReadOnlyList<RegisteredWorkspaces.RootIdentity> LoadIdentities(StoreReader reader) =>
+        TryLoadIdentitiesForUse(reader) ?? throw new InvalidDataException("The private stage registry needs indexed protection.");
+
+    internal static bool ContainsIdentity(StoreReader reader, WorkspaceObjectIdentity identity)
+    {
+        ArgumentNullException.ThrowIfNull(reader);
+        if (!identity.IsFile || !HasSchema(reader)) return false;
+        // A newly added hard link does not change the identity of the protected native file.
+        var encoded = RegisteredWorkspaces.RootIdentity.Encode(identity with { Links = 1 }, directory: false);
+        return reader.Scalar("""
+            SELECT 1 FROM file_private_stage_object WHERE identity_platform = $platform AND native_identity = $identity LIMIT 1;
+            """, ("$platform", encoded.Platform), ("$identity", encoded.Bytes)) is not null;
     }
 
     /// <summary>

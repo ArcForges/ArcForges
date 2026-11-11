@@ -163,7 +163,7 @@ public sealed class FileApprovedJournalTests
         Assert.Equal("target", retained.WorkspacePath.Path);
         Assert.Equal(body, File.ReadAllBytes(Path.Combine(rootPath, "stage")));
         Assert.Single(node.Runtime.Store.Read(PrivateStageRegistry.LoadIdentities));
-        Assert.Equal((1, (long)body.Length), node.Runtime.Store.Read(PrivateStageRegistry.Usage));
+        Assert.Equal((0, (long)body.Length), node.Runtime.Store.Read(PrivateStageRegistry.Usage));
         Assert.False(File.Exists(Path.Combine(rootPath, "target")));
     }
 

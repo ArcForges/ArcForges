@@ -400,7 +400,7 @@ public sealed class NodeStore : IDisposable
             SqliteConnection? writer = null;
             try
             {
-                var existing = File.Exists(path) ? Inspect(path) : null;
+                var existing = File.Exists(path) ? Inspect(path, plan) : null;
                 if (existing is { MinReaderVersion: var minReader } && minReader > plan.LatestVersion)
                 {
                     throw new StoreIncompatibleException(string.Create(CultureInfo.InvariantCulture,
@@ -433,7 +433,7 @@ public sealed class NodeStore : IDisposable
         }
     }
 
-    private static ExistingStore? Inspect(string path)
+    private static ExistingStore? Inspect(string path, MigrationPlan plan)
     {
         using var connection = new SqliteConnection(StorePaths.ConnectionString(path, SqliteOpenMode.ReadOnly));
         connection.Open();
@@ -450,15 +450,42 @@ public sealed class NodeStore : IDisposable
             throw new StoreIncompatibleException($"{path} is a SQLite database but not an ArcForges node store (no store_meta table); it was not changed.");
         }
 
-        using var command = connection.CreateCommand();
-        command.CommandText = "SELECT schema_version, min_reader_version FROM store_meta WHERE singleton = 1;";
-        using var reader = command.ExecuteReader();
-        if (!reader.Read())
+        int version, minimum;
+        using (var command = connection.CreateCommand())
         {
-            throw new StoreIncompatibleException($"{path} has no store_meta row; it was not changed.");
+            command.CommandText = "SELECT schema_version, min_reader_version FROM store_meta WHERE singleton = 1;";
+            using var reader = command.ExecuteReader();
+            if (!reader.Read())
+            {
+                throw new StoreIncompatibleException($"{path} has no store_meta row; it was not changed.");
+            }
+
+            version = checked((int)reader.GetInt64(0));
+            minimum = checked((int)reader.GetInt64(1));
         }
 
-        return new ExistingStore(checked((int)reader.GetInt64(0)), checked((int)reader.GetInt64(1)));
+        // Step 8 has never been released. A previous local author draft used the same version with different
+        // private-stage capacity semantics. Refuse that draft while the database is still open read-only; neither
+        // migrate it by pretending its version matches nor adopt or delete its potentially retained stages.
+        if (version >= 8 && plan.LatestVersion >= 8 && minimum <= plan.LatestVersion &&
+            plan.Steps[7].Sql.Contains("ctr06-stage-active-v2", StringComparison.Ordinal))
+        {
+            var hasLayout = Convert.ToInt64(Scalar(connection, """
+                SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name = 'file_private_stage_layout';
+                """), CultureInfo.InvariantCulture) == 1;
+            var hasGuards = Convert.ToInt64(Scalar(connection, """
+                SELECT count(*) FROM sqlite_schema WHERE type = 'trigger' AND name IN
+                  ('tr_file_private_stage_capacity', 'tr_file_private_stage_reactivate_capacity');
+                """), CultureInfo.InvariantCulture) == 2;
+            if (!hasLayout || !hasGuards || !string.Equals(Convert.ToString(Scalar(connection,
+                "SELECT layout FROM file_private_stage_layout WHERE singleton = 1;"), CultureInfo.InvariantCulture),
+                "ctr06-stage-active-v2", StringComparison.Ordinal))
+            {
+                throw new StoreIncompatibleException("The node store has an unrecognized private-stage draft layout; it was not changed.");
+            }
+        }
+
+        return new ExistingStore(version, minimum);
     }
 
     private static void Create(SqliteConnection writer, MigrationPlan plan, NodeStoreOptions options)

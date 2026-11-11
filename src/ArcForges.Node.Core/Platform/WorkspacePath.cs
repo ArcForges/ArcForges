@@ -283,11 +283,11 @@ internal sealed partial class WorkspacePath : IDisposable
         {
             using var metadata = LinuxOpenAt2(RootHandle, string.Join('/', parts), noCrossMount: true);
             CheckVolume(metadata, _linuxFileSystemUuid);
-            if (_privateStageFiles.Length != 0) RefusePrivateStageFile(LinuxIdentity(metadata, _linuxFileSystemUuid));
+            if (HasPrivateStageFiles) RefusePrivateStageFile(LinuxIdentity(metadata, _linuxFileSystemUuid));
             var reopened = LinuxReopenChecked(metadata, directory: false, _linuxFileSystemUuid, afterMetadataOpen);
             try
             {
-                if (_privateStageFiles.Length != 0) RefusePrivateStageFile(Identity(reopened));
+                if (HasPrivateStageFiles) RefusePrivateStageFile(Identity(reopened));
                 return Retain(_files, reopened);
             }
             catch
@@ -339,13 +339,13 @@ internal sealed partial class WorkspacePath : IDisposable
         {
             using var metadata = LinuxOpenAt2(RootHandle, string.Join('/', parts), noCrossMount: true);
             CheckVolume(metadata, _linuxFileSystemUuid);
-            if (_privateStageFiles.Length != 0) RefusePrivateStageFile(LinuxIdentity(metadata, _linuxFileSystemUuid));
+            if (HasPrivateStageFiles) RefusePrivateStageFile(LinuxIdentity(metadata, _linuxFileSystemUuid));
             try
             {
                 file = LinuxReopenChecked(metadata, directory: false, _linuxFileSystemUuid, afterMetadataOpen, writable: true);
                 try
                 {
-                    if (_privateStageFiles.Length != 0) RefusePrivateStageFile(Identity(file));
+                    if (HasPrivateStageFiles) RefusePrivateStageFile(Identity(file));
                 }
                 catch
                 {

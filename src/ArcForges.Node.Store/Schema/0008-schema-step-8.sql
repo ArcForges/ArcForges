@@ -1,6 +1,13 @@
 -- AF-CTR-06: bounded, metadata-only reservations for private named file stages.
 -- A reservation is durable before a stage may contain file bytes. Identity rows protect
 -- the opened object, independent of its name; no file content belongs in this database.
+-- Identifies this unmerged draft layout on open; it is not a user-provided authorization marker.
+CREATE TABLE file_private_stage_layout (
+  singleton INTEGER NOT NULL PRIMARY KEY CHECK (singleton = 1),
+  layout TEXT NOT NULL CHECK (layout = 'ctr06-stage-active-v2')
+) STRICT;
+INSERT INTO file_private_stage_layout (singleton, layout) VALUES (1, 'ctr06-stage-active-v2');
+
 CREATE TABLE file_private_stage_reservation (
   command_id BLOB NOT NULL PRIMARY KEY REFERENCES command_dedup (command_id) CHECK (length(command_id) = 16),
   workspace_id BLOB NOT NULL REFERENCES workspace (workspace_id) CHECK (length(workspace_id) = 16),
@@ -58,9 +65,18 @@ BEGIN
   SELECT RAISE(IGNORE);
 END;
 
+-- A terminal reservation may release its active slot, but retained bytes remain charged until safe disposition.
 CREATE TRIGGER tr_file_private_stage_capacity BEFORE INSERT ON file_private_stage_reservation
-WHEN (SELECT count(*) FROM file_private_stage_reservation) >= 64 OR
+WHEN (NEW.active = 1 AND (SELECT count(*) FROM file_private_stage_reservation WHERE active = 1) >= 64) OR
      NEW.reserved_bytes > 268435456 - COALESCE((SELECT sum(reserved_bytes) FROM file_private_stage_reservation), 0)
+BEGIN
+  SELECT RAISE(ABORT, 'file_stage_capacity');
+END;
+
+-- Compatible earlier writers may not reactivate a retained item past the same active limit.
+CREATE TRIGGER tr_file_private_stage_reactivate_capacity BEFORE UPDATE OF active ON file_private_stage_reservation
+WHEN OLD.active = 0 AND NEW.active = 1 AND
+     (SELECT count(*) FROM file_private_stage_reservation WHERE active = 1) >= 64
 BEGIN
   SELECT RAISE(ABORT, 'file_stage_capacity');
 END;

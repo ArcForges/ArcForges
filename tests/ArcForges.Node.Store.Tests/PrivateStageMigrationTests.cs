@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Security.Cryptography;
 using ArcForges.Node.Store.Migrations;
 using Microsoft.Data.Sqlite;
 
@@ -68,4 +69,58 @@ public sealed class PrivateStageMigrationTests
         Assert.Equal(1L, older.Read(r => r.Scalar("SELECT count(*) FROM workspace WHERE removed_at IS NULL;")));
         Assert.Equal(1L, older.Read(r => r.Scalar("SELECT count(*) FROM file_private_stage_object;")));
     }
+    [Fact]
+    public void AnEarlierUnreleasedStageDraftIsRefusedReadOnlyWithoutAdoptingItsFiles()
+    {
+        using var root = new TemporaryDataRoot();
+        var clock = new ManualClock();
+        var oldSql = File.ReadAllText(Repository.PathOf("tests/ArcForges.Node.Store.Tests/Fixtures/0008-unreleased-stage-draft.sql"));
+        var oldStep = new StoreMigration(8, 1, "0008-unreleased-stage-draft.sql", oldSql);
+        Assert.Equal("914525bd869cb374ba947d7e47e72b311630e4dc7471b2737b3fbbeef773734d", oldStep.Sha256);
+        var oldPlan = new MigrationPlan([.. StoreMigrations.Released.Steps.Take(7), oldStep]);
+        var workspace = StoreIds.NewUuid7(clock);
+        var command = StoreIds.NewUuid7(clock);
+        var correlation = StoreIds.NewUuid7(clock);
+        Directory.CreateDirectory(root.Path);
+        var stage = System.IO.Path.Combine(root.Path, "owned-prior-stage");
+        var content = new byte[] { 2, 7, 1, 8, 2, 8 };
+        File.WriteAllBytes(stage, content);
+        using (var old = root.Open(clock, oldPlan))
+        {
+            old.Write(t =>
+            {
+                t.Execute("""
+                    INSERT INTO workspace (workspace_id, kind, state, name, root_path, created_at, last_used_at, rev)
+                    VALUES ($workspace, 1, 2, 'owned fixture', $root, 0, 0, 0);
+                    """, ("$workspace", workspace), ("$root", root.Path));
+                t.Execute("""
+                    INSERT INTO command_dedup (command_id, method, payload_digest, origin, created_at, expires_at)
+                    VALUES ($command, 'arcforges.node.v1.FileService/WriteFile', zeroblob(32), 4, 0, 1);
+                    """, ("$command", command));
+                t.Execute("""
+                    INSERT INTO file_private_stage_reservation
+                      (command_id, workspace_id, kind, correlation_id, relative_path, expected_absent, request_sha256,
+                       caller, reserved_bytes, created_at)
+                    VALUES ($command, $workspace, 1, $correlation, 'target', 1, zeroblob(32), x'01', 6, 0);
+                    """, ("$command", command), ("$workspace", workspace), ("$correlation", correlation));
+                t.Execute("""
+                    INSERT INTO file_private_stage_object
+                      (command_id, slot, stage_path, expected_size, expected_sha256, phase, identity_platform, native_identity, parent_identity)
+                    VALUES ($command, 2, $path, 6, zeroblob(32), 2, 1, zeroblob(33), zeroblob(33));
+                    """, ("$command", command), ("$path", stage));
+            }, CommitDurability.Full);
+        }
+        var before = SHA256.HashData(File.ReadAllBytes(root.Database));
+        var refusal = Assert.Throws<StoreIncompatibleException>(() => root.Open(clock));
+        Assert.Contains("unrecognized private-stage draft layout", refusal.Message, StringComparison.Ordinal);
+        Assert.Equal(before, SHA256.HashData(File.ReadAllBytes(root.Database)));
+        Assert.Equal(content, File.ReadAllBytes(stage));
+        using var connection = new SqliteConnection(StorePaths.ConnectionString(root.Database, SqliteOpenMode.ReadOnly));
+        connection.Open();
+        using var query = connection.CreateCommand();
+        query.CommandText = "SELECT count(*) FROM file_private_stage_object WHERE phase = 2 AND stage_path = $path;";
+        query.Parameters.AddWithValue("$path", stage);
+        Assert.Equal(1L, query.ExecuteScalar());
+    }
+
 }

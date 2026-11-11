@@ -271,7 +271,7 @@ internal sealed class RegisteredWorkspaces
                     cancellationToken.ThrowIfCancellationRequested();
                     var row = FindById(transaction, key) ?? throw new RegisteredWorkspaceException("workspace_not_found");
                     root = OpenVerified(row);
-                    root.ProtectPrivateStageFiles(PrivateStageRegistry.LoadIdentities(transaction));
+                    root.ProtectPrivateStageFiles(identity => _store.Read(reader => PrivateStageRegistry.ContainsIdentity(reader, identity)));
                     cancellationToken.ThrowIfCancellationRequested();
                     beforeUse?.Invoke(transaction);
                     if (transaction.Execute("""
@@ -330,7 +330,11 @@ internal sealed class RegisteredWorkspaces
                 cancellationToken.ThrowIfCancellationRequested();
                 var row = FindById(transaction, key) ?? throw new RegisteredWorkspaceException("workspace_not_found");
                 root = OpenVerified(row);
-                root.ProtectPrivateStageFiles(PrivateStageRegistry.LoadIdentities(transaction));
+                var protectedStages = PrivateStageRegistry.TryLoadIdentitiesForUse(transaction);
+                if (protectedStages is null)
+                    root.ProtectPrivateStageFiles(identity => _store.Read(reader => PrivateStageRegistry.ContainsIdentity(reader, identity)));
+                else
+                    root.ProtectPrivateStageFiles(protectedStages);
                 cancellationToken.ThrowIfCancellationRequested();
                 beforeUse?.Invoke(transaction);
                 if (transaction.Execute("""

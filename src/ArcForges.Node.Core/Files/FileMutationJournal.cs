@@ -234,7 +234,7 @@ internal static partial class FileMutationJournal
             """, ("$id", commandId.ToArray()), ("$now", transaction.NowMicroseconds)) != 1)
             throw new InvalidOperationException("The file journal hold changed during acknowledgment.");
         // Retain the named stage and its identity, but an explicit HUMAN acknowledgment releases its workspace hold.
-        // Capacity remains charged until safe disposition; this update never deletes or changes any file.
+        // The active slot is released, but retained bytes and object-identity protection remain until safe disposition.
         if (PrivateStageRegistry.HasSchema(transaction))
             transaction.Execute("UPDATE file_private_stage_reservation SET active = 0 WHERE command_id = $id AND active = 1;",
                 ("$id", commandId.ToArray()));
