@@ -57,7 +57,7 @@ internal enum FileJournalAcknowledgment
 /// filesystem effect or an IPC endpoint. Its caller must prove the native identities, private stage, flush, authorization,
 /// deadline and before-effect checks. Recovery only makes an uncertainty durable; it does not inspect or modify user files.
 /// </summary>
-internal static class FileMutationJournal
+internal static partial class FileMutationJournal
 {
     private const int MaximumRequestBytes = 245_760;
     private const int MaximumFileBytes = 4 * 1024 * 1024;
@@ -171,20 +171,7 @@ internal static class FileMutationJournal
 
         foreach (var id in ids)
         {
-            var row = ReadRow(transaction, id) ?? throw new InvalidDataException("A prepared file journal disappeared.");
-            if (transaction.Execute("""
-                UPDATE file_operation_journal SET phase = 3, updated_at = max(updated_at, $now)
-                WHERE command_id = $id AND phase = 1;
-                """, ("$now", transaction.NowMicroseconds), ("$id", id)) != 1)
-                throw new InvalidOperationException("The prepared file journal changed during recovery.");
-            var actor = new ActorRef
-            {
-                Origin = Origin.Remote,
-                CenterCaller = row.Caller,
-                RemoteCommandId = new Id { Value = ByteString.CopyFrom(id) },
-            };
-            AuditLog.AppendFileWorkspace(transaction, actor, "file.recovery FileService.GetFileOperation",
-                row.WorkspaceId, null, row.Path, PermissionDecision.Allow, "recovered: file_outcome_unknown", null);
+            _ = MarkUnknown(transaction, id);
         }
         return ids.Count;
     }
@@ -341,27 +328,31 @@ internal static class FileMutationJournal
     }
 
     private sealed record JournalRow(byte[] CommandId, FileOperationKind Kind, FileOperationState State, byte[] RequestSha256,
-        CenterCaller Caller, byte[] Correlation, byte[] WorkspaceId, string Path, long Created, long Updated, bool Held, bool Acknowledged);
+        CenterCaller Caller, byte[] Correlation, byte[] WorkspaceId, string Path, long Created, long Updated, bool Held, bool Acknowledged,
+        long IntendedSize, byte[] IntendedSha256, byte[]? Outcome);
 
     private static JournalRow? ReadRow(StoreReader reader, ReadOnlySpan<byte> commandId)
     {
         using var command = reader.CreateCommand("""
-            SELECT command_id, kind, phase, request_sha256, caller, correlation_id, workspace_id, relative_path,
-                   created_at, updated_at, held, acknowledged
-            FROM file_operation_journal WHERE command_id = $id;
+            SELECT j.command_id, j.kind, j.phase, j.request_sha256, j.caller, j.correlation_id, j.workspace_id, j.relative_path,
+                   j.created_at, j.updated_at, j.held, j.acknowledged, j.intended_size, j.intended_sha256, d.outcome
+            FROM file_operation_journal j JOIN command_dedup d ON d.command_id = j.command_id
+            WHERE j.command_id = $id;
             """);
         command.Parameters.AddWithValue("$id", commandId.ToArray());
         using var row = command.ExecuteReader();
         if (!row.Read()) return null;
-        // This initial component only creates write/edit rows. A removal or completed row needs its separately implemented outcome.
-        if (row.IsDBNull(6) || row.IsDBNull(7) || row.GetInt32(1) is not (1 or 2) || row.GetInt32(2) is not (1 or 3))
+        // This component only creates write/edit rows. Removal remains separately implemented.
+        if (row.IsDBNull(6) || row.IsDBNull(7) || row.IsDBNull(12) || row.IsDBNull(13) ||
+            row.GetInt32(1) is not (1 or 2) || row.GetInt32(2) is not (1 or 2 or 3))
             throw new InvalidDataException("Unsupported file journal record.");
         var caller = CenterCaller.Parser.ParseFrom((byte[])row.GetValue(4));
         if (CenterRouting.Shape(caller) is not null)
             throw new InvalidDataException("Invalid file journal caller.");
         return new JournalRow((byte[])row.GetValue(0), (FileOperationKind)row.GetInt32(1), (FileOperationState)row.GetInt32(2),
             (byte[])row.GetValue(3), caller, (byte[])row.GetValue(5), (byte[])row.GetValue(6), row.GetString(7),
-            row.GetInt64(8), row.GetInt64(9), row.GetInt32(10) != 0, row.GetInt32(11) != 0);
+            row.GetInt64(8), row.GetInt64(9), row.GetInt32(10) != 0, row.GetInt32(11) != 0,
+            row.GetInt64(12), (byte[])row.GetValue(13), row.IsDBNull(14) ? null : (byte[])row.GetValue(14));
     }
 
     private static FileOperation ToOperation(JournalRow row)
@@ -384,16 +375,11 @@ internal static class FileMutationJournal
         };
         if (row.State == FileOperationState.Unknown)
         {
-            operation.Error = new ArcError
-            {
-                Category = ErrorCategory.Execution,
-                Code = "operation_failed",
-                MessageKey = "error.execution.operation_failed",
-                Effect = EffectCertainty.Unknown,
-                Retry = new RetryAdvice { Mode = RetryMode.Never },
-                CorrelationId = new Id { Value = ByteString.CopyFrom(row.Correlation) },
-                Details = new ErrorDetails { State = new StateFailure { State = "file", Reason = "file_outcome_unknown" } },
-            };
+            operation.Error = UnknownError(row);
+        }
+        else if (row.State == FileOperationState.Completed)
+        {
+            operation.Mutation = CompletedResult(row);
         }
         return operation;
     }

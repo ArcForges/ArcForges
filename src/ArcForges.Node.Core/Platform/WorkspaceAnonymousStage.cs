@@ -7,8 +7,8 @@ using Microsoft.Win32.SafeHandles;
 namespace ArcForges.Node.Core.Platform;
 
 /// <summary>
-/// A synchronous Linux stage on the registered root's volume, without a directory entry and restricted to its OS owner.
-/// Closing this node's descriptor does not prove that the object or bytes disappeared: another process may retain an O_PATH
+/// A synchronous same-volume private stage: Linux O_TMPFILE or a Windows delete-on-close object with a protected DACL.
+/// Closing this node's handle does not prove that the object or bytes disappeared: another process may retain a metadata
 /// reference and later reopen it. This component has no target-file effect, approval persistence, or API route and must not
 /// be connected to file effects without the remaining access, resource, recovery and authorization checks in the design.
 /// A lease observation does not establish the separate scheduling or namespace guarantees required for an effect.
@@ -28,12 +28,23 @@ internal sealed class WorkspaceAnonymousStage : IDisposable
 
     internal RegisteredWorkspaces.RootIdentity Identity { get; }
 
+    internal WorkspaceObjectIdentity ObjectIdentity => _guard.ObjectIdentity;
+
     internal long Length { get; }
 
     internal ReadOnlyMemory<byte> Sha256 => _hash;
 
     /// <summary>Rehashes the exact held object with its guard and verifies its length.</summary>
     internal bool Verify(CancellationToken cancellationToken) => _guard.MatchesExpectedContent(_hash, Length, cancellationToken);
+
+    internal WorkspaceGuardedContent ReadVerified(CancellationToken cancellationToken)
+    {
+        var content = _guard.ReadForMutation(cancellationToken);
+        if (content.Bytes.Length == Length && CryptographicOperations.FixedTimeEquals(content.Sha256.Span, _hash))
+            return content;
+        content.Dispose();
+        throw new WorkspacePathException("file_identity_changed");
+    }
 
     internal void CheckIntact() => _guard.CheckIntact();
 
@@ -45,19 +56,21 @@ internal sealed class WorkspaceAnonymousStage : IDisposable
 internal sealed partial class WorkspacePath
 {
     /// <summary>
-    /// Creates, writes and flushes an unnamed, owner-only file on this root's volume, then acquires and verifies its
-    /// native guard and exact bytes. A caller still needs a proven stage lifetime and access model, complete effect protocol
-    /// and real deadline before any target effect. No named stage is created, and unsupported systems refuse before creating
-    /// a target file.
+    /// Creates, writes and flushes a private same-volume stage, then acquires and verifies its native guard and exact bytes.
+    /// Linux uses O_TMPFILE; Windows uses a fresh delete-on-close handle, whose name may be visible while it is held.
+    /// A caller still needs a proven stage lifetime and access model, complete effect protocol and real deadline before any
+    /// target effect. Neither form supplies durable named approval staging.
     /// </summary>
     internal WorkspaceAnonymousStage CreateAnonymousStage(ReadOnlySpan<byte> bytes, CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
-        if (!OperatingSystem.IsLinux())
-            throw new WorkspacePathException("file_guard_unavailable");
         if (bytes.Length > 4 * 1024 * 1024)
             throw new ArgumentOutOfRangeException(nameof(bytes));
+        if (OperatingSystem.IsWindows())
+            return CreateWindowsDeleteOnCloseStage(bytes, cancellationToken);
+        if (!OperatingSystem.IsLinux())
+            throw new WorkspacePathException("file_guard_unavailable");
 
         var started = Stopwatch.GetTimestamp();
         void CheckBudget()

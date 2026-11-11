@@ -17,7 +17,7 @@ namespace ArcForges.Node.Core.Tests;
 /// Real SQLite and test-owned native files for the journal component only. Fixture stages are named and do not prove
 /// the future private anonymous-stage or guarded effect protocol.
 /// </summary>
-public sealed class FileMutationJournalTests
+public sealed partial class FileMutationJournalTests
 {
     [Fact]
     public void PreparedRecordSurvivesRestartBecomesUnknownAndNeedsExactHumanDigest()

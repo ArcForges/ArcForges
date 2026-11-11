@@ -14,7 +14,7 @@ namespace ArcForges.Node.Core.Platform;
 /// an actual mutation also needs a durable journal, authorization, staging and name revalidation. An observed intact
 /// guard is not an atomic guarantee across a later system call, and Linux leases do not lock the namespace.
 /// </summary>
-internal sealed class WorkspaceWriteGuard : IDisposable
+internal sealed partial class WorkspaceWriteGuard : IDisposable
 {
     private const int MaximumExpectedBytes = 4 * 1024 * 1024;
     private static readonly TimeSpan Lifetime = TimeSpan.FromSeconds(10);
@@ -23,18 +23,21 @@ internal sealed class WorkspaceWriteGuard : IDisposable
     private readonly bool _linux;
     private readonly uint _expectedLinks;
     private readonly bool _privateStage;
+    private readonly Action<SafeFileHandle>? _verifyPrivateSecurity;
     private readonly long _started;
     private SafeFileHandle? _file;
     private Timer? _expiry;
     private string _closedReason = "file_guard_closed";
 
-    private WorkspaceWriteGuard(SafeFileHandle file, WorkspaceObjectIdentity identity, bool linux, bool privateStage)
+    private WorkspaceWriteGuard(SafeFileHandle file, WorkspaceObjectIdentity identity, bool linux, bool privateStage,
+        Action<SafeFileHandle>? verifyPrivateSecurity)
     {
         _file = file;
         _identity = identity;
         _linux = linux;
         _privateStage = privateStage;
-        _expectedLinks = privateStage ? 0u : 1u;
+        _expectedLinks = privateStage && linux ? 0u : 1u;
+        _verifyPrivateSecurity = verifyPrivateSecurity;
         _started = Stopwatch.GetTimestamp();
         _expiry = new Timer(static state => ((WorkspaceWriteGuard)state!).Expire(), this, Lifetime, Timeout.InfiniteTimeSpan);
     }
@@ -45,13 +48,21 @@ internal sealed class WorkspaceWriteGuard : IDisposable
     /// <summary>Guards a previously created unnamed Linux object; it has no name and must have no links.</summary>
     internal static WorkspaceWriteGuard AcquireAnonymousStage(SafeFileHandle file) => Acquire(file, privateStage: true);
 
-    private static WorkspaceWriteGuard Acquire(SafeFileHandle file, bool privateStage)
+    /// <summary>Guards a Windows stage created with no sharing; rechecks its actual owner and protected DACL.</summary>
+    internal static WorkspaceWriteGuard AcquireWindowsPrivateStage(SafeFileHandle file, Action<SafeFileHandle> verifySecurity)
+    {
+        if (!OperatingSystem.IsWindows()) throw new WorkspacePathException("file_guard_unavailable");
+        ArgumentNullException.ThrowIfNull(verifySecurity);
+        return Acquire(file, privateStage: true, verifySecurity);
+    }
+
+    private static WorkspaceWriteGuard Acquire(SafeFileHandle file, bool privateStage, Action<SafeFileHandle>? verifySecurity = null)
     {
         ArgumentNullException.ThrowIfNull(file);
         var identity = WorkspacePath.Identity(file);
         var linux = OperatingSystem.IsLinux();
-        if (!identity.IsFile || identity.Links != (privateStage ? 0u : 1u) ||
-            privateStage && (!linux || (identity.Mode & 0x3f) != 0))
+        if (!identity.IsFile || identity.Links != (privateStage && linux ? 0u : 1u) ||
+            privateStage && (linux ? (identity.Mode & 0x3f) != 0 : !OperatingSystem.IsWindows() || verifySecurity is null))
         {
             throw new WorkspacePathException("file_identity_changed");
         }
@@ -80,7 +91,7 @@ internal sealed class WorkspaceWriteGuard : IDisposable
             throw new WorkspacePathException("file_guard_unavailable");
         }
 
-        var guard = new WorkspaceWriteGuard(file, identity, linux, privateStage);
+        var guard = new WorkspaceWriteGuard(file, identity, linux, privateStage, verifySecurity);
         try
         {
             if (linux)
@@ -185,6 +196,48 @@ internal sealed class WorkspaceWriteGuard : IDisposable
         }
     }
 
+    /// <summary>Reads the actual whole checked file through the held guard without changing it.</summary>
+    internal WorkspaceGuardedContent ReadForMutation(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_sync)
+        {
+            CheckLocked();
+            var file = _file!;
+            var length = RandomAccess.GetLength(file);
+            if (length < 0 || length > MaximumExpectedBytes)
+                throw new WorkspacePathException("file_too_large");
+
+            var bytes = new byte[checked((int)length)];
+            try
+            {
+                var offset = 0;
+                while (offset < bytes.Length)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    CheckLocked();
+                    var read = RandomAccess.Read(file, bytes.AsSpan(offset, Math.Min(65_536, bytes.Length - offset)), offset);
+                    if (read <= 0) throw new WorkspacePathException("file_identity_changed");
+                    offset += read;
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+                CheckLocked();
+                if (RandomAccess.GetLength(file) != length)
+                    throw new WorkspacePathException("file_identity_changed");
+                var digest = SHA256.HashData(bytes);
+                CheckLocked();
+                cancellationToken.ThrowIfCancellationRequested();
+                return new WorkspaceGuardedContent(bytes, digest);
+            }
+            catch
+            {
+                CryptographicOperations.ZeroMemory(bytes);
+                throw;
+            }
+        }
+    }
+
     /// <summary>Closes the guarded description and releases its kernel lease or exclusive Windows handle.</summary>
     public void Dispose()
     {
@@ -228,13 +281,23 @@ internal sealed class WorkspaceWriteGuard : IDisposable
             throw;
         }
 
-        if (!actual.IsFile || actual.Links != _expectedLinks || _privateStage && (actual.Mode & 0x3f) != 0 || !_identity.SameObject(actual))
+        if (!actual.IsFile || actual.Links != _expectedLinks || _privateStage && _linux && (actual.Mode & 0x3f) != 0 || !_identity.SameObject(actual))
         {
             CloseLocked("file_identity_changed");
             throw new WorkspacePathException(_closedReason);
         }
 
-        // An identity syscall may have blocked while a conflicting open initiated a break.
+        try
+        {
+            _verifyPrivateSecurity?.Invoke(_file!);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)
+        {
+            CloseLocked("file_guard_unavailable");
+            throw new WorkspacePathException(_closedReason, exception);
+        }
+
+        // An identity or ACL syscall may have blocked while a conflicting open initiated a break.
         CheckLeaseAndDeadlineLocked();
     }
 
@@ -295,6 +358,16 @@ internal sealed class WorkspaceWriteGuard : IDisposable
         _expiry = null;
         file.Dispose();
     }
+}
+
+/// <summary>Content read from the held native guard; the owner releases its in-memory copy after staging.</summary>
+internal sealed class WorkspaceGuardedContent(byte[] bytes, byte[] sha256) : IDisposable
+{
+    internal ReadOnlyMemory<byte> Bytes { get; } = bytes;
+
+    internal ReadOnlyMemory<byte> Sha256 { get; } = sha256;
+
+    public void Dispose() => CryptographicOperations.ZeroMemory(bytes);
 }
 
 /// <summary>
