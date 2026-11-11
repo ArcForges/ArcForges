@@ -118,14 +118,27 @@ public sealed class FileWriteExistingCandidateTests
         }
         // The test's independent later mutation must not remove the stream before the Edit path is exercised.
         Assert.Equal(alternate, File.ReadAllBytes(streamPath));
-        var replay = await Invoke(request, actor);
-        Assert.Equal(first, replay);
-        Assert.Equal(external, File.ReadAllBytes(path));
-        var changedRequest = request.Clone();
-        changedRequest.Meta.CorrelationId = CommandIds.New();
-        var conflict = FileServiceWriteFileResponse.Parser.ParseFrom(await Invoke(changedRequest, actor));
-        Assert.Equal("command_id_reused", conflict.Error.Code);
-        Assert.Equal(external, File.ReadAllBytes(path));
+        await using (var human = await node.ChannelAsync(helloAsHuman: true))
+        {
+            Assert.Null((await Sched.ChangePolicyAsync(human, policy => policy.Permissions.Add(new PermissionOverride
+            {
+                Operation = PermissionMatrix.FileWrite,
+                Origin = Origin.Remote,
+                Decision = PermissionDecision.Deny,
+            }))).Error);
+            var replay = await Invoke(request, actor);
+            Assert.Equal(first, replay);
+            Assert.Equal(external, File.ReadAllBytes(path));
+            var changedRequest = request.Clone();
+            changedRequest.Meta.CorrelationId = CommandIds.New();
+            var conflict = FileServiceWriteFileResponse.Parser.ParseFrom(await Invoke(changedRequest, actor));
+            Assert.Equal("command_id_reused", conflict.Error.Code);
+            var fresh = Request(SHA256.HashData(external), intended);
+            var deniedWhileNarrowed = FileServiceWriteFileResponse.Parser.ParseFrom(await Invoke(fresh, actor));
+            Assert.Equal("permission_denied", deniedWhileNarrowed.Error.Code);
+            Assert.Equal(external, File.ReadAllBytes(path));
+            Assert.Null((await Sched.ChangePolicyAsync(human, policy => policy.Permissions.Clear())).Error);
+        }
 
         FileServiceEditFileRequest Edit(uint occurrences) => new()
         {

@@ -21,21 +21,73 @@ internal sealed partial class FileServiceHandler
     // platform paths are complete. It executes the real guarded existing-file protocol for an authorized caller.
     private readonly FileStageBudget _writeStageBudget = new();
 
+    // Test-only callbacks coordinate a real competing create and an interruption after the actual creation effect.
+    internal Action? BeforeCreateForTests { get; set; }
+    internal Action? AfterCreateForTests { get; set; }
+    internal Action? BeforeMutationEffectForTests { get; set; }
+
     internal Task<byte[]?> WriteExistingCandidateAsync(Caller caller, CancellationToken cancellationToken)
     {
         var raw = caller.RawRequest ?? throw new InvalidOperationException("The exact transmitted request is required.");
         var request = FileServiceWriteFileRequest.Parser.ParseFrom(raw);
+        var admission = WriteAdmission(request);
         return MutateExistingCandidateAsync(caller, raw, new MutationRequest(FileOperationKind.Write, request.Meta, request.Path,
-            NodeShapes.IsValid(request), request.HasExpectedSha256, request.ExpectedSha256, request.Data, null, null, 0), cancellationToken);
+            admission.Valid, admission.Limit, request.HasExpectedSha256, request.ExpectedSha256, request.Data, null, null, 0), cancellationToken);
     }
 
     internal Task<byte[]?> EditExistingCandidateAsync(Caller caller, CancellationToken cancellationToken)
     {
         var raw = caller.RawRequest ?? throw new InvalidOperationException("The exact transmitted request is required.");
         var request = FileServiceEditFileRequest.Parser.ParseFrom(raw);
+        var admission = EditAdmission(request);
         return MutateExistingCandidateAsync(caller, raw, new MutationRequest(FileOperationKind.Edit, request.Meta, request.Path,
-            NodeShapes.IsValid(request), request.HasExpectedSha256, request.ExpectedSha256, ByteString.Empty,
+            admission.Valid, admission.Limit, request.HasExpectedSha256, request.ExpectedSha256, ByteString.Empty,
             request.OldText, request.NewText, request.ExpectedOccurrences), cancellationToken);
+    }
+
+    // The published shape validator includes resource maxima. Validate all other rules against a bounded clone while
+    // measuring the original values; otherwise a valid oversized value would be mislabeled invalid_argument.
+    private static (bool Valid, string? Limit) WriteAdmission(FileServiceWriteFileRequest original)
+    {
+        try
+        {
+            var bounded = original.Clone();
+            var pathLimit = NormalizeOversizedPath(bounded.Path);
+            var writeLimit = bounded.HasData && bounded.Data.Length > 196_608;
+            if (writeLimit) bounded.Data = ByteString.Empty;
+            return (NodeShapes.IsValid(bounded), pathLimit ? "path_bytes" : writeLimit ? "file_write_bytes" : null);
+        }
+        catch (Exception exception) when (exception is System.Text.EncoderFallbackException or WorkspacePathException)
+        {
+            return (false, null);
+        }
+    }
+
+    private static (bool Valid, string? Limit) EditAdmission(FileServiceEditFileRequest original)
+    {
+        try
+        {
+            var bounded = original.Clone();
+            var pathLimit = NormalizeOversizedPath(bounded.Path);
+            var oldLimit = bounded.HasOldText && StrictUtf8.GetByteCount(bounded.OldText) > 65_536;
+            var newLimit = bounded.HasNewText && StrictUtf8.GetByteCount(bounded.NewText) > 65_536;
+            if (oldLimit) bounded.OldText = "x";
+            if (newLimit) bounded.NewText = string.Empty;
+            return (NodeShapes.IsValid(bounded), pathLimit ? "path_bytes" : oldLimit || newLimit ? "file_edit_text_bytes" : null);
+        }
+        catch (Exception exception) when (exception is System.Text.EncoderFallbackException or WorkspacePathException)
+        {
+            return (false, null);
+        }
+    }
+
+    private static bool NormalizeOversizedPath(FilePath? path)
+    {
+        if (path is not { HasPath: true } || StrictUtf8.GetByteCount(path.Path) <= 4096) return false;
+        // Do not erase traversal, platform-reserved names or other path errors when classifying an oversized path.
+        _ = WorkspacePath.ComponentsIgnoringSize(path.Path);
+        path.Path = "x";
+        return true;
     }
 
     private async Task<byte[]?> MutateExistingCandidateAsync(Caller caller, byte[] raw, MutationRequest request, CancellationToken cancellationToken)
@@ -134,6 +186,19 @@ internal sealed partial class FileServiceHandler
         {
             if (Expired(started, limit, token)) throw new OperationCanceledException(token);
         }
+        MutationPreparation Reserve(FileJournalIntent intent)
+        {
+            CheckWriteCandidateAuthority(transaction, caller);
+            CheckBudget();
+            return FileMutationJournal.Prepare(transaction, intent, raw) switch
+            {
+                FileJournalPreparation.Prepared => new MutationPreparation(true),
+                FileJournalPreparation.Conflict => Refuse(Error(ErrorCategory.Conflict, "command_id_reused", "command_id_reused", correlation)),
+                FileJournalPreparation.WorkspaceHeld => Refuse(Error(ErrorCategory.State, "invalid_state", "file_recovery_pending", correlation)),
+                FileJournalPreparation.Capacity => Refuse(Error(ErrorCategory.Resource, "enforcement_unavailable", "file_stage_capacity", correlation)),
+                _ => new MutationPreparation(false),
+            };
+        }
 
         try
         {
@@ -144,29 +209,60 @@ internal sealed partial class FileServiceHandler
                 caller.CenterCaller is null || raw.Length is < 1 or > 245_760)
                 return Refuse(Error(ErrorCategory.Validation, "invalid_argument", "request: invalid_argument", correlation));
             workspace = selected.Value.ToByteArray();
+            path = request.Limit == "path_bytes" ? null : request.Path.Path;
+            if (request.Limit is { } resource)
+                return Refuse(TooLargeFile(resource, resource switch
+                {
+                    "path_bytes" => "4096",
+                    "file_write_bytes" => "196608",
+                    "file_edit_text_bytes" => "65536",
+                    _ => throw new InvalidOperationException("Unknown mutation request limit."),
+                }, correlation));
             path = request.Path.Path;
-            CheckWriteCandidateAuthority(transaction, caller);
+            // A recorded command is replayed only to the original caller with the exact transmitted bytes. Like the
+            // existing workspace mutation flow, replay still requires a live, non-stopping link, but does not execute
+            // another effect or depend on the current write matrix or the target remaining available.
+            routed.BeforeReplay();
             CheckBudget();
             var existing = FileMutationJournal.FindExisting(transaction, request.Kind, request.Meta.CommandId.Value.Span, caller.CenterCaller, raw);
             if (existing == FileJournalPreparation.Conflict)
                 return Refuse(Error(ErrorCategory.Conflict, "command_id_reused", "command_id_reused", correlation));
             if (existing == FileJournalPreparation.Existing)
             {
-                routed.BeforeReplay();
                 var cached = FileMutationJournal.Replay(transaction, request.Kind, request.Meta.CommandId.Value.Span, caller.CenterCaller, raw);
                 if (cached is not null) Audit(PermissionDecision.Allow, "replayed");
                 return new MutationPreparation(false, cached);
             }
 
-            // Linux and CREATE_NEW remain separately unimplemented in this internal candidate.
+            CheckWriteCandidateAuthority(transaction, caller);
+            CheckBudget();
+            // Linux remains unavailable until its lease coordinator is proven. A new AGENT-owned target also waits
+            // for durable per-creation ownership markers; this internal candidate does not claim unattended ownership.
             if (!OperatingSystem.IsWindows())
                 return Refuse(Error(ErrorCategory.Resource, "enforcement_unavailable", "file_guard_unavailable", correlation));
-            if (!request.HasExpectedSha256)
-                throw new NotSupportedException("CREATE_NEW is not implemented by this internal candidate.");
+            if (!request.HasExpectedSha256 && caller.CellsOrigin == Origin.Agent)
+                return Refuse(Error(ErrorCategory.Resource, "enforcement_unavailable", "file_ownership_unavailable", correlation));
             _ = WorkspacePath.Components(path);
             lease.Use = _workspaces.OpenForUse(transaction, workspace, beforeUse: selectedTx =>
                 CheckWriteCandidateAuthority(selectedTx, caller), token);
             CheckBudget();
+            if (!request.HasExpectedSha256)
+            {
+                lease.Stages = WorkspaceStagePair.TryCreate(lease.Use.Root, _writeStageBudget, original: null, request.Data.Memory, token);
+                if (lease.Stages is null)
+                    return Refuse(Error(ErrorCategory.Resource, "enforcement_unavailable", "file_stage_capacity", correlation));
+                var slashAt = path.LastIndexOf('/');
+                var parentHandle = lease.Use.Root.OpenDirectory(slashAt < 0 ? "" : path[..slashAt]);
+                var rootId = RegisteredWorkspaces.RootIdentity.Encode(lease.Use.Root.RootIdentity);
+                var newParentIdentity = WorkspacePath.Identity(parentHandle);
+                lease.ParentIdentity = newParentIdentity;
+                var parentId = RegisteredWorkspaces.RootIdentity.Encode(newParentIdentity);
+                var stage = lease.Stages.Intended;
+                var absentIntent = new FileJournalIntent(FileOperationKind.Write, request.Meta.CommandId.Value.ToByteArray(),
+                    correlation.Value.ToByteArray(), caller.CenterCaller, workspace, path, rootId.Platform, rootId.Bytes,
+                    parentId.Bytes, null, null, null, null, stage.Length, stage.Sha256.ToArray(), stage.Identity.Bytes);
+                return Reserve(absentIntent);
+            }
             lease.Guard = lease.Use.Root.OpenExistingWriteGuard(path);
             using var original = lease.Guard.ReadForMutation(token);
             observed = new FileAuditMetadata
@@ -203,21 +299,7 @@ internal sealed partial class FileServiceHandler
                 correlation.Value.ToByteArray(), caller.CenterCaller, workspace, path, rootIdentity.Platform, rootIdentity.Bytes,
                 parentIdentity.Bytes, targetIdentity.Bytes, original.Bytes.Length, original.Sha256.ToArray(), originalStage.Identity.Bytes,
                 lease.Stages.Intended.Length, lease.Stages.Intended.Sha256.ToArray(), lease.Stages.Intended.Identity.Bytes);
-            CheckWriteCandidateAuthority(transaction, caller);
-            CheckBudget();
-            switch (FileMutationJournal.Prepare(transaction, intent, raw))
-            {
-                case FileJournalPreparation.Prepared:
-                    return new MutationPreparation(true);
-                case FileJournalPreparation.Conflict:
-                    return Refuse(Error(ErrorCategory.Conflict, "command_id_reused", "command_id_reused", correlation));
-                case FileJournalPreparation.WorkspaceHeld:
-                    return Refuse(Error(ErrorCategory.State, "invalid_state", "file_recovery_pending", correlation));
-                case FileJournalPreparation.Capacity:
-                    return Refuse(Error(ErrorCategory.Resource, "enforcement_unavailable", "file_stage_capacity", correlation));
-                default:
-                    return new MutationPreparation(false);
-            }
+            return Reserve(intent);
         }
         catch (FilePolicyException refusal)
         {
@@ -247,13 +329,53 @@ internal sealed partial class FileServiceHandler
     private byte[] ApplyMutation(StoreTransaction transaction, Caller caller, MutationRequest request, byte[] raw, MutationLease lease,
         long started, TimeSpan limit, CancellationToken token)
     {
+        void CheckEffect()
+        {
+            BeforeMutationEffectForTests?.Invoke();
+            if (Expired(started, limit, token)) throw new OperationCanceledException(token);
+            CheckWriteCandidateAuthority(transaction, caller);
+            if (Expired(started, limit, token)) throw new OperationCanceledException(token);
+        }
+
         if (Expired(started, limit, token)) throw new OperationCanceledException(token);
         CheckWriteCandidateAuthority(transaction, caller);
         if (Expired(started, limit, token)) throw new OperationCanceledException(token);
+        if (!request.HasExpectedSha256)
+        {
+            try
+            {
+                lease.Created = lease.Use!.Root.CreateWindowsNewTarget(request.Path!.Path, lease.ParentIdentity!.Value,
+                    lease.Stages!.Intended, BeforeCreateForTests, CheckEffect, token);
+            }
+            catch (WorkspaceCreateCollisionException collision)
+            {
+                return FileMutationJournal.CompleteKnownExpectedAbsentConflict(transaction, request.Meta!.CommandId.Value.Span,
+                    caller.CenterCaller!, raw, collision);
+            }
+            catch (WorkspaceCreateUncertainException)
+            {
+                return FileMutationJournal.MarkUnknown(transaction, request.Meta!.CommandId.Value.Span);
+            }
+
+            WorkspaceGuardedMutationResult actual;
+            try
+            {
+                AfterCreateForTests?.Invoke();
+                actual = lease.Use!.Root.ApplyExistingGuardedStage(request.Path!.Path, lease.Created.Guard,
+                    lease.Stages!.Intended, SHA256.HashData(ReadOnlySpan<byte>.Empty), afterFirstEffect: null, beforeEachEffect: CheckEffect, token);
+            }
+            catch (Exception failure) when (failure is not OutOfMemoryException and not StackOverflowException)
+            {
+                // Creation itself was an effect, even when no later content write began.
+                return FileMutationJournal.MarkUnknown(transaction, request.Meta!.CommandId.Value.Span);
+            }
+            return FileMutationJournal.CompleteVerifiedEffect(transaction, request.Meta!.CommandId.Value.Span, raw, actual.Size, actual.Sha256, null);
+        }
+
         try
         {
             var actual = lease.Use!.Root.ApplyExistingGuardedStage(request.Path!.Path, lease.Guard!, lease.Stages!.Intended,
-                request.ExpectedSha256.Span, token);
+                request.ExpectedSha256.Span, afterFirstEffect: null, beforeEachEffect: CheckEffect, token);
             var replacements = request.Kind == FileOperationKind.Edit ? request.ExpectedOccurrences : (uint?)null;
             return FileMutationJournal.CompleteVerifiedEffect(transaction, request.Meta!.CommandId.Value.Span, raw, actual.Size, actual.Sha256, replacements);
         }
@@ -318,7 +440,7 @@ internal sealed partial class FileServiceHandler
         finally { lease.Dispose(); }
     }
 
-    private sealed record MutationRequest(FileOperationKind Kind, RequestMeta? Meta, FilePath? Path, bool ShapeValid,
+    private sealed record MutationRequest(FileOperationKind Kind, RequestMeta? Meta, FilePath? Path, bool ShapeValid, string? Limit,
         bool HasExpectedSha256, ByteString ExpectedSha256, ByteString Data, string? OldText, string? NewText, uint ExpectedOccurrences);
 
     private sealed record MutationPreparation(bool Ready, byte[]? Response = null, string? PolicyReason = null);
@@ -327,6 +449,8 @@ internal sealed partial class FileServiceHandler
     {
         internal RegisteredWorkspaceUse? Use { get; set; }
         internal WorkspaceWriteGuard? Guard { get; set; }
+        internal WorkspaceCreatedTarget? Created { get; set; }
+        internal WorkspaceObjectIdentity? ParentIdentity { get; set; }
         internal WorkspaceStagePair? Stages { get; set; }
 
         public void Dispose()
@@ -335,7 +459,11 @@ internal sealed partial class FileServiceHandler
             finally
             {
                 try { Guard?.Dispose(); }
-                finally { Use?.Dispose(); }
+                finally
+                {
+                    try { Created?.Dispose(); }
+                    finally { Use?.Dispose(); }
+                }
             }
         }
     }

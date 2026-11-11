@@ -86,7 +86,7 @@ internal static partial class FileMutationJournal
     {
         // Current producer's recorded refusal has a fixed canonical envelope. A malformed or noncanonical stored
         // Decimal is never accepted merely because the published 450.1 validator accepts its shape.
-        if (!NodeShapes.IsValid(error) || !error.Equals(ExistingFileTooLarge(row)))
+        if (row.ExpectedAbsent || !NodeShapes.IsValid(error) || !error.Equals(ExistingFileTooLarge(row)))
             throw new InvalidDataException("Invalid known existing-file size refusal.");
         return error.Clone();
     }

@@ -88,7 +88,12 @@ public sealed class WorkspaceGuardedMutationTests
             Assert.Equal("file_identity_changed", Assert.IsType<WorkspacePathException>(failure.InnerException).Reason);
         }
         Assert.Equal(substituted, File.ReadAllBytes(fixture.Target));
-        Assert.Equal(intendedBytes, File.ReadAllBytes(moved));
+        // The post-write name check detects the replacement before the later length change. The originally opened
+        // object therefore contains the actual first write over its original tail, not a claimed completed result.
+        Assert.True(intendedBytes.Length < fixture.Original.Length);
+        var partiallyWritten = fixture.Original.ToArray();
+        intendedBytes.CopyTo(partiallyWritten, 0);
+        Assert.Equal(partiallyWritten, File.ReadAllBytes(moved));
     }
 
     private sealed class Fixture : IDisposable

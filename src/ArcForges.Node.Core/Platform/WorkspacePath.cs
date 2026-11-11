@@ -154,7 +154,14 @@ internal sealed partial class WorkspacePath : IDisposable
     {
         ArgumentNullException.ThrowIfNull(path);
         ValidateUtf8Path(path);
+        return ComponentsIgnoringSize(path, allowRoot);
+    }
 
+    // Admission checks the size separately so a malformed oversized path remains an invalid argument. This helper
+    // checks syntax only; it never opens a path or replaces the size check required before filesystem access.
+    internal static string[] ComponentsIgnoringSize(string path, bool allowRoot = false)
+    {
+        ArgumentNullException.ThrowIfNull(path);
         if (path.Length == 0)
         {
             return allowRoot ? [] : throw new WorkspacePathException("root_operation_refused");

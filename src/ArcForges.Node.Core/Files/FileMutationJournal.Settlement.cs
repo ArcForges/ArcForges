@@ -212,7 +212,7 @@ internal static partial class FileMutationJournal
         if (error is not null)
         {
             if (result is not null || audit is not null) throw new InvalidDataException("Invalid known file refusal.");
-            return (null, ReadKnownExistingFileTooLarge(row, error));
+            return (null, ReadKnownFileRefusal(row, error));
         }
         if (result?.CommandId?.Value.Span.SequenceEqual(row.CommandId) != true ||
             !result.HasSizeBytes || result.SizeBytes != (ulong)row.IntendedSize ||

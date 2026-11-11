@@ -30,7 +30,12 @@ internal sealed partial class WorkspacePath
 
     // Callback is a test seam for coordinating a real namespace change after the first actual write.
     internal WorkspaceGuardedMutationResult ApplyExistingGuardedStage(string path, WorkspaceWriteGuard target,
-        WorkspaceAnonymousStage intended, ReadOnlySpan<byte> expectedSha256, Action? afterFirstEffect, CancellationToken cancellationToken)
+        WorkspaceAnonymousStage intended, ReadOnlySpan<byte> expectedSha256, Action? afterFirstEffect, CancellationToken cancellationToken) =>
+        ApplyExistingGuardedStage(path, target, intended, expectedSha256, afterFirstEffect, beforeEachEffect: null, cancellationToken);
+
+    internal WorkspaceGuardedMutationResult ApplyExistingGuardedStage(string path, WorkspaceWriteGuard target,
+        WorkspaceAnonymousStage intended, ReadOnlySpan<byte> expectedSha256, Action? afterFirstEffect, Action? beforeEachEffect,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(target);
         ArgumentNullException.ThrowIfNull(intended);
@@ -75,7 +80,7 @@ internal sealed partial class WorkspacePath
                 throw new WorkspacePathException("file_identity_changed");
         }
 
-        return target.ApplyStage(intended, expectedSha256, CheckNames, afterFirstEffect, cancellationToken);
+        return target.ApplyStage(intended, expectedSha256, CheckNames, afterFirstEffect, beforeEachEffect, cancellationToken);
     }
 }
 
@@ -90,7 +95,7 @@ internal sealed partial class WorkspaceWriteGuard
     /// this same guarded target handle and rehashes it. Names are checked immediately before and after; no effect uses a name.
     /// </summary>
     internal WorkspaceGuardedMutationResult ApplyStage(WorkspaceAnonymousStage stage, ReadOnlySpan<byte> expectedSha256,
-        Action checkNames, Action? afterFirstEffect, CancellationToken cancellationToken)
+        Action checkNames, Action? afterFirstEffect, Action? beforeEachEffect, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(stage);
         ArgumentNullException.ThrowIfNull(checkNames);
@@ -132,6 +137,12 @@ internal sealed partial class WorkspaceWriteGuard
                     stage.CheckIntact();
                     CheckMetadata();
                     var length = Math.Min(65_536, source.Bytes.Length - offset);
+                    beforeEachEffect?.Invoke();
+                    cancellationToken.ThrowIfCancellationRequested();
+                    CheckLocked();
+                    stage.CheckIntact();
+                    CheckMetadata();
+                    checkNames();
                     possibleEffect = true; // a failing write may still have changed bytes
                     RandomAccess.Write(file, source.Bytes.Span.Slice(offset, length), offset);
                     if (offset == 0) afterFirstEffect?.Invoke();
@@ -145,6 +156,12 @@ internal sealed partial class WorkspaceWriteGuard
                 CheckLocked();
                 stage.CheckIntact();
                 CheckMetadata();
+                beforeEachEffect?.Invoke();
+                cancellationToken.ThrowIfCancellationRequested();
+                CheckLocked();
+                stage.CheckIntact();
+                CheckMetadata();
+                checkNames();
                 possibleEffect = true; // length change is itself an effect, including for an empty result
                 RandomAccess.SetLength(file, source.Bytes.Length);
                 if (source.Bytes.Length == 0) afterFirstEffect?.Invoke();

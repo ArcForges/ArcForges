@@ -329,13 +329,13 @@ internal static partial class FileMutationJournal
 
     private sealed record JournalRow(byte[] CommandId, FileOperationKind Kind, FileOperationState State, byte[] RequestSha256,
         CenterCaller Caller, byte[] Correlation, byte[] WorkspaceId, string Path, long Created, long Updated, bool Held, bool Acknowledged,
-        long IntendedSize, byte[] IntendedSha256, byte[]? Outcome);
+        long IntendedSize, byte[] IntendedSha256, byte[]? Outcome, bool ExpectedAbsent);
 
     private static JournalRow? ReadRow(StoreReader reader, ReadOnlySpan<byte> commandId)
     {
         using var command = reader.CreateCommand("""
             SELECT j.command_id, j.kind, j.phase, j.request_sha256, j.caller, j.correlation_id, j.workspace_id, j.relative_path,
-                   j.created_at, j.updated_at, j.held, j.acknowledged, j.intended_size, j.intended_sha256, d.outcome
+                   j.created_at, j.updated_at, j.held, j.acknowledged, j.intended_size, j.intended_sha256, d.outcome, j.expected_absent
             FROM file_operation_journal j JOIN command_dedup d ON d.command_id = j.command_id
             WHERE j.command_id = $id;
             """);
@@ -352,7 +352,7 @@ internal static partial class FileMutationJournal
         return new JournalRow((byte[])row.GetValue(0), (FileOperationKind)row.GetInt32(1), (FileOperationState)row.GetInt32(2),
             (byte[])row.GetValue(3), caller, (byte[])row.GetValue(5), (byte[])row.GetValue(6), row.GetString(7),
             row.GetInt64(8), row.GetInt64(9), row.GetInt32(10) != 0, row.GetInt32(11) != 0,
-            row.GetInt64(12), (byte[])row.GetValue(13), row.IsDBNull(14) ? null : (byte[])row.GetValue(14));
+            row.GetInt64(12), (byte[])row.GetValue(13), row.IsDBNull(14) ? null : (byte[])row.GetValue(14), row.GetInt32(15) != 0);
     }
 
     private static FileOperation ToOperation(JournalRow row)
