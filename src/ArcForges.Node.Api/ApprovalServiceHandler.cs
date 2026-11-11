@@ -17,7 +17,7 @@ namespace ArcForges.Node.Api;
 /// </summary>
 internal sealed class ApprovalExecutors
 {
-    private readonly Dictionary<string, (string Operation, Func<byte[], Caller, Task<byte[]>> Run)> _executors = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (string Operation, Func<byte[], Caller, Task<byte[]?>> Run)> _executors = new(StringComparer.Ordinal);
 
     /// <summary>Registers the executor of <paramref name="method"/>, gated as the matrix operation <paramref name="operation"/>.</summary>
     public void Register<TRequest, TResponse>(string method, string operation, MessageParser<TRequest> parser, Func<TRequest, Caller, Task<TResponse>> run)
@@ -25,8 +25,12 @@ internal sealed class ApprovalExecutors
         where TResponse : IMessage<TResponse> =>
         _executors[method] = (operation, async (bytes, caller) => (await run(parser.ParseFrom(bytes), caller).ConfigureAwait(false)).ToByteArray());
 
+    /// <summary>Registers an executor of a content-free captured reference. Null defers execution without claiming an outcome.</summary>
+    internal void RegisterReference(string method, string operation, Func<byte[], Caller, Task<byte[]?>> run) =>
+        _executors[method] = (operation, run);
+
     /// <summary>The executor of <paramref name="method"/>, or <see langword="null"/>.</summary>
-    public (string Operation, Func<byte[], Caller, Task<byte[]>> Run)? Find(string method) => _executors.TryGetValue(method, out var found) ? found : null;
+    public (string Operation, Func<byte[], Caller, Task<byte[]?>> Run)? Find(string method) => _executors.TryGetValue(method, out var found) ? found : null;
 }
 
 /// <summary>
@@ -261,7 +265,7 @@ public sealed class ApprovalServiceHandler : ApprovalService.ApprovalServiceBase
     /// </summary>
     private async Task ExecuteAsync(StoredApproval approval)
     {
-        byte[] outcome;
+        byte[]? outcome;
         var operation = "approval.execute";
         if (_executors.Find(approval.View.Operation) is { } executor)
         {
@@ -280,6 +284,13 @@ public sealed class ApprovalServiceHandler : ApprovalService.ApprovalServiceBase
         else
         {
             outcome = ErrorResponse(NodeErrors.InvalidState("UNSUPPORTED", approval.View.Operation + " cannot run from an approval on this node"));
+        }
+
+        if (outcome is null)
+        {
+            // A file effect may still be unresolved. Preserve APPROVED for a safe later recovery, not a fabricated failure.
+            _node.Log.Warning("api.approval.execution_deferred", new LogField("approval", IdText.Format(approval.Id)));
+            return;
         }
 
         try

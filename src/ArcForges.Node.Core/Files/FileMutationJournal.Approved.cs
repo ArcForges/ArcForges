@@ -75,6 +75,14 @@ internal static partial class FileMutationJournal
         }
         // Recheck the target after hashing both stages and before recording a possible effect.
         PrivateStageApproval.CheckTarget(intent, root, target, cancellationToken);
+        InsertApprovedIntent(transaction, plan);
+        return (ApprovedFilePreparation.Prepared, plan);
+    }
+
+    // Caller has established either all guards for PREPARED or a verified pre-effect refusal.
+    private static void InsertApprovedIntent(StoreTransaction transaction, PrivateStageApprovedPlan plan)
+    {
+        var intent = plan.Intent;
         var now = transaction.NowMicroseconds;
         transaction.Execute("""
             INSERT INTO file_operation_journal
@@ -94,7 +102,6 @@ internal static partial class FileMutationJournal
             ("$original_hash", intent.OriginalSha256), ("$original_stage", intent.OriginalStageIdentity),
             ("$intended_size", intent.IntendedSize), ("$intended_hash", intent.IntendedSha256),
             ("$intended_stage", intent.IntendedStageIdentity), ("$now", now));
-        return (ApprovedFilePreparation.Prepared, plan);
     }
 
     /// <summary>

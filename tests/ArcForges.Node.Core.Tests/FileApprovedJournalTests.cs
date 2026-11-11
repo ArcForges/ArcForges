@@ -87,6 +87,12 @@ public sealed class FileApprovedJournalTests
             var prepared = node.Runtime.Store.Write(t => FileMutationJournal.PrepareApproved(t, id, root, target: null,
                 original: null, source, ct), CommitDurability.Full);
             Assert.Equal(ApprovedFilePreparation.Prepared, prepared.Status);
+            // A PREPARED journal could be an in-flight effect: a different attempt cannot rewrite it as a clean refusal.
+            Assert.Throws<InvalidOperationException>(() => node.Runtime.Store.Write(t =>
+                FileMutationJournal.RecordApprovedPreEffectRefusal(t, id, ApprovedFileRefusal.PolicyDenied), CommitDurability.Full));
+            var pending = node.Runtime.Store.Read(r => FileMutationJournal.GetForCaller(r, intent.CommandId, caller))!;
+            Assert.Equal(FileOperationState.Prepared, pending.State);
+            Assert.True(pending.Held);
             var duplicate = node.Runtime.Store.Write(t => FileMutationJournal.PrepareApproved(t, id, root, target: null,
                 original: null, source, ct), CommitDurability.Full);
             Assert.Equal(ApprovedFilePreparation.Existing, duplicate.Status);

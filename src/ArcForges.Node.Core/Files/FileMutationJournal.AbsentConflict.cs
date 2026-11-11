@@ -79,6 +79,11 @@ internal static partial class FileMutationJournal
             (error.Equals(AuthorityRefusal(row, approvalUnavailable: false)) ||
              error.Equals(AuthorityRefusal(row, approvalUnavailable: true))))
             return error.Clone();
+        foreach (var reason in Enum.GetValues<ApprovedFileRefusal>())
+        {
+            if (NodeShapes.IsValid(error) && error.Equals(ApprovedRefusal(row, reason)))
+                return error.Clone();
+        }
         return ReadKnownExistingFileTooLarge(row, error);
     }
 }
