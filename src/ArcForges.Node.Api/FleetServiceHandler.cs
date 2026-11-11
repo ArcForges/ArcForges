@@ -416,17 +416,34 @@ internal sealed class FleetServiceHandler(NodeRuntime node, ClientSessions sessi
             ? response : Fail(NodeErrors.Internal(node.Clock.GetUtcNow()));
     }
 
-    public override Task<FleetServiceRegisterNodeWorkspaceResponse> RegisterNodeWorkspace(FleetServiceRegisterNodeWorkspaceRequest request, ServerCallContext context)
+    public override async Task<FleetServiceRegisterNodeWorkspaceResponse> RegisterNodeWorkspace(FleetServiceRegisterNodeWorkspaceRequest request, ServerCallContext context)
     {
         ArgumentNullException.ThrowIfNull(request);
         var forwarded = request.Clone();
+        var correlation = Validation.RequiredId(request.Meta?.CorrelationId, "correlation_id") is null
+            ? request.Meta!.CorrelationId.Clone() : CommandIds.New(node.Clock);
+        var meta = ApiCommands.Meta(request.Meta);
+        meta.CorrelationId = correlation.Clone();
+        FleetServiceRegisterNodeWorkspaceResponse Fail(ArcError error)
+        {
+            RoutedFileErrors.Complete(error, request.Meta, correlation, node.Clock);
+            return new FleetServiceRegisterNodeWorkspaceResponse { Meta = meta, Error = error };
+        }
+
         var invalid = Validation.RequiredId(forwarded.NodeId, "node_id") ?? Payload(forwarded.HasRequest, forwarded.Request, 245760);
+        WorkspaceServiceRegisterWorkspaceRequest? inner = null;
+        if (invalid is null && request.Meta?.CorrelationId is { } suppliedCorrelation)
+        {
+            invalid = Validation.RequiredId(suppliedCorrelation, "meta.correlation_id");
+        }
+
         Id? command = null;
         if (invalid is null)
         {
             try
             {
-                command = WorkspaceServiceRegisterWorkspaceRequest.Parser.ParseFrom(forwarded.Request).Meta?.CommandId;
+                inner = WorkspaceServiceRegisterWorkspaceRequest.Parser.ParseFrom(forwarded.Request);
+                command = inner.Meta?.CommandId;
                 invalid = Validation.CommandId(forwarded.Meta) ?? Validation.RequiredId(command, "request.meta.command_id");
                 if (invalid is null && !command!.Equals(forwarded.Meta.CommandId))
                 {
@@ -441,31 +458,49 @@ internal sealed class FleetServiceHandler(NodeRuntime node, ClientSessions sessi
 
         if (invalid is not null)
         {
-            return Task.FromResult(new FleetServiceRegisterNodeWorkspaceResponse { Meta = ApiCommands.Meta(request.Meta), Error = invalid });
+            return Fail(invalid);
         }
 
-        return ForwardAsync(context, request.Meta?.CorrelationId, RoutedMethod.RegisterNodeWorkspace, forwarded.NodeId, command,
+        var response = await ForwardAsync(context, correlation, RoutedMethod.RegisterNodeWorkspace, forwarded.NodeId, command,
             _ => SHA256.HashData(forwarded.Request.Span),
             (caller, assertion, client, options) =>
             {
                 forwarded.Caller = caller;
                 forwarded.RelayAssertion = assertion;
                 return client.RegisterNodeWorkspaceAsync(forwarded, options).ResponseAsync;
-            }, answer => answer.Error, answer => answer.Value is not null,
-            error => new FleetServiceRegisterNodeWorkspaceResponse { Meta = ApiCommands.Meta(request.Meta), Error = error });
+            }, answer => answer.Error, answer => answer.Value is not null, Fail).ConfigureAwait(false);
+        return RoutedFileResponseValidation.RegisterWorkspace(response, forwarded.NodeId, inner!)
+            ? response : Fail(NodeErrors.Internal(node.Clock.GetUtcNow()));
     }
 
-    public override Task<FleetServiceUnregisterNodeWorkspaceResponse> UnregisterNodeWorkspace(FleetServiceUnregisterNodeWorkspaceRequest request, ServerCallContext context)
+    public override async Task<FleetServiceUnregisterNodeWorkspaceResponse> UnregisterNodeWorkspace(FleetServiceUnregisterNodeWorkspaceRequest request, ServerCallContext context)
     {
         ArgumentNullException.ThrowIfNull(request);
         var forwarded = request.Clone();
+        var correlation = Validation.RequiredId(request.Meta?.CorrelationId, "correlation_id") is null
+            ? request.Meta!.CorrelationId.Clone() : CommandIds.New(node.Clock);
+        var meta = ApiCommands.Meta(request.Meta);
+        meta.CorrelationId = correlation.Clone();
+        FleetServiceUnregisterNodeWorkspaceResponse Fail(ArcError error)
+        {
+            RoutedFileErrors.Complete(error, request.Meta, correlation, node.Clock);
+            return new FleetServiceUnregisterNodeWorkspaceResponse { Meta = meta, Error = error };
+        }
+
         var invalid = Validation.RequiredId(forwarded.NodeId, "node_id") ?? Payload(forwarded.HasRequest, forwarded.Request, 245760);
+        WorkspaceServiceUnregisterWorkspaceRequest? inner = null;
+        if (invalid is null && request.Meta?.CorrelationId is { } suppliedCorrelation)
+        {
+            invalid = Validation.RequiredId(suppliedCorrelation, "meta.correlation_id");
+        }
+
         Id? command = null;
         if (invalid is null)
         {
             try
             {
-                command = WorkspaceServiceUnregisterWorkspaceRequest.Parser.ParseFrom(forwarded.Request).Meta?.CommandId;
+                inner = WorkspaceServiceUnregisterWorkspaceRequest.Parser.ParseFrom(forwarded.Request);
+                command = inner.Meta?.CommandId;
                 invalid = Validation.CommandId(forwarded.Meta) ?? Validation.RequiredId(command, "request.meta.command_id");
                 if (invalid is null && !command!.Equals(forwarded.Meta.CommandId))
                 {
@@ -480,31 +515,48 @@ internal sealed class FleetServiceHandler(NodeRuntime node, ClientSessions sessi
 
         if (invalid is not null)
         {
-            return Task.FromResult(new FleetServiceUnregisterNodeWorkspaceResponse { Meta = ApiCommands.Meta(request.Meta), Error = invalid });
+            return Fail(invalid);
         }
 
-        return ForwardAsync(context, request.Meta?.CorrelationId, RoutedMethod.UnregisterNodeWorkspace, forwarded.NodeId, command,
+        var response = await ForwardAsync(context, correlation, RoutedMethod.UnregisterNodeWorkspace, forwarded.NodeId, command,
             _ => SHA256.HashData(forwarded.Request.Span),
             (caller, assertion, client, options) =>
             {
                 forwarded.Caller = caller;
                 forwarded.RelayAssertion = assertion;
                 return client.UnregisterNodeWorkspaceAsync(forwarded, options).ResponseAsync;
-            }, answer => answer.Error, answer => answer.Value is not null,
-            error => new FleetServiceUnregisterNodeWorkspaceResponse { Meta = ApiCommands.Meta(request.Meta), Error = error });
+            }, answer => answer.Error, answer => answer.Value is not null, Fail).ConfigureAwait(false);
+        return RoutedFileResponseValidation.UnregisterWorkspace(response, forwarded.NodeId, inner!)
+            ? response : Fail(NodeErrors.Internal(node.Clock.GetUtcNow()));
     }
 
-    public override Task<FleetServiceListNodeWorkspacesResponse> ListNodeWorkspaces(FleetServiceListNodeWorkspacesRequest request, ServerCallContext context)
+    public override async Task<FleetServiceListNodeWorkspacesResponse> ListNodeWorkspaces(FleetServiceListNodeWorkspacesRequest request, ServerCallContext context)
     {
         ArgumentNullException.ThrowIfNull(request);
         var forwarded = request.Clone();
+        var correlation = Validation.RequiredId(request.Meta?.CorrelationId, "correlation_id") is null
+            ? request.Meta!.CorrelationId.Clone() : CommandIds.New(node.Clock);
+        var meta = ApiCommands.Meta(request.Meta);
+        meta.CorrelationId = correlation.Clone();
+        FleetServiceListNodeWorkspacesResponse Fail(ArcError error)
+        {
+            RoutedFileErrors.Complete(error, request.Meta, correlation, node.Clock);
+            return new FleetServiceListNodeWorkspacesResponse { Meta = meta, Error = error };
+        }
+
         var invalid = Validation.RequiredId(forwarded.NodeId, "node_id") ?? Payload(forwarded.HasRequest, forwarded.Request, 245760);
+        WorkspaceServiceListWorkspacesRequest? inner = null;
+        if (invalid is null && request.Meta?.CorrelationId is { } suppliedCorrelation)
+        {
+            invalid = Validation.RequiredId(suppliedCorrelation, "meta.correlation_id");
+        }
+
         Id? command = null;
         if (invalid is null)
         {
             try
             {
-                var inner = WorkspaceServiceListWorkspacesRequest.Parser.ParseFrom(forwarded.Request);
+                inner = WorkspaceServiceListWorkspacesRequest.Parser.ParseFrom(forwarded.Request);
                 if (forwarded.Meta?.CommandId is not null || inner.Meta?.CommandId is not null)
                 {
                     invalid = NodeErrors.InvalidArgument("meta.command_id: absent for a workspace read");
@@ -518,31 +570,48 @@ internal sealed class FleetServiceHandler(NodeRuntime node, ClientSessions sessi
 
         if (invalid is not null)
         {
-            return Task.FromResult(new FleetServiceListNodeWorkspacesResponse { Meta = ApiCommands.Meta(request.Meta), Error = invalid });
+            return Fail(invalid);
         }
 
-        return ForwardAsync(context, request.Meta?.CorrelationId, RoutedMethod.ListNodeWorkspaces, forwarded.NodeId, command,
+        var response = await ForwardAsync(context, correlation, RoutedMethod.ListNodeWorkspaces, forwarded.NodeId, command,
             _ => SHA256.HashData(forwarded.Request.Span),
             (caller, assertion, client, options) =>
             {
                 forwarded.Caller = caller;
                 forwarded.RelayAssertion = assertion;
                 return client.ListNodeWorkspacesAsync(forwarded, options).ResponseAsync;
-            }, answer => answer.Error, answer => answer.Value is not null,
-            error => new FleetServiceListNodeWorkspacesResponse { Meta = ApiCommands.Meta(request.Meta), Error = error });
+            }, answer => answer.Error, answer => answer.Value is not null, Fail).ConfigureAwait(false);
+        return RoutedFileResponseValidation.ListWorkspaces(response, forwarded.NodeId, inner!)
+            ? response : Fail(NodeErrors.Internal(node.Clock.GetUtcNow()));
     }
 
-    public override Task<FleetServiceGetNodeWorkspaceResponse> GetNodeWorkspace(FleetServiceGetNodeWorkspaceRequest request, ServerCallContext context)
+    public override async Task<FleetServiceGetNodeWorkspaceResponse> GetNodeWorkspace(FleetServiceGetNodeWorkspaceRequest request, ServerCallContext context)
     {
         ArgumentNullException.ThrowIfNull(request);
         var forwarded = request.Clone();
+        var correlation = Validation.RequiredId(request.Meta?.CorrelationId, "correlation_id") is null
+            ? request.Meta!.CorrelationId.Clone() : CommandIds.New(node.Clock);
+        var meta = ApiCommands.Meta(request.Meta);
+        meta.CorrelationId = correlation.Clone();
+        FleetServiceGetNodeWorkspaceResponse Fail(ArcError error)
+        {
+            RoutedFileErrors.Complete(error, request.Meta, correlation, node.Clock);
+            return new FleetServiceGetNodeWorkspaceResponse { Meta = meta, Error = error };
+        }
+
         var invalid = Validation.RequiredId(forwarded.NodeId, "node_id") ?? Payload(forwarded.HasRequest, forwarded.Request, 245760);
+        WorkspaceServiceGetWorkspaceRequest? inner = null;
+        if (invalid is null && request.Meta?.CorrelationId is { } suppliedCorrelation)
+        {
+            invalid = Validation.RequiredId(suppliedCorrelation, "meta.correlation_id");
+        }
+
         Id? command = null;
         if (invalid is null)
         {
             try
             {
-                var inner = WorkspaceServiceGetWorkspaceRequest.Parser.ParseFrom(forwarded.Request);
+                inner = WorkspaceServiceGetWorkspaceRequest.Parser.ParseFrom(forwarded.Request);
                 if (forwarded.Meta?.CommandId is not null || inner.Meta?.CommandId is not null)
                 {
                     invalid = NodeErrors.InvalidArgument("meta.command_id: absent for a workspace read");
@@ -556,18 +625,19 @@ internal sealed class FleetServiceHandler(NodeRuntime node, ClientSessions sessi
 
         if (invalid is not null)
         {
-            return Task.FromResult(new FleetServiceGetNodeWorkspaceResponse { Meta = ApiCommands.Meta(request.Meta), Error = invalid });
+            return Fail(invalid);
         }
 
-        return ForwardAsync(context, request.Meta?.CorrelationId, RoutedMethod.GetNodeWorkspace, forwarded.NodeId, command,
+        var response = await ForwardAsync(context, correlation, RoutedMethod.GetNodeWorkspace, forwarded.NodeId, command,
             _ => SHA256.HashData(forwarded.Request.Span),
             (caller, assertion, client, options) =>
             {
                 forwarded.Caller = caller;
                 forwarded.RelayAssertion = assertion;
                 return client.GetNodeWorkspaceAsync(forwarded, options).ResponseAsync;
-            }, answer => answer.Error, answer => answer.Value is not null,
-            error => new FleetServiceGetNodeWorkspaceResponse { Meta = ApiCommands.Meta(request.Meta), Error = error });
+            }, answer => answer.Error, answer => answer.Value is not null, Fail).ConfigureAwait(false);
+        return RoutedFileResponseValidation.GetWorkspace(response, forwarded.NodeId, inner!)
+            ? response : Fail(NodeErrors.Internal(node.Clock.GetUtcNow()));
     }
 
     private static ArcError? Payload(bool present, ByteString bytes, int maximum) =>

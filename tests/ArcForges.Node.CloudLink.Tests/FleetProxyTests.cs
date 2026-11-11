@@ -5,6 +5,7 @@ using ArcForges.Contracts.Fleet.V1;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Contracts.Relay.V1;
+using ArcForges.Node.Api;
 using ArcForges.Node.CloudLink;
 using ArcForges.Node.Core;
 using Google.Protobuf;
@@ -232,11 +233,27 @@ public sealed class FleetProxyTests
         var target = new Id { Value = ByteString.CopyFrom(nodeId) };
         var forged = new RoutedCaller { Kind = CallerKind.NodeRelay, RelayingNodeId = CommandIds.New(), LocalOrigin = Origin.Agent };
         var meta = CloudNode.Command();
+        var workspace = new Workspace
+        {
+            WorkspaceId = CommandIds.New(),
+            Kind = WorkspaceKind.Registered,
+            State = WorkspaceState.Active,
+            Name = "workspace",
+            RootPath = "/test/workspace",
+            Git = new GitStatusSummary { Quality = GitStatusQuality.Unknown },
+        };
+        var audit = WorkspaceAuditMetadata.ForRecords([workspace]);
         var register = new WorkspaceServiceRegisterWorkspaceRequest { Meta = meta.Clone(), Path = "/test/workspace" }.ToByteString();
+        var registeredInner = new WorkspaceServiceRegisterWorkspaceResponse
+        {
+            Meta = new ResponseMeta { CorrelationId = meta.CorrelationId.Clone() },
+            Value = new WorkspaceServiceRegisterWorkspaceValue { Workspace = workspace.Clone() },
+            Audit = audit.Clone(),
+        };
         center.Script("RegisterNodeWorkspace", Reply(new FleetServiceRegisterNodeWorkspaceResponse
         {
-            Meta = new ResponseMeta(),
-            Value = new FleetServiceRegisterNodeWorkspaceValue { NodeId = target, Response = ByteString.CopyFrom([1]) },
+            Meta = new ResponseMeta { CorrelationId = meta.CorrelationId.Clone() },
+            Value = new FleetServiceRegisterNodeWorkspaceValue { NodeId = target, Response = registeredInner.ToByteString() },
         }));
         var registered = await fleet.RegisterNodeWorkspaceAsync(new FleetServiceRegisterNodeWorkspaceRequest
         {
@@ -248,11 +265,19 @@ public sealed class FleetProxyTests
         Assert.NotNull(registered.Value);
 
         var removeMeta = CloudNode.Command();
-        var unregister = new WorkspaceServiceUnregisterWorkspaceRequest { Meta = removeMeta.Clone(), WorkspaceId = CommandIds.New() }.ToByteString();
+        var unregister = new WorkspaceServiceUnregisterWorkspaceRequest { Meta = removeMeta.Clone(), WorkspaceId = workspace.WorkspaceId.Clone() }.ToByteString();
+        var unregisterInner = new WorkspaceServiceUnregisterWorkspaceResponse
+        {
+            Meta = new ResponseMeta { CorrelationId = removeMeta.CorrelationId.Clone() },
+            Value = new WorkspaceServiceUnregisterWorkspaceValue
+            {
+                Receipt = new Receipt { CommandId = removeMeta.CommandId.Clone(), Effect = EffectCertainty.Happened },
+            },
+        };
         center.Script("UnregisterNodeWorkspace", Reply(new FleetServiceUnregisterNodeWorkspaceResponse
         {
-            Meta = new ResponseMeta(),
-            Value = new FleetServiceUnregisterNodeWorkspaceValue { NodeId = target, Response = ByteString.CopyFrom([1]) },
+            Meta = new ResponseMeta { CorrelationId = removeMeta.CorrelationId.Clone() },
+            Value = new FleetServiceUnregisterNodeWorkspaceValue { NodeId = target, Response = unregisterInner.ToByteString() },
         }));
         Assert.NotNull((await fleet.UnregisterNodeWorkspaceAsync(new FleetServiceUnregisterNodeWorkspaceRequest
         {
@@ -264,10 +289,16 @@ public sealed class FleetProxyTests
 
         var readMeta = new RequestMeta { CorrelationId = CommandIds.New() };
         var list = new WorkspaceServiceListWorkspacesRequest { Meta = readMeta.Clone() }.ToByteString();
+        var listInner = new WorkspaceServiceListWorkspacesResponse
+        {
+            Meta = new ResponseMeta { CorrelationId = readMeta.CorrelationId.Clone() },
+            Value = new WorkspaceServiceListWorkspacesValue { Workspaces = { workspace.Clone() }, Page = new PageState { HasMore = false } },
+            Audit = audit.Clone(),
+        };
         center.Script("ListNodeWorkspaces", Reply(new FleetServiceListNodeWorkspacesResponse
         {
-            Meta = new ResponseMeta(),
-            Value = new FleetServiceListNodeWorkspacesValue { NodeId = target, Response = ByteString.CopyFrom([1]) },
+            Meta = new ResponseMeta { CorrelationId = readMeta.CorrelationId.Clone() },
+            Value = new FleetServiceListNodeWorkspacesValue { NodeId = target, Response = listInner.ToByteString() },
         }));
         Assert.NotNull((await fleet.ListNodeWorkspacesAsync(new FleetServiceListNodeWorkspacesRequest
         {
@@ -277,11 +308,17 @@ public sealed class FleetProxyTests
             Request = list,
         }, cancellationToken: ct)).Value);
 
-        var get = new WorkspaceServiceGetWorkspaceRequest { Meta = readMeta.Clone(), WorkspaceId = CommandIds.New() }.ToByteString();
+        var get = new WorkspaceServiceGetWorkspaceRequest { Meta = readMeta.Clone(), WorkspaceId = workspace.WorkspaceId.Clone() }.ToByteString();
+        var getInner = new WorkspaceServiceGetWorkspaceResponse
+        {
+            Meta = new ResponseMeta { CorrelationId = readMeta.CorrelationId.Clone() },
+            Value = new WorkspaceServiceGetWorkspaceValue { Workspace = workspace.Clone() },
+            Audit = audit.Clone(),
+        };
         center.Script("GetNodeWorkspace", Reply(new FleetServiceGetNodeWorkspaceResponse
         {
-            Meta = new ResponseMeta(),
-            Value = new FleetServiceGetNodeWorkspaceValue { NodeId = target, Response = ByteString.CopyFrom([1]) },
+            Meta = new ResponseMeta { CorrelationId = readMeta.CorrelationId.Clone() },
+            Value = new FleetServiceGetNodeWorkspaceValue { NodeId = target, Response = getInner.ToByteString() },
         }));
         Assert.NotNull((await fleet.GetNodeWorkspaceAsync(new FleetServiceGetNodeWorkspaceRequest
         {
@@ -525,6 +562,23 @@ public sealed class FleetProxyTests
         Assert.Equal(RetryMode.Never, invalidReply.Error.Retry.Mode);
         Assert.True(ArcForges.Contracts.Node.Shapes.ContractShapeValidation.IsValid(invalidReply.Error));
         Assert.Equal(2, center.CallsOf("ReadNodeFile").Count);
+
+        // The local relay must not forward a malformed signed-inner value from the scripted center.
+        center.Script("ListNodeWorkspaces", Reply(new FleetServiceListNodeWorkspacesResponse
+        {
+            Meta = new ResponseMeta { CorrelationId = readMeta.CorrelationId.Clone() },
+            Value = new FleetServiceListNodeWorkspacesValue { NodeId = target, Response = ByteString.CopyFrom([1]) },
+        }));
+        var malformedWorkspace = await fleet.ListNodeWorkspacesAsync(new FleetServiceListNodeWorkspacesRequest
+        {
+            Meta = readMeta,
+            NodeId = target,
+            Request = list,
+        }, cancellationToken: ct);
+        Assert.Equal("internal", malformedWorkspace.Error.Code);
+        Assert.Equal(readMeta.CorrelationId, malformedWorkspace.Error.CorrelationId);
+        Assert.True(ArcForges.Contracts.Node.Shapes.ContractShapeValidation.IsValid(malformedWorkspace.Error));
+        Assert.Equal(2, center.CallsOf("ListNodeWorkspaces").Count);
     }
 
     private static FakeFault.Raw Reply(IMessage response) => new([.. FakeCenter.DataFrame(response), .. FakeCenter.TrailerFrame(0, null)]);

@@ -105,6 +105,41 @@ public sealed class RoutedFileResponseValidationTests
         Assert.False(RoutedFileResponseValidation.Read(response, target, request));
     }
 
+    [Fact]
+    public void ReadPreservesTheRequestCorrelationAndAcceptsCataloguedStoreCorruption()
+    {
+        var target = CommandIds.New();
+        var request = Request("file");
+        request.Meta = new RequestMeta { CorrelationId = CommandIds.New() };
+        var inner = new FileServiceReadFileResponse
+        {
+            Meta = new ResponseMeta { CorrelationId = request.Meta.CorrelationId.Clone() },
+            Error = new ArcError
+            {
+                Category = ErrorCategory.Internal,
+                Code = "store_corrupt",
+                MessageKey = "error.internal.store_corrupt",
+                Effect = EffectCertainty.DidNotHappen,
+                Retry = new RetryAdvice { Mode = RetryMode.Never },
+                CorrelationId = request.Meta.CorrelationId.Clone(),
+            },
+        };
+        var outer = new FleetServiceReadNodeFileResponse
+        {
+            Meta = new ResponseMeta { CorrelationId = request.Meta.CorrelationId.Clone() },
+            Value = new FleetServiceReadNodeFileValue { NodeId = target.Clone(), Response = inner.ToByteString() },
+        };
+        Assert.True(NodeShapes.IsValid(inner));
+        Assert.True(RoutedFileResponseValidation.Read(outer, target, request));
+        inner.Error.CorrelationId = CommandIds.New();
+        outer.Value.Response = inner.ToByteString();
+        Assert.False(RoutedFileResponseValidation.Read(outer, target, request));
+        inner.Error.CorrelationId = request.Meta.CorrelationId.Clone();
+        inner.Meta.CorrelationId = CommandIds.New();
+        outer.Value.Response = inner.ToByteString();
+        Assert.False(RoutedFileResponseValidation.Read(outer, target, request));
+    }
+
     private static ArcError TooLarge(string name, string maximum) => new()
     {
         Category = ErrorCategory.Resource,

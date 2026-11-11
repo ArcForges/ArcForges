@@ -44,7 +44,7 @@ internal static partial class RoutedFileResponseValidation
             return false;
         }
 
-        if (!NodeShapes.IsValid(inner))
+        if (!NodeShapes.IsValid(inner) || !FileMetaMatches(inner.Meta, request.Meta, inner.Error))
         {
             return false;
         }
@@ -186,6 +186,11 @@ internal static partial class RoutedFileResponseValidation
         if (category == ErrorCategory.Internal && code == "internal")
         {
             return error.Retry.Mode == RetryMode.AfterTime && error.Retry.RetryAt is not null;
+        }
+
+        if (category == ErrorCategory.Internal && code == "store_corrupt")
+        {
+            return error.Retry.Mode == RetryMode.Never && error.Retry.RetryAt is null;
         }
 
         if (error.Retry.Mode != RetryMode.Never || error.Retry.RetryAt is not null)
