@@ -22,6 +22,9 @@ internal sealed class RoutedCalls(InProcessNode node)
 
     private RoutedCallLog Log { get; } = new(new ProcessorRoutedCallStore(node.Runtime.Processor), node.Runtime.Clock);
 
+    /// <summary>The most recently constructed verified call ID, for response-correlation checks.</summary>
+    public Id? LastCallId { get; private set; }
+
     /// <summary>The link the calls arrive on (a test flips it).</summary>
     public TestLink Link { get; } = new();
 
@@ -51,7 +54,7 @@ internal sealed class RoutedCalls(InProcessNode node)
     /// the log rows (a test that holds the writer). <paramref name="expires"/> defaults to a minute from now.
     /// </summary>
     public async Task<(RoutedAnswer? Answer, long LogId)> CallAsync(CenterCaller caller, RoutedMethod method, byte[] payload, Id? commandId = null,
-        DateTimeOffset? expires = null, bool record = true)
+        DateTimeOffset? expires = null, bool record = true, CancellationToken? cancellationToken = null)
     {
         var now = node.Runtime.Clock.GetUtcNow();
         var header = new CallHeader
@@ -69,6 +72,7 @@ internal sealed class RoutedCalls(InProcessNode node)
             ExpiresAt = ProtoTime.ToInstant(expires ?? now.AddSeconds(60)),
             Deadline = ProtoTime.ToInstant((expires ?? now.AddSeconds(60)) < now.AddSeconds(10) ? (expires ?? now) : now.AddSeconds(10)),
         };
+        LastCallId = header.CallId.Clone();
         if (commandId is not null)
         {
             header.CommandId = commandId;
@@ -90,7 +94,7 @@ internal sealed class RoutedCalls(InProcessNode node)
             }) ?? throw new InvalidOperationException("a fresh call ID");
         }
 
-        var answer = await Dispatcher.DispatchAsync(new VerifiedCall(header, ByteString.CopyFrom(payload), logId), Link, TestContext.Current.CancellationToken);
+        var answer = await Dispatcher.DispatchAsync(new VerifiedCall(header, ByteString.CopyFrom(payload), logId), Link, cancellationToken ?? TestContext.Current.CancellationToken);
         if (record && answer is not null)
         {
             var decision = answer.Outcome switch

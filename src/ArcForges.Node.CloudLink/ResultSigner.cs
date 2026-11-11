@@ -62,6 +62,7 @@ internal static partial class RoutedRefusals
         RoutedMethod.SubmitNodeTask => "task.submit",
         RoutedMethod.ReadNodeTaskOutput => "task.read_output",
         RoutedMethod.CancelNodeTask => "task.cancel_others",
+        RoutedMethod.ReadNodeFile => "file.read",
         RoutedMethod.RegisterNodeWorkspace => "workspace.register",
         RoutedMethod.UnregisterNodeWorkspace => "workspace.unregister",
         RoutedMethod.ListNodeWorkspaces or RoutedMethod.GetNodeWorkspace => "workspace.read",

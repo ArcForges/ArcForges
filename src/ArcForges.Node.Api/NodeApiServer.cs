@@ -43,7 +43,7 @@ public static class NodeApiServer
         builder.AddService(new NodeServiceHandler(node, sessions, executors, images ?? ClientImages.ForNode(testMode: false)));
         builder.AddService(new NodeEventServiceHandler(node, streamBuffer));
         var tasks = new TaskServiceHandler(node, sessions, executors);
-        (node.RoutedDispatcher as RoutedDispatcher)?.Bind(tasks, new WorkspaceServiceHandler(node));
+        (node.RoutedDispatcher as RoutedDispatcher)?.Bind(tasks, new WorkspaceServiceHandler(node), new FileServiceHandler(node));
         builder.AddService(tasks);
         builder.AddService(new ResourceServiceHandler(node, sessions, executors));
         builder.AddService(new QueueServiceHandler(node, sessions, executors));
@@ -56,7 +56,7 @@ public static class NodeApiServer
             builder.AddService(new AccountServiceHandler(node, sessions, cloud));
             builder.AddService(new FleetServiceHandler(node, sessions, cloud));
             foreach (var method in (ReadOnlySpan<string>)["ListNodes", "GetNode", "SubmitNodeTask", "GetNodeTask", "ListNodeTasks", "ReadNodeTaskOutput", "CancelNodeTask",
-                "RegisterNodeWorkspace", "UnregisterNodeWorkspace", "ListNodeWorkspaces", "GetNodeWorkspace"])
+                "ReadNodeFile", "RegisterNodeWorkspace", "UnregisterNodeWorkspace", "ListNodeWorkspaces", "GetNodeWorkspace"])
             {
                 builder.RegisterMethod(Fleet, method, new LocalRpcCallProfile(TimeSpan.FromSeconds(40), TimeSpan.FromSeconds(40)));
             }

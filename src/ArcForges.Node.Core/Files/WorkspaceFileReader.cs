@@ -34,7 +34,7 @@ internal static class WorkspaceFileReader
         ArgumentNullException.ThrowIfNull(workspace);
         ArgumentOutOfRangeException.ThrowIfZero(length);
         cancellationToken.ThrowIfCancellationRequested();
-        var file = workspace.OpenRead(path);
+        using var file = workspace.OpenRead(path);
         byte[] bytes = [];
         var count = 0;
         try
@@ -45,7 +45,8 @@ internal static class WorkspaceFileReader
                 throw Failure("file_identity_changed", bytes, count);
             }
 
-            var initialSize = checked((ulong)RandomAccess.GetLength(file));
+            var initialStamp = WorkspacePath.FileStamp(file);
+            var initialSize = checked((ulong)initialStamp.Size);
             checkpoint?.Invoke(WorkspaceReadCheckpoint.AfterInitialSize);
             var requested = offset >= initialSize ? 0 : checked((int)Math.Min((ulong)MaximumReadBytes, Math.Min(length, initialSize - offset)));
             bytes = new byte[requested];
@@ -68,13 +69,26 @@ internal static class WorkspaceFileReader
                 checkpoint?.Invoke(WorkspaceReadCheckpoint.AfterBytesRead);
             }
 
-            var observedSize = checked((ulong)RandomAccess.GetLength(file));
+            var finalStamp = WorkspacePath.FileStamp(file);
+            var observedSize = checked((ulong)finalStamp.Size);
             var identity = WorkspacePath.Identity(file);
+            WorkspaceEntryMetadata named;
+            try
+            {
+                named = workspace.InspectEntry(path);
+            }
+            catch (WorkspacePathException exception) when (exception.Reason is "native_2" or "native_3" or "native_20")
+            {
+                // A previously opened name disappeared or an ancestor ceased to be a directory during the read.
+                throw Failure("file_changed_while_reading", bytes, count, exception);
+            }
+
             var next = checked(offset + (ulong)count);
-            // EOF goes through the same identity, size and cancellation checks as a nonempty read.
-            // A concurrent truncate or growth must not yield an out-of-file range or a zero-progress continuation.
-            if (!firstIdentity.SameObject(identity) || !identity.IsFile || identity.Links != 1 ||
-                (count == 0 ? offset < observedSize : next > observedSize))
+            // Check the actual held file and the current named entry, including EOF and same-size changes.
+            // This detects observed changes; it does not claim a cross-call snapshot or an atomic namespace lock.
+            if (!firstIdentity.SameObject(identity) || !identity.IsFile || identity.Links != 1 || initialStamp != finalStamp ||
+                named.Kind != WorkspaceEntryType.File || !identity.SameObject(named.Identity) || named.Identity.Links != 1 ||
+                finalStamp != named.Stamp || (count == 0 ? offset < observedSize : next > observedSize))
             {
                 throw Failure("file_changed_while_reading", bytes, count);
             }

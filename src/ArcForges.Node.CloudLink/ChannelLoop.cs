@@ -862,11 +862,50 @@ internal sealed class ChannelLoop : IAsyncDisposable
             }
 
             var code = answer.Error is { } error ? error.Category.ToString().ToUpperInvariant() + "/" + error.Code : answer.HandlerCode;
-            await _log.CompleteAsync(verified!.LogId, decision, code, answer.TaskId, answer.Risk,
-                decision == RoutedCallDecision.Executed ? SHA256.HashData(answer.Response!.Span) : null,
-                decision == RoutedCallDecision.Executed ? answer.Response!.Length : null,
-                fileWorkspace: (int)verified.Header.Method is >= 9 and <= 20, workspaceId: answer.WorkspaceId).ConfigureAwait(false);
-            await session.Client.SendAsync(new RelayFrame { CallResult = result }, session.Token).ConfigureAwait(false);
+            var responseHash = decision == RoutedCallDecision.Executed ? SHA256.HashData(answer.Response!.Span) : null;
+            var responseSize = decision == RoutedCallDecision.Executed ? answer.Response!.Length : (int?)null;
+            if (verified!.Header.Method == RoutedMethod.ReadNodeFile)
+            {
+                // A result-log wait consumes the same monotonic budget as the read. A late queued log update must not
+                // turn an unreturned result into a completed call, and a late result must not be sent after that wait.
+                var lifetime = ProtoTime.ToDateTimeOffset(verified.Header.Deadline)!.Value - ProtoTime.ToDateTimeOffset(verified.Header.IssuedAt)!.Value;
+                var budget = lifetime < TimeSpan.FromSeconds(10) ? lifetime : TimeSpan.FromSeconds(10);
+                var remaining = budget - _clock.GetElapsedTime(receivedAt);
+                if (remaining <= TimeSpan.Zero)
+                {
+                    return;
+                }
+
+                using var deadline = new CancellationTokenSource(remaining, _clock);
+                using var linked = CancellationTokenSource.CreateLinkedTokenSource(session.Token, deadline.Token);
+                var token = linked.Token;
+                var completion = _log.CompleteAsync(verified.LogId, decision, code, answer.TaskId, answer.Risk,
+                    responseHash, responseSize, fileWorkspace: true, workspaceId: answer.WorkspaceId,
+                    beforeCommit: () => !token.IsCancellationRequested && _clock.GetElapsedTime(receivedAt) < budget);
+                try
+                {
+                    var updated = await completion.WaitAsync(token).ConfigureAwait(false);
+                    if (updated != 1 || token.IsCancellationRequested || _clock.GetElapsedTime(receivedAt) >= budget)
+                    {
+                        return;
+                    }
+
+                    await session.Client.SendAsync(new RelayFrame { CallResult = result }, token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    _ = ObserveReadCompletionAsync(completion);
+                    throw;
+                }
+            }
+            else
+            {
+                await _log.CompleteAsync(verified.LogId, decision, code, answer.TaskId, answer.Risk,
+                    responseHash, responseSize, fileWorkspace: (int)verified.Header.Method is >= 9 and <= 20,
+                    workspaceId: answer.WorkspaceId).ConfigureAwait(false);
+                await session.Client.SendAsync(new RelayFrame { CallResult = result }, session.Token).ConfigureAwait(false);
+            }
+
             _nodeLog.Info("cloud.channel.call_answered", new LogField("method", (int)verified.Header.Method), new LogField("decision", (int)decision));
         }
         catch (Exception exception) when (exception is OperationCanceledException or WebSocketException or ObjectDisposedException or IOException)
@@ -876,6 +915,19 @@ internal sealed class ChannelLoop : IAsyncDisposable
         catch (Exception exception) when (exception is not OutOfMemoryException)
         {
             _nodeLog.Error("cloud.channel.call_failed", exception);
+        }
+    }
+
+    private async Task ObserveReadCompletionAsync(Task<long> completion)
+    {
+        try
+        {
+            _ = await completion.ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            // Do not log sensitive path, file, or exception text from the abandoned result.
+            _nodeLog.Error("cloud.channel.file_read_settlement_failed");
         }
     }
 

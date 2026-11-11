@@ -57,10 +57,16 @@ internal sealed class RoutedAbortException : Exception
 /// The context of one center-routed call on its way through a TaskService body (AF-CTR-05 N2b): the link it arrived on, its expiry, its
 /// wait budget on the local monotonic clock, and the closed operation and reason of a refusal the body made (the dispatcher signs it).
 /// </summary>
-internal sealed class RoutedContext(IRoutedLink link, NodeLifecycle lifecycle, DateTimeOffset expiresAt, TimeSpan lifetime, TimeProvider clock, long receivedAt)
+internal sealed class RoutedContext(IRoutedLink link, NodeLifecycle lifecycle, DateTimeOffset expiresAt, TimeSpan lifetime, TimeProvider clock, long receivedAt, Id callId)
 {
     /// <summary>The margin a routed answer keeps before the call's deadline.</summary>
     public static readonly TimeSpan Margin = TimeSpan.FromSeconds(1);
+
+    /// <summary>The verified call ID, used only when no valid request correlation was supplied.</summary>
+    public Id CallId { get; } = callId.Clone();
+
+    /// <summary>The correlation supplied by the request, otherwise the verified call ID.</summary>
+    public Id Correlation(RequestMeta? meta) => RoutedFileErrors.Correlation(meta, CallId);
 
     /// <summary>The link of the call.</summary>
     public IRoutedLink Link { get; } = link;
@@ -92,6 +98,14 @@ internal sealed class RoutedContext(IRoutedLink link, NodeLifecycle lifecycle, D
     {
         var left = lifetime - clock.GetElapsedTime(receivedAt) - Margin;
         return left > TimeSpan.Zero ? left : TimeSpan.Zero;
+    }
+
+    /// <summary>The file operation budget also includes time since this verified call was received.</summary>
+    public TimeSpan RemainingFileOperation()
+    {
+        var fromReceipt = TimeSpan.FromSeconds(10) - clock.GetElapsedTime(receivedAt);
+        var left = Remaining();
+        return fromReceipt <= TimeSpan.Zero ? TimeSpan.Zero : fromReceipt < left ? fromReceipt : left;
     }
 
     /// <summary>
@@ -146,16 +160,21 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
     private readonly ConcurrentDictionary<string, CenterCaller> _inFlight = new(StringComparer.Ordinal);
     private TaskServiceHandler? _tasks;
     private WorkspaceServiceHandler? _workspaces;
+    private FileServiceHandler? _files;
 
     /// <summary>Binds the actual handlers built by the host after the cloud link.</summary>
-    public void Bind(TaskServiceHandler tasks, WorkspaceServiceHandler workspaces)
+    public void Bind(TaskServiceHandler tasks, WorkspaceServiceHandler workspaces, FileServiceHandler files)
     {
+        Volatile.Write(ref _files, files ?? throw new ArgumentNullException(nameof(files)));
         Volatile.Write(ref _workspaces, workspaces ?? throw new ArgumentNullException(nameof(workspaces)));
         Volatile.Write(ref _tasks, tasks ?? throw new ArgumentNullException(nameof(tasks)));
     }
 
     // Lets in-process tests coordinate an actual policy update between native preparation and the writer.
     internal WorkspaceServiceHandler? WorkspaceHandlerForTests => Volatile.Read(ref _workspaces);
+
+    // Coordinates real policy changes around a file read in the in-process native fixture.
+    internal FileServiceHandler? FileHandlerForTests => Volatile.Read(ref _files);
 
     /// <inheritdoc />
     public async Task<RoutedAnswer?> DispatchAsync(VerifiedCall call, IRoutedLink link, CancellationToken cancellationToken)
@@ -166,6 +185,21 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
         var method = header.Method;
         var risk = Risk(method);
         var operation = RoutedRefusals.Operation(method);
+        RoutedAnswer ExecutedHere(RoutedMethod selected, RequestMeta? selectedMeta, ArcError error, byte[]? taskId, int selectedRisk,
+            byte[]? workspaceId = null)
+        {
+            if (IsFileWorkspace(selected))
+            {
+                RoutedFileErrors.Complete(error, selectedMeta, header.CallId, node.Clock);
+                if (selected == RoutedMethod.ReadNodeFile && error.Category == ErrorCategory.Internal)
+                {
+                    ReadInternalFailure(error);
+                }
+            }
+
+            return Executed(selected, selectedMeta, error, taskId, selectedRisk, workspaceId);
+        }
+
         var actor = new ActorRef { Origin = Origin.Remote };
         if (header.Caller is { } statedCaller)
         {
@@ -179,7 +213,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
 
         if (Volatile.Read(ref _tasks) is not { } tasks)
         {
-            return await AuditedRefusalAsync(actor, method, null, operation, RoutedRefusals.DispatchUnavailable, risk, null).ConfigureAwait(false);
+            return await AuditedRefusalAsync(actor, method, null, operation, RoutedRefusals.DispatchUnavailable, risk, null, callId: header.CallId).ConfigureAwait(false);
         }
 
         if (!link.Usable)
@@ -188,24 +222,25 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
         }
 
         var workspaces = Volatile.Read(ref _workspaces);
-        if (IsWorkspace(method) && workspaces is null)
+        var files = Volatile.Read(ref _files);
+        if (IsWorkspace(method) && workspaces is null || IsFile(method) && files is null)
         {
             try
             {
                 await WriteRefusalAuditAsync(actor, method, operation, "enforcement_unavailable", PermissionDecision.Deny, null, null,
                     fleetEntry: true).ConfigureAwait(false);
-                return Executed(method, null, NodeErrors.EnforcementUnavailable("workspace_service_unavailable"), null, risk);
+                return ExecutedHere(method, null, NodeErrors.EnforcementUnavailable("workspace_service_unavailable"), null, risk);
             }
             catch (CommandQueueFullException)
             {
-                return Executed(method, null, NodeErrors.Overloaded(node.Clock.GetUtcNow()), null, risk);
+                return ExecutedHere(method, null, NodeErrors.Overloaded(node.Clock.GetUtcNow()), null, risk);
             }
         }
 
         var center = header.Caller;
         if (CenterRouting.Shape(center) is { } shape)
         {
-            return await AuditedRefusalAsync(actor, method, null, operation, shape, risk, null).ConfigureAwait(false);
+            return await AuditedRefusalAsync(actor, method, null, operation, shape, risk, null, callId: header.CallId).ConfigureAwait(false);
         }
 
         IMessage request;
@@ -216,33 +251,33 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
         }
         catch (InvalidProtocolBufferException)
         {
-            if (IsWorkspace(method))
+            if (IsFileWorkspace(method))
             {
                 await WriteRefusalAuditAsync(actor, method, operation, "invalid_argument", PermissionDecision.Deny, null, null).ConfigureAwait(false);
             }
 
-            return Executed(method, null, NodeErrors.InvalidArgument("request: a node.v1 request of the routed method"), null, risk);
+            return ExecutedHere(method, null, NodeErrors.InvalidArgument("request: a node.v1 request of the routed method"), null, risk);
         }
 
         var mutation = method is RoutedMethod.SubmitNodeTask or RoutedMethod.CancelNodeTask or
             RoutedMethod.RegisterNodeWorkspace or RoutedMethod.UnregisterNodeWorkspace;
         if (mutation && (meta?.CommandId is not { } inner || header.CommandId is null || !inner.Value.Span.SequenceEqual(header.CommandId.Value.Span)))
         {
-            if (IsWorkspace(method))
+            if (IsFileWorkspace(method))
             {
                 await WriteRefusalAuditAsync(actor, method, operation, "invalid_argument", PermissionDecision.Deny, null, null,
-                    workspaceId: WorkspaceIdOf(request)).ConfigureAwait(false);
+                    workspaceId: WorkspaceIdOf(request), path: AuditPathOf(request)).ConfigureAwait(false);
             }
 
-            return Executed(method, meta, NodeErrors.InvalidArgument("meta.command_id: equals the routed call's command ID"),
+            return ExecutedHere(method, meta, NodeErrors.InvalidArgument("meta.command_id: equals the routed call's command ID"),
                 TaskIdOf(request), risk, WorkspaceIdOf(request));
         }
 
-        if ((method is RoutedMethod.ListNodeWorkspaces or RoutedMethod.GetNodeWorkspace) && meta?.CommandId is not null)
+        if ((method is RoutedMethod.ReadNodeFile or RoutedMethod.ListNodeWorkspaces or RoutedMethod.GetNodeWorkspace) && meta?.CommandId is not null)
         {
             await WriteRefusalAuditAsync(actor, method, operation, "invalid_argument", PermissionDecision.Deny, null, null,
                 workspaceId: WorkspaceIdOf(request)).ConfigureAwait(false);
-            return Executed(method, meta, NodeErrors.InvalidArgument("meta.command_id: absent for a workspace read"), null, risk, WorkspaceIdOf(request));
+            return ExecutedHere(method, meta, NodeErrors.InvalidArgument("meta.command_id: absent for a read"), null, risk, WorkspaceIdOf(request));
         }
 
         // A stop or an ending link takes precedence over an in-progress or recorded replay (decisions B-2/B-3).
@@ -253,7 +288,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
 
         if (link.Stopping || node.Lifecycle.IsStopping)
         {
-            return Executed(method, meta, NodeErrors.NodeStopping(node.Clock.GetUtcNow()), TaskIdOf(request), risk);
+            return ExecutedHere(method, meta, NodeErrors.NodeStopping(node.Clock.GetUtcNow()), TaskIdOf(request), risk);
         }
 
         var raw = call.Payload.ToByteArray();
@@ -271,8 +306,8 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
                 }
 
                 return link.Stopping || node.Lifecycle.IsStopping
-                    ? Executed(method, meta, NodeErrors.NodeStopping(node.Clock.GetUtcNow()), TaskIdOf(request), risk)
-                    : Executed(method, meta, NodeErrors.CommandInProgress(), TaskIdOf(request), risk);
+                    ? ExecutedHere(method, meta, NodeErrors.NodeStopping(node.Clock.GetUtcNow()), TaskIdOf(request), risk)
+                    : ExecutedHere(method, meta, NodeErrors.CommandInProgress(), TaskIdOf(request), risk);
             }
 
             var recorded = node.Store.Read(reader => Recorded(reader, header.CommandId!.Value.Span, ServiceOf(method), MethodName(method), digest, center));
@@ -285,14 +320,14 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
 
                 if (link.Stopping || node.Lifecycle.IsStopping)
                 {
-                    return Executed(method, meta, NodeErrors.NodeStopping(node.Clock.GetUtcNow()), TaskIdOf(request), risk);
+                    return ExecutedHere(method, meta, NodeErrors.NodeStopping(node.Clock.GetUtcNow()), TaskIdOf(request), risk);
                 }
             }
 
             switch (recorded)
             {
                 case { InProgress: true }:
-                    return Executed(method, meta, NodeErrors.CommandInProgress(), TaskIdOf(request), risk);
+                    return ExecutedHere(method, meta, NodeErrors.CommandInProgress(), TaskIdOf(request), risk);
                 case { Outcome: { } outcome }:
                     return Replayed(method, outcome, request, risk);
             }
@@ -301,18 +336,18 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
         var expires = ProtoTime.ToDateTimeOffset(header.ExpiresAt)!.Value;
         if (!CallVerifier.StillValid(expires, node.Clock.GetUtcNow()))
         {
-            if (IsWorkspace(method))
+            if (IsFileWorkspace(method))
             {
                 await WriteRefusalAuditAsync(actor, method, operation, "expired_before_effect", PermissionDecision.Deny, null, null,
-                    workspaceId: WorkspaceIdOf(request)).ConfigureAwait(false);
+                    workspaceId: WorkspaceIdOf(request), path: AuditPathOf(request)).ConfigureAwait(false);
             }
 
-            return new RoutedAnswer(RoutedOutcome.Expired, null, RoutedRefusals.ExpiredBeforeEffect(Correlation()), TaskIdOf(request), risk,
+            return new RoutedAnswer(RoutedOutcome.Expired, null, RoutedRefusals.ExpiredBeforeEffect(IsFileWorkspace(method) ? RoutedFileErrors.Correlation(meta, header.CallId) : Correlation()), TaskIdOf(request), risk,
                 WorkspaceId: WorkspaceIdOf(request));
         }
 
         var lifetime = ProtoTime.ToDateTimeOffset(header.Deadline)!.Value - ProtoTime.ToDateTimeOffset(header.IssuedAt)!.Value;
-        var context = new RoutedContext(link, node.Lifecycle, expires, lifetime, node.Clock, call.ReceivedAt ?? node.Clock.GetTimestamp());
+        var context = new RoutedContext(link, node.Lifecycle, expires, lifetime, node.Clock, call.ReceivedAt ?? node.Clock.GetTimestamp(), header.CallId);
         var caller = new Caller(Origin.Remote, ClientKind.Unspecified, null, centerCaller: center.Clone())
         {
             CellsOrigin = CenterRouting.CellsOrigin(center, node.NodeId.Span),
@@ -323,53 +358,64 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
         var policy = node.Store.Read(PolicyRules.Current).Document;
         if (CenterRouting.Refusal(center, node.NodeId.Span, policy.CenterRouted) is { } reason)
         {
-            return await AuditedRefusalAsync(caller.Actor, method, meta, operation, reason, risk, TaskIdOf(request), WorkspaceIdOf(request)).ConfigureAwait(false);
+            return await AuditedRefusalAsync(caller.Actor, method, meta, operation, reason, risk, TaskIdOf(request), WorkspaceIdOf(request), header.CallId, AuditPathOf(request)).ConfigureAwait(false);
         }
 
         // The routed column narrowed by the caller's cells and the REMOTE overrides; a cancel is decided by its gate once its task is read.
         if (method != RoutedMethod.CancelNodeTask && tasks.Api.Decide(caller, operation) is { Decision: not PermissionDecision.Allow } verdict)
         {
             var denied = verdict.Source.StartsWith("policy permissions[", StringComparison.Ordinal) ? "permission_override" : "denied";
-            return await AuditedRefusalAsync(caller.Actor, method, meta, operation, denied, risk, TaskIdOf(request), WorkspaceIdOf(request)).ConfigureAwait(false);
+            return await AuditedRefusalAsync(caller.Actor, method, meta, operation, denied, risk, TaskIdOf(request), WorkspaceIdOf(request), header.CallId, AuditPathOf(request)).ConfigureAwait(false);
         }
 
         var slot = key is not null && _inFlight.TryAdd(key, center.Clone());
         try
         {
-            var (response, error) = await RunAsync(tasks, workspaces, method, caller, request, cancellationToken).ConfigureAwait(false);
+            var (response, error) = await RunAsync(tasks, workspaces, files, method, caller, request, cancellationToken).ConfigureAwait(false);
             if (response.CalculateSize() > ResultSigner.MaxPayloadBytes)
             {
                 // A valid FULL view can exceed the wire limit. Report an existing bounded internal failure, never a truncated success.
                 var oversized = NodeErrors.Internal(node.Clock.GetUtcNow());
                 oversized.Effect = EffectCertainty.Unknown;
                 oversized.Retry = new RetryAdvice { Mode = RetryMode.Never };
-                return Executed(method, meta, oversized, TaskIdOf(request), risk);
+                return ExecutedHere(method, meta, oversized, TaskIdOf(request), risk);
             }
 
-            var answer = Answer(response, error, context, request, operation, risk);
+            if (error is not null && IsFileWorkspace(method))
+            {
+                RoutedFileErrors.Complete(error, meta, header.CallId, node.Clock);
+            }
+
+            var answer = Answer(response, error, context, request, meta, operation, risk);
             if (answer.Outcome == RoutedOutcome.RefusedByPolicy && !context.Audited)
             {
                 var approved = error?.Code == "approval_required";
                 await WriteRefusalAuditAsync(caller.Actor, method, context.Operation ?? operation, context.Reason ?? "denied",
                     approved ? PermissionDecision.Approval : PermissionDecision.Deny,
                     approved ? answer.Error?.Details?.State?.Resource?.Id?.Value.ToByteArray() : null, TaskIdOf(request),
-                    workspaceId: WorkspaceIdOf(request)).ConfigureAwait(false);
+                    workspaceId: WorkspaceIdOf(request), path: AuditPathOf(request)).ConfigureAwait(false);
             }
 
             return answer;
         }
         catch (CommandQueueFullException)
         {
+            // A file read cannot claim a recorded refusal while the audit writer cannot admit it. The center observes no verified reply.
+            if (method == RoutedMethod.ReadNodeFile)
+            {
+                return null;
+            }
+
             // A policy refusal is never reported unless its audit committed.
-            return Executed(method, meta, NodeErrors.Overloaded(node.Clock.GetUtcNow()), TaskIdOf(request), risk);
+            return ExecutedHere(method, meta, NodeErrors.Overloaded(node.Clock.GetUtcNow()), TaskIdOf(request), risk);
         }
         catch (RoutedAbortException abort)
         {
             return abort.Kind switch
             {
                 RoutedAbort.Dropped => null,
-                RoutedAbort.Stopping => Executed(method, meta, NodeErrors.NodeStopping(node.Clock.GetUtcNow()), TaskIdOf(request), risk),
-                _ => new RoutedAnswer(RoutedOutcome.Expired, null, RoutedRefusals.ExpiredBeforeEffect(Correlation()), TaskIdOf(request), risk),
+                RoutedAbort.Stopping => ExecutedHere(method, meta, NodeErrors.NodeStopping(node.Clock.GetUtcNow()), TaskIdOf(request), risk),
+                _ => new RoutedAnswer(RoutedOutcome.Expired, null, RoutedRefusals.ExpiredBeforeEffect(IsFileWorkspace(method) ? RoutedFileErrors.Correlation(meta, header.CallId) : Correlation()), TaskIdOf(request), risk),
             };
         }
         finally
@@ -428,6 +474,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
 
     private static (IMessage Request, RequestMeta? Meta) Parse(RoutedMethod method, ByteString payload) => method switch
     {
+        RoutedMethod.ReadNodeFile => Pair(FileServiceReadFileRequest.Parser.ParseFrom(payload), request => request.Meta),
         RoutedMethod.SubmitNodeTask => Pair(TaskServiceSubmitTaskRequest.Parser.ParseFrom(payload), request => request.Meta),
         RoutedMethod.GetNodeTask => Pair(TaskServiceGetTaskRequest.Parser.ParseFrom(payload), request => request.Meta),
         RoutedMethod.ListNodeTasks => Pair(TaskServiceListTasksRequest.Parser.ParseFrom(payload), request => request.Meta),
@@ -444,12 +491,15 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
     private static (IMessage, RequestMeta?) Pair<T>(T request, Func<T, RequestMeta?> meta)
         where T : IMessage => (request, meta(request));
 
-    private static async Task<(IMessage Response, ArcError? Error)> RunAsync(TaskServiceHandler tasks, WorkspaceServiceHandler? workspaces,
+    private static async Task<(IMessage Response, ArcError? Error)> RunAsync(TaskServiceHandler tasks, WorkspaceServiceHandler? workspaces, FileServiceHandler? files,
         RoutedMethod method, Caller caller, IMessage request,
         CancellationToken cancellationToken)
     {
         switch (method)
         {
+            case RoutedMethod.ReadNodeFile:
+                var file = await files!.ReadAsync(caller, (FileServiceReadFileRequest)request, cancellationToken).ConfigureAwait(false);
+                return (file, file.Error);
             case RoutedMethod.SubmitNodeTask:
                 var submitted = await tasks.SubmitTask(caller, (TaskServiceSubmitTaskRequest)request, cancellationToken).ConfigureAwait(false);
                 return (submitted, submitted.Error);
@@ -490,7 +540,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
     /// patterns) is REFUSED_BY_POLICY with closed fields only; anything else is EXECUTED with the response's exact bytes. An INTERNAL error
     /// that was not recorded is made UNKNOWN with NEVER (the catalogue's pair), never a final DID_NOT_HAPPEN it cannot prove.
     /// </summary>
-    private RoutedAnswer Answer(IMessage response, ArcError? error, RoutedContext context, IMessage request, string operation, int risk)
+    private RoutedAnswer Answer(IMessage response, ArcError? error, RoutedContext context, IMessage request, RequestMeta? meta, string operation, int risk)
     {
         var taskId = TaskIdOf(request) ?? (response is TaskServiceSubmitTaskResponse { Value.TaskId: { } created } ? created.Value.ToByteArray() : null);
         var workspaceId = WorkspaceIdOf(request) ?? (response is WorkspaceServiceRegisterWorkspaceResponse { Value.Workspace.WorkspaceId: { } added }
@@ -498,7 +548,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
         if (error is { Category: ErrorCategory.Authorization })
         {
             var stated = context.Operation ?? operation;
-            var correlation = Correlation();
+            var correlation = IsFileWorkspaceMethod(request) ? context.Correlation(meta) : Correlation();
             var closed = error.Code switch
             {
                 "approval_required" when error.Details?.State?.Resource?.Id is { } approval => RoutedRefusals.ApprovalRequired(stated, approval, correlation),
@@ -510,18 +560,38 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
 
         if (error is { Category: ErrorCategory.Internal })
         {
-            error.Effect = EffectCertainty.Unknown;
-            error.Retry = new RetryAdvice { Mode = RetryMode.Never };
+            if (request is FileServiceReadFileRequest)
+            {
+                ReadInternalFailure(error);
+            }
+            else
+            {
+                error.Effect = EffectCertainty.Unknown;
+                error.Retry = new RetryAdvice { Mode = RetryMode.Never };
+            }
         }
 
         return new RoutedAnswer(RoutedOutcome.Executed, response.ToByteString(), null, taskId, risk, Code(error), workspaceId);
     }
 
+    private void ReadInternalFailure(ArcError error)
+    {
+        // A read has no durable file effect; the file result was not returned. This is the read pair accepted by the catalogue.
+        error.Effect = EffectCertainty.DidNotHappen;
+        error.Retry = new RetryAdvice { Mode = RetryMode.AfterTime, RetryAt = ProtoTime.ToInstant(node.Clock.GetUtcNow().AddSeconds(1)) };
+    }
+
     private static RoutedAnswer Executed(RoutedMethod method, RequestMeta? meta, ArcError error, byte[]? taskId, int risk, byte[]? workspaceId = null)
     {
         var responseMeta = ApiCommands.Meta(meta);
+        if (IsFileWorkspace(method) && error.CorrelationId is not null)
+        {
+            responseMeta.CorrelationId = error.CorrelationId.Clone();
+        }
+
         IMessage response = method switch
         {
+            RoutedMethod.ReadNodeFile => new FileServiceReadFileResponse { Meta = responseMeta, Error = error },
             RoutedMethod.SubmitNodeTask => new TaskServiceSubmitTaskResponse { Meta = responseMeta, Error = error },
             RoutedMethod.GetNodeTask => new TaskServiceGetTaskResponse { Meta = responseMeta, Error = error },
             RoutedMethod.ListNodeTasks => new TaskServiceListTasksResponse { Meta = responseMeta, Error = error },
@@ -583,35 +653,41 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
         return new RoutedAnswer(RoutedOutcome.Executed, ByteString.CopyFrom(outcome), null, taskId, risk, Code(error), workspaceId);
     }
 
-    private RoutedAnswer Refused(string operation, string reason, int risk, byte[]? taskId = null, byte[]? workspaceId = null) =>
-        new(RoutedOutcome.RefusedByPolicy, null, RoutedRefusals.Policy(operation, reason, Correlation()), taskId, risk, WorkspaceId: workspaceId);
+    private static RoutedAnswer Refused(string operation, string reason, int risk, Id correlation, byte[]? taskId = null, byte[]? workspaceId = null) =>
+        new(RoutedOutcome.RefusedByPolicy, null, RoutedRefusals.Policy(operation, reason, correlation), taskId, risk, WorkspaceId: workspaceId);
 
     private Id Correlation() => CommandIds.New(node.Clock);
 
     private async Task<RoutedAnswer> AuditedRefusalAsync(ActorRef actor, RoutedMethod method, RequestMeta? meta, string operation, string reason,
-        int risk, byte[]? taskId, byte[]? workspaceId = null)
+        int risk, byte[]? taskId, byte[]? workspaceId = null, Id? callId = null, string? path = null)
     {
         try
         {
             await WriteRefusalAuditAsync(actor, method, operation, reason, PermissionDecision.Deny, null, taskId, fleetEntry: true,
-                workspaceId: workspaceId).ConfigureAwait(false);
-            return Refused(operation, reason, risk, taskId, workspaceId);
+                workspaceId: workspaceId, path: path).ConfigureAwait(false);
+            var correlation = IsFileWorkspace(method) && callId is not null ? RoutedFileErrors.Correlation(meta, callId) : Correlation();
+            return Refused(operation, reason, risk, correlation, taskId, workspaceId);
         }
         catch (CommandQueueFullException)
         {
-            return Executed(method, meta, NodeErrors.Overloaded(node.Clock.GetUtcNow()), taskId, risk);
+            var overloaded = NodeErrors.Overloaded(node.Clock.GetUtcNow());
+            if (IsFileWorkspace(method) && callId is not null)
+            {
+                RoutedFileErrors.Complete(overloaded, meta, callId, node.Clock);
+            }
+
+            return Executed(method, meta, overloaded, taskId, risk);
         }
     }
 
     private Task<int> WriteRefusalAuditAsync(ActorRef actor, RoutedMethod method, string operation, string reason, PermissionDecision decision,
-        byte[]? approvalId, byte[]? taskId, bool fleetEntry = false, byte[]? workspaceId = null) => node.Processor.ExecuteAsync(context =>
+        byte[]? approvalId, byte[]? taskId, bool fleetEntry = false, byte[]? workspaceId = null, string? path = null) => node.Processor.ExecuteAsync(context =>
     {
-        if (method is RoutedMethod.RegisterNodeWorkspace or RoutedMethod.UnregisterNodeWorkspace or
-            RoutedMethod.ListNodeWorkspaces or RoutedMethod.GetNodeWorkspace)
+        if (IsFileWorkspace(method))
         {
             AuditLog.AppendFileWorkspace(context.Transaction, actor,
-                operation + (fleetEntry ? " FleetService." + method : " WorkspaceService." + MethodName(method)),
-                workspaceId, null, null, decision, "denied: " + reason, null);
+                operation + (fleetEntry ? " FleetService." + method : IsFile(method) ? " FileService." + MethodName(method) : " WorkspaceService." + MethodName(method)),
+                workspaceId, null, path, decision, "denied: " + reason, null);
         }
         else
         {
@@ -620,6 +696,23 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
         }
         return 0;
     }, CommitDurability.Full);
+
+    private static string? AuditPathOf(IMessage request)
+    {
+        if (request is not FileServiceReadFileRequest { Path: { HasPath: true } path })
+        {
+            return null;
+        }
+
+        try
+        {
+            return new System.Text.UTF8Encoding(false, true).GetByteCount(path.Path) <= 4096 ? path.Path : null;
+        }
+        catch (System.Text.EncoderFallbackException)
+        {
+            return null;
+        }
+    }
 
     private static string? Code(ArcError? error) => error is null ? null : error.Category.ToString().ToUpperInvariant() + "/" + error.Code;
 
@@ -635,10 +728,20 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
         method is RoutedMethod.RegisterNodeWorkspace or RoutedMethod.UnregisterNodeWorkspace or
             RoutedMethod.ListNodeWorkspaces or RoutedMethod.GetNodeWorkspace;
 
-    private static string ServiceOf(RoutedMethod method) => IsWorkspace(method) ? "arcforges.node.v1.WorkspaceService" : Service;
+    private static bool IsFile(RoutedMethod method) => method == RoutedMethod.ReadNodeFile;
+
+    private static bool IsFileWorkspace(RoutedMethod method) => IsFile(method) || IsWorkspace(method);
+
+    private static bool IsFileWorkspaceMethod(IMessage request) => request is FileServiceReadFileRequest or
+        WorkspaceServiceRegisterWorkspaceRequest or WorkspaceServiceUnregisterWorkspaceRequest or
+        WorkspaceServiceListWorkspacesRequest or WorkspaceServiceGetWorkspaceRequest;
+
+    private static string ServiceOf(RoutedMethod method) => IsWorkspace(method) ? "arcforges.node.v1.WorkspaceService" :
+        IsFile(method) ? "arcforges.node.v1.FileService" : Service;
 
     private static byte[]? WorkspaceIdOf(IMessage request) => request switch
     {
+        FileServiceReadFileRequest { Path.WorkspaceId: { } id } => id.Value.ToByteArray(),
         WorkspaceServiceUnregisterWorkspaceRequest { WorkspaceId: { } id } => id.Value.ToByteArray(),
         WorkspaceServiceGetWorkspaceRequest { WorkspaceId: { } id } => id.Value.ToByteArray(),
         _ => null,
@@ -646,6 +749,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher
 
     private static string MethodName(RoutedMethod method) => method switch
     {
+        RoutedMethod.ReadNodeFile => "ReadFile",
         RoutedMethod.SubmitNodeTask => "SubmitTask",
         RoutedMethod.GetNodeTask => "GetTask",
         RoutedMethod.ListNodeTasks => "ListTasks",

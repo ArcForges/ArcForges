@@ -204,7 +204,8 @@ internal sealed class CallVerifier(RoutedCallLog log, TimeProvider clock)
         }
 
         // AD-0021 section 10: issued_at < expires_at <= issued_at + 300 s, and issued_at < deadline <= expires_at.
-        if (expires <= issued || expires - issued > MaxLifetime || deadline <= issued || deadline > expires)
+        if (expires <= issued || expires - issued > MaxLifetime || deadline <= issued || deadline > expires ||
+            (int)header.Method is >= 9 and <= 20 && (deadline - issued > TimeSpan.FromSeconds(15) || expires - deadline > TimeSpan.FromSeconds(30)))
         {
             return (null, Refuse("lifetime"));
         }
@@ -215,7 +216,7 @@ internal sealed class CallVerifier(RoutedCallLog log, TimeProvider clock)
         }
 
         var method = (int)header.Method;
-        if (((method is < 1 or > 6) && (method is < 17 or > 20))
+        if (((method is < 1 or > 6) && method != 9 && (method is < 17 or > 20))
             || (header.CommandId is not null) != (method is 1 or 6 or 17 or 18))
         {
             return (null, Refuse("method"));

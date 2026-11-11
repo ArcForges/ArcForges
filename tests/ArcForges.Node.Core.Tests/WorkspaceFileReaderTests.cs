@@ -188,6 +188,75 @@ public sealed class WorkspaceFileReaderTests
         Assert.Equal(new byte[] { 1, 2, 3, 4 }, File.ReadAllBytes(alias));
     }
 
+    [Fact(Timeout = 30_000)]
+    [Trait("env", "linux-real")]
+    public void ReplacingTheNameAfterTheActualReadIsNotReportedAsAStableRead()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "Linux namespace substitution during the held read");
+        using var fixture = new OwnedDirectory();
+        var path = Path.Combine(fixture.Path, "file.bin");
+        var moved = Path.Combine(fixture.Path, "old.bin");
+        byte[] original = [1, 2, 3, 4];
+        File.WriteAllBytes(path, original);
+        using var root = WorkspacePath.OpenRoot(fixture.Path);
+        var failure = Assert.Throws<WorkspaceReadException>(() => WorkspaceFileReader.Read(root, "file.bin", 0, 4, phase =>
+        {
+            if (phase == WorkspaceReadCheckpoint.AfterBytesRead)
+            {
+                File.Move(path, moved);
+                File.WriteAllBytes(path, [5, 6, 7, 8]);
+            }
+        }, TestContext.Current.CancellationToken));
+        Assert.Equal("file_changed_while_reading", failure.Reason);
+        Assert.Equal(4, failure.ObservedBytes);
+        Assert.Equal(SHA256.HashData(original), failure.ObservedSha256!.Value.ToArray());
+        Assert.Equal(original, File.ReadAllBytes(moved));
+        Assert.Equal(new byte[] { 5, 6, 7, 8 }, File.ReadAllBytes(path));
+    }
+
+    [Fact(Timeout = 30_000)]
+    [Trait("env", "linux-real")]
+    public void SameLengthContentChangeDuringReadIsNotReportedAsStable()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "Linux competing write while the read handle is open");
+        using var fixture = new OwnedDirectory();
+        var path = Path.Combine(fixture.Path, "file.bin");
+        File.WriteAllBytes(path, new byte[32_768]);
+        using var root = WorkspacePath.OpenRoot(fixture.Path);
+        var changed = false;
+        var failure = Assert.Throws<WorkspaceReadException>(() => WorkspaceFileReader.Read(root, "file.bin", 0, 32_768, phase =>
+        {
+            if (!changed && phase == WorkspaceReadCheckpoint.AfterBytesRead)
+            {
+                using var writer = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.ReadWrite);
+                writer.WriteByte(42);
+                writer.Flush(flushToDisk: true);
+                changed = true;
+            }
+        }, TestContext.Current.CancellationToken));
+        Assert.True(changed);
+        Assert.Equal("file_changed_while_reading", failure.Reason);
+        Assert.Equal(32_768, failure.ObservedBytes);
+        Assert.Equal(32_768, new FileInfo(path).Length);
+    }
+
+    [Fact(Timeout = 30_000)]
+    [Trait("env", "windows-real")]
+    public void SuccessfulReadReleasesItsDataHandleBeforeTheWorkspaceIsDisposed()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows exclusive sharing checks actual data-handle lifetime");
+        using var fixture = new OwnedDirectory();
+        var path = Path.Combine(fixture.Path, "file.bin");
+        File.WriteAllBytes(path, [1, 2, 3, 4]);
+        using var root = WorkspacePath.OpenRoot(fixture.Path);
+        _ = WorkspaceFileReader.Read(root, "file.bin", 0, 4, TestContext.Current.CancellationToken);
+        using var exclusive = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        Assert.Equal(4, exclusive.Length);
+    }
+
     private sealed class OwnedDirectory : IDisposable
     {
         private readonly DirectoryInfo _directory = Directory.CreateTempSubdirectory("arcforges-workspace-read-");

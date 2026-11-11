@@ -312,6 +312,64 @@ internal sealed class RegisteredWorkspaces
         }
     }
 
+    /// <summary>Opens and leases a verified root inside a caller-owned write transaction, without nesting store writes.</summary>
+    internal RegisteredWorkspaceUse OpenForUse(StoreTransaction transaction, ReadOnlySpan<byte> id,
+        Action<StoreTransaction>? beforeUse, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(transaction);
+        cancellationToken.ThrowIfCancellationRequested();
+        var key = CopyId(id);
+        var text = Convert.ToHexString(key);
+        WorkspacePath? root = null;
+        var acquired = false;
+        try
+        {
+            lock (_state.Gate)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var row = FindById(transaction, key) ?? throw new RegisteredWorkspaceException("workspace_not_found");
+                root = OpenVerified(row);
+                cancellationToken.ThrowIfCancellationRequested();
+                beforeUse?.Invoke(transaction);
+                if (transaction.Execute("""
+                    UPDATE workspace SET last_used_at = max(last_used_at, $now), rev = rev + 1
+                    WHERE workspace_id = $id AND kind = 1 AND state = 2 AND removed_at IS NULL;
+                    """, ("$id", key), ("$now", transaction.NowMicroseconds)) != 1)
+                {
+                    throw new RegisteredWorkspaceException("workspace_not_found");
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+                _state.Users.TryGetValue(text, out var current);
+                _state.Users[text] = checked(current + 1);
+                acquired = true;
+            }
+
+            return new RegisteredWorkspaceUse(_state, text, root!);
+        }
+        catch
+        {
+            if (acquired)
+            {
+                lock (_state.Gate)
+                {
+                    var current = _state.Users[text];
+                    if (current == 1)
+                    {
+                        _state.Users.Remove(text);
+                    }
+                    else
+                    {
+                        _state.Users[text] = current - 1;
+                    }
+                }
+            }
+
+            root?.Dispose();
+            throw;
+        }
+    }
+
     /// <summary>
     /// Called only after the application has verified HUMAN authority. It retains the old workspace row and all files.
     /// Pending file plans and approvals require workspace-bound persistent checks when their records are implemented.

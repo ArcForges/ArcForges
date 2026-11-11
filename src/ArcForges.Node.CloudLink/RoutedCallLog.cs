@@ -129,8 +129,9 @@ internal sealed class RoutedCallLog(IRoutedCallStore store, TimeProvider clock)
     }
 
     /// <summary>Completes a pending row with its final decision (1, 2 or 4) and what the answer named.</summary>
-    public Task CompleteAsync(long logId, RoutedCallDecision decision, string? refusalCode, byte[]? taskId = null, int? risk = null,
-        byte[]? responseSha256 = null, long? responseSize = null, bool fileWorkspace = false, byte[]? workspaceId = null)
+    public Task<long> CompleteAsync(long logId, RoutedCallDecision decision, string? refusalCode, byte[]? taskId = null, int? risk = null,
+        byte[]? responseSha256 = null, long? responseSize = null, bool fileWorkspace = false, byte[]? workspaceId = null,
+        Func<bool>? beforeCommit = null)
     {
         if (decision is not (RoutedCallDecision.Executed or RoutedCallDecision.RefusedByPolicy or RoutedCallDecision.Expired))
         {
@@ -148,7 +149,7 @@ internal sealed class RoutedCallLog(IRoutedCallStore store, TimeProvider clock)
                 response_sha256 = $response, response_size = $size
               WHERE log_id = $id AND decision = 5;
               """;
-        return store.WriteAsync(transaction => transaction.Execute(sql,
+        return store.WriteAsync(transaction => beforeCommit is not null && !beforeCommit() ? 0 : transaction.Execute(sql,
             ("$decision", (int)decision), ("$code", (object?)refusalCode ?? DBNull.Value),
             (fileWorkspace ? "$workspace" : "$task", (object?)(fileWorkspace ? workspaceId : taskId) ?? DBNull.Value),
             ("$risk", (object?)risk ?? DBNull.Value), ("$response", (object?)responseSha256 ?? DBNull.Value),

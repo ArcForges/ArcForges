@@ -291,16 +291,59 @@ public sealed class FleetProxyTests
             Request = get,
         }, cancellationToken: ct)).Value);
 
+        var fileRequest = new FileServiceReadFileRequest
+        {
+            Meta = readMeta.Clone(),
+            Path = new FilePath { WorkspaceId = CommandIds.New(), Path = "file.bin" },
+            Offset = 0,
+            Length = 3,
+        }.ToByteString();
+        var content = ByteString.CopyFrom([1, 2, 3]);
+        var digest = ByteString.CopyFrom(SHA256.HashData(content.Span));
+        var nodeResponse = new FileServiceReadFileResponse
+        {
+            Meta = new ResponseMeta { CorrelationId = readMeta.CorrelationId.Clone() },
+            Value = new FileServiceReadFileValue
+            {
+                Data = content,
+                Offset = 0,
+                NextOffset = 3,
+                Eof = true,
+                Sha256 = digest,
+                FileSize = 3,
+            },
+            Audit = new FileAuditMetadata
+            {
+                Observations = { new FileAuditObservation { Kind = FileAuditKind.ReadBytes, SizeBytes = 3, DigestInputBytes = 3, Sha256 = digest } },
+            },
+        };
+        center.Script("ReadNodeFile", Reply(new FleetServiceReadNodeFileResponse
+        {
+            Meta = new ResponseMeta { CorrelationId = readMeta.CorrelationId.Clone() },
+            Value = new FleetServiceReadNodeFileValue { NodeId = target, Response = nodeResponse.ToByteString() },
+        }));
+        var read = await fleet.ReadNodeFileAsync(new FleetServiceReadNodeFileRequest
+        {
+            Meta = readMeta,
+            NodeId = target,
+            Caller = forged,
+            Request = fileRequest,
+        }, cancellationToken: ct);
+        Assert.NotNull(read.Value);
+        Assert.Equal(nodeResponse.ToByteString(), read.Value.Response);
+
         var sentRegister = FleetServiceRegisterNodeWorkspaceRequest.Parser.ParseFrom(FakeCenter.Payload(Assert.Single(center.CallsOf("RegisterNodeWorkspace")).Body));
         var sentUnregister = FleetServiceUnregisterNodeWorkspaceRequest.Parser.ParseFrom(FakeCenter.Payload(Assert.Single(center.CallsOf("UnregisterNodeWorkspace")).Body));
         var sentList = FleetServiceListNodeWorkspacesRequest.Parser.ParseFrom(FakeCenter.Payload(Assert.Single(center.CallsOf("ListNodeWorkspaces")).Body));
         var sentGet = FleetServiceGetNodeWorkspaceRequest.Parser.ParseFrom(FakeCenter.Payload(Assert.Single(center.CallsOf("GetNodeWorkspace")).Body));
+        var sentRead = FleetServiceReadNodeFileRequest.Parser.ParseFrom(FakeCenter.Payload(Assert.Single(center.CallsOf("ReadNodeFile")).Body));
         var checks = new[]
         {
             (sentRegister.Caller, sentRegister.RelayAssertion, register, RoutedMethod.RegisterNodeWorkspace, meta.CommandId),
             (sentUnregister.Caller, sentUnregister.RelayAssertion, unregister, RoutedMethod.UnregisterNodeWorkspace, removeMeta.CommandId),
             (sentList.Caller, sentList.RelayAssertion, list, RoutedMethod.ListNodeWorkspaces, (Id?)null),
             (sentGet.Caller, sentGet.RelayAssertion, get, RoutedMethod.GetNodeWorkspace, (Id?)null),
+            (sentRead.Caller, sentRead.RelayAssertion, fileRequest, RoutedMethod.ReadNodeFile, (Id?)null),
         };
         foreach (var (caller, signedBytes, payload, method, command) in checks)
         {
@@ -328,8 +371,59 @@ public sealed class FleetProxyTests
             Request = get,
         }, cancellationToken: ct);
         Assert.Equal("invalid_argument", unexpectedReadCommand.Error.Code);
+        var invalidFileRead = await fleet.ReadNodeFileAsync(new FleetServiceReadNodeFileRequest
+        {
+            Meta = CloudNode.Command(),
+            NodeId = target,
+            Request = fileRequest,
+        }, cancellationToken: ct);
+        Assert.Equal("invalid_argument", invalidFileRead.Error.Code);
+        Assert.Single(center.CallsOf("ReadNodeFile"));
         Assert.Single(center.CallsOf("RegisterNodeWorkspace"));
         Assert.Single(center.CallsOf("GetNodeWorkspace"));
+
+        // A scripted center can send an SDK-accepted noncanonical Decimal. The local consumer must reject it.
+        var tooLong = new FileServiceReadFileRequest
+        {
+            Meta = readMeta.Clone(),
+            Path = new FilePath { WorkspaceId = CommandIds.New(), Path = new string('x', 4097) },
+            Offset = 0,
+            Length = 1,
+        }.ToByteString();
+        var invalidDecimal = new ArcError
+        {
+            Category = ErrorCategory.Resource,
+            Code = "too_large",
+            MessageKey = "error.resource.too_large",
+            Retry = new RetryAdvice { Mode = RetryMode.Never },
+            Effect = EffectCertainty.DidNotHappen,
+            CorrelationId = readMeta.CorrelationId.Clone(),
+            Details = new ErrorDetails
+            {
+                Limit = new LimitFailure
+                {
+                    LimitName = "path_bytes",
+                    Maximum = new ArcForges.Contracts.Foundation.V1.Decimal { Value = "4096.00" },
+                }
+            },
+        };
+        Assert.True(ArcForges.Contracts.Node.Shapes.ContractShapeValidation.IsValid(invalidDecimal));
+        center.Script("ReadNodeFile", Reply(new FleetServiceReadNodeFileResponse
+        {
+            Meta = new ResponseMeta { CorrelationId = readMeta.CorrelationId.Clone() },
+            Error = invalidDecimal,
+        }));
+        var invalidReply = await fleet.ReadNodeFileAsync(new FleetServiceReadNodeFileRequest
+        {
+            Meta = readMeta,
+            NodeId = target,
+            Request = tooLong,
+        }, cancellationToken: ct);
+        Assert.Equal("internal", invalidReply.Error.Code);
+        Assert.Equal(EffectCertainty.Unknown, invalidReply.Error.Effect);
+        Assert.Equal(RetryMode.Never, invalidReply.Error.Retry.Mode);
+        Assert.True(ArcForges.Contracts.Node.Shapes.ContractShapeValidation.IsValid(invalidReply.Error));
+        Assert.Equal(2, center.CallsOf("ReadNodeFile").Count);
     }
 
     private static FakeFault.Raw Reply(IMessage response) => new([.. FakeCenter.DataFrame(response), .. FakeCenter.TrailerFrame(0, null)]);

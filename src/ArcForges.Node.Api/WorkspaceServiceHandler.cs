@@ -34,6 +34,10 @@ internal sealed class WorkspaceServiceHandler(NodeRuntime node)
         CancellationToken cancellationToken)
     {
         var meta = ApiCommands.Meta(request.Meta);
+        if (caller.Routed is { } responseRouting)
+        {
+            meta.CorrelationId = responseRouting.Correlation(request.Meta);
+        }
         if (!NodeShapes.IsValid(request))
         {
             var error = NodeErrors.InvalidArgument("workspace registration request");
@@ -110,6 +114,10 @@ internal sealed class WorkspaceServiceHandler(NodeRuntime node)
         CancellationToken cancellationToken)
     {
         var meta = ApiCommands.Meta(request.Meta);
+        if (caller.Routed is { } responseRouting)
+        {
+            meta.CorrelationId = responseRouting.Correlation(request.Meta);
+        }
         if (!NodeShapes.IsValid(request))
         {
             await AuditRefusalAsync(caller, PermissionMatrix.WorkspaceUnregister, "UnregisterWorkspace", null, null, "invalid_argument").ConfigureAwait(false);
@@ -147,6 +155,10 @@ internal sealed class WorkspaceServiceHandler(NodeRuntime node)
         CancellationToken cancellationToken)
     {
         var meta = ApiCommands.Meta(request.Meta);
+        if (caller.Routed is { } responseRouting)
+        {
+            meta.CorrelationId = responseRouting.Correlation(request.Meta);
+        }
         if (!NodeShapes.IsValid(request))
         {
             await AuditRefusalAsync(caller, PermissionMatrix.WorkspaceRead, "GetWorkspace", null, null, "invalid_argument").ConfigureAwait(false);
@@ -185,6 +197,10 @@ internal sealed class WorkspaceServiceHandler(NodeRuntime node)
         CancellationToken cancellationToken)
     {
         var meta = ApiCommands.Meta(request.Meta);
+        if (caller.Routed is { } responseRouting)
+        {
+            meta.CorrelationId = responseRouting.Correlation(request.Meta);
+        }
         if (!NodeShapes.IsValid(request))
         {
             await AuditRefusalAsync(caller, PermissionMatrix.WorkspaceRead, "ListWorkspaces", null, null, "invalid_argument").ConfigureAwait(false);
@@ -259,7 +275,22 @@ internal sealed class WorkspaceServiceHandler(NodeRuntime node)
         try
         {
             var result = await node.Processor.ExecuteIdempotentAsync(meta.CommandId.Value.Memory, Service + "/" + method, digest, Origin.Remote,
-                command => effect(command).ToByteArray(),
+                command =>
+                {
+                    var outcome = effect(command);
+                    var error = outcome switch
+                    {
+                        WorkspaceServiceRegisterWorkspaceResponse response => response.Error,
+                        WorkspaceServiceUnregisterWorkspaceResponse response => response.Error,
+                        _ => null,
+                    };
+                    if (error is not null && caller.Routed is { } routed)
+                    {
+                        RoutedFileErrors.Complete(error, meta, routed.CallId, node.Clock);
+                    }
+
+                    return outcome.ToByteArray();
+                },
                 beforeDedup: command =>
                 {
                     caller.Routed?.BeforeReplay();

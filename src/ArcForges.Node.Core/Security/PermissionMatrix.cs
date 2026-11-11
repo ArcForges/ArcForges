@@ -109,6 +109,9 @@ public static class PermissionMatrix
     /// <summary>Read registered workspace metadata.</summary>
     public const string WorkspaceRead = "workspace.read";
 
+    /// <summary>Read, search or list files in a registered workspace.</summary>
+    public const string FileRead = "file.read";
+
     /// <summary>Plan a cleanup.</summary>
     public const string CleanupPlan = "cleanup.plan";
 
@@ -172,6 +175,7 @@ public static class PermissionMatrix
         new(WorkspaceRegister, "Register a workspace (HUMAN only)", A, D, D, "register_node_workspace", RiskClass.High, D, true, RiskClass.High),
         new(WorkspaceUnregister, "Unregister a workspace (HUMAN only)", A, D, D, "unregister_node_workspace", RiskClass.High, D, true, RiskClass.High),
         new(WorkspaceRead, "Read registered workspaces", A, A, A, "list_node_workspaces", RiskClass.Low, D, false, RiskClass.Low),
+        new(FileRead, "Read files in a registered workspace", A, A, A, "read_node_file", RiskClass.Low, D, false, RiskClass.Low),
         new(CleanupPlan, "Plan cleanup", A, A, A, null, RiskClass.Unspecified, D, false, RiskClass.Low),
         new(CleanupExecute, "Execute cleanup", A, P, P, null, RiskClass.Unspecified, D, false, RiskClass.High),
         new(ProcessAdopt, "Adopt a process", A, D, D, null, RiskClass.Unspecified, D, false, RiskClass.High),
@@ -238,7 +242,7 @@ public static class PermissionMatrix
     /// </summary>
     public static PermissionDecision RoutedDefault(string operation) => operation switch
     {
-        TaskSubmit or TaskRead or TaskReadOutput or TaskCancelOwn or WorkspaceRegister or WorkspaceUnregister or WorkspaceRead => A,
+        TaskSubmit or TaskRead or TaskReadOutput or TaskCancelOwn or WorkspaceRegister or WorkspaceUnregister or WorkspaceRead or FileRead => A,
         TaskCancelOthers => P,
         _ => D,
     };

@@ -36,13 +36,13 @@ public sealed class CallVerifierTests
             RoutedMethod.ListNodeWorkspaces, RoutedMethod.GetNodeWorkspace })
         {
             var mutation = method is RoutedMethod.RegisterNodeWorkspace or RoutedMethod.UnregisterNodeWorkspace;
-            var valid = Build(change: header =>
+            var valid = Build(lifetime: TimeSpan.FromSeconds(35), change: header =>
             {
                 header.Method = method;
                 header.CommandId = mutation ? CommandIds.New() : null;
             });
             Assert.Null(Check(valid).Refusal);
-            var bad = Build(change: header =>
+            var bad = Build(lifetime: TimeSpan.FromSeconds(35), change: header =>
             {
                 header.Method = method;
                 header.CommandId = mutation ? null : CommandIds.New();
@@ -50,8 +50,29 @@ public sealed class CallVerifierTests
             Assert.NotNull(Check(bad).Refusal);
         }
 
-        // Other new methods are not admitted by this workspace-only vertical yet.
-        Assert.NotNull(Check(Build(change: header => header.Method = RoutedMethod.ReadNodeFile)).Refusal);
+        // Read is admitted without a command ID; later file mutations are still refused.
+        Assert.Null(Check(Build(lifetime: TimeSpan.FromSeconds(35), change: header => header.Method = RoutedMethod.ReadNodeFile)).Refusal);
+        Assert.NotNull(Check(Build(lifetime: TimeSpan.FromSeconds(35), change: header =>
+        {
+            header.Method = RoutedMethod.ReadNodeFile;
+            header.CommandId = CommandIds.New();
+        })).Refusal);
+        Assert.NotNull(Check(Build(lifetime: TimeSpan.FromSeconds(35), change: header => header.Method = RoutedMethod.WriteNodeFile)).Refusal);
+    }
+
+    [Fact]
+    public void FileAndWorkspaceSignedLifetimesRespectTheirSeparateDeadlineAndExpiryBounds()
+    {
+        foreach (var method in new[] { RoutedMethod.ReadNodeFile, RoutedMethod.GetNodeWorkspace })
+        {
+            Assert.Null(Check(Build(lifetime: TimeSpan.FromSeconds(35), change: header => header.Method = method)).Refusal);
+            Assert.Equal("lifetime", Step(Build(lifetime: TimeSpan.FromSeconds(36), change: header => header.Method = method)));
+            Assert.Equal("lifetime", Step(Build(lifetime: TimeSpan.FromSeconds(40), change: header =>
+            {
+                header.Method = method;
+                header.Deadline = Add(header.IssuedAt, 16);
+            })));
+        }
     }
 
     [Fact]
