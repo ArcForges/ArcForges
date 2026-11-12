@@ -80,8 +80,9 @@ internal static partial class RoutedFileResponseValidation
     /// Retains the stricter maximum check while validating optional available with the published 450.1 Decimal shape.
     /// The method-specific limit checks still require their exact unsigned integer maximum text.
     /// </summary>
-    internal static bool CanonicalLimits(ArcError error)
+    internal static bool CanonicalLimits(ArcError error, bool allowAttemptQualification = false)
     {
+        if (!allowAttemptQualification && AttemptQualificationReason(error)) return false;
         if (error.Details?.Limit is not { } limit)
         {
             return error.Code != "too_large";

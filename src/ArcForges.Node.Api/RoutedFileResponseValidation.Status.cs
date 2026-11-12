@@ -98,10 +98,10 @@ internal static partial class RoutedFileResponseValidation
         } item && item.SizeBytes <= 131_072 && item.DigestInputBytes == item.SizeBytes;
     }
 
-    private static bool CommonFileError(ArcError error)
+    private static bool CommonFileError(ArcError error, bool allowAttemptQualification = false)
     {
         if (!NodeShapes.IsValid(error) || Validation.RequiredId(error.CorrelationId, "correlation_id") is not null ||
-            !CanonicalLimits(error) || !error.HasCategory || !error.HasCode || !error.HasMessageKey || error.Retry is null ||
+            !CanonicalLimits(error, allowAttemptQualification) || !error.HasCategory || !error.HasCode || !error.HasMessageKey || error.Retry is null ||
             !error.HasEffect || error.CalculateSize() > 4096 ||
             error.MessageKey != "error." + error.Category.ToString().ToLowerInvariant() + "." + error.Code)
             return false;

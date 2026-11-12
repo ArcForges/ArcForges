@@ -142,23 +142,42 @@ internal static class FileRemovalPlans
 
     internal sealed record PreparedAttemptPlan(FileRemovalPlan Plan, byte[] CommandId, byte[] RawSha256,
         byte[] CallerBytes, byte[] ActorBytes, Id AttemptId, string AttemptRootPath, WorkspaceRemovalSnapshot Snapshot,
-        long ObservedTime, long ExpiresAt);
+        long ObservedTime, long ExpiresAt, IReadOnlyList<int> ItemClasses);
 
     /// <summary>Prepares metadata for the exact verified task-temp tree; it does not grant cleanup authority.</summary>
     internal static PreparedAttemptPlan PrepareAttempt(StoreTransaction transaction, ReadOnlySpan<byte> commandId,
         ReadOnlySpan<byte> rawSha256, CenterCaller caller, ActorRef actor, Id attemptId, string attemptRootPath,
-        WorkspaceRemovalSnapshot snapshot, long observedTime)
+        WorkspaceRemovalSnapshot snapshot, long observedTime, IReadOnlyDictionary<string, AttemptDirectoryTracking> tracking)
     {
         ArgumentNullException.ThrowIfNull(transaction);
         ArgumentNullException.ThrowIfNull(caller);
         ArgumentNullException.ThrowIfNull(actor);
         ArgumentNullException.ThrowIfNull(attemptId);
         ArgumentNullException.ThrowIfNull(snapshot);
+        ArgumentNullException.ThrowIfNull(tracking);
         if (transaction.Durability != CommitDurability.Full || rawSha256.Length != 32 || commandId.Length != 16 ||
             attemptId.Value.Length != 16 || snapshot.Entries.Count is < 1 or > WorkspaceRemovalPlan.MaximumDescendants + 1 ||
             snapshot.TotalBytes > WorkspaceRemovalPlan.MaximumTotalBytes || snapshot.Entries[0].Path.Length != 0 ||
             snapshot.Entries[0].Kind != ArcForges.Node.Core.Platform.WorkspaceEntryType.Directory)
             throw new InvalidOperationException("A checked attempt removal plan requires a FULL transaction and bounded identity.");
+
+        // USAGE describes measured attempt-root usage; it does not prove who created an individual child.
+        // Only an observed untracked directory gets UNTRACKED. Caller ownership is set independently below.
+        var itemClasses = new int[snapshot.Entries.Count];
+        for (var index = 0; index < snapshot.Entries.Count; index++)
+        {
+            var entry = snapshot.Entries[index];
+            if (entry.Kind == ArcForges.Node.Core.Platform.WorkspaceEntryType.File)
+            {
+                itemClasses[index] = 1;
+                continue;
+            }
+
+            if (!tracking.TryGetValue(entry.Path, out var state) || state == AttemptDirectoryTracking.Unknown ||
+                index == 0 && state != AttemptDirectoryTracking.Tracked)
+                throw new InvalidOperationException("A directory tracking observation is incomplete.");
+            itemClasses[index] = state == AttemptDirectoryTracking.Tracked ? 1 : 10;
+        }
 
         var planId = StoreIds.NewUuid7(transaction.Clock);
         var expires = checked(observedTime + LifetimeMicroseconds);
@@ -189,7 +208,7 @@ internal static class FileRemovalPlans
         var callerBytes = caller.ToByteArray();
         plan.Digest = ByteString.CopyFrom(Digest(plan, rawSha256, callerBytes, snapshot));
         return new PreparedAttemptPlan(plan, commandId.ToArray(), rawSha256.ToArray(), callerBytes, actor.ToByteArray(),
-            attemptId.Clone(), attemptRootPath, snapshot, observedTime, expires);
+            attemptId.Clone(), attemptRootPath, snapshot, observedTime, expires, itemClasses);
     }
 
     /// <summary>Records the checked attempt target and every fingerprint alongside the caller's receipt transaction.</summary>
@@ -204,7 +223,9 @@ internal static class FileRemovalPlans
         unsigned.ClearDigest();
         var digest = Digest(unsigned, prepared.RawSha256, prepared.CallerBytes, prepared.Snapshot);
         if (plan.PlanId?.Value.Length != 16 || !plan.HasDigest ||
-            !CryptographicOperations.FixedTimeEquals(plan.Digest.Span, digest))
+            !CryptographicOperations.FixedTimeEquals(plan.Digest.Span, digest) ||
+            prepared.ItemClasses.Count != prepared.Snapshot.Entries.Count ||
+            prepared.ItemClasses.Any(itemClass => itemClass is not (1 or 10)))
             throw new InvalidOperationException("The checked removal plan changed before persistence.");
 
         var planId = plan.PlanId.Value.ToByteArray();
@@ -230,8 +251,9 @@ internal static class FileRemovalPlans
             var entry = snapshot.Entries[index];
             var itemId = StoreIds.NewUuid7(transaction.Clock);
             // Display-only; future authority must re-derive the attempt root and compare the persisted native identities.
-            // The tracked attempt root is per-owner USAGE; descendants without independent provenance are UNTRACKED.
-            // These descriptive classes do not authorize an effect or establish a quarantine.
+            // Tracking classification and verified caller ownership are independent descriptive facts.
+            // Neither class authorizes an effect or establishes a quarantine.
+            var itemClass = prepared.ItemClasses[index];
             var displayPath = Path.Combine(prepared.AttemptRootPath, entry.Path.Replace('/', Path.DirectorySeparatorChar));
             transaction.Execute("""
                 INSERT INTO cleanup_item
@@ -240,8 +262,8 @@ internal static class FileRemovalPlans
                 VALUES ($plan, $item, $path, $size, $class, $reason, 3, 1,
                         $mtime, $size, $owner, 0);
                 """, ("$plan", planId), ("$item", itemId), ("$path", displayPath), ("$size", checked((long)entry.Size)),
-                ("$class", index == 0 ? 1 : 10), ("$mtime", entry.Stamp.Modification),
-                ("$reason", index == 0 ? "attempt_temp_verified" : "ownership_unverified"),
+                ("$class", itemClass), ("$mtime", entry.Stamp.Modification),
+                ("$reason", index == 0 ? "attempt_temp_verified" : itemClass == 10 ? "untracked_directory" : "usage_unverified"),
                 ("$owner", index == 0 ? "verified" : "unverified"));
             transaction.Execute("""
                 INSERT INTO file_removal_plan_item

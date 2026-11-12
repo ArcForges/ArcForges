@@ -46,6 +46,7 @@ internal sealed partial class WorkspacePath : IDisposable
     private int _rootAncestorCount;
     private SafeFileHandle? _rootHandle;
     private SafeFileHandle? _windowsRootParent;
+    private SafeFileHandle? _borrowedWindowsRootParent;
     private string? _windowsRootName;
     private string? _windowsDriveRoot;
     private byte[]? _linuxFileSystemUuid;
@@ -511,6 +512,9 @@ internal sealed partial class WorkspacePath : IDisposable
         {
             _directories[index].Dispose();
         }
+
+        _borrowedWindowsRootParent?.DangerousRelease();
+        _borrowedWindowsRootParent = null;
     }
 
     /// <summary>Reads size, modification and change times from the opened object; no name is reopened.</summary>

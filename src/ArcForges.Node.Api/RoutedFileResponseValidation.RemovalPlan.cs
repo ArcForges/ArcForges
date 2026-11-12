@@ -79,8 +79,18 @@ internal static partial class RoutedFileResponseValidation
         } item && item.SizeBytes is > 0 and <= 67_108_864 && item.DigestInputBytes == item.SizeBytes;
     }
 
+    private static bool AttemptQualificationReason(ArcError error) =>
+        error.Details?.State?.Reason is "attempt_references_unverified" or "attempt_tracking_unverified";
+
     private static bool RemovalPlanError(ArcError error, FileServicePlanRemovalRequest request)
     {
+        if (AttemptQualificationReason(error))
+            return CommonFileError(error, allowAttemptQualification: true) && NodeShapes.IsValid(request) &&
+                request.AttemptId is not null && request.WorkspacePath is null &&
+                error.Category == ErrorCategory.State && error.Code == "invalid_state" &&
+                error.Effect == EffectCertainty.DidNotHappen &&
+                error.Retry is { Mode: RetryMode.Never, RetryAt: null, HasReconciliationOperation: false } &&
+                error.Details?.State is { State: "file", Resource: null, Native: null };
         if (!CommonFileError(error) || !RemovalPlanLimit(error, request, signedInner: true)) return false;
         if (error.Category == ErrorCategory.Internal && error.Code == "internal")
             return error.Effect == EffectCertainty.Unknown && error.Retry is { Mode: RetryMode.Never, RetryAt: null };

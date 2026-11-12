@@ -8,6 +8,7 @@ namespace ArcForges.Node.Core.Tests;
 public sealed class WorkspaceRemovalPlanTests
 {
     private static readonly string[] ExpectedPaths = ["tree", "tree/first.txt", "tree/nested", "tree/nested/second.txt"];
+    private static readonly string[] CheckedRootPaths = ["", "inside.txt"];
 
     [Fact]
     public void ExactTreeCapturesNativeIdentityAndSizeWithoutChangingAnyEntry()
@@ -33,6 +34,86 @@ public sealed class WorkspaceRemovalPlanTests
         var repeated = WorkspaceRemovalPlan.Capture(workspace, "tree", TestContext.Current.CancellationToken);
         Assert.Equal(plan.Entries.Select(x => Convert.ToHexString(x.FingerprintSha256)),
             repeated.Entries.Select(x => Convert.ToHexString(x.FingerprintSha256)));
+    }
+
+    [Fact]
+    public void CheckedRootUsesTheHeldDirectoryAndRejectsASeparateIdentity()
+    {
+        using var fixture = new OwnedDirectory();
+        var tree = Directory.CreateDirectory(Path.Combine(fixture.Path, "tree")).FullName;
+        var other = Directory.CreateDirectory(Path.Combine(fixture.Path, "other")).FullName;
+        File.WriteAllText(Path.Combine(tree, "inside.txt"), "test content");
+        using var target = WorkspacePath.OpenRoot(tree);
+        using var unrelated = WorkspacePath.OpenRoot(other);
+        var expected = RegisteredWorkspaces.RootIdentity.Encode(target.RootIdentity);
+        var different = RegisteredWorkspaces.RootIdentity.Encode(unrelated.RootIdentity);
+
+        var result = WorkspaceRemovalPlan.CaptureCheckedRoot(target, expected.Platform, expected.Bytes,
+            TestContext.Current.CancellationToken);
+        Assert.Equal(CheckedRootPaths, result.Entries.Select(entry => entry.Path));
+        Assert.Equal(expected.Bytes, result.Entries[0].NativeIdentity.Bytes);
+        var refusal = Assert.Throws<WorkspaceRemovalPlanException>(() =>
+            WorkspaceRemovalPlan.CaptureCheckedRoot(target, different.Platform, different.Bytes,
+                TestContext.Current.CancellationToken));
+        Assert.Equal("planned_tree_changed", refusal.Reason);
+        Assert.Equal("test content", File.ReadAllText(Path.Combine(tree, "inside.txt")));
+    }
+
+    [Fact]
+    public void CheckedRootRejectsWrongIdentityBeforeAnEnumerationLimit()
+    {
+        using var fixture = new OwnedDirectory();
+        var tree = Directory.CreateDirectory(Path.Combine(fixture.Path, "tree")).FullName;
+        var other = Directory.CreateDirectory(Path.Combine(fixture.Path, "other")).FullName;
+        for (var index = 0; index < 1002; index++)
+            File.WriteAllBytes(Path.Combine(tree, index.ToString(System.Globalization.CultureInfo.InvariantCulture)), []);
+        using var target = WorkspacePath.OpenRoot(tree);
+        using var unrelated = WorkspacePath.OpenRoot(other);
+        var different = RegisteredWorkspaces.RootIdentity.Encode(unrelated.RootIdentity);
+        var refusal = Assert.Throws<WorkspaceRemovalPlanException>(() => WorkspaceRemovalPlan.CaptureCheckedRoot(
+            target, different.Platform, different.Bytes, TestContext.Current.CancellationToken));
+        Assert.Equal("planned_tree_changed", refusal.Reason);
+    }
+
+    [Fact]
+    [Trait("env", "linux-real")]
+    public void CheckedRootRechecksTheNameWhenCaptureThrowsAfterEnumeration()
+    {
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "This real rename/error case runs on Linux.");
+        using var fixture = new OwnedDirectory();
+        var tree = Directory.CreateDirectory(Path.Combine(fixture.Path, "tree")).FullName;
+        var moved = tree + "-moved";
+        using var target = WorkspacePath.OpenRoot(tree);
+        var expected = RegisteredWorkspaces.RootIdentity.Encode(target.RootIdentity);
+        var refusal = Assert.Throws<WorkspaceRemovalPlanException>(() => WorkspaceRemovalPlan.CaptureCheckedRoot(
+            target, expected.Platform, expected.Bytes, () =>
+            {
+                Directory.Move(tree, moved);
+                Directory.CreateDirectory(tree);
+                throw new IOException("test-owned capture failure");
+            }, TestContext.Current.CancellationToken));
+        Assert.Equal("planned_tree_changed", refusal.Reason);
+        Assert.True(Directory.Exists(tree));
+        Assert.True(Directory.Exists(moved));
+    }
+
+    [Fact]
+    [Trait("env", "windows-real")]
+    public void WindowsHeldChildIsTheCheckedTraversalRoot()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "The held-child root uses Windows native directory handles.");
+        using var fixture = new OwnedDirectory();
+        var tree = Directory.CreateDirectory(Path.Combine(fixture.Path, "tree")).FullName;
+        File.WriteAllText(Path.Combine(tree, "inside.txt"), "test content");
+        using var parent = WorkspacePath.OpenRoot(fixture.Path);
+        using var target = parent.OpenWindowsHeldChildRoot("tree");
+        var expected = RegisteredWorkspaces.RootIdentity.Encode(target.RootIdentity);
+
+        var result = WorkspaceRemovalPlan.CaptureCheckedRoot(target, expected.Platform, expected.Bytes,
+            TestContext.Current.CancellationToken);
+        Assert.Equal(CheckedRootPaths, result.Entries.Select(entry => entry.Path));
+        Assert.Equal(expected.Bytes, result.Entries[0].NativeIdentity.Bytes);
+        Assert.Equal("test content", File.ReadAllText(Path.Combine(tree, "inside.txt")));
     }
 
     [Fact(Timeout = 120_000)]

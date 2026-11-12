@@ -179,14 +179,26 @@ internal sealed partial class FileServiceHandler
                                 throw new WorkspaceRemovalPlanException("file_access_denied");
 
                             using var temporaryRoot = OpenAttemptPlanRoot(target);
-                            var snapshot = WorkspaceRemovalPlan.Capture(temporaryRoot, target.Name, token);
-                            if (snapshot.Entries.Count == 0 ||
-                                !snapshot.Entries[0].NativeIdentity.Bytes.AsSpan().SequenceEqual(target.DirectoryIdentity) ||
-                                snapshot.Entries[0].NativeIdentity.Platform != target.Platform)
-                                throw new WorkspaceRemovalPlanException("planned_tree_changed");
-                            if (AttemptTreeHasHold(transaction, temporaryRoot, snapshot, token) ||
-                                AttemptHasPathReferences(transaction, temporaryRoot, target, CheckBudget))
+                            using var attemptRoot = temporaryRoot.OpenWindowsHeldChildRoot(target.Name);
+                            // Bind the persisted target identity to the held no-follow handle before enumeration.
+                            var captured = WorkspaceRemovalPlan.CaptureCheckedRoot(attemptRoot, target.Platform,
+                                target.DirectoryIdentity, token);
+                            var snapshot = captured with
+                            {
+                                RootIdentity = RegisteredWorkspaces.RootIdentity.Encode(temporaryRoot.RootIdentity),
+                                Entries = captured.Entries.Select(entry => entry with
+                                {
+                                    Path = entry.Path.Length == 0 ? target.Name : target.Name + "/" + entry.Path,
+                                }).ToArray(),
+                            };
+                            var references = AttemptTreeHasHold(transaction, temporaryRoot, snapshot, token)
+                                ? AttemptReferenceState.InUse
+                                : QualifyAttemptReferences(transaction, temporaryRoot, target, CheckBudget);
+                            WorkspaceRemovalPlan.VerifyCheckedRoot(attemptRoot, target.Platform, target.DirectoryIdentity);
+                            if (references == AttemptReferenceState.InUse)
                                 response = Refusal(NodeErrors.InUse("attempt_in_use"));
+                            else if (references == AttemptReferenceState.Unknown)
+                                response = Refusal(Error(ErrorCategory.State, "invalid_state", "attempt_references_unverified", correlation));
                             else
                             {
                                 var relativeEntries = snapshot.Entries.Select(entry => entry with
@@ -194,6 +206,12 @@ internal sealed partial class FileServiceHandler
                                     Path = AttemptRelativePath(target.Name, entry.Path),
                                 }).ToArray();
                                 var relativeSnapshot = snapshot with { Entries = relativeEntries };
+                                var tracking = AttemptDirectoryTrackingObservation.Read(transaction, relativeSnapshot, CheckBudget);
+                                WorkspaceRemovalPlan.VerifyCheckedRoot(attemptRoot, target.Platform, target.DirectoryIdentity);
+                                if (tracking.Values.Any(value => value == AttemptDirectoryTracking.Unknown))
+                                    throw new WorkspaceRemovalPlanException("attempt_tracking_unverified");
+                                if (!tracking.TryGetValue("", out var rootTracking) || rootTracking != AttemptDirectoryTracking.Tracked)
+                                    throw new WorkspaceRemovalPlanException("planned_tree_changed");
                                 CheckBudget();
                                 if (AttemptHasDirectReferences(transaction, target, attempt))
                                 {
@@ -206,7 +224,7 @@ internal sealed partial class FileServiceHandler
                                     if (!sample.Healthy) throw new RoutedAbortException(RoutedAbort.ClockUncertain);
                                     var prepared = FileRemovalPlans.PrepareAttempt(transaction, commandId, rawDigest, caller.CenterCaller,
                                         caller.Actor, request.AttemptId!, Path.Combine(temporaryRoot.RootPath, target.Name),
-                                        relativeSnapshot, sample.BoundaryMicroseconds);
+                                        relativeSnapshot, sample.BoundaryMicroseconds, tracking);
                                     response = new FileServicePlanRemovalResponse
                                     {
                                         Meta = meta,
@@ -313,6 +331,8 @@ internal sealed partial class FileServiceHandler
                     "removal_descendants" => RemovalLimit(correlation, "removal_descendants", "1000"),
                     "removal_total_bytes" => RemovalLimit(correlation, "removal_total_bytes", "67108864"),
                     "removal_ownership_input_bytes" => RemovalLimit(correlation, "removal_ownership_input_bytes", "67108864"),
+                    "attempt_references_unverified" or "attempt_tracking_unverified" when attempt is not null =>
+                        Error(ErrorCategory.State, "invalid_state", failure.Reason, correlation),
                     "planned_tree_changed" => Error(ErrorCategory.Conflict, "file_changed", "planned_tree_changed", correlation),
                     "path_link_or_special" => Error(ErrorCategory.State, "file_access_denied", "path_link_or_special", correlation),
                     "path_enforcement_unavailable" => Error(ErrorCategory.State, "file_access_denied", "path_enforcement_unavailable", correlation),
@@ -494,144 +514,6 @@ internal sealed partial class FileServiceHandler
                 OR EXISTS(SELECT 1 FROM remote_attempt WHERE released_at IS NULL AND
                     (local_task_id = $task OR (origin_node_id = $node AND origin_attempt_id = $attempt)));
             """, ("$attempt", attempt), ("$task", target.TaskId), ("$node", node.NodeId.ToArray())) is not null;
-    }
-
-    private static bool AttemptHasPathReferences(StoreReader reader, WorkspacePath temporaryRoot,
-        AttemptPlanTarget target, Action checkBudget)
-    {
-        // Compare native identities of checked paths and their retained ancestors, never textual prefixes.
-        // These observations cover the persisted paths below; they do not establish that an external process
-        // has no open handle or that an unrecorded reference does not exist.
-        var targetKey = FileCreationOwnership.StableKey(target.Platform, target.DirectoryIdentity)
-            ?? throw new WorkspacePathException("identity_unavailable");
-        var targetAncestors = temporaryRoot.WindowsRootAncestors().Select(WindowsDirectoryKey).ToArray();
-        var observations = new Dictionary<string, (RegisteredWorkspaces.RootIdentity Identity, bool Overlaps)>(StringComparer.Ordinal);
-
-        bool Overlaps(string? path, int? expectedPlatform = null, byte[]? expectedIdentity = null)
-        {
-            checkBudget();
-            if (string.IsNullOrEmpty(path)) return false;
-            if (!observations.TryGetValue(path, out var observation))
-            {
-                try
-                {
-                    using var reference = WorkspacePath.OpenRoot(Path.TrimEndingDirectorySeparator(path));
-                    var identity = RegisteredWorkspaces.RootIdentity.Encode(reference.RootIdentity);
-                    var referenceKey = WindowsDirectoryKey(reference.RootIdentity);
-                    var overlaps = targetAncestors.Any(item => item.AsSpan().SequenceEqual(referenceKey)) ||
-                        reference.WindowsRootAncestors().Any(item => WindowsDirectoryKey(item).AsSpan().SequenceEqual(targetKey));
-                    observation = (identity, overlaps);
-                    observations.Add(path, observation);
-                }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
-                {
-                    // A persisted reference path could not be safely opened/identified; this is not an observed
-                    // change to the target and is not proof that the reference is unrelated.
-                    throw new WorkspaceRemovalPlanException("identity_unavailable", exception);
-                }
-            }
-
-            // A registered workspace has a stronger stored root binding. Use the full identity for that binding;
-            // the overlap comparison above deliberately ignores the mutable creation-time part of the ID.
-            if (expectedPlatform is { } platform &&
-                (expectedIdentity is null || platform != observation.Identity.Platform ||
-                 !CryptographicOperations.FixedTimeEquals(expectedIdentity, observation.Identity.Bytes)))
-                throw new WorkspaceRemovalPlanException("identity_unavailable");
-            return observation.Overlaps;
-        }
-
-        using (var sessions = reader.CreateCommand("""
-            SELECT s.cwd, w.root_path, i.platform, i.native_identity FROM session s
-            LEFT JOIN workspace w ON w.workspace_id = s.workspace_id
-            LEFT JOIN workspace_root_identity i ON i.workspace_id = w.workspace_id AND i.released_at IS NULL
-            WHERE s.state IN (1, 2) OR EXISTS
-                (SELECT 1 FROM session_subagent a WHERE a.session_id = s.session_id AND a.stopped_at IS NULL);
-            """))
-        using (var rows = sessions.ExecuteReader())
-        {
-            while (rows.Read())
-                if (Overlaps(rows.IsDBNull(0) ? null : rows.GetString(0)) ||
-                    Overlaps(rows.IsDBNull(1) ? null : rows.GetString(1),
-                        rows.IsDBNull(2) ? null : rows.GetInt32(2), rows.IsDBNull(3) ? null : (byte[])rows.GetValue(3))) return true;
-        }
-
-        using (var tasks = reader.CreateCommand("""
-            SELECT t.spec, w.root_path, i.platform, i.native_identity FROM task t
-            LEFT JOIN workspace w ON w.workspace_id = t.workspace_id
-            LEFT JOIN workspace_root_identity i ON i.workspace_id = w.workspace_id AND i.released_at IS NULL
-            WHERE t.state BETWEEN 1 AND 6;
-            """))
-        using (var rows = tasks.ExecuteReader())
-        {
-            while (rows.Read())
-                if (Overlaps(StoredTaskWorkingDirectory((byte[])rows.GetValue(0))) ||
-                    Overlaps(rows.IsDBNull(1) ? null : rows.GetString(1),
-                        rows.IsDBNull(2) ? null : rows.GetInt32(2), rows.IsDBNull(3) ? null : (byte[])rows.GetValue(3))) return true;
-        }
-
-        using (var references = reader.CreateCommand("""
-            SELECT path, NULL, NULL FROM cache_instance
-            WHERE maintenance_lease_holder IS NOT NULL
-            UNION ALL
-            SELECT w.root_path, i.platform, i.native_identity FROM workspace w
-            LEFT JOIN workspace_root_identity i ON i.workspace_id = w.workspace_id AND i.released_at IS NULL
-            WHERE w.leased_by_attempt_id IS NOT NULL OR EXISTS
-                (SELECT 1 FROM remote_attempt r WHERE r.remote_workspace_id = w.workspace_id AND r.released_at IS NULL);
-            """))
-        using (var rows = references.ExecuteReader())
-        {
-            while (rows.Read())
-                if (Overlaps(rows.GetString(0), rows.IsDBNull(1) ? null : rows.GetInt32(1),
-                    rows.IsDBNull(2) ? null : (byte[])rows.GetValue(2))) return true;
-        }
-
-        using (var pinned = reader.CreateCommand("""
-            SELECT r.path, m.relative_path FROM managed_directory m
-            LEFT JOIN root_location r ON r.root_class = m.root_class
-            WHERE m.pinned = 1 AND m.state <> 5;
-            """))
-        using (var rows = pinned.ExecuteReader())
-        {
-            while (rows.Read())
-            {
-                checkBudget();
-                if (rows.IsDBNull(0) || rows.GetString(0).Length == 0) continue;
-                try
-                {
-                    var components = WorkspacePath.Components(rows.GetString(1), allowRoot: true);
-                    var candidate = components.Length == 0 ? rows.GetString(0) :
-                        Path.Combine(rows.GetString(0), string.Join(Path.DirectorySeparatorChar, components));
-                    if (Overlaps(candidate)) return true;
-                }
-                catch (WorkspacePathException exception)
-                {
-                    throw new WorkspaceRemovalPlanException("identity_unavailable", exception);
-                }
-            }
-        }
-        checkBudget();
-        return false;
-    }
-
-    private static byte[] WindowsDirectoryKey(WorkspaceObjectIdentity identity)
-    {
-        var encoded = RegisteredWorkspaces.RootIdentity.Encode(identity);
-        return encoded.Platform == 1 && FileCreationOwnership.StableKey(encoded.Platform, encoded.Bytes) is { } key
-            ? key : throw new WorkspacePathException("identity_unavailable");
-    }
-
-    private static string? StoredTaskWorkingDirectory(byte[] encoded)
-    {
-        // Extract field 2 only; command, argument and environment fields remain opaque and are never logged.
-        var input = new CodedInputStream(encoded);
-        string? directory = null;
-        uint tag;
-        while ((tag = input.ReadTag()) != 0)
-        {
-            if (tag == 18) directory = input.ReadString();
-            else input.SkipLastField();
-        }
-        return directory;
     }
 
     private static bool AttemptTreeHasHold(StoreReader reader, WorkspacePath root, WorkspaceRemovalSnapshot snapshot,

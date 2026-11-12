@@ -44,10 +44,58 @@ internal static class WorkspaceRemovalPlan
 
     // Coordinates changes to real test-owned entries. Production does not supply a callback.
     internal static WorkspaceRemovalSnapshot Capture(WorkspacePath root, string path, Action? afterEnumeration,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken) => CaptureCore(root, path, allowRoot: false, afterEnumeration, cancellationToken);
+
+    /// <summary>
+    /// Captures an already held directory only after its complete recorded identity matches the actual handle.
+    /// Every descendant is subsequently resolved beneath that same handle; this does not authorize cleanup.
+    /// </summary>
+    internal static WorkspaceRemovalSnapshot CaptureCheckedRoot(WorkspacePath root, int platform, byte[] expectedIdentity,
+        CancellationToken cancellationToken = default) =>
+        CaptureCheckedRoot(root, platform, expectedIdentity, afterEnumeration: null, cancellationToken);
+
+    // Test-owned coordination only, as for Capture above. Production never supplies this callback.
+    internal static WorkspaceRemovalSnapshot CaptureCheckedRoot(WorkspacePath root, int platform, byte[] expectedIdentity,
+        Action? afterEnumeration, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(root);
-        _ = WorkspacePath.Components(path);
+        ArgumentNullException.ThrowIfNull(expectedIdentity);
+        VerifyCheckedRoot(root, platform, expectedIdentity);
+        try
+        {
+            return CaptureCore(root, "", allowRoot: true, afterEnumeration, cancellationToken);
+        }
+        finally
+        {
+            // A budget/access/cancellation refusal must not classify an unverified or replaced target either.
+            VerifyCheckedRoot(root, platform, expectedIdentity);
+        }
+    }
+
+    internal static void VerifyCheckedRoot(WorkspacePath root, int platform, byte[] expectedIdentity)
+    {
+        var held = WorkspacePath.Identity(root.RootHandle);
+        var encoded = RegisteredWorkspaces.RootIdentity.Encode(held);
+        if (!root.RootIdentity.SameObject(held) || encoded.Platform != platform ||
+            !CryptographicOperations.FixedTimeEquals(encoded.Bytes, expectedIdentity))
+            throw new WorkspaceRemovalPlanException("planned_tree_changed");
+        try
+        {
+            using var named = WorkspacePath.OpenRoot(root.RootPath, root.RootIdentity);
+            if (!root.RootIdentity.SameObject(named.RootIdentity))
+                throw new WorkspaceRemovalPlanException("planned_tree_changed");
+        }
+        catch (WorkspacePathException error) when (error.Reason is "root_changed" or "native_2" or "native_3" or "native_20" or "root_not_directory")
+        {
+            throw new WorkspaceRemovalPlanException("planned_tree_changed", error);
+        }
+    }
+
+    private static WorkspaceRemovalSnapshot CaptureCore(WorkspacePath root, string path, bool allowRoot,
+        Action? afterEnumeration, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(root);
+        _ = WorkspacePath.Components(path, allowRoot);
         var entries = new List<(WorkspaceRemovalEntry Entry, WorkspaceEntryMetadata Native)>();
         var directories = new Dictionary<string, (string[] Names, SafeFileHandle Handle)>(StringComparer.Ordinal);
         var pending = new Stack<string>();
@@ -61,7 +109,7 @@ internal static class WorkspaceRemovalPlan
             WorkspaceEntryMetadata entry;
             try
             {
-                entry = root.InspectEntry(current);
+                entry = root.InspectEntry(current, allowRoot);
             }
             catch (WorkspacePathException exception) when (entries.Count > 0 && (exception.Reason is "native_2" or "native_3" or "native_20"))
             {
@@ -98,7 +146,7 @@ internal static class WorkspaceRemovalPlan
             directories.Add(current, (names, handle));
             for (var index = names.Length - 1; index >= 0; index--)
             {
-                var child = current + "/" + names[index];
+                var child = current.Length == 0 ? names[index] : current + "/" + names[index];
                 try { _ = WorkspacePath.Components(child); }
                 catch (WorkspacePathException exception)
                 {
@@ -116,7 +164,7 @@ internal static class WorkspaceRemovalPlan
             WorkspaceEntryMetadata current;
             try
             {
-                current = root.InspectEntry(item.Path);
+                current = root.InspectEntry(item.Path, allowRoot);
             }
             catch (WorkspacePathException exception)
             {

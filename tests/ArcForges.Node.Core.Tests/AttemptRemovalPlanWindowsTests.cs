@@ -20,6 +20,24 @@ namespace ArcForges.Node.Core.Tests;
 [Trait("env", "windows-real")]
 public sealed class AttemptRemovalPlanWindowsTests
 {
+    private static readonly byte[] UnknownRequestField = [0xa0, 0x06, 0x01];
+    private static readonly string[] ReferenceKinds = ["stdin", "readiness", "shell", "argv-absolute", "argv-path", "opaque"];
+    private static void AssertQualification(FileServicePlanRemovalResponse response, string reason)
+    {
+        Assert.True(NodeShapes.IsValid(response));
+        Assert.Null(response.Value);
+        Assert.Equal(ErrorCategory.State, response.Error.Category);
+        Assert.Equal("invalid_state", response.Error.Code);
+        Assert.Equal(EffectCertainty.DidNotHappen, response.Error.Effect);
+        Assert.Equal(RetryMode.Never, response.Error.Retry.Mode);
+        Assert.Null(response.Error.Retry.RetryAt);
+        Assert.False(response.Error.Retry.HasReconciliationOperation);
+        Assert.Equal("file", response.Error.Details.State.State);
+        Assert.Equal(reason, response.Error.Details.State.Reason);
+        Assert.Null(response.Error.Details.State.Resource);
+        Assert.Null(response.Error.Details.State.Native);
+    }
+
     [Fact(Timeout = 180_000)]
     public async Task ActualFinishedAttemptIsPlannedWithoutInheritingOwnershipAndReplays()
     {
@@ -56,6 +74,7 @@ public sealed class AttemptRemovalPlanWindowsTests
         File.WriteAllText(file, body);
         var nested = Directory.CreateDirectory(Path.Combine(root, "later")).FullName;
         File.WriteAllText(Path.Combine(nested, "child.txt"), "child-fixture");
+        Directory.CreateDirectory(Path.Combine(root, "untracked"));
         var unrelated = Directory.CreateDirectory(Path.Combine(node.Root, "unrelated-reference")).FullName;
         var unrelatedWorkspace = new RegisteredWorkspaces(node.Runtime.Store)
             .RegisterFromVerifiedHuman(unrelated, cancellationToken: ct);
@@ -64,12 +83,13 @@ public sealed class AttemptRemovalPlanWindowsTests
             Assert.Equal(attemptRoot.RootIdentity.Volume, unrelatedRoot.RootIdentity.Volume);
 
         // Session/cache rows are isolated metadata fixtures; the task and attempt provenance above are produced
-        // by the actual native task path. A live unrelated session, and one without a path, are not target proof.
+        // by the actual native task path. Missing association is tested separately from known unrelated metadata.
         var sessionId = CommandIds.New().Value.ToByteArray();
         var pathlessSessionId = CommandIds.New().Value.ToByteArray();
         var cacheId = CommandIds.New().Value.ToByteArray();
         var expiredCacheId = CommandIds.New().Value.ToByteArray();
         var otherDirectoryId = CommandIds.New().Value.ToByteArray();
+        var trackedDirectoryId = CommandIds.New().Value.ToByteArray();
         node.Runtime.Store.Write(transaction =>
         {
             transaction.Execute("""
@@ -89,6 +109,13 @@ public sealed class AttemptRemovalPlanWindowsTests
                 INSERT INTO cache_instance (cache_id, kind, path, compat_key, maintenance_lease_expires_at, rev)
                 VALUES ($id, 'attempt-test', $path, 'expiry-without-holder', $expired, 0);
                 """, ("$id", expiredCacheId), ("$path", root), ("$expired", transaction.NowMicroseconds - 1));
+            // This row tracks the actual child directory but does not prove it was created by the caller.
+            transaction.Execute("""
+                INSERT INTO managed_directory
+                  (directory_id, owner_kind, owner_id, root_class, relative_path, created_at, last_used_at, pinned, state, rev)
+                VALUES ($id, 5, $owner, 'tmp', $path, $now, $now, 0, 2, 0);
+                """, ("$id", trackedDirectoryId), ("$owner", node.Runtime.NodeId.ToArray()), ("$path", name + "/later"),
+                ("$now", transaction.NowMicroseconds));
             // An unrelated historical row with the same owner cannot replace the producer's exact tmp target.
             transaction.Execute("""
                 INSERT INTO managed_directory
@@ -98,6 +125,31 @@ public sealed class AttemptRemovalPlanWindowsTests
                 ("$path", name + "-historical"), ("$now", transaction.NowMicroseconds));
             return 0;
         }, CommitDurability.Full);
+        // A pathless live session is unknown, never a guessed holder or proof of no reference.
+        var unknownRequest = new FileServicePlanRemovalRequest { Meta = Tasks.Meta(), AttemptId = attempt.Clone() };
+        var unknownRaw = unknownRequest.ToByteArray();
+        var unknownAnswer = await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval, unknownRaw, unknownRequest.Meta.CommandId);
+        var unknownBytes = unknownAnswer.Answer!.Response ?? throw new InvalidOperationException("Missing qualification refusal.");
+        var unknown = FileServicePlanRemovalResponse.Parser.ParseFrom(unknownBytes);
+        AssertQualification(unknown, "attempt_references_unverified");
+        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_removal_plan;")));
+        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_operation_journal;")));
+        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM approval;")));
+        Assert.Equal(unknownBytes.ToByteArray(), node.Runtime.Store.Read(reader => reader.Scalar(
+            "SELECT outcome FROM command_dedup WHERE command_id = $id;", ("$id", unknownRequest.Meta.CommandId.Value.ToByteArray()))));
+        Assert.Equal(1L, node.Runtime.Store.Read(reader => reader.Scalar("""
+            SELECT count(*) FROM file_workspace_audit f JOIN audit_log a ON a.seq = f.audit_seq
+            WHERE f.attempt_id = $id AND a.operation = 'cleanup.plan FileService.PlanRemoval'
+              AND a.outcome_summary = 'refused: invalid_state';
+            """, ("$id", attempt.Value.ToByteArray()))));
+        node.Runtime.Store.Write(transaction => transaction.Execute(
+            "UPDATE session SET state = 3 WHERE session_id = $id;", ("$id", pathlessSessionId)), CommitDurability.Full);
+        Assert.Equal(unknownBytes, (await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval,
+            unknownRaw, unknownRequest.Meta.CommandId)).Answer!.Response);
+        var changedUnknownRaw = unknownRaw.Concat(UnknownRequestField).ToArray();
+        Assert.Equal("command_id_reused", FileServicePlanRemovalResponse.Parser.ParseFrom((await calls.CallAsync(caller,
+            RoutedMethod.PlanNodeRemoval, changedUnknownRaw, unknownRequest.Meta.CommandId)).Answer!.Response).Error.Code);
+
         var request = new FileServicePlanRemovalRequest { Meta = Tasks.Meta(), AttemptId = attempt.Clone() };
         var raw = request.ToByteArray();
         var result = await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval, raw, request.Meta.CommandId);
@@ -112,7 +164,7 @@ public sealed class AttemptRemovalPlanWindowsTests
         Assert.Equal(RiskClass.High, plan.Risk);
         Assert.True(plan.RequiresApproval);
         Assert.False(plan.QuarantineAvailable);
-        Assert.Equal(4, plan.Items.Count);
+        Assert.Equal(5, plan.Items.Count);
         Assert.Equal((ulong)(new FileInfo(file).Length + new FileInfo(Path.Combine(nested, "child.txt")).Length), plan.TotalBytes);
         Assert.Equal("", plan.Items[0].Path);
         Assert.Equal(FileEntryKind.Directory, plan.Items[0].Kind);
@@ -120,6 +172,7 @@ public sealed class AttemptRemovalPlanWindowsTests
         Assert.Contains(plan.Items, item => item.Path == "keep.txt");
         Assert.Contains(plan.Items, item => item.Path == "later" && item.Kind == FileEntryKind.Directory);
         Assert.Contains(plan.Items, item => item.Path == "later/child.txt");
+        Assert.Contains(plan.Items, item => item.Path == "untracked" && item.Kind == FileEntryKind.Directory);
         Assert.All(plan.Items.Skip(1), item => Assert.False(item.OwnerVerified));
         Assert.True(response.Audit is null || response.Audit.Observations.Count == 0);
         Assert.Equal(-1, responseBytes.Span.IndexOf(Encoding.UTF8.GetBytes(body)));
@@ -138,7 +191,12 @@ public sealed class AttemptRemovalPlanWindowsTests
                         ON i.plan_id = c.plan_id AND i.item_id = c.item_id WHERE i.plan_id = p.plan_id AND i.ordinal = 0),
                        (SELECT count(*) FROM cleanup_item c JOIN file_removal_plan_item i
                         ON i.plan_id = c.plan_id AND i.item_id = c.item_id
-                        WHERE i.plan_id = p.plan_id AND i.ordinal > 0 AND c.item_class = 10)
+                        WHERE i.plan_id = p.plan_id AND i.ordinal > 0 AND c.item_class = 10),
+                       (SELECT c.item_class FROM cleanup_item c JOIN file_removal_plan_item i
+                        ON i.plan_id = c.plan_id AND i.item_id = c.item_id
+                        WHERE i.plan_id = p.plan_id AND i.relative_path = 'later'),
+                       (SELECT i.owner_verified FROM file_removal_plan_item i
+                        WHERE i.plan_id = p.plan_id AND i.relative_path = 'later')
                 FROM file_removal_plan p JOIN command_dedup d ON d.command_id = p.command_id
                 WHERE p.command_id = $command;
                 """);
@@ -150,14 +208,117 @@ public sealed class AttemptRemovalPlanWindowsTests
             Assert.Equal(SHA256.HashData(raw), (byte[])row.GetValue(2));
             Assert.Equal(caller, CenterCaller.Parser.ParseFrom((byte[])row.GetValue(3)));
             Assert.Equal(responseBytes.ToByteArray(), (byte[])row.GetValue(4));
-            Assert.Equal(4L, row.GetInt64(5));
+            Assert.Equal(5L, row.GetInt64(5));
             Assert.Equal(1L, row.GetInt64(6));
             Assert.Equal(1L, row.GetInt64(7));
-            Assert.Equal(1, row.GetInt32(8)); // the verified attempt root is recorded as USAGE
-            Assert.Equal(3L, row.GetInt64(9)); // descendants without independent provenance are UNTRACKED
+            Assert.Equal(1, row.GetInt32(8)); // verified attempt root is recorded as USAGE
+            Assert.Equal(1L, row.GetInt64(9)); // only the unrecorded directory is UNTRACKED
+            Assert.Equal(1, row.GetInt32(10)); // the recorded child is USAGE
+            Assert.Equal(0, row.GetInt32(11)); // tracking does not grant caller ownership
             Assert.False(row.Read());
             return 0;
         });
+
+        // Real TaskService admission into a paused queue, not synthetic task rows. Nothing executes.
+        var declaredProgram = Path.Combine(root, "declared-program.exe");
+        File.Copy(Tasks.Cmd, declaredProgram);
+        await using (var human = await node.ChannelAsync(helloAsHuman: true))
+        {
+            Assert.Null((await human.Queue.PausePoolAsync(new QueueServicePausePoolRequest
+            {
+                Meta = Tasks.Meta(),
+                All = true,
+            }, cancellationToken: ct)).Error);
+            foreach (var kind in ReferenceKinds)
+            {
+                var spec = Tasks.Argv(unrelated, Tasks.TestLoad, "hold", "--hold-ms", "100");
+                switch (kind)
+                {
+                    case "stdin": spec.Stdin = new StdinSpec { Mode = StdinMode.File, FilePath = file }; break;
+                    case "readiness":
+                        spec.Kind = TaskKind.Service;
+                        spec.Readiness = new ReadinessCondition { FileExists = file };
+                        break;
+                    case "shell":
+                        spec.Command = new CommandSpec
+                        {
+                            Shell = new ShellCommand
+                            {
+                                Kind = ShellKind.Cmd,
+                                Script = "exit /b 0",
+                                ShellPath = declaredProgram,
+                            }
+                        };
+                        break;
+                    case "argv-absolute": spec = Tasks.Argv(unrelated, declaredProgram, "/d", "/c", "exit 0"); break;
+                    case "argv-path":
+                        spec = Tasks.Argv(unrelated, "declared-program", "/d", "/c", "exit 0");
+                        spec.Environment = new EnvironmentSpec { Inherit = EnvironmentInherit.None };
+                        spec.Environment.Set["PATH"] = root;
+                        spec.Environment.Set["PATHEXT"] = ".EXE";
+                        break;
+                    case "opaque":
+                        spec.Command = new CommandSpec
+                        {
+                            Shell = new ShellCommand
+                            {
+                                Kind = ShellKind.Cmd,
+                                Script = "exit /b 0",
+                                ShellPath = Tasks.Cmd,
+                            }
+                        };
+                        break;
+                }
+                var queued = await Tasks.SubmitAsync(human, spec);
+                var check = new FileServicePlanRemovalRequest { Meta = Tasks.Meta(), AttemptId = attempt.Clone() };
+                var answer = await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval, check.ToByteArray(), check.Meta.CommandId);
+                var checkedResponse = FileServicePlanRemovalResponse.Parser.ParseFrom(answer.Answer!.Response);
+                if (kind == "opaque") AssertQualification(checkedResponse, "attempt_references_unverified");
+                else Assert.Equal("in_use", checkedResponse.Error.Code);
+                Assert.Null(checkedResponse.Value);
+                Assert.Null((await human.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest
+                {
+                    Meta = Tasks.Meta(),
+                    TaskId = queued,
+                }, cancellationToken: ct)).Error);
+                Assert.Equal(TaskState.Cancelled, (await Tasks.WaitAsync(human, queued)).State);
+            }
+        }
+
+        // Missing root associations are real SQLite fixtures, distinct from actual native access failures.
+        var missingRootDirectory = CommandIds.New().Value.ToByteArray();
+        var recordedRoot = node.Runtime.Store.Read(reader => reader.Scalar(
+            "SELECT path FROM root_location WHERE root_class = 'records';")) as string;
+        node.Runtime.Store.Write(transaction =>
+        {
+            transaction.Execute("DELETE FROM root_location WHERE root_class = 'records';");
+            transaction.Execute("""
+                INSERT INTO managed_directory
+                  (directory_id, owner_kind, owner_id, root_class, relative_path, created_at, last_used_at, pinned, state, rev)
+                VALUES ($id, 5, $owner, 'records', 'unresolved-reference', $now, $now, 1, 2, 0);
+                """, ("$id", missingRootDirectory), ("$owner", node.Runtime.NodeId.ToArray()), ("$now", transaction.NowMicroseconds));
+        }, CommitDurability.Full);
+        var pinUnknownRequest = new FileServicePlanRemovalRequest { Meta = Tasks.Meta(), AttemptId = attempt.Clone() };
+        var pinUnknownRaw = pinUnknownRequest.ToByteArray();
+        var pinUnknown = await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval, pinUnknownRaw, pinUnknownRequest.Meta.CommandId);
+        AssertQualification(FileServicePlanRemovalResponse.Parser.ParseFrom(pinUnknown.Answer!.Response), "attempt_references_unverified");
+        node.Runtime.Store.Write(transaction => transaction.Execute(
+            "UPDATE managed_directory SET pinned = 0 WHERE directory_id = $id;", ("$id", missingRootDirectory)), CommitDurability.Full);
+        var trackingUnknownRequest = new FileServicePlanRemovalRequest { Meta = Tasks.Meta(), AttemptId = attempt.Clone() };
+        var trackingUnknownRaw = trackingUnknownRequest.ToByteArray();
+        var trackingUnknown = await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval, trackingUnknownRaw, trackingUnknownRequest.Meta.CommandId);
+        AssertQualification(FileServicePlanRemovalResponse.Parser.ParseFrom(trackingUnknown.Answer!.Response), "attempt_tracking_unverified");
+        node.Runtime.Store.Write(transaction =>
+        {
+            transaction.Execute("UPDATE managed_directory SET state = 5 WHERE directory_id = $id;", ("$id", missingRootDirectory));
+            if (recordedRoot is not null) transaction.Execute(
+                "INSERT INTO root_location (root_class, path) VALUES ('records', $path);", ("$path", recordedRoot));
+        }, CommitDurability.Full);
+        Assert.Equal(pinUnknown.Answer.Response, (await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval,
+            pinUnknownRaw, pinUnknownRequest.Meta.CommandId)).Answer!.Response);
+        Assert.Equal(trackingUnknown.Answer.Response, (await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval,
+            trackingUnknownRaw, trackingUnknownRequest.Meta.CommandId)).Answer!.Response);
+        Assert.Equal(1L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_removal_plan;")));
 
         async Task AssertReferenceInUse(string reference)
         {
@@ -185,8 +346,7 @@ public sealed class AttemptRemovalPlanWindowsTests
             missingReferenceRequest.Meta.CommandId);
         var missingIdentity = FileServicePlanRemovalResponse.Parser.ParseFrom(missingReference.Answer!.Response);
         Assert.True(NodeShapes.IsValid(missingIdentity));
-        Assert.Equal("file_access_denied", missingIdentity.Error.Code);
-        Assert.Equal("identity_unavailable", missingIdentity.Error.Details.State.Reason);
+        AssertQualification(missingIdentity, "attempt_references_unverified");
         node.Runtime.Store.Write(transaction => transaction.Execute(
             "UPDATE session SET cwd = $cwd WHERE session_id = $id;", ("$cwd", unrelated), ("$id", sessionId)),
             CommitDurability.Full);
@@ -201,18 +361,14 @@ public sealed class AttemptRemovalPlanWindowsTests
             "UPDATE cache_instance SET path = $path WHERE cache_id = $id;", ("$path", unrelated), ("$id", cacheId)),
             CommitDurability.Full);
 
-        var pinnedDirectory = CommandIds.New().Value.ToByteArray();
-        node.Runtime.Store.Write(transaction => transaction.Execute("""
-            INSERT INTO managed_directory
-              (directory_id, owner_kind, owner_id, root_class, relative_path, created_at, last_used_at, pinned, state, rev)
-            VALUES ($id, 5, $owner, 'tmp', $path, $now, $now, 1, 2, 0);
-            """, ("$id", pinnedDirectory), ("$owner", node.Runtime.NodeId.ToArray()), ("$path", name + "/later"),
-            ("$now", transaction.NowMicroseconds)), CommitDurability.Full);
+        node.Runtime.Store.Write(transaction => transaction.Execute(
+            "UPDATE managed_directory SET pinned = 1 WHERE directory_id = $id;",
+            ("$id", trackedDirectoryId)), CommitDurability.Full);
         var pinnedChildRequest = new FileServicePlanRemovalRequest { Meta = Tasks.Meta(), AttemptId = attempt.Clone() };
         var pinnedChild = await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval, pinnedChildRequest.ToByteArray(), pinnedChildRequest.Meta.CommandId);
         Assert.Equal("in_use", FileServicePlanRemovalResponse.Parser.ParseFrom(pinnedChild.Answer!.Response).Error.Code);
         node.Runtime.Store.Write(transaction => transaction.Execute(
-            "UPDATE managed_directory SET pinned = 0 WHERE directory_id = $id;", ("$id", pinnedDirectory)), CommitDurability.Full);
+            "UPDATE managed_directory SET pinned = 0 WHERE directory_id = $id;", ("$id", trackedDirectoryId)), CommitDurability.Full);
 
         // A registered reference is never adopted by its old name after its native root changes.
         var oldUnrelated = unrelated + "-moved";
@@ -222,8 +378,7 @@ public sealed class AttemptRemovalPlanWindowsTests
         var staleReference = await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval, staleReferenceRequest.ToByteArray(),
             staleReferenceRequest.Meta.CommandId);
         var staleReferenceError = FileServicePlanRemovalResponse.Parser.ParseFrom(staleReference.Answer!.Response);
-        Assert.Equal("file_access_denied", staleReferenceError.Error.Code);
-        Assert.Equal("identity_unavailable", staleReferenceError.Error.Details.State.Reason);
+        AssertQualification(staleReferenceError, "attempt_references_unverified");
         node.Runtime.Store.Write(transaction => transaction.Execute(
             "UPDATE session SET workspace_id = NULL WHERE session_id = $id;", ("$id", sessionId)), CommitDurability.Full);
 
@@ -250,6 +405,8 @@ public sealed class AttemptRemovalPlanWindowsTests
         Assert.Equal("not_found", FileServicePlanRemovalResponse.Parser.ParseFrom(foreignAnswer.Answer!.Response).Error.Code);
         var foreignReplay = await calls.CallAsync(foreign, RoutedMethod.PlanNodeRemoval, raw, request.Meta.CommandId);
         Assert.Equal("command_id_reused", FileServicePlanRemovalResponse.Parser.ParseFrom(foreignReplay.Answer!.Response).Error.Code);
+        var foreignUnknown = await calls.CallAsync(foreign, RoutedMethod.PlanNodeRemoval, unknownRaw, unknownRequest.Meta.CommandId);
+        Assert.Equal("command_id_reused", FileServicePlanRemovalResponse.Parser.ParseFrom(foreignUnknown.Answer!.Response).Error.Code);
 
         File.WriteAllText(file, body + "-changed-after-plan");
         var replay = await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval, raw, request.Meta.CommandId);
@@ -275,7 +432,7 @@ public sealed class AttemptRemovalPlanWindowsTests
         }
 
         // Add only test-owned empty entries; the actual planner must refuse rather than truncate or delete.
-        for (var index = 0; index < 998; index++)
+        for (var index = 0; index < 997; index++)
             File.WriteAllBytes(Path.Combine(root, "overflow-" + index.ToString("D4", System.Globalization.CultureInfo.InvariantCulture)), []);
         var boundedRequest = new FileServicePlanRemovalRequest { Meta = Tasks.Meta(), AttemptId = attempt.Clone() };
         var boundedRaw = boundedRequest.ToByteArray();
@@ -312,6 +469,12 @@ public sealed class AttemptRemovalPlanWindowsTests
         calls = new RoutedCalls(node);
         var restarted = await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval, raw, request.Meta.CommandId);
         Assert.Equal(responseBytes, restarted.Answer!.Response);
+        Assert.Equal(unknownBytes, (await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval,
+            unknownRaw, unknownRequest.Meta.CommandId)).Answer!.Response);
+        Assert.Equal(pinUnknown.Answer.Response, (await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval,
+            pinUnknownRaw, pinUnknownRequest.Meta.CommandId)).Answer!.Response);
+        Assert.Equal(trackingUnknown.Answer.Response, (await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval,
+            trackingUnknownRaw, trackingUnknownRequest.Meta.CommandId)).Answer!.Response);
         Assert.Equal(body + "-changed-after-plan", File.ReadAllText(Path.Combine(moved, "keep.txt")));
         Assert.Equal("unplanned-replacement", File.ReadAllText(replacement));
         Assert.True(Directory.Exists(Path.Combine(moved, "later")));

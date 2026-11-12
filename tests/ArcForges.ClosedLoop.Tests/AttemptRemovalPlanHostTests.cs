@@ -138,6 +138,38 @@ public sealed class AttemptRemovalPlanHostTests
             Assert.True(response.Audit is null || response.Audit.Observations.Count == 0);
             AssertPersisted(node.DataRoot, request.Meta.CommandId, raw, first, caller, attempt);
 
+            // Only these association rows are fixtures: the Host producer, FULL refusal/audit and signature are real.
+            var unknownSession = CommandIds.New().Value.ToByteArray();
+            FixtureWrite(node.DataRoot, """
+                INSERT INTO session (session_id, client, source, state, started_at, last_activity_at, rev)
+                VALUES ($id, 1, 1, 1, $now, $now, 0);
+                """, ("$id", unknownSession), ("$now", StoreTime.ToMicroseconds(DateTimeOffset.UtcNow)));
+            var unknownRequest = new FileServicePlanRemovalRequest { Meta = Command(), AttemptId = attempt.Clone() };
+            var unknownFirst = await Invoke(RoutedMethod.PlanNodeRemoval, unknownRequest, unknownRequest.Meta.CommandId, caller);
+            AssertQualification(unknownFirst, "attempt_references_unverified");
+            FixtureWrite(node.DataRoot, "UPDATE session SET state = 3 WHERE session_id = $id;", ("$id", unknownSession));
+            Assert.Equal(unknownFirst, await Invoke(RoutedMethod.PlanNodeRemoval, unknownRequest, unknownRequest.Meta.CommandId, caller));
+
+            // A missing root association cannot be invented by tracking classification.
+            var unknownDirectory = CommandIds.New().Value.ToByteArray();
+            var recordsRoot = FixtureScalar(node.DataRoot, "SELECT path FROM root_location WHERE root_class = 'records';") as string;
+            FixtureWrite(node.DataRoot, """
+                DELETE FROM root_location WHERE root_class = 'records';
+                INSERT INTO managed_directory
+                  (directory_id, owner_kind, owner_id, root_class, relative_path, created_at, last_used_at, pinned, state, rev)
+                VALUES ($id, 5, $owner, 'records', 'unresolved-reference', $now, $now, 0, 2, 0);
+                """, ("$id", unknownDirectory), ("$owner", nodeId.Value.ToByteArray()),
+                ("$now", StoreTime.ToMicroseconds(DateTimeOffset.UtcNow)));
+            var trackingRequest = new FileServicePlanRemovalRequest { Meta = Command(), AttemptId = attempt.Clone() };
+            var trackingFirst = await Invoke(RoutedMethod.PlanNodeRemoval, trackingRequest, trackingRequest.Meta.CommandId, caller);
+            AssertQualification(trackingFirst, "attempt_tracking_unverified");
+            FixtureWrite(node.DataRoot, "UPDATE managed_directory SET state = 5 WHERE directory_id = $id;", ("$id", unknownDirectory));
+            if (recordsRoot is not null) FixtureWrite(node.DataRoot,
+                "INSERT INTO root_location (root_class, path) VALUES ('records', $path);", ("$path", recordsRoot));
+            Assert.Equal(trackingFirst, await Invoke(RoutedMethod.PlanNodeRemoval, trackingRequest, trackingRequest.Meta.CommandId, caller));
+            Assert.Equal(1L, FixtureScalar(node.DataRoot, "SELECT count(*) FROM file_removal_plan;"));
+            Assert.Equal(0L, FixtureScalar(node.DataRoot, "SELECT count(*) FROM file_operation_journal;"));
+
             var foreign = caller.Clone();
             foreign.LocalSessionId = CommandIds.New();
             var foreignRequest = new FileServicePlanRemovalRequest { Meta = Command(), AttemptId = attempt.Clone() };
@@ -150,6 +182,8 @@ public sealed class AttemptRemovalPlanHostTests
             await node.StartNodeAsync();
             channel = await center.Channel.ProvedAsync(2);
             Assert.Equal(first, await Invoke(RoutedMethod.PlanNodeRemoval, request, request.Meta.CommandId, caller));
+            Assert.Equal(unknownFirst, await Invoke(RoutedMethod.PlanNodeRemoval, unknownRequest, unknownRequest.Meta.CommandId, caller));
+            Assert.Equal(trackingFirst, await Invoke(RoutedMethod.PlanNodeRemoval, trackingRequest, trackingRequest.Meta.CommandId, caller));
             AssertPersisted(node.DataRoot, request.Meta.CommandId, raw, first, caller, attempt);
             Assert.Equal(body + "-after-plan", File.ReadAllText(file));
             Assert.True(Directory.Exists(directory));
@@ -292,6 +326,57 @@ public sealed class AttemptRemovalPlanHostTests
         }
     }
 
+    private static void AssertQualification(byte[] encoded, string reason)
+    {
+        var response = FileServicePlanRemovalResponse.Parser.ParseFrom(encoded);
+        Assert.True(NodeShapes.IsValid(response));
+        Assert.Null(response.Value);
+        Assert.Equal(ErrorCategory.State, response.Error.Category);
+        Assert.Equal("invalid_state", response.Error.Code);
+        Assert.Equal("file", response.Error.Details.State.State);
+        Assert.Equal(reason, response.Error.Details.State.Reason);
+        Assert.Equal(EffectCertainty.DidNotHappen, response.Error.Effect);
+        Assert.Equal(RetryMode.Never, response.Error.Retry.Mode);
+        Assert.Null(response.Error.Retry.RetryAt);
+        Assert.False(response.Error.Retry.HasReconciliationOperation);
+        Assert.Null(response.Error.Details.State.Resource);
+        Assert.Null(response.Error.Details.State.Native);
+    }
+
+    // Isolated metadata fixtures only. Never used with a production database or to manufacture an effect result.
+    private static void FixtureWrite(string dataRoot, string sql, params (string Name, object? Value)[] parameters)
+    {
+        using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = StorePaths.Database(dataRoot),
+            Mode = SqliteOpenMode.ReadWrite,
+        }.ToString());
+        connection.Open();
+        using var setting = connection.CreateCommand();
+        setting.CommandText = "PRAGMA synchronous=FULL;";
+        setting.ExecuteNonQuery();
+        using var transaction = connection.BeginTransaction();
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = sql;
+        foreach (var (name, value) in parameters) command.Parameters.AddWithValue(name, value ?? DBNull.Value);
+        command.ExecuteNonQuery();
+        transaction.Commit();
+    }
+
+    private static object? FixtureScalar(string dataRoot, string sql)
+    {
+        using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = StorePaths.Database(dataRoot),
+            Mode = SqliteOpenMode.ReadOnly,
+        }.ToString());
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        return command.ExecuteScalar();
+    }
+
     private static void AssertNoAttemptPlan(string dataRoot, Id command, byte[] raw, byte[] response, Id attempt)
     {
         var builder = new SqliteConnectionStringBuilder { DataSource = StorePaths.Database(dataRoot), Mode = SqliteOpenMode.ReadOnly };
@@ -367,7 +452,8 @@ public sealed class AttemptRemovalPlanHostTests
         Assert.Equal(1L, row.GetInt64(6));
         Assert.Equal(1L, row.GetInt64(7));
         Assert.Equal(1, row.GetInt32(8));
-        Assert.Equal(3L, row.GetInt64(9));
+        Assert.Equal(1L, row.GetInt64(9)); // only the unrecorded directory, not either ordinary file
+
         Assert.False(row.Read());
     }
 }
