@@ -82,9 +82,57 @@ public sealed partial class FileMutationJournalTests
             using var selectedRoot = WorkspacePath.OpenRoot(fixture.Workspace);
             Assert.Equal(FileJournalPreparation.Prepared, restarted.Write(
                 transaction => FileMutationJournal.Prepare(transaction, other, otherRaw, selectedRoot), CommitDurability.Full));
+            Assert.False(selectedRoot.RootHandle.IsClosed);
+            Assert.True(WorkspacePath.Identity(selectedRoot.RootHandle).SameObject(selectedRoot.RootIdentity));
+            Assert.Equal(WorkspaceEntryType.File, selectedRoot.InspectEntry("second.txt").Kind);
             Assert.Equal("first original", File.ReadAllText(firstPath));
             Assert.Equal("second original", File.ReadAllText(otherPath));
         }
+    }
+
+    [Fact]
+    public void DistinctNestedTargetKeepsOwnedDirectoryHandlesUsableUntilWorkspaceDisposal()
+    {
+        using var fixture = new TargetHoldFixture();
+        var child = Directory.CreateDirectory(Path.Combine(fixture.Workspace, "nested")).FullName;
+        var firstPath = Path.Combine(child, "first.txt");
+        var otherPath = Path.Combine(child, "second.txt");
+        File.WriteAllText(firstPath, "first original");
+        File.WriteAllText(otherPath, "second original");
+        byte[] workspaceId;
+        using (var store = fixture.Open())
+        {
+            workspaceId = new RegisteredWorkspaces(store).RegisterFromVerifiedHuman(
+                fixture.Workspace, cancellationToken: TestContext.Current.CancellationToken).Id;
+            var (first, firstRaw) = fixture.Intent(workspaceId, fixture.Workspace, "nested/first.txt", "first result");
+            Assert.Equal(FileJournalPreparation.Prepared, store.Write(
+                transaction => FileMutationJournal.Prepare(transaction, first, firstRaw), CommitDurability.Full));
+        }
+
+        using var restarted = fixture.Open();
+        Assert.Equal(1, restarted.Write(FileMutationJournal.RecoverInterrupted, CommitDurability.Full));
+        var (other, otherRaw) = fixture.Intent(workspaceId, fixture.Workspace, "nested/second.txt", "second result");
+        var selectedRoot = WorkspacePath.OpenRoot(fixture.Workspace);
+        var rootHandle = selectedRoot.RootHandle;
+        var childHandle = selectedRoot.OpenDirectory("nested");
+        try
+        {
+            Assert.Equal(FileJournalPreparation.Prepared, restarted.Write(
+                transaction => FileMutationJournal.Prepare(transaction, other, otherRaw, selectedRoot), CommitDurability.Full));
+            Assert.False(rootHandle.IsClosed);
+            Assert.False(childHandle.IsClosed);
+            Assert.True(WorkspacePath.Identity(rootHandle).SameObject(selectedRoot.RootIdentity));
+            Assert.True(WorkspacePath.Identity(childHandle).IsDirectory);
+            Assert.Equal(WorkspaceEntryType.File, selectedRoot.InspectEntry("nested/second.txt").Kind);
+            Assert.Equal("first original", File.ReadAllText(firstPath));
+            Assert.Equal("second original", File.ReadAllText(otherPath));
+        }
+        finally
+        {
+            selectedRoot.Dispose();
+        }
+        Assert.True(rootHandle.IsClosed);
+        Assert.True(childHandle.IsClosed);
     }
 
     [Fact]

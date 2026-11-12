@@ -137,15 +137,15 @@ public sealed class CombinedStageCapacityMigrationTests
           (command_id, kind, phase, request_sha256, caller, correlation_id, workspace_id, relative_path,
            identity_platform, root_identity, parent_identity, expected_absent, intended_size, intended_sha256,
            intended_stage_identity, created_at, updated_at, held, acknowledged)
-        VALUES ($id, 1, 1, zeroblob(32), x'01', $id, $workspace, 'target', 1, zeroblob(33), zeroblob(33),
+        VALUES ($id, 1, 1, zeroblob(32), x'01', $id, $workspace, 'target', 1, $root, $identity,
                 1, $bytes, zeroblob(32), $identity, 0, 0, 1, 0);
-        """, ("$id", id), ("$workspace", workspace), ("$bytes", bytes), ("$identity", identity));
+        """, ("$id", id), ("$workspace", workspace), ("$bytes", bytes), ("$identity", identity), ("$root", Identity(255)));
 
     private static byte[] Identity(byte marker)
     {
         var result = new byte[33];
         result[0] = 1;
-        result[32] = marker;
+        result[1] = marker;
         return result;
     }
 

@@ -113,6 +113,7 @@ public sealed class NodeStore : IDisposable
     private readonly SqliteConnection _writer;
     private readonly TimeProvider _clock;
     private readonly RoutedFileRetentionProcess? _fileRetention;
+    private readonly FileTargetHoldWitnesses _fileTargetWitnesses = new();
     private bool _writing;
     private bool _disposed;
 
@@ -121,6 +122,8 @@ public sealed class NodeStore : IDisposable
         DataRoot = dataRoot;
         DatabasePath = path;
         _writer = writer;
+        _writer.CreateFunction<byte[]?, byte[]?, byte[]?, string?, byte[]?, byte[]?, byte[]?, byte[]?, byte[]?, long, long>(
+            "arcforges_file_hold_witness", _fileTargetWitnesses.Matches);
         _clock = clock;
         Metadata = metadata;
         _fileRetention = metadata.SchemaVersion >= 6 ? new RoutedFileRetentionProcess(_clock) : null;
@@ -257,14 +260,18 @@ public sealed class NodeStore : IDisposable
             }
 
             _writing = true;
+            _fileTargetWitnesses.Clear();
             try
             {
                 T result = default!;
-                InTransaction(_writer, durability, transaction => result = action(new StoreTransaction(_writer, transaction, _clock, durability, _fileRetention)));
+                InTransaction(_writer, durability, transaction => result = action(
+                    new StoreTransaction(_writer, transaction, _clock, durability, _fileRetention, _fileTargetWitnesses)));
                 return result;
             }
             finally
             {
+                // Witnesses must never survive commit, rollback, exception or a later unrelated command.
+                _fileTargetWitnesses.Clear();
                 _writing = false;
             }
         }

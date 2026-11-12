@@ -88,7 +88,8 @@ internal static partial class FileMutationJournal
             """, ("$id", intent.CommandId), ("$now", transaction.NowMicroseconds)) is not null)
             return FileJournalPreparation.Conflict;
 
-        if (HasTargetHold(transaction, intent.IdentityPlatform, intent.ParentIdentity, intent.TargetIdentity, intent.RelativePath, selectedRoot))
+        var distinctHeldIds = new List<byte[]>();
+        if (HasTargetHold(transaction, intent.IdentityPlatform, intent.ParentIdentity, intent.TargetIdentity, intent.RelativePath, selectedRoot, distinctHeldIds))
         {
             return FileJournalPreparation.WorkspaceHeld;
         }
@@ -111,7 +112,12 @@ internal static partial class FileMutationJournal
 
         var now = transaction.NowMicroseconds;
         var absent = intent.TargetIdentity is null;
-        transaction.Execute("""
+        try
+        {
+            foreach (var heldId in distinctHeldIds)
+                transaction.AllowDistinctFileTarget(intent.CommandId, heldId, intent.WorkspaceId, intent.RelativePath,
+                    intent.RootIdentity, intent.ParentIdentity, intent.TargetIdentity!, digest, caller.ToByteArray(), (long)intent.Kind);
+            transaction.Execute("""
             INSERT INTO file_operation_journal
               (command_id, kind, phase, request_sha256, caller, correlation_id, workspace_id, relative_path,
                identity_platform, root_identity, parent_identity, target_identity, expected_absent,
@@ -128,6 +134,11 @@ internal static partial class FileMutationJournal
             ("$absent", absent ? 1 : 0), ("$original_size", intent.OriginalSize), ("$original_hash", intent.OriginalSha256),
             ("$original_stage", intent.OriginalStageIdentity), ("$intended_size", intent.IntendedSize),
             ("$intended_hash", intent.IntendedSha256), ("$intended_stage", intent.IntendedStageIdentity), ("$now", now));
+        }
+        finally
+        {
+            transaction.ClearFileTargetWitnesses();
+        }
         return FileJournalPreparation.Prepared;
     }
 

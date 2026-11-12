@@ -200,6 +200,9 @@ public sealed partial class LinuxWorkerInterruptionHostTests
             };
             var (_, aliasBytes) = await Invoke(RoutedMethod.WriteNodeFile, alias, alias.Meta.CommandId);
             var aliasRefusal = FileServiceWriteFileResponse.Parser.ParseFrom(aliasBytes);
+            Console.WriteLine("held-alias-outcome=" + (aliasRefusal.Error?.Code ?? "success") +
+                "; target-sha256=" + Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(target))));
+            Assert.NotNull(aliasRefusal.Error);
             Assert.Equal("invalid_state", aliasRefusal.Error.Code);
             Assert.Equal("file_recovery_pending", aliasRefusal.Error.Details.State.Reason);
             Assert.Equal(EffectCertainty.DidNotHappen, aliasRefusal.Error.Effect);

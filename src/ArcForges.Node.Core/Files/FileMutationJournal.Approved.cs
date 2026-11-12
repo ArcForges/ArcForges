@@ -73,9 +73,24 @@ internal static partial class FileMutationJournal
                 intended.ObjectIdentity.SameObject(target.ObjectIdentity))
                 throw new WorkspacePathException("file_identity_changed");
         }
-        // Recheck the target after hashing both stages and before recording a possible effect.
+        // Recheck the target and all held names after hashing the stages and before recording a possible effect.
         PrivateStageApproval.CheckTarget(intent, root, target, cancellationToken);
-        InsertApprovedIntent(transaction, plan);
+        var distinctHeldIds = new List<byte[]>();
+        if (HasTargetHold(transaction, intent.IdentityPlatform, intent.ParentIdentity, intent.TargetIdentity,
+            intent.RelativePath, root, distinctHeldIds))
+            return (ApprovedFilePreparation.WorkspaceHeld, plan);
+        try
+        {
+            foreach (var heldId in distinctHeldIds)
+                transaction.AllowDistinctFileTarget(intent.CommandId, heldId, intent.WorkspaceId, intent.RelativePath,
+                    intent.RootIdentity, intent.ParentIdentity, intent.TargetIdentity!, plan.RequestSha256,
+                    intent.Caller.ToByteArray(), (long)intent.Kind);
+            InsertApprovedIntent(transaction, plan);
+        }
+        finally
+        {
+            transaction.ClearFileTargetWitnesses();
+        }
         return (ApprovedFilePreparation.Prepared, plan);
     }
 

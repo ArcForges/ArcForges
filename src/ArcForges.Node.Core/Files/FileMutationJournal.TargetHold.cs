@@ -14,7 +14,7 @@ internal static partial class FileMutationJournal
     /// This is node-side serialization; it does not lock a filesystem namespace against another process.
     /// </summary>
     internal static bool HasTargetHold(StoreReader reader, int platform, byte[] parentIdentity, byte[]? targetIdentity,
-        string relativePath, WorkspacePath? selectedRoot)
+        string relativePath, WorkspacePath? selectedRoot, List<byte[]>? distinctHeldIds = null)
     {
         ArgumentNullException.ThrowIfNull(reader);
         ArgumentNullException.ThrowIfNull(parentIdentity);
@@ -24,10 +24,11 @@ internal static partial class FileMutationJournal
 
         SafeFileHandle? parent = null;
         var parentChecked = false;
+        // OpenDirectory returns a handle retained and owned by selectedRoot, including its root handle.
         using var command = reader.CreateCommand("""
-            SELECT identity_platform, parent_identity, target_identity, relative_path, kind
-            FROM file_operation_journal WHERE held = 1 ORDER BY created_at, command_id LIMIT 65;
-            """);
+        SELECT identity_platform, parent_identity, target_identity, relative_path, kind, command_id
+        FROM file_operation_journal WHERE held = 1 ORDER BY created_at, command_id LIMIT 65;
+        """);
         using var rows = command.ExecuteReader();
         var count = 0;
         while (rows.Read())
@@ -62,6 +63,7 @@ internal static partial class FileMutationJournal
                 var observed = selectedRoot.InspectHeldParentChild(parent!, heldParts[^1]);
                 var encoded = RegisteredWorkspaces.RootIdentity.Encode(observed with { Links = 1 }, directory: false);
                 if (encoded.Platform != platform || SameNativeObject(platform, targetIdentity, encoded.Bytes)) return true;
+                distinctHeldIds?.Add((byte[])rows.GetValue(5));
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                 ArgumentException or NotSupportedException)

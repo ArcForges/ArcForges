@@ -85,6 +85,14 @@
       "sha256": "0bd608717f99fe0f0504ccc8d2b7ce4ed2dfb545f658c7c87d085adf644ad0d9",
       "source": "AF-CTR-06 persistent Linux effect-worker lifetime fence; local author candidate.",
       "addedBy": "AF-CTR-06"
+    },
+    {
+      "version": 11,
+      "minReaderVersion": 1,
+      "file": "0011-schema-step-11.sql",
+      "sha256": "d00b5bea598ece808109d9af9e3c89d47f436800a2b246ac51f990be181394a9",
+      "source": "AF-CTR-06 native target hold fence and transaction-local distinct-object witness; local author candidate.",
+      "addedBy": "AF-CTR-06"
     }
   ]
 }

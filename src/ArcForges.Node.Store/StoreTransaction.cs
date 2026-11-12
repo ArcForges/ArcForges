@@ -81,10 +81,26 @@ public class StoreReader
 /// <summary>One write transaction of the single writer (node-store.md section 1).</summary>
 public sealed class StoreTransaction : StoreReader
 {
+    private readonly FileTargetHoldWitnesses? _fileTargetWitnesses;
+
     internal StoreTransaction(SqliteConnection connection, SqliteTransaction transaction, TimeProvider clock, CommitDurability durability,
-        RoutedFileRetentionProcess? fileRetention = null)
-        : base(connection, transaction, clock, fileRetention) => Durability = durability;
+        RoutedFileRetentionProcess? fileRetention = null, FileTargetHoldWitnesses? fileTargetWitnesses = null)
+        : base(connection, transaction, clock, fileRetention)
+    {
+        Durability = durability;
+        _fileTargetWitnesses = fileTargetWitnesses;
+    }
 
     /// <summary>How this transaction commits.</summary>
     public CommitDurability Durability { get; }
+
+    internal void AllowDistinctFileTarget(byte[] command, byte[] held, byte[] workspace, string path, byte[] root,
+        byte[] parent, byte[] target, byte[] digest, byte[] caller, long kind)
+    {
+        if (Durability != CommitDurability.Full || _fileTargetWitnesses is null)
+            throw new InvalidOperationException("A FULL writer transaction with native target evidence is required.");
+        _fileTargetWitnesses.Add(command, held, workspace, path, root, parent, target, digest, caller, kind);
+    }
+
+    internal void ClearFileTargetWitnesses() => _fileTargetWitnesses?.Clear();
 }
