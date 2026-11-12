@@ -313,13 +313,18 @@ public sealed class WorkspaceGitStatusTests
         await CompareAsync(fixture, root, ct);
     }
 
-    [Fact(Timeout = 60_000)]
+    // isolation=exclusive: proving absence rechecks native stamps of every ancestor, including the shared temp directory.
+    // Parallel test-fixture creation there is a legitimate UNKNOWN, not proof that this root is non-Git.
+    [Fact(Timeout = 60_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public async Task NonGitRequiresCheckedAncestorsAndCancellationIsHonored()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         using var fixture = new Repository();
         using var root = WorkspacePath.OpenRoot(fixture.Root);
-        Assert.Null(await WorkspaceGitStatus.ObserveAsync(root, IsolatedSources, TestContext.Current.CancellationToken));
+        string? failure = null;
+        var summary = await WorkspaceGitStatus.ObserveAsync(root, IsolatedSources, TestContext.Current.CancellationToken, value => failure = value);
+        Assert.True(summary is null, "Expected a fully checked non-Git root; quality=" + summary?.Quality + "; phase=" + failure);
         using var cancelled = new CancellationTokenSource();
         cancelled.Cancel();
         await Assert.ThrowsAsync<OperationCanceledException>(() => WorkspaceGitStatus.ObserveAsync(root, IsolatedSources, cancelled.Token));
