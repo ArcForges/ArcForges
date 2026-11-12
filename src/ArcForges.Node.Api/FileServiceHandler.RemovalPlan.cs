@@ -319,9 +319,9 @@ internal sealed partial class FileServiceHandler
             if (state is not (2 or 3)) return NodeErrors.NotFound("attempt", attempt);
         }
 
-        // No current source populates root_location or managed_directory, or verifies the required live-reference
-        // and lease conditions. Even a matching terminal row cannot supply those facts here; never invent provenance
-        // or accept a caller-provided path as a substitute.
+        // A Windows-created attempt may now have a provenance record, but this endpoint does not yet re-open and
+        // verify that identity or establish all live-reference and lease conditions. Never infer those facts from
+        // a terminal row or accept a caller-provided path as a substitute.
         return Error(ErrorCategory.State, "file_access_denied", "identity_unavailable", correlation);
     }
 
