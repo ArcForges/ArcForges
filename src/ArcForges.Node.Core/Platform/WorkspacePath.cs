@@ -275,7 +275,13 @@ internal sealed partial class WorkspacePath : IDisposable
     public SafeFileHandle OpenRead(string path) => OpenRead(path, afterMetadataOpen: null);
 
     // The callback only coordinates real filesystem races in component tests; production passes no callback.
-    internal SafeFileHandle OpenRead(string path, Action? afterMetadataOpen)
+    internal SafeFileHandle OpenRead(string path, Action? afterMetadataOpen) =>
+        OpenRead(path, afterMetadataOpen, readMarker: false);
+
+    // Ownership checks additionally need FILE_READ_EA on Windows. Traversal and stage privacy checks stay identical.
+    internal SafeFileHandle OpenReadForOwnership(string path) => OpenRead(path, afterMetadataOpen: null, readMarker: true);
+
+    private SafeFileHandle OpenRead(string path, Action? afterMetadataOpen, bool readMarker)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         var parts = Components(path);
@@ -303,7 +309,7 @@ internal sealed partial class WorkspacePath : IDisposable
             parent = RetainCheckedDirectory(OpenChild(parent, component, directory: true));
         }
 
-        var file = OpenChild(parent, parts[^1], directory: false);
+        var file = OpenChild(parent, parts[^1], directory: false, readMarker: readMarker);
         try
         {
             var identity = Identity(file);
@@ -604,9 +610,9 @@ internal sealed partial class WorkspacePath : IDisposable
         }
     }
 
-    private static SafeFileHandle OpenChild(SafeFileHandle parent, string component, bool directory)
+    private static SafeFileHandle OpenChild(SafeFileHandle parent, string component, bool directory, bool readMarker = false)
     {
-        var handle = WindowsOpen(parent, component, directory);
+        var handle = WindowsOpen(parent, component, directory, readMarker: readMarker);
         try
         {
             var identity = Identity(handle);
@@ -789,7 +795,8 @@ internal sealed partial class WorkspacePath : IDisposable
         return handle;
     }
 
-    private static unsafe SafeFileHandle WindowsOpen(SafeFileHandle parent, string name, bool directory, bool metadataOnly = false)
+    private static unsafe SafeFileHandle WindowsOpen(SafeFileHandle parent, string name, bool directory, bool metadataOnly = false,
+        bool readMarker = false)
     {
         // FILE_CASE_SENSITIVE_INFO is read from the actual parent. A case-sensitive directory must retain exact-case lookup.
         uint flags;
@@ -808,7 +815,9 @@ internal sealed partial class WorkspacePath : IDisposable
                 ObjectName = (nint)(&unicode),
                 Attributes = (flags & 1) == 0 ? 0x40u : 0u,
             };
-            var status = NtCreateFile(out var raw, metadataOnly ? 0x00100080u : 0x00100081u, ref attributes, out _, 0, 0,
+            var access = metadataOnly ? 0x00100080u : 0x00100081u;
+            if (readMarker) access |= 0x8u; // FILE_READ_EA on this same no-follow handle
+            var status = NtCreateFile(out var raw, access, ref attributes, out _, 0, 0,
                 metadataOnly ? 7u : directory ? 3u : 1u, 1, 0x20u | 0x00200000u | (directory ? 1u : 0x40u), 0, 0);
             if (status < 0)
             {

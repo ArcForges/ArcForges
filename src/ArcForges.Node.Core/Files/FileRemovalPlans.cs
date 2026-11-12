@@ -23,7 +23,7 @@ internal static class FileRemovalPlans
 
     internal static PreparedWorkspacePlan PrepareWorkspace(StoreTransaction transaction, ReadOnlySpan<byte> commandId,
         ReadOnlySpan<byte> rawSha256, CenterCaller caller, ActorRef actor, FilePath target, string rootPath,
-        WorkspaceRemovalSnapshot snapshot, long observedTime)
+        WorkspaceRemovalSnapshot snapshot, long observedTime, IReadOnlySet<string>? verifiedOwnedPaths = null)
     {
         ArgumentNullException.ThrowIfNull(transaction);
         ArgumentNullException.ThrowIfNull(caller);
@@ -44,8 +44,8 @@ internal static class FileRemovalPlans
             ExpiresAt = ProtoTime.ToInstant(StoreTime.FromMicroseconds(expires)),
             WorkspacePath = target.Clone(),
             TotalBytes = snapshot.TotalBytes,
-            // Ownership markers and confirmed same-volume quarantine are not yet implemented in this candidate.
-            // Unknown ownership is never classified as low risk and cannot silently authorize removal.
+            // Ownership observations do not prove strict cleanup protection or a usable quarantine.
+            // This candidate therefore keeps the plan high-risk and requires approval.
             RequiresApproval = true,
             QuarantineAvailable = false,
             Risk = RiskClass.High,
@@ -58,7 +58,7 @@ internal static class FileRemovalPlans
                 Kind = (FileEntryKind)entry.Kind,
                 SizeBytes = entry.Size,
                 IdentitySha256 = ByteString.CopyFrom(entry.IdentitySha256),
-                OwnerVerified = false,
+                OwnerVerified = verifiedOwnedPaths?.Contains(entry.Path) == true,
             });
         }
 
@@ -110,6 +110,7 @@ internal static class FileRemovalPlans
         for (var index = 0; index < snapshot.Entries.Count; index++)
         {
             var entry = snapshot.Entries[index];
+            var ownerVerified = plan.Items[index].OwnerVerified;
             var itemId = StoreIds.NewUuid7(transaction.Clock);
             // Display-only path for the existing cleanup ledger; all future authority must use the recorded native root and IDs.
             var displayPath = Path.Combine(rootPath, entry.Path.Replace('/', Path.DirectorySeparatorChar));
@@ -117,23 +118,24 @@ internal static class FileRemovalPlans
                 INSERT INTO cleanup_item
                   (plan_id, item_id, path, size_bytes, item_class, reason, risk, action,
                    fp_mtime, fp_size, fp_owner_state, external)
-                VALUES ($plan, $item, $path, $size, 10, 'ownership_unverified', 3, 1,
-                        $mtime, $size, 'unverified', 1);
+                VALUES ($plan, $item, $path, $size, 10, $reason, 3, 1,
+                        $mtime, $size, $owner, 1);
                 """, ("$plan", planId), ("$item", itemId), ("$path", displayPath), ("$size", checked((long)entry.Size)),
-                ("$mtime", entry.Stamp.Modification));
+                ("$mtime", entry.Stamp.Modification), ("$reason", ownerVerified ? "ownership_verified" : "ownership_unverified"),
+                ("$owner", ownerVerified ? "verified" : "unverified"));
             transaction.Execute("""
                 INSERT INTO file_removal_plan_item
                   (plan_id, item_id, ordinal, relative_path, entry_kind, native_platform, native_identity,
                    identity_sha256, fingerprint_sha256, stamp_size, stamp_mtime, stamp_mtime_nsec,
                    stamp_change, stamp_change_nsec, mode, link_count, owner_verified)
                 VALUES ($plan, $item, $ordinal, $path, $kind, $platform, $identity,
-                        $identity_sha, $fingerprint, $size, $mtime, $mtime_nsec, $change, $change_nsec, $mode, $links, 0);
+                        $identity_sha, $fingerprint, $size, $mtime, $mtime_nsec, $change, $change_nsec, $mode, $links, $owner);
                 """, ("$plan", planId), ("$item", itemId), ("$ordinal", index), ("$path", entry.Path),
                 ("$kind", (int)entry.Kind), ("$platform", entry.NativeIdentity.Platform), ("$identity", entry.NativeIdentity.Bytes),
                 ("$identity_sha", entry.IdentitySha256), ("$fingerprint", entry.FingerprintSha256), ("$size", entry.Stamp.Size),
                 ("$mtime", entry.Stamp.Modification), ("$mtime_nsec", (long)entry.Stamp.ModificationNanoseconds),
                 ("$change", entry.Stamp.Change), ("$change_nsec", (long)entry.Stamp.ChangeNanoseconds),
-                ("$mode", (long)entry.Mode), ("$links", (long)entry.Links));
+                ("$mode", (long)entry.Mode), ("$links", (long)entry.Links), ("$owner", ownerVerified ? 1 : 0));
         }
 
     }

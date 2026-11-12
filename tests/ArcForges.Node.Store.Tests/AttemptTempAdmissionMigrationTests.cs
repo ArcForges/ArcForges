@@ -13,7 +13,8 @@ public sealed class AttemptTempAdmissionMigrationTests
     {
         using var root = new TemporaryDataRoot();
         var clock = new ManualClock();
-        using (var current = root.Open(clock))
+        var version13 = new MigrationPlan(StoreMigrations.Released.Steps.Take(13));
+        using (var current = root.Open(clock, version13))
         {
             Assert.Equal(13, current.Metadata.SchemaVersion);
             Assert.Equal(13, current.Metadata.MinReaderVersion);
@@ -23,7 +24,7 @@ public sealed class AttemptTempAdmissionMigrationTests
         var older = new MigrationPlan(StoreMigrations.Released.Steps.Take(12));
         var refusal = Assert.Throws<StoreIncompatibleException>(() => root.Open(clock, older));
         Assert.Contains("schema version 13", refusal.Message, StringComparison.Ordinal);
-        using var reopened = root.Open(clock);
+        using var reopened = root.Open(clock, version13);
         Assert.Equal("7", reopened.Read(reader => reader.Scalar("SELECT value_json FROM node_setting WHERE name = 'preserved';")));
     }
 

@@ -84,7 +84,7 @@ public sealed class MigrationPlan
 public static class StoreMigrations
 {
     /// <summary>The schema version this binary writes; it reads stores whose <c>min_reader_version</c> is at most this.</summary>
-    public const int SupportedSchemaVersion = 13;
+    public const int SupportedSchemaVersion = 14;
 
     /// <summary>The released steps, loaded from the embedded <c>Schema/*.sql</c> resources.</summary>
     public static MigrationPlan Released { get; } = new([
@@ -128,6 +128,9 @@ public static class StoreMigrations
         // AF-CTR-06: prior binaries can delete untracked attempt directories without checking provenance or protection.
         // They must not open a store whose attempt-directory retention has switched to the new semantics.
         Load(13, 13, "0013-schema-step-13.sql"),
+
+        // AF-CTR-06: creation evidence changes ownership decisions; prior writers cannot safely share this store.
+        Load(14, 14, "0014-schema-step-14.sql"),
     ]);
 
     private static StoreMigration Load(int version, int minReaderVersion, string name)

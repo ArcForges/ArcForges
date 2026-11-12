@@ -170,12 +170,29 @@ internal sealed partial class FileServiceHandler
                     if (transaction.Scalar("SELECT 1 FROM file_private_stage_object LIMIT 1;") is not null)
                         throw new WorkspaceRemovalPlanException("file_access_denied");
                     var snapshot = WorkspaceRemovalPlan.Capture(use.Root, target.Path, token);
+                    var verifiedOwners = new HashSet<string>(StringComparer.Ordinal);
+                    foreach (var entry in snapshot.Entries)
+                    {
+                        CheckBudget();
+                        if (FileCreationOwnership.IsVerifiedAgent(transaction, caller.CenterCaller, workspace, use.Root, entry, token))
+                            verifiedOwners.Add(entry.Path);
+                    }
+                    if (verifiedOwners.Count != 0)
+                    {
+                        // Ownership readback may take time. Re-observe the entire plan before recording a positive item.
+                        var rechecked = WorkspaceRemovalPlan.Capture(use.Root, target.Path, token);
+                        if (rechecked.Entries.Count != snapshot.Entries.Count || rechecked.TotalBytes != snapshot.TotalBytes ||
+                            !rechecked.RootIdentity.Bytes.AsSpan().SequenceEqual(snapshot.RootIdentity.Bytes) ||
+                            rechecked.Entries.Where((entry, index) =>
+                                !entry.FingerprintSha256.AsSpan().SequenceEqual(snapshot.Entries[index].FingerprintSha256)).Any())
+                            throw new WorkspaceRemovalPlanException("planned_tree_changed");
+                    }
                     CheckBudget();
                     CheckPlanAuthority(transaction, caller);
                     var sample = RoutedFileValidationTime.Sample(transaction);
                     if (!sample.Healthy) throw new RoutedAbortException(RoutedAbort.ClockUncertain);
                     var prepared = FileRemovalPlans.PrepareWorkspace(transaction, commandId, rawDigest, caller.CenterCaller,
-                        caller.Actor, target, use.Root.RootPath, snapshot, sample.BoundaryMicroseconds);
+                        caller.Actor, target, use.Root.RootPath, snapshot, sample.BoundaryMicroseconds, verifiedOwners);
                     response = new FileServicePlanRemovalResponse { Meta = meta, Value = new FileServicePlanRemovalValue { Plan = prepared.Plan } };
                     // A different malformed candidate cannot be misreported as an observed response-size limit.
                     if (!NodeShapes.IsValid(meta) || !NodeShapes.IsValid(prepared.Plan)) throw new RemovalPlanResponseUnavailableException();

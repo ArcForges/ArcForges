@@ -124,7 +124,8 @@ internal static partial class FileMutationJournal
     /// completed the guarded target effect and durability checks; no file content or reserialized request is stored.
     /// </summary>
     internal static byte[] CompleteApprovedVerifiedEffect(StoreTransaction transaction, ReadOnlySpan<byte> approvalId,
-        long resultingSize, ReadOnlySpan<byte> resultingSha256, uint? replacements)
+        long resultingSize, ReadOnlySpan<byte> resultingSha256, uint? replacements, WorkspaceCreatedOwnership? createdOwnership = null,
+        FileCreationOwnership.UpdateProof? ownershipUpdate = null)
     {
         RequireFull(transaction);
         var plan = PrivateStageApprovedPlans.Read(transaction, approvalId)
@@ -139,7 +140,10 @@ internal static partial class FileMutationJournal
             (row.Kind == FileOperationKind.Write ? replacements is not null :
                 replacements is null or < 1 or > 1000 || replacements != plan.ExpectedOccurrences))
             throw new InvalidOperationException("The approved effect does not match the prepared file intent.");
-        return CompleteCheckedEffect(transaction, row, resultingSize, resultingSha256, replacements);
+        if (createdOwnership is not null && (row.Kind != FileOperationKind.Write || !row.ExpectedAbsent || ownershipUpdate is not null) ||
+            ownershipUpdate is not null && row.ExpectedAbsent)
+            throw new InvalidOperationException("Creation and update evidence do not match the file intent.");
+        return CompleteCheckedEffect(transaction, row, resultingSize, resultingSha256, replacements, createdOwnership, ownershipUpdate);
     }
 
     /// <summary>

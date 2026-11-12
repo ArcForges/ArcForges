@@ -428,6 +428,14 @@ public sealed class NodeStore : IDisposable
                     throw new StoreIncompatibleException("The node store cannot be upgraded to schema 13 until prior node-instance exclusion is established; it was not changed.");
                 }
 
+                // A schema-13 instance already open could act on files without the new ownership rules. A reader
+                // floor does not stop that instance, so existing stores stay unchanged until process exclusion exists.
+                if (existing is { SchemaVersion: < 14 } && plan.LatestVersion >= 14 &&
+                    plan.Steps[13].Name == "0014-schema-step-14.sql")
+                {
+                    throw new StoreIncompatibleException("The node store cannot be upgraded to schema 14 until prior node-instance exclusion is established; it was not changed.");
+                }
+
                 writer = new SqliteConnection(StorePaths.ConnectionString(path, SqliteOpenMode.ReadWriteCreate));
                 writer.Open();
                 Pragma(writer, string.Create(CultureInfo.InvariantCulture, $"PRAGMA busy_timeout={BusyTimeoutMilliseconds};"));

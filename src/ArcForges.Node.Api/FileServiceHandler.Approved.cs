@@ -186,7 +186,10 @@ internal sealed partial class FileServiceHandler
                 AfterCreateForTests?.Invoke();
                 var created = lease.Use!.Root.ApplyExistingGuardedStage(plan.Intent.RelativePath, lease.Created.Guard,
                     lease.Intended!, SHA256.HashData(ReadOnlySpan<byte>.Empty), afterFirstEffect: null, beforeEachEffect: BeforeEffect, token);
-                return FileMutationJournal.CompleteApprovedVerifiedEffect(transaction, approvalId, created.Size, created.Sha256, replacements: null);
+                var ownership = lease.Use.Root.MarkCreatedTarget(plan.Intent.RelativePath, lease.Created, created.Size, created.Sha256,
+                    BeforeEffect, token);
+                return FileMutationJournal.CompleteApprovedVerifiedEffect(transaction, approvalId, created.Size, created.Sha256,
+                    replacements: null, ownership);
             }
             catch (Exception failure) when (failure is not OutOfMemoryException and not StackOverflowException)
             {
@@ -197,10 +200,14 @@ internal sealed partial class FileServiceHandler
 
         try
         {
-            var result = lease.Use!.Root.ApplyExistingGuardedStage(plan.Intent.RelativePath, lease.Target!, lease.Intended!,
+            var ownership = FileCreationOwnership.PrepareUpdate(transaction, plan.Intent.Caller, plan.Intent.WorkspaceId,
+                lease.Use!.Root, plan.Intent.RelativePath, lease.Target!, plan.Intent.OriginalSha256!, token);
+            var result = lease.Use.Root.ApplyExistingGuardedStage(plan.Intent.RelativePath, lease.Target!, lease.Intended!,
                 plan.Intent.OriginalSha256!, afterFirstEffect: null, beforeEachEffect: BeforeEffect, token);
+            if (ownership is not null && !FileCreationOwnership.ConfirmUpdate(ownership, lease.Use.Root, lease.Target!,
+                result.Size, result.Sha256, token)) ownership = null;
             return FileMutationJournal.CompleteApprovedVerifiedEffect(transaction, approvalId, result.Size, result.Sha256,
-                plan.Intent.Kind == FileOperationKind.Edit ? plan.ExpectedOccurrences : null);
+                plan.Intent.Kind == FileOperationKind.Edit ? plan.ExpectedOccurrences : null, ownershipUpdate: ownership);
         }
         catch (WorkspaceGuardedMutationException exception) when (exception.PossibleEffect)
         {

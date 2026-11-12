@@ -116,5 +116,16 @@ public sealed class RoutedApprovedFileCreateTests
         }
         Assert.Equal(request.Meta.CorrelationId, response.Meta.CorrelationId);
         Assert.Equal(SHA256.HashData(raw), op.RequestSha256.ToByteArray());
+        var ownershipRows = node.Runtime.Store.Read(r => r.Scalar(
+            "SELECT count(*) FROM file_creation_ownership WHERE creation_command_id = $id;",
+            ("$id", request.Meta.CommandId.Value.ToByteArray())));
+        Assert.Equal(scenario == 0 ? 1L : 0L, ownershipRows);
+        if (scenario == 0)
+        {
+            var recordedCaller = node.Runtime.Store.Read(r => (byte[])r.Scalar(
+                "SELECT caller FROM file_creation_ownership WHERE creation_command_id = $id;",
+                ("$id", request.Meta.CommandId.Value.ToByteArray()))!);
+            Assert.True(ArcForges.Node.Core.Security.CenterRouting.SameFileCaller(actor, CenterCaller.Parser.ParseFrom(recordedCaller)));
+        }
     }
 }

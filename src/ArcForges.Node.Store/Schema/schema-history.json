@@ -109,6 +109,14 @@
       "sha256": "d64d18e4f0ccf3990a0cd5c570dde1ac48be38e070bc21c6df4148f3d20dce78",
       "source": "AF-CTR-06 exact attempt temporary-directory provenance and reader admission: older binaries do not honor required retained/untracked semantics. Local unmerged candidate, not cleanup authority.",
       "addedBy": "AF-CTR-06"
+    },
+    {
+      "version": 14,
+      "minReaderVersion": 14,
+      "file": "0014-schema-step-14.sql",
+      "sha256": "8d18e05bc6413c4ce61f5497757ad4aab994c5b2d1085575ccf67890074d1e21",
+      "source": "AF-CTR-06 file creation marker and specific-caller provenance; local candidate, not cleanup authority.",
+      "addedBy": "AF-CTR-06"
     }
   ]
 }

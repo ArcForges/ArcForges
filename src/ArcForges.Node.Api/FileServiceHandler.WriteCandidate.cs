@@ -24,6 +24,8 @@ internal sealed partial class FileServiceHandler
     // Test-only callbacks coordinate a real competing create and an interruption after the actual creation effect.
     internal Action? BeforeCreateForTests { get; set; }
     internal Action? AfterCreateForTests { get; set; }
+    // A test can force a real SQLite rollback after the native create and tentative settlement.
+    internal Action? AfterCreationSettlementForTests { get; set; }
     internal Action? BeforeMutationEffectForTests { get; set; }
     internal Action? AfterStageBeforeJournalForTests { get; set; }
     internal Func<Task>? AfterPreparationForTests { get; set; }
@@ -558,26 +560,37 @@ internal sealed partial class FileServiceHandler
             }
 
             WorkspaceGuardedMutationResult actual;
+            WorkspaceCreatedOwnership? ownership;
             try
             {
                 AfterCreateForTests?.Invoke();
                 actual = lease.Use!.Root.ApplyExistingGuardedStage(request.Path!.Path, lease.Created.Guard,
                     lease.Stages!.Intended, SHA256.HashData(ReadOnlySpan<byte>.Empty), afterFirstEffect: null, beforeEachEffect: CheckEffect, token);
+                ownership = lease.Use.Root.MarkCreatedTarget(request.Path.Path, lease.Created, actual.Size, actual.Sha256, CheckEffect, token);
             }
             catch (Exception failure) when (failure is not OutOfMemoryException and not StackOverflowException)
             {
                 // Creation itself was an effect, even when no later content write began.
                 return FileMutationJournal.MarkUnknown(transaction, request.Meta!.CommandId.Value.Span);
             }
-            return FileMutationJournal.CompleteVerifiedEffect(transaction, request.Meta!.CommandId.Value.Span, raw, actual.Size, actual.Sha256, null);
+            var completed = FileMutationJournal.CompleteVerifiedEffect(transaction, request.Meta!.CommandId.Value.Span,
+                raw, actual.Size, actual.Sha256, null, ownership);
+            AfterCreationSettlementForTests?.Invoke();
+            return completed;
         }
 
         try
         {
-            var actual = lease.Use!.Root.ApplyExistingGuardedStage(request.Path!.Path, lease.Guard!, lease.Stages!.Intended,
+            var ownership = FileCreationOwnership.PrepareUpdate(transaction, caller.CenterCaller!,
+                request.Path!.WorkspaceId.Value.Span, lease.Use!.Root, request.Path.Path, lease.Guard!,
+                request.ExpectedSha256.Span, token);
+            var actual = lease.Use.Root.ApplyExistingGuardedStage(request.Path.Path, lease.Guard!, lease.Stages!.Intended,
                 request.ExpectedSha256.Span, afterFirstEffect: null, beforeEachEffect: CheckEffect, token);
+            if (ownership is not null && !FileCreationOwnership.ConfirmUpdate(ownership, lease.Use.Root, lease.Guard!,
+                actual.Size, actual.Sha256, token)) ownership = null;
             var replacements = request.Kind == FileOperationKind.Edit ? request.ExpectedOccurrences : (uint?)null;
-            return FileMutationJournal.CompleteVerifiedEffect(transaction, request.Meta!.CommandId.Value.Span, raw, actual.Size, actual.Sha256, replacements);
+            return FileMutationJournal.CompleteVerifiedEffect(transaction, request.Meta!.CommandId.Value.Span, raw, actual.Size,
+                actual.Sha256, replacements, ownershipUpdate: ownership);
         }
         catch (WorkspaceGuardedMutationException failure) when (failure.PossibleEffect)
         {

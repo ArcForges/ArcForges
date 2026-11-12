@@ -2,6 +2,7 @@
 using System.Security.Cryptography;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
+using ArcForges.Node.Core.Platform;
 using ArcForges.Node.Core.Security;
 using ArcForges.Node.Store;
 using Google.Protobuf;
@@ -21,7 +22,8 @@ internal static partial class FileMutationJournal
     /// flushed, rehashed and the required identities have been revalidated.
     /// </summary>
     internal static byte[] CompleteVerifiedEffect(StoreTransaction transaction, ReadOnlySpan<byte> commandId,
-        ReadOnlySpan<byte> transmitted, long resultingSize, ReadOnlySpan<byte> resultingSha256, uint? replacements)
+        ReadOnlySpan<byte> transmitted, long resultingSize, ReadOnlySpan<byte> resultingSha256, uint? replacements,
+        WorkspaceCreatedOwnership? createdOwnership = null, FileCreationOwnership.UpdateProof? ownershipUpdate = null)
     {
         RequireFull(transaction);
         StoreIds.Validate(commandId, nameof(commandId));
@@ -46,11 +48,15 @@ internal static partial class FileMutationJournal
                 throw new ArgumentException("The replacement count must match the original edit request.", nameof(replacements));
         }
 
-        return CompleteCheckedEffect(transaction, row, resultingSize, resultingSha256, replacements);
+        if (createdOwnership is not null && (row.Kind != FileOperationKind.Write || !row.ExpectedAbsent || ownershipUpdate is not null) ||
+            ownershipUpdate is not null && row.ExpectedAbsent)
+            throw new InvalidOperationException("Creation and update evidence do not match the file intent.");
+        return CompleteCheckedEffect(transaction, row, resultingSize, resultingSha256, replacements, createdOwnership, ownershipUpdate);
     }
 
     private static byte[] CompleteCheckedEffect(StoreTransaction transaction, JournalRow row, long resultingSize,
-        ReadOnlySpan<byte> resultingSha256, uint? replacements)
+        ReadOnlySpan<byte> resultingSha256, uint? replacements, WorkspaceCreatedOwnership? createdOwnership = null,
+        FileCreationOwnership.UpdateProof? ownershipUpdate = null)
     {
         var result = new FileMutationResult
         {
@@ -103,6 +109,15 @@ internal static partial class FileMutationJournal
             """, ("$now", transaction.NowMicroseconds), ("$id", row.CommandId)) != 1)
             throw new InvalidOperationException("The file intent changed during settlement.");
         CommandDeduplication.Complete(transaction, row.CommandId, outcome);
+        // A controlled update retains evidence only if the same caller, old marker/ID/hash and the final
+        // marker/ID/hash were observed on the guarded object. Any unverified or foreign write invalidates it.
+        var objectGeneration = FileCreationOwnership.InvalidateAffected(transaction, row.CommandId, createdOwnership);
+        var retained = ownershipUpdate is not null && objectGeneration is not null &&
+            FileCreationOwnership.Advance(transaction, ownershipUpdate, row.CommandId, row.WorkspaceId, row.Path,
+                row.Caller, resultingSize, resultingSha256, objectGeneration.Value);
+        if (!retained) FileCreationOwnership.ForgetPath(transaction, row.WorkspaceId, row.Path);
+        if (createdOwnership?.Marker is not null)
+            FileCreationOwnership.RecordCompleted(transaction, row.CommandId, createdOwnership, resultingSize, resultingSha256);
         // A terminal named stage remains retained and charged, but no longer holds the workspace open.
         if (PrivateStageRegistry.HasSchema(transaction))
             transaction.Execute("UPDATE file_private_stage_reservation SET active = 0 WHERE command_id = $id AND active = 1;",
@@ -130,6 +145,8 @@ internal static partial class FileMutationJournal
             WHERE command_id = $id AND phase = 1 AND held = 1 AND acknowledged = 0;
             """, ("$now", transaction.NowMicroseconds), ("$id", row.CommandId)) != 1)
             throw new InvalidOperationException("The file intent changed during recovery.");
+        _ = FileCreationOwnership.InvalidateAffected(transaction, row.CommandId, created: null);
+        FileCreationOwnership.ForgetPath(transaction, row.WorkspaceId, row.Path);
         CommandDeduplication.Complete(transaction, row.CommandId, outcome);
         AuditLog.AppendFileWorkspace(transaction, Actor(row), "file.recovery FileService.GetFileOperation",
             row.WorkspaceId, null, row.Path, PermissionDecision.Allow, "recovered: file_outcome_unknown", null);
