@@ -493,18 +493,22 @@ public sealed partial class AttemptRemovalPlanWindowsTests
         Assert.Equal(1L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_removal_plan;")));
 
         // A configured database root whose physical directory is missing cannot classify children UNTRACKED.
-        Assert.NotNull(recordedRoot);
         var physicallyMissing = Path.Combine(node.Root, "physically-missing-tracking-root");
         var physicalDirectory = CommandIds.New().Value.ToByteArray();
         node.Runtime.Store.Write(transaction =>
         {
-            transaction.Execute("UPDATE root_location SET path=$path WHERE root_class='records';", ("$path", physicallyMissing));
+            if (recordedRoot is null)
+                transaction.Execute("INSERT INTO root_location (root_class, path) VALUES ('records', $path);", ("$path", physicallyMissing));
+            else
+                transaction.Execute("UPDATE root_location SET path=$path WHERE root_class='records';", ("$path", physicallyMissing));
             transaction.Execute("""
                 INSERT INTO managed_directory
                   (directory_id, owner_kind, owner_id, root_class, relative_path, created_at, last_used_at, pinned, state, rev)
                 VALUES ($id, 5, $owner, 'records', 'missing-entry', $now, $now, 0, 2, 0);
                 """, ("$id", physicalDirectory), ("$owner", node.Runtime.NodeId.ToArray()), ("$now", transaction.NowMicroseconds));
         }, CommitDurability.Full);
+        Assert.Equal(physicallyMissing, node.Runtime.Store.Read(reader => reader.Scalar(
+            "SELECT path FROM root_location WHERE root_class='records';")));
         var physicalRequest = new FileServicePlanRemovalRequest { Meta = Tasks.Meta(), AttemptId = attempt.Clone() };
         var physicalRaw = physicalRequest.ToByteArray();
         var physicalAnswer = await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval, physicalRaw, physicalRequest.Meta.CommandId);
@@ -513,7 +517,10 @@ public sealed partial class AttemptRemovalPlanWindowsTests
         node.Runtime.Store.Write(transaction =>
         {
             transaction.Execute("UPDATE managed_directory SET state=5 WHERE directory_id=$id;", ("$id", physicalDirectory));
-            if (recordedRoot is not null) transaction.Execute("UPDATE root_location SET path=$path WHERE root_class='records';", ("$path", recordedRoot));
+            if (recordedRoot is null)
+                transaction.Execute("DELETE FROM root_location WHERE root_class='records';");
+            else
+                transaction.Execute("UPDATE root_location SET path=$path WHERE root_class='records';", ("$path", recordedRoot));
         }, CommitDurability.Full);
         Assert.Equal(physicalAnswer.Answer.Response, (await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval,
             physicalRaw, physicalRequest.Meta.CommandId)).Answer!.Response);
