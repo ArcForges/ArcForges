@@ -93,6 +93,14 @@
       "sha256": "d00b5bea598ece808109d9af9e3c89d47f436800a2b246ac51f990be181394a9",
       "source": "AF-CTR-06 native target hold fence and transaction-local distinct-object witness; local author candidate.",
       "addedBy": "AF-CTR-06"
+    },
+    {
+      "version": 12,
+      "minReaderVersion": 1,
+      "file": "0012-schema-step-12.sql",
+      "sha256": "1b8ae5ba3e67f0d220d75597d2865b35bec9975d96381f40fe5f6151e4b03af5",
+      "source": "AF-CTR-06 metadata-only removal plan identities and exact requester-bound receipts; isolated, unmerged candidate.",
+      "addedBy": "AF-CTR-06"
     }
   ]
 }

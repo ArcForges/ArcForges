@@ -37,7 +37,7 @@ public sealed class TargetHoldMigrationTests
             }, CommitDurability.Full);
         }
 
-        using var current = root.Open(clock);
+        using var current = root.Open(clock, new MigrationPlan(StoreMigrations.Released.Steps.Take(11)));
         Assert.Equal(10, current.Opening.MigratedFrom);
         Assert.Equal(11, current.Metadata.SchemaVersion);
         Assert.Equal(1, current.Metadata.MinReaderVersion);
@@ -190,7 +190,7 @@ public sealed class TargetHoldMigrationTests
             Assert.Equal(SQLitePCL.raw.SQLITE_OK, SQLitePCL.raw.sqlite3_bind_blob(prepared, 6, parent));
             Assert.Equal(SQLitePCL.raw.SQLITE_OK, SQLitePCL.raw.sqlite3_bind_blob(prepared, 7, heldTarget));
 
-            using var current = root.Open(clock);
+            using var current = root.Open(clock, new MigrationPlan(StoreMigrations.Released.Steps.Take(11)));
             Assert.Equal(10, current.Opening.MigratedFrom);
             Assert.Equal(11, current.Metadata.SchemaVersion);
             Assert.Same(database, older.Handle);

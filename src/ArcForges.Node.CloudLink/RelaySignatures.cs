@@ -93,14 +93,14 @@ internal static class RelaySignatures
         ArgumentNullException.ThrowIfNull(center);
         var method = assertion.HasMethod ? (int)assertion.Method : 0;
         var origin = assertion.HasLocalOrigin ? (int)assertion.LocalOrigin : 0;
-        if ((method is < 1 or > 9) && method is not (10 or 11 or 12 or 13 or 16) && (method is < 17 or > 20) || origin is < 1 or > 3)
+        if ((method is < 1 or > 9) && method is not (10 or 11 or 12 or 13 or 14 or 16) && (method is < 17 or > 20) || origin is < 1 or > 3)
         {
             return null;
         }
 
         var listNodes = method == (int)RoutedMethod.ListNodes;
         var commanded = method is (int)RoutedMethod.SubmitNodeTask or (int)RoutedMethod.CancelNodeTask
-            or (int)RoutedMethod.WriteNodeFile or (int)RoutedMethod.EditNodeFile
+            or (int)RoutedMethod.WriteNodeFile or (int)RoutedMethod.EditNodeFile or (int)RoutedMethod.PlanNodeRemoval
             or (int)RoutedMethod.RegisterNodeWorkspace or (int)RoutedMethod.UnregisterNodeWorkspace;
         if (!IdBytes(assertion.RelayingNodeId, out var relaying) || !IdBytes(assertion.RelayingInstallationId, out var installation)
             || !IdBytes(assertion.LocalSessionId, out var session)

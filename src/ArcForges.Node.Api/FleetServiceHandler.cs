@@ -19,7 +19,7 @@ namespace ArcForges.Node.Api;
 /// channel nonce over the original request bytes, and forwards supported fleet methods through the node's bound center transport.
 /// All other FleetService methods retain the generated UNIMPLEMENTED implementation.
 /// </summary>
-internal sealed class FleetServiceHandler(NodeRuntime node, ClientSessions sessions, CloudLinkService cloud) : FleetService.FleetServiceBase
+internal sealed partial class FleetServiceHandler(NodeRuntime node, ClientSessions sessions, CloudLinkService cloud) : FleetService.FleetServiceBase
 {
     private readonly ApiCommands _api = new(node, sessions, "FleetService");
 
@@ -873,7 +873,7 @@ internal sealed class FleetServiceHandler(NodeRuntime node, ClientSessions sessi
 
             var maximum = method == RoutedMethod.WaitNodeTask ? TimeSpan.FromSeconds(55) :
                 method == RoutedMethod.ReadNodeTaskOutput ? TimeSpan.FromSeconds(30) :
-                method is RoutedMethod.ReadNodeFile or RoutedMethod.WriteNodeFile or RoutedMethod.EditNodeFile or RoutedMethod.SearchNodeFiles or RoutedMethod.ListNodeDirectory or RoutedMethod.GetNodeFileOperation or RoutedMethod.RegisterNodeWorkspace or RoutedMethod.UnregisterNodeWorkspace or
+                method is RoutedMethod.ReadNodeFile or RoutedMethod.WriteNodeFile or RoutedMethod.EditNodeFile or RoutedMethod.SearchNodeFiles or RoutedMethod.ListNodeDirectory or RoutedMethod.GetNodeFileOperation or RoutedMethod.PlanNodeRemoval or RoutedMethod.RegisterNodeWorkspace or RoutedMethod.UnregisterNodeWorkspace or
                     RoutedMethod.ListNodeWorkspaces or RoutedMethod.GetNodeWorkspace ? TimeSpan.FromSeconds(15) : TimeSpan.FromSeconds(10);
             var answer = await cloud.ForwardRelayAsync(signed,
                 (client, options) => send(caller, signed.Assertion.ToByteString(), client, options), left < maximum ? left : maximum, context.CancellationToken)

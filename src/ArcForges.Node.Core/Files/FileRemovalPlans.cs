@@ -1,0 +1,145 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+using System.Buffers.Binary;
+using System.Security.Cryptography;
+using ArcForges.Client;
+using ArcForges.Contracts.Node.V1;
+using ArcForges.Node.Store;
+using Google.Protobuf;
+using Id = ArcForges.Contracts.Foundation.V1.Id;
+
+namespace ArcForges.Node.Core.Files;
+
+/// <summary>
+/// Persists one checked metadata-only plan with its exact caller and request binding in the caller's FULL transaction.
+/// The caller owns authorization, the receipt and audit. This class neither grants cleanup authority nor changes files.
+/// </summary>
+internal static class FileRemovalPlans
+{
+    internal const long LifetimeMicroseconds = 60L * 60 * 1_000_000;
+
+    internal static FileRemovalPlan RecordWorkspace(StoreTransaction transaction, ReadOnlySpan<byte> commandId,
+        ReadOnlySpan<byte> rawSha256, CenterCaller caller, ActorRef actor, FilePath target, string rootPath,
+        WorkspaceRemovalSnapshot snapshot, long observedTime)
+    {
+        ArgumentNullException.ThrowIfNull(transaction);
+        ArgumentNullException.ThrowIfNull(caller);
+        ArgumentNullException.ThrowIfNull(actor);
+        ArgumentNullException.ThrowIfNull(target);
+        ArgumentNullException.ThrowIfNull(snapshot);
+        if (transaction.Durability != CommitDurability.Full || rawSha256.Length != 32 ||
+            commandId.Length != 16 || target.WorkspaceId?.Value.Length != 16 || !target.HasPath ||
+            snapshot.Entries.Count is < 1 or > WorkspaceRemovalPlan.MaximumDescendants + 1 ||
+            snapshot.TotalBytes > WorkspaceRemovalPlan.MaximumTotalBytes)
+            throw new InvalidOperationException("A checked removal plan requires a FULL transaction and bounded identity.");
+
+        var planId = StoreIds.NewUuid7(transaction.Clock);
+        var expires = checked(observedTime + LifetimeMicroseconds);
+        var plan = new FileRemovalPlan
+        {
+            PlanId = new Id { Value = ByteString.CopyFrom(planId) },
+            ExpiresAt = ProtoTime.ToInstant(StoreTime.FromMicroseconds(expires)),
+            WorkspacePath = target.Clone(),
+            TotalBytes = snapshot.TotalBytes,
+            // Ownership markers and confirmed same-volume quarantine are not yet implemented in this candidate.
+            // Unknown ownership is never classified as low risk and cannot silently authorize removal.
+            RequiresApproval = true,
+            QuarantineAvailable = false,
+            Risk = RiskClass.High,
+        };
+        foreach (var entry in snapshot.Entries)
+        {
+            plan.Items.Add(new FileRemovalItem
+            {
+                Path = entry.Path,
+                Kind = (FileEntryKind)entry.Kind,
+                SizeBytes = entry.Size,
+                IdentitySha256 = ByteString.CopyFrom(entry.IdentitySha256),
+                OwnerVerified = false,
+            });
+        }
+
+        var callerBytes = caller.ToByteArray();
+        var digest = Digest(plan, rawSha256, callerBytes, snapshot);
+        plan.Digest = ByteString.CopyFrom(digest);
+        transaction.Execute("""
+            INSERT INTO cleanup_plan
+              (plan_id, state, digest, planned_by, total_bytes, item_count, created_at, expires_at, rev)
+            VALUES ($plan, 1, $digest, $actor, $total, $count, $created, $expires, 0);
+            """, ("$plan", planId), ("$digest", digest), ("$actor", actor.ToByteArray()),
+            ("$total", checked((long)snapshot.TotalBytes)), ("$count", snapshot.Entries.Count),
+            ("$created", observedTime), ("$expires", expires));
+        transaction.Execute("""
+            INSERT INTO file_removal_plan
+              (plan_id, command_id, request_sha256, caller, target_kind, workspace_id, workspace_path,
+               root_platform, root_identity, requires_approval, quarantine_available)
+            VALUES ($plan, $command, $request, $caller, 1, $workspace, $path, $platform, $root, 1, 0);
+            """, ("$plan", planId), ("$command", commandId.ToArray()), ("$request", rawSha256.ToArray()),
+            ("$caller", callerBytes), ("$workspace", target.WorkspaceId.Value.ToByteArray()), ("$path", target.Path),
+            ("$platform", snapshot.RootIdentity.Platform), ("$root", snapshot.RootIdentity.Bytes));
+
+        for (var index = 0; index < snapshot.Entries.Count; index++)
+        {
+            var entry = snapshot.Entries[index];
+            var itemId = StoreIds.NewUuid7(transaction.Clock);
+            // Display-only path for the existing cleanup ledger; all future authority must use the recorded native root and IDs.
+            var displayPath = Path.Combine(rootPath, entry.Path.Replace('/', Path.DirectorySeparatorChar));
+            transaction.Execute("""
+                INSERT INTO cleanup_item
+                  (plan_id, item_id, path, size_bytes, item_class, reason, risk, action,
+                   fp_mtime, fp_size, fp_owner_state, external)
+                VALUES ($plan, $item, $path, $size, 10, 'ownership_unverified', 3, 1,
+                        $mtime, $size, 'unverified', 1);
+                """, ("$plan", planId), ("$item", itemId), ("$path", displayPath), ("$size", checked((long)entry.Size)),
+                ("$mtime", entry.Stamp.Modification));
+            transaction.Execute("""
+                INSERT INTO file_removal_plan_item
+                  (plan_id, item_id, ordinal, relative_path, entry_kind, native_platform, native_identity,
+                   identity_sha256, fingerprint_sha256, stamp_size, stamp_mtime, stamp_mtime_nsec,
+                   stamp_change, stamp_change_nsec, mode, link_count, owner_verified)
+                VALUES ($plan, $item, $ordinal, $path, $kind, $platform, $identity,
+                        $identity_sha, $fingerprint, $size, $mtime, $mtime_nsec, $change, $change_nsec, $mode, $links, 0);
+                """, ("$plan", planId), ("$item", itemId), ("$ordinal", index), ("$path", entry.Path),
+                ("$kind", (int)entry.Kind), ("$platform", entry.NativeIdentity.Platform), ("$identity", entry.NativeIdentity.Bytes),
+                ("$identity_sha", entry.IdentitySha256), ("$fingerprint", entry.FingerprintSha256), ("$size", entry.Stamp.Size),
+                ("$mtime", entry.Stamp.Modification), ("$mtime_nsec", (long)entry.Stamp.ModificationNanoseconds),
+                ("$change", entry.Stamp.Change), ("$change_nsec", (long)entry.Stamp.ChangeNanoseconds),
+                ("$mode", (long)entry.Mode), ("$links", (long)entry.Links));
+        }
+
+        return plan;
+    }
+
+    private static byte[] Digest(FileRemovalPlan plan, ReadOnlySpan<byte> rawSha256, ReadOnlySpan<byte> caller,
+        WorkspaceRemovalSnapshot snapshot)
+    {
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        hash.AppendData("ArcForges exact removal plan v1\0"u8);
+        Append(hash, rawSha256);
+        Append(hash, caller);
+        Append(hash, plan.ToByteArray());
+        Append(hash, snapshot.RootIdentity.Bytes);
+        Span<byte> frame = stackalloc byte[4];
+        BinaryPrimitives.WriteInt32BigEndian(frame, snapshot.RootIdentity.Platform);
+        hash.AppendData(frame);
+        // The action is the existing ledger's QUARANTINE candidate. It is not an effect or proof a root is available.
+        BinaryPrimitives.WriteInt32BigEndian(frame, 1);
+        hash.AppendData(frame);
+        foreach (var entry in snapshot.Entries)
+        {
+            BinaryPrimitives.WriteInt32BigEndian(frame, entry.NativeIdentity.Platform);
+            hash.AppendData(frame);
+            Append(hash, entry.NativeIdentity.Bytes);
+            Append(hash, entry.FingerprintSha256);
+        }
+
+        return hash.GetHashAndReset();
+    }
+
+    private static void Append(IncrementalHash hash, ReadOnlySpan<byte> value)
+    {
+        Span<byte> size = stackalloc byte[4];
+        BinaryPrimitives.WriteInt32BigEndian(size, value.Length);
+        hash.AppendData(size);
+        hash.AppendData(value);
+    }
+}

@@ -304,7 +304,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
         }
 
         var mutation = method is RoutedMethod.SubmitNodeTask or RoutedMethod.CancelNodeTask or
-            RoutedMethod.WriteNodeFile or RoutedMethod.EditNodeFile or
+            RoutedMethod.WriteNodeFile or RoutedMethod.EditNodeFile or RoutedMethod.PlanNodeRemoval or
             RoutedMethod.RegisterNodeWorkspace or RoutedMethod.UnregisterNodeWorkspace;
         if (mutation && (meta?.CommandId is not { } inner || header.CommandId is null || !inner.Value.Span.SequenceEqual(header.CommandId.Value.Span)))
         {
@@ -405,7 +405,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
         var digest = PayloadDigest.Compute(raw);
         // New file mutations use the journal's original-caller and SHA-256-of-exact-raw-bytes binding, not the
         // legacy PayloadDigest or its in-flight caller-class shortcut. Their writer serializes the journal/effect.
-        var key = mutation && !IsFileMutation(method) ? Convert.ToHexString(header.CommandId!.Value.Span) : null;
+        var key = mutation && !IsFileMutation(method) && method != RoutedMethod.PlanNodeRemoval ? Convert.ToHexString(header.CommandId!.Value.Span) : null;
 
         // Decisions B-2: the same caller's duplicate is answered before anything that would assert DID_NOT_HAPPEN.
         if (key is not null)
@@ -462,7 +462,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
             RawRequest = raw,
             Routed = context,
         };
-        if (!IsFileMutation(method))
+        if (!IsFileMutation(method) && method != RoutedMethod.PlanNodeRemoval)
         {
             var policy = node.Store.Read(PolicyRules.Current).Document;
             if (CenterRouting.Refusal(center, node.NodeId.Span, policy.CenterRouted) is { } reason)
@@ -538,6 +538,11 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
             }
 
             return answer;
+        }
+        catch (RemovalPlanResponseUnavailableException)
+        {
+            // A rolled-back plan that cannot be represented is never signed as a partial success.
+            return null;
         }
         catch (CommandQueueFullException)
         {
@@ -626,6 +631,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
         RoutedMethod.ReadNodeFile => Pair(FileServiceReadFileRequest.Parser.ParseFrom(payload), request => request.Meta),
         RoutedMethod.ListNodeDirectory => Pair(FileServiceListDirectoryRequest.Parser.ParseFrom(payload), request => request.Meta),
         RoutedMethod.SearchNodeFiles => Pair(FileServiceSearchFilesRequest.Parser.ParseFrom(payload), request => request.Meta),
+        RoutedMethod.PlanNodeRemoval => Pair(FileServicePlanRemovalRequest.Parser.ParseFrom(payload), request => request.Meta),
         RoutedMethod.SubmitNodeTask => Pair(TaskServiceSubmitTaskRequest.Parser.ParseFrom(payload), request => request.Meta),
         RoutedMethod.GetNodeTask => Pair(TaskServiceGetTaskRequest.Parser.ParseFrom(payload), request => request.Meta),
         RoutedMethod.ListNodeTasks => Pair(TaskServiceListTasksRequest.Parser.ParseFrom(payload), request => request.Meta),
@@ -657,6 +663,9 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
             case RoutedMethod.ListNodeDirectory:
                 var directory = await files!.ListDirectoryAsync(caller, (FileServiceListDirectoryRequest)request, cancellationToken).ConfigureAwait(false);
                 return (directory, directory.Error);
+            case RoutedMethod.PlanNodeRemoval:
+                var plan = await files!.PlanRemovalAsync(caller, (FileServicePlanRemovalRequest)request, cancellationToken).ConfigureAwait(false);
+                return (plan, plan.Error);
             case RoutedMethod.SearchNodeFiles:
                 var search = await files!.SearchAsync(caller, (FileServiceSearchFilesRequest)request, cancellationToken).ConfigureAwait(false);
                 return (search, search.Error);
@@ -759,6 +768,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
             RoutedMethod.ReadNodeFile => new FileServiceReadFileResponse { Meta = responseMeta, Error = error },
             RoutedMethod.ListNodeDirectory => new FileServiceListDirectoryResponse { Meta = responseMeta, Error = error },
             RoutedMethod.SearchNodeFiles => new FileServiceSearchFilesResponse { Meta = responseMeta, Error = error },
+            RoutedMethod.PlanNodeRemoval => new FileServicePlanRemovalResponse { Meta = responseMeta, Error = error },
             RoutedMethod.SubmitNodeTask => new TaskServiceSubmitTaskResponse { Meta = responseMeta, Error = error },
             RoutedMethod.GetNodeTask => new TaskServiceGetTaskResponse { Meta = responseMeta, Error = error },
             RoutedMethod.ListNodeTasks => new TaskServiceListTasksResponse { Meta = responseMeta, Error = error },
@@ -873,6 +883,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
             FileServiceEditFileRequest { Path: { HasPath: true } selected } => selected,
             FileServiceListDirectoryRequest { Path: { HasPath: true } selected } => selected,
             FileServiceSearchFilesRequest { Path: { HasPath: true } selected } => selected,
+            FileServicePlanRemovalRequest { WorkspacePath: { HasPath: true } selected } => selected,
             _ => null,
         };
         if (path is null)
@@ -907,11 +918,11 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
     private static bool IsFileMutation(RoutedMethod method) => method is RoutedMethod.WriteNodeFile or RoutedMethod.EditNodeFile;
 
     private static bool IsFile(RoutedMethod method) => IsFileMutation(method) ||
-        method is RoutedMethod.ReadNodeFile or RoutedMethod.SearchNodeFiles or RoutedMethod.ListNodeDirectory or RoutedMethod.GetNodeFileOperation;
+        method is RoutedMethod.ReadNodeFile or RoutedMethod.SearchNodeFiles or RoutedMethod.ListNodeDirectory or RoutedMethod.GetNodeFileOperation or RoutedMethod.PlanNodeRemoval;
 
     private static bool IsFileWorkspace(RoutedMethod method) => IsFile(method) || IsWorkspace(method);
 
-    private static bool IsFileWorkspaceMethod(IMessage request) => request is FileServiceReadFileRequest or FileServiceWriteFileRequest or FileServiceEditFileRequest or FileServiceSearchFilesRequest or FileServiceListDirectoryRequest or FileServiceGetFileOperationRequest or
+    private static bool IsFileWorkspaceMethod(IMessage request) => request is FileServiceReadFileRequest or FileServiceWriteFileRequest or FileServiceEditFileRequest or FileServiceSearchFilesRequest or FileServiceListDirectoryRequest or FileServiceGetFileOperationRequest or FileServicePlanRemovalRequest or
         WorkspaceServiceRegisterWorkspaceRequest or WorkspaceServiceUnregisterWorkspaceRequest or
         WorkspaceServiceListWorkspacesRequest or WorkspaceServiceGetWorkspaceRequest;
 
@@ -925,6 +936,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
         FileServiceEditFileRequest { Path.WorkspaceId: { } id } => id.Value.ToByteArray(),
         FileServiceListDirectoryRequest { Path.WorkspaceId: { } id } => id.Value.ToByteArray(),
         FileServiceSearchFilesRequest { Path.WorkspaceId: { } id } => id.Value.ToByteArray(),
+        FileServicePlanRemovalRequest { WorkspacePath.WorkspaceId: { } id } => id.Value.ToByteArray(),
         WorkspaceServiceUnregisterWorkspaceRequest { WorkspaceId: { } id } => id.Value.ToByteArray(),
         WorkspaceServiceGetWorkspaceRequest { WorkspaceId: { } id } => id.Value.ToByteArray(),
         _ => null,
@@ -938,6 +950,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
         RoutedMethod.ReadNodeFile => "ReadFile",
         RoutedMethod.ListNodeDirectory => "ListDirectory",
         RoutedMethod.SearchNodeFiles => "SearchFiles",
+        RoutedMethod.PlanNodeRemoval => "PlanRemoval",
         RoutedMethod.SubmitNodeTask => "SubmitTask",
         RoutedMethod.GetNodeTask => "GetTask",
         RoutedMethod.ListNodeTasks => "ListTasks",

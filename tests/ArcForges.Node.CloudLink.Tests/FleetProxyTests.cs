@@ -682,5 +682,85 @@ public sealed class FleetProxyTests
         Assert.Null(rejected.Value);
     }
 
+    [Fact(Timeout = 60000)]
+    public async Task RemovalPlanProxySignsTheOriginalCommandAndRejectsMismatchedIds()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var center = await FakeCenter.StartAsync();
+        center.ScriptedFleet = true;
+        await using var node = await CloudNode.Create(center.Endpoint.Url).StartAsync();
+        var nodeId = node.Runtime.NodeId.ToArray();
+        var credentials = center.Issue(nodeId);
+        byte[] publicKey;
+        using (var key = NodeKeyStores.ForTestDataRoot(node.DataRoot).Load(nodeId, center.Endpoint.Origin)
+            ?? NodeKeyStores.ForTestDataRoot(node.DataRoot).Create(nodeId, center.Endpoint.Origin, TimeProvider.System))
+        {
+            publicKey = key.PublicKey;
+            center.CommandKeys.Add(center.Channel.CommandPublicKey);
+            center.Channel.RegisterNodeKey(credentials.AccessToken, publicKey);
+            await node.Cloud.AdoptAsync(credentials, center.Endpoint);
+        }
+
+        await center.Channel.ProvedAsync();
+        await Eventually.TrueAsync(() => node.Cloud.Status().Relay == RelayState.Connected, "the node channel is connected");
+        await using var human = await node.ChannelAsync(Origin.Human);
+        var fleet = new FleetService.FleetServiceClient(human.CallInvoker);
+        var target = new Id { Value = ByteString.CopyFrom(nodeId) };
+        var meta = CloudNode.Command();
+        var path = new FilePath { WorkspaceId = CommandIds.New(), Path = "tree" };
+        var innerRequest = new FileServicePlanRemovalRequest { Meta = meta.Clone(), WorkspacePath = path.Clone() };
+        var inner = new FileServicePlanRemovalResponse
+        {
+            Meta = new ResponseMeta { CorrelationId = meta.CorrelationId.Clone() },
+            Value = new FileServicePlanRemovalValue
+            {
+                Plan = new FileRemovalPlan
+                {
+                    PlanId = CommandIds.New(),
+                    Digest = ByteString.CopyFrom(SHA256.HashData("fixture plan"u8)),
+                    ExpiresAt = ProtoTime.ToInstant(DateTimeOffset.UtcNow.AddMinutes(60)),
+                    WorkspacePath = path.Clone(),
+                    TotalBytes = 0,
+                    RequiresApproval = true,
+                    QuarantineAvailable = false,
+                    Risk = RiskClass.High,
+                    Items = { new FileRemovalItem { Path = "tree", Kind = FileEntryKind.Directory, SizeBytes = 0,
+                        IdentitySha256 = ByteString.CopyFrom(SHA256.HashData("fixture identity"u8)), OwnerVerified = false } },
+                },
+            },
+        };
+        center.Script("PlanNodeRemoval", Reply(new FleetServicePlanNodeRemovalResponse
+        {
+            Meta = new ResponseMeta { CorrelationId = meta.CorrelationId.Clone() },
+            Value = new FleetServicePlanNodeRemovalValue { NodeId = target.Clone(), Response = inner.ToByteString() },
+        }));
+        var result = await fleet.PlanNodeRemovalAsync(new FleetServicePlanNodeRemovalRequest
+        {
+            Meta = meta.Clone(),
+            NodeId = target.Clone(),
+            Request = innerRequest.ToByteString(),
+        }, cancellationToken: ct);
+        Assert.NotNull(result.Value);
+        Assert.Equal(inner.ToByteString(), result.Value.Response);
+        var sent = FleetServicePlanNodeRemovalRequest.Parser.ParseFrom(
+            FakeCenter.Payload(Assert.Single(center.CallsOf("PlanNodeRemoval")).Body));
+        var assertion = RelayAssertion.Parser.ParseFrom(sent.RelayAssertion);
+        Assert.Equal(RoutedMethod.PlanNodeRemoval, assertion.Method);
+        Assert.Equal(meta.CommandId, assertion.CommandId);
+        Assert.Equal(SHA256.HashData(innerRequest.ToByteArray()), assertion.RequestSha256.ToByteArray());
+        Assert.Equal(Origin.Human, sent.Caller.LocalOrigin);
+        Assert.True(FakeChannelPeer.Verify(publicKey, RelaySignatures.AssertionInput(assertion, center.Endpoint)!,
+            assertion.Signature.ToByteArray()));
+
+        var mismatch = await fleet.PlanNodeRemovalAsync(new FleetServicePlanNodeRemovalRequest
+        {
+            Meta = CloudNode.Command(),
+            NodeId = target,
+            Request = innerRequest.ToByteString(),
+        }, cancellationToken: ct);
+        Assert.Equal("invalid_argument", mismatch.Error.Code);
+        Assert.Single(center.CallsOf("PlanNodeRemoval"));
+    }
+
     private static FakeFault.Raw Reply(IMessage response) => new([.. FakeCenter.DataFrame(response), .. FakeCenter.TrailerFrame(0, null)]);
 }

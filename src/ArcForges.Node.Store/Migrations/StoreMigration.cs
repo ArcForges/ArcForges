@@ -84,7 +84,7 @@ public sealed class MigrationPlan
 public static class StoreMigrations
 {
     /// <summary>The schema version this binary writes; it reads stores whose <c>min_reader_version</c> is at most this.</summary>
-    public const int SupportedSchemaVersion = 11;
+    public const int SupportedSchemaVersion = 12;
 
     /// <summary>The released steps, loaded from the embedded <c>Schema/*.sql</c> resources.</summary>
     public static MigrationPlan Released { get; } = new([
@@ -121,6 +121,9 @@ public static class StoreMigrations
 
         // AF-CTR-06: old writers fail closed on target holds; only a native-checked transaction can witness distinct objects.
         Load(11, 1, "0011-schema-step-11.sql"),
+
+        // AF-CTR-06: exact removal-plan evidence and requester-bound command receipts.
+        Load(12, 1, "0012-schema-step-12.sql"),
     ]);
 
     private static StoreMigration Load(int version, int minReaderVersion, string name)
