@@ -168,6 +168,12 @@ public sealed class FileMutationFleetResponseValidationTests
         bool Accept() { outer.Value.Response = inner.ToByteString(); return RoutedFileResponseValidation.Write(outer, target, request); }
 
         Assert.True(Accept()); // Existing-file size is unknown even for an expected-absent request.
+        error.Details.Limit.Available = new WireDecimal { Value = "1.00" };
+        Assert.True(NodeShapes.IsValid(error));
+        Assert.True(Accept());
+        error.Details.Limit.Available.Value = "01.0";
+        Assert.False(Accept());
+        error.Details.Limit.Available.Value = "1.00";
         error.Details.Limit.LimitName = "removal_plan_response_bytes";
         Assert.False(Accept()); // Canonical names cannot be reinterpreted as another method's matching 4 MiB limit.
         error.Details.Limit.LimitName = "removal_ownership_input_bytes";

@@ -77,8 +77,8 @@ internal static partial class RoutedFileResponseValidation
     }
 
     /// <summary>
-    /// Applies canonicalDecimal independently of the published 450.1 validator, which accepts trailing fractional zeroes.
-    /// Each present maximum and available value must be canonical before the surrounding result may be accepted.
+    /// Retains the stricter maximum check while validating optional available with the published 450.1 Decimal shape.
+    /// The method-specific limit checks still require their exact unsigned integer maximum text.
     /// </summary>
     internal static bool CanonicalLimits(ArcError error)
     {
@@ -88,7 +88,7 @@ internal static partial class RoutedFileResponseValidation
         }
 
         return (limit.Maximum is null || CanonicalDecimal(limit.Maximum)) &&
-            (limit.Available is null || CanonicalDecimal(limit.Available)) &&
+            (limit.Available is null || NodeShapes.IsValid(limit.Available)) &&
             (error.Code != "too_large" || limit.Maximum is not null);
     }
 

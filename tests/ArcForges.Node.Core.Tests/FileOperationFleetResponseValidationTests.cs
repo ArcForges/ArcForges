@@ -65,6 +65,12 @@ public sealed class FileOperationFleetResponseValidationTests
 
         Assert.True(NodeShapes.IsValid(inner));
         Assert.True(Accept());
+        error.Details.Limit.Available = new WireDecimal { Value = "1.00" };
+        Assert.True(NodeShapes.IsValid(inner));
+        Assert.True(Accept());
+        error.Details.Limit.Available.Value = "-0.0";
+        Assert.False(Accept());
+        error.Details.Limit.Available.Value = "1.00";
         error.Details.Limit.LimitName = "removal_plan_response_bytes";
         Assert.False(Accept()); // A removal plan is not a persisted file operation kind.
         error.Details.Limit.LimitName = "file_existing_bytes";
