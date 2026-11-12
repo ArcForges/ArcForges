@@ -311,7 +311,7 @@ internal sealed partial class FileServiceHandler
         {
             directories.Parameters.AddWithValue("$id", attempt);
             using var row = directories.ExecuteReader();
-            if (!row.Read()) return NodeErrors.NotFound("attempt", attempt);
+            if (!row.Read()) return Error(ErrorCategory.State, "file_access_denied", "identity_unavailable", correlation);
             var state = row.GetInt32(0);
             var pinned = row.GetInt32(1);
             if (row.Read()) return Error(ErrorCategory.State, "file_access_denied", "identity_unavailable", correlation);
