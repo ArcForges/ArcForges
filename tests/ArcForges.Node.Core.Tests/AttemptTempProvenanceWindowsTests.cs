@@ -19,10 +19,12 @@ public sealed class AttemptTempProvenanceWindowsTests
         Assert.SkipUnless(OperatingSystem.IsWindows(), "Native Windows directory creation.");
         await using var node = await InProcessNode.Create().StartAsync();
         await using var channel = await node.ChannelAsync();
-        var spec = Tasks.Argv(node.Root, Tasks.Cmd, "/d", "/c", "echo retained>\"%TEMP%\\keep.txt\"");
+        var spec = AttemptTempRetentionTests.WriteFixtureToTemp(node.Root);
         var task = await Tasks.WaitAsync(channel, await Tasks.SubmitAsync(channel, spec));
-        Assert.Equal(TaskState.Succeeded, task.State);
-        var attempt = task.CurrentAttempt.AttemptId;
+        var result = task.CurrentAttempt?.Result;
+        Assert.True(task.State == TaskState.Succeeded,
+            $"state={task.State}; termination={result?.TerminationReason}; exit={result?.ExitCode}; detail={result?.Detail}");
+        var attempt = task.CurrentAttempt!.AttemptId;
         var name = IdText.Format(attempt);
         await Tasks.WaitForAsync(() => Sched.LogEvents(node, "execution.tmp.cleanup_unavailable")
             .Any(entry => Sched.Text(entry, "attempt") == name), Tasks.Bound, "the retained attempt directory");

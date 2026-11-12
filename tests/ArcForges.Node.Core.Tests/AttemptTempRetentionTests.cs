@@ -33,12 +33,11 @@ public sealed class AttemptTempRetentionTests
         Sched.RequirePlatform();
         await using var node = await InProcessNode.Create().StartAsync();
         await using var channel = await node.ChannelAsync();
-        var spec = OperatingSystem.IsWindows()
-            ? Tasks.Argv(node.Root, Tasks.Cmd, "/d", "/c", "echo retained>\"%TEMP%\\keep.txt\"")
-            : Tasks.Argv(node.Root, "/bin/sh", "-c", "printf retained > \"$TMPDIR/keep.txt\"");
-        var task = await Tasks.WaitAsync(channel, await Tasks.SubmitAsync(channel, spec));
-        Assert.Equal(TaskState.Succeeded, task.State);
-        var attempt = task.CurrentAttempt.AttemptId;
+        var task = await Tasks.WaitAsync(channel, await Tasks.SubmitAsync(channel, WriteFixtureToTemp(node.Root)));
+        var result = task.CurrentAttempt?.Result;
+        Assert.True(task.State == TaskState.Succeeded,
+            $"state={task.State}; termination={result?.TerminationReason}; exit={result?.ExitCode}; detail={result?.Detail}");
+        var attempt = task.CurrentAttempt!.AttemptId;
         var name = ArcForges.Client.IdText.Format(attempt);
         await Tasks.WaitForAsync(() => Sched.LogEvents(node, "execution.tmp.cleanup_unavailable")
             .Any(entry => Sched.Text(entry, "attempt") == name), Tasks.Bound, "the cleanup refusal");
@@ -46,5 +45,19 @@ public sealed class AttemptTempRetentionTests
         Assert.Equal("retained", File.ReadAllText(payload).Trim());
         Assert.Equal(0, node.Runtime.Execution!.RemoveExpiredTemp());
         Assert.Equal("retained", File.ReadAllText(payload).Trim());
+    }
+
+    internal static TaskSpec WriteFixtureToTemp(string workingDirectory)
+    {
+        if (!OperatingSystem.IsWindows())
+            return Tasks.Argv(workingDirectory, "/bin/sh", "-c", "printf retained > \"$TMPDIR/keep.txt\"");
+        // CMD scripts must use the supported shell mode; passing quoted shell syntax as one ordinary argv item
+        // subjects the embedded quotes to CommandLineToArgvW escaping, which CMD does not parse as shell quoting.
+        return new TaskSpec
+        {
+            Command = new CommandSpec { Shell = new ShellCommand { Kind = ShellKind.Cmd, Script = "echo retained>\"%TEMP%\\keep.txt\"" } },
+            WorkingDirectory = workingDirectory,
+            Environment = new EnvironmentSpec { Inherit = EnvironmentInherit.Node },
+        };
     }
 }
