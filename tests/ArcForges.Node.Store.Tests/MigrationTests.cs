@@ -15,7 +15,7 @@ public sealed class MigrationTests
     public void ReleasedMigrationsEndAtTheSupportedSchemaVersion()
     {
         Assert.Equal(StoreMigrations.SupportedSchemaVersion, StoreMigrations.Released.LatestVersion);
-        Assert.Equal(1, StoreMigrations.Released.Steps[^1].MinReaderVersion);
+        Assert.Equal(StoreMigrations.SupportedSchemaVersion, StoreMigrations.Released.Steps[^1].MinReaderVersion);
     }
 
     [Fact]

@@ -419,6 +419,15 @@ public sealed class NodeStore : IDisposable
                         $"The node store needs a reader of schema version {minReader} or later; this binary reads up to version {plan.LatestVersion}. Install a newer ArcForges version (13-distribution-updates section 6)."));
                 }
 
+                // A prior binary may already have this store open and continue its old path-based housekeeping
+                // after a schema upgrade. A new minimum-reader version only prevents later opens. Until the upgrade
+                // path can prove exclusion of all prior node instances, do not migrate an existing store to step 13.
+                if (existing is { SchemaVersion: < 13 } && plan.LatestVersion >= 13 &&
+                    plan.Steps[12].Name == "0013-schema-step-13.sql")
+                {
+                    throw new StoreIncompatibleException("The node store cannot be upgraded to schema 13 until prior node-instance exclusion is established; it was not changed.");
+                }
+
                 writer = new SqliteConnection(StorePaths.ConnectionString(path, SqliteOpenMode.ReadWriteCreate));
                 writer.Open();
                 Pragma(writer, string.Create(CultureInfo.InvariantCulture, $"PRAGMA busy_timeout={BusyTimeoutMilliseconds};"));
@@ -499,6 +508,38 @@ public sealed class NodeStore : IDisposable
             {
                 throw new StoreIncompatibleException("The node store has an unrecognized private-stage draft layout; it was not changed.");
             }
+        }
+
+        // Step 12 is still an unmerged AF-CTR-06 candidate. A separate protected draft used the same version
+        // for a different layout. Check this candidate's required removal-plan objects while still read-only;
+        // never advance an unknown step-12 database by assigning it this candidate's meaning.
+        if (version >= 12 && plan.LatestVersion >= 12 && minimum <= plan.LatestVersion &&
+            plan.Steps[11].Sql.Contains("CREATE TABLE file_removal_plan (", StringComparison.Ordinal))
+        {
+            var tables = Convert.ToInt64(Scalar(connection, """
+                SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name IN
+                  ('file_removal_plan', 'file_removal_plan_item', 'file_removal_command_owner');
+                """), CultureInfo.InvariantCulture);
+            var planColumns = Convert.ToInt64(Scalar(connection, """
+                SELECT count(*) FROM pragma_table_info('file_removal_plan') WHERE name IN
+                  ('plan_id', 'command_id', 'request_sha256', 'caller', 'target_kind', 'workspace_id',
+                   'workspace_path', 'attempt_id', 'root_platform', 'root_identity', 'requires_approval', 'quarantine_available');
+                """), CultureInfo.InvariantCulture);
+            var itemColumns = Convert.ToInt64(Scalar(connection, """
+                SELECT count(*) FROM pragma_table_info('file_removal_plan_item') WHERE name IN
+                  ('plan_id', 'item_id', 'ordinal', 'relative_path', 'entry_kind', 'native_platform', 'native_identity',
+                   'identity_sha256', 'fingerprint_sha256', 'stamp_size', 'stamp_mtime', 'stamp_mtime_nsec',
+                   'stamp_change', 'stamp_change_nsec', 'mode', 'link_count', 'owner_verified');
+                """), CultureInfo.InvariantCulture);
+            var ownerColumns = Convert.ToInt64(Scalar(connection, """
+                SELECT count(*) FROM pragma_table_info('file_removal_command_owner') WHERE name IN
+                  ('command_id', 'caller', 'policy_reason');
+                """), CultureInfo.InvariantCulture);
+            var index = Convert.ToInt64(Scalar(connection, """
+                SELECT count(*) FROM sqlite_schema WHERE type = 'index' AND name = 'ix_file_removal_plan__command';
+                """), CultureInfo.InvariantCulture);
+            if (tables != 3 || planColumns != 12 || itemColumns != 17 || ownerColumns != 3 || index != 1)
+                throw new StoreIncompatibleException("The node store has an unrecognized removal-plan draft layout; it was not changed.");
         }
 
         return new ExistingStore(version, minimum);

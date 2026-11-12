@@ -40,7 +40,7 @@ public sealed class RemovalPlanMigrationTests
             }, CommitDurability.Full);
         }
 
-        using var current = root.Open(clock);
+        using var current = root.Open(clock, new MigrationPlan(StoreMigrations.Released.Steps.Take(12)));
         Assert.Equal(11, current.Opening.MigratedFrom);
         Assert.Equal(12, current.Metadata.SchemaVersion);
         Assert.Equal(1L, current.Read(reader => reader.Scalar("SELECT count(*) FROM cleanup_item WHERE plan_id=$id;", ("$id", plan))));

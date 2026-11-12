@@ -902,7 +902,7 @@ public sealed partial class ExecutionSupervisor
                 new LogField("cpuGrant", grant.CpuGrant), new LogField("memExpected", request.Expected),
                 new LogField("accountedAfter", _running.Values.Sum(running => running.AccountedMemory)), new LogField("budgetMemory", Queue?.BudgetMemory ?? -1),
                 new LogField("toolParallelism", tool?.Parallelism ?? 0));
-            Launch(attempt, admitted, platform, settings, tool);
+            await LaunchAsync(attempt, admitted, platform, settings, tool).ConfigureAwait(false);
         }
         catch (CommandRefusedException exception)
         {

@@ -101,6 +101,14 @@
       "sha256": "1b8ae5ba3e67f0d220d75597d2865b35bec9975d96381f40fe5f6151e4b03af5",
       "source": "AF-CTR-06 metadata-only removal plan identities and exact requester-bound receipts; isolated, unmerged candidate.",
       "addedBy": "AF-CTR-06"
+    },
+    {
+      "version": 13,
+      "minReaderVersion": 13,
+      "file": "0013-schema-step-13.sql",
+      "sha256": "d64d18e4f0ccf3990a0cd5c570dde1ac48be38e070bc21c6df4148f3d20dce78",
+      "source": "AF-CTR-06 exact attempt temporary-directory provenance and reader admission: older binaries do not honor required retained/untracked semantics. Local unmerged candidate, not cleanup authority.",
+      "addedBy": "AF-CTR-06"
     }
   ]
 }
