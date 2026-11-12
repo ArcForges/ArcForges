@@ -245,8 +245,9 @@ public sealed class NodeStore : IDisposable
     }
 
     /// <summary>
-    /// Runs <paramref name="action"/> in one write transaction of the single writer and commits it. An exception rolls the
-    /// transaction back. <see cref="CommitDurability.Full"/> commits with <c>synchronous=FULL</c>.
+    /// Runs <paramref name="action"/> in one write transaction of the single writer and commits it. An exception before
+    /// commit rolls the transaction back; a commit whose completion is not returned can have an uncertain outcome.
+    /// <see cref="CommitDurability.Full"/> commits with <c>synchronous=FULL</c>.
     /// </summary>
     public T Write<T>(Func<StoreTransaction, T> action, CommitDurability durability = CommitDurability.Normal)
     {
@@ -264,8 +265,10 @@ public sealed class NodeStore : IDisposable
             try
             {
                 T result = default!;
+                StoreTransaction? scoped = null;
                 InTransaction(_writer, durability, transaction => result = action(
-                    new StoreTransaction(_writer, transaction, _clock, durability, _fileRetention, _fileTargetWitnesses)));
+                    scoped = new StoreTransaction(_writer, transaction, _clock, durability, _fileRetention, _fileTargetWitnesses)),
+                    () => scoped?.AfterCommitForTests?.Invoke());
                 return result;
             }
             finally
@@ -347,7 +350,8 @@ public sealed class NodeStore : IDisposable
 
     internal void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, this);
 
-    private static void InTransaction(SqliteConnection connection, CommitDurability durability, Action<SqliteTransaction> action)
+    private static void InTransaction(SqliteConnection connection, CommitDurability durability, Action<SqliteTransaction> action,
+        Action? afterCommitForTests = null)
     {
         if (durability == CommitDurability.Full)
         {
@@ -359,6 +363,7 @@ public sealed class NodeStore : IDisposable
             using var transaction = connection.BeginTransaction(deferred: false);
             action(transaction);
             transaction.Commit();
+            afterCommitForTests?.Invoke();
         }
         finally
         {

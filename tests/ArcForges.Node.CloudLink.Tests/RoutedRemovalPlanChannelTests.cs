@@ -5,6 +5,7 @@ using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Contracts.Relay.V1;
 using ArcForges.Node.Core;
+using ArcForges.Node.Core.Files;
 using Google.Protobuf;
 using NodeFilePath = ArcForges.Contracts.Node.V1.FilePath;
 using NodeShapes = ArcForges.Contracts.Node.Shapes.ContractShapeValidation;
@@ -103,4 +104,77 @@ public sealed class RoutedRemovalPlanChannelTests
             "SELECT request_sha256 FROM file_removal_plan WHERE command_id = $id;", ("$id", request.Meta.CommandId.Value.ToByteArray()))));
         Assert.Empty(connection.UnverifiedResults);
     }
+    [Fact(Timeout = 120_000)]
+    public async Task SignedOversizedPlanReturnsAndReplaysTheCommittedInnerRefusal()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var center = await FakeCenter.StartAsync();
+        await using var node = await CloudNode.Create(center.Endpoint.Url).StartAsync();
+        var nodeId = node.Runtime.NodeId.ToArray();
+        var credentials = center.Issue(nodeId);
+        using (var key = NodeKeyStores.ForTestDataRoot(node.DataRoot).Load(nodeId, center.Endpoint.Origin)
+            ?? NodeKeyStores.ForTestDataRoot(node.DataRoot).Create(nodeId, center.Endpoint.Origin, TimeProvider.System))
+        {
+            center.CommandKeys.Add(center.Channel.CommandPublicKey);
+            center.Channel.RegisterNodeKey(credentials.AccessToken, key.PublicKey);
+            await node.Cloud.AdoptAsync(credentials, center.Endpoint);
+        }
+        var connection = await center.Channel.ProvedAsync();
+        var caller = new CenterCaller
+        {
+            Kind = CenterCallerKind.NodeRelay,
+            AccountId = new Id { Value = ByteString.CopyFrom(connection.AccountId) },
+            RelayingNodeId = new Id { Value = ByteString.CopyFrom(nodeId) },
+            LocalOrigin = Origin.Human,
+            LocalSessionId = CommandIds.New(),
+        };
+        var root = Directory.CreateDirectory(Path.Combine(node.Root, "signed-budget-root")).FullName;
+        var deep = Directory.CreateDirectory(Path.Combine(root, "tree")).FullName;
+        for (var depth = 0; depth < 5; depth++)
+            deep = Directory.CreateDirectory(Path.Combine(deep, new string((char)('a' + depth), 210))).FullName;
+        for (var index = 0; index < 980; index++)
+            File.WriteAllBytes(Path.Combine(deep, "f" + index.ToString("D4", System.Globalization.CultureInfo.InvariantCulture)), []);
+        var workspace = new RegisteredWorkspaces(node.Runtime.Store).RegisterFromVerifiedHuman(root, cancellationToken: ct);
+        var request = new FileServicePlanRemovalRequest
+        {
+            Meta = CloudNode.Command(),
+            WorkspacePath = new NodeFilePath { WorkspaceId = new Id { Value = ByteString.CopyFrom(workspace.Id) }, Path = "tree" },
+        };
+        var raw = request.ToByteArray();
+        async Task<ByteString> Invoke()
+        {
+            var built = center.Channel.BuildCall(connection, new FakeCallSpec
+            {
+                Method = RoutedMethod.PlanNodeRemoval,
+                Payload = raw,
+                Caller = caller,
+                CommandId = request.Meta.CommandId,
+                Lifetime = TimeSpan.FromSeconds(30),
+            });
+            await connection.SendCallAsync(built.Call);
+            var frame = await connection.ResultOfAsync(built.Call.CallId);
+            await Eventually.TrueAsync(() => connection.VerifiedResults.Any(x => x.Header.CallId.Equals(built.Call.CallId)), "verified size refusal");
+            Assert.Equal(RoutedOutcome.Executed, connection.VerifiedResults.Single(x => x.Header.CallId.Equals(built.Call.CallId)).Header.Outcome);
+            return frame.Payload;
+        }
+        var first = await Invoke();
+        var refusal = FileServicePlanRemovalResponse.Parser.ParseFrom(first);
+        Assert.True(NodeShapes.IsValid(refusal));
+        Assert.Equal(ErrorCategory.Resource, refusal.Error.Category);
+        Assert.Equal("too_large", refusal.Error.Code);
+        Assert.Equal(EffectCertainty.DidNotHappen, refusal.Error.Effect);
+        Assert.Equal(RetryMode.Never, refusal.Error.Retry.Mode);
+        Assert.Equal("removal_plan_response_bytes", refusal.Error.Details.Limit.LimitName);
+        Assert.Equal("1040384", refusal.Error.Details.Limit.Maximum.Value);
+        Assert.Null(refusal.Value);
+        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_removal_plan;")));
+        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM cleanup_plan;")));
+        Assert.Equal(SHA256.HashData(raw), node.Runtime.Store.Read(reader => reader.Scalar(
+            "SELECT payload_digest FROM command_dedup WHERE command_id = $id;", ("$id", request.Meta.CommandId.Value.ToByteArray()))));
+        for (var index = 980; index < 996; index++)
+            File.WriteAllBytes(Path.Combine(deep, "f" + index.ToString("D4", System.Globalization.CultureInfo.InvariantCulture)), []);
+        Assert.Equal(first, await Invoke());
+        Assert.Empty(connection.UnverifiedResults);
+    }
+
 }

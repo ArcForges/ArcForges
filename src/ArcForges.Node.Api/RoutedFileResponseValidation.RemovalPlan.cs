@@ -14,7 +14,7 @@ internal static partial class RoutedFileResponseValidation
     internal static bool PlanRemoval(FleetServicePlanNodeRemovalResponse response, Id target, FileServicePlanRemovalRequest request)
     {
         if (!FleetShapes.IsValid(response)) return false;
-        if (response.Error is { } outer) return CanonicalLimits(outer) && RemovalPlanLimit(outer, request);
+        if (response.Error is { } outer) return CanonicalLimits(outer) && RemovalPlanLimit(outer, request, signedInner: false);
         if (response.Value is not { HasResponse: true } value || value.NodeId is null || !value.NodeId.Equals(target) ||
             value.Response.Length is < 1 or > 1_040_384) return false;
         FileServicePlanRemovalResponse inner;
@@ -70,7 +70,7 @@ internal static partial class RoutedFileResponseValidation
 
     private static bool RemovalPlanError(ArcError error, FileServicePlanRemovalRequest request)
     {
-        if (!CommonFileError(error) || !RemovalPlanLimit(error, request)) return false;
+        if (!CommonFileError(error) || !RemovalPlanLimit(error, request, signedInner: true)) return false;
         if (error.Category == ErrorCategory.Internal && error.Code == "internal")
             return error.Effect == EffectCertainty.Unknown && error.Retry is { Mode: RetryMode.Never, RetryAt: null };
         if (error.Category == ErrorCategory.State && error.Code == "in_use")
@@ -93,7 +93,7 @@ internal static partial class RoutedFileResponseValidation
         };
     }
 
-    private static bool RemovalPlanLimit(ArcError error, FileServicePlanRemovalRequest request)
+    private static bool RemovalPlanLimit(ArcError error, FileServicePlanRemovalRequest request, bool signedInner)
     {
         if (error.Category != ErrorCategory.Resource || error.Code != "too_large") return true;
         if (error.Details?.Limit is not { HasLimitName: true, Maximum: { } maximum } limit ||
@@ -104,13 +104,14 @@ internal static partial class RoutedFileResponseValidation
         return limit.LimitName switch
         {
             "path_bytes" => oversizedPath && maximum.Value == "4096",
-            "removal_descendants" => maximum.Value == "1000",
-            "removal_total_bytes" => maximum.Value == "67108864",
+            "removal_descendants" => signedInner && maximum.Value == "1000",
+            "removal_total_bytes" => signedInner && maximum.Value == "67108864",
+            "removal_plan_response_bytes" => signedInner && maximum.Value == "1040384",
             "workspace_root_path_bytes" or "file_write_bytes" or "file_edit_text_bytes" or "file_existing_bytes" or "file_edit_result_bytes" => false,
             _ => maximum.Value switch
             {
                 "4096" => oversizedPath,
-                "1000" or "67108864" => true,
+                "1000" or "67108864" or "1040384" => signedInner,
                 _ => false,
             },
         };

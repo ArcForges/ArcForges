@@ -99,9 +99,13 @@ public sealed class FileRemovalPlanConsumerTests
         };
         Assert.True(NodeShapes.IsValid(inner));
         Assert.True(RoutedFileResponseValidation.PlanRemoval(response, target, request));
+        var outerTreeObservation = new FleetServicePlanNodeRemovalResponse { Meta = response.Meta.Clone(), Error = error.Clone() };
+        Assert.False(RoutedFileResponseValidation.PlanRemoval(outerTreeObservation, target, request));
         error.Details.Limit.LimitName = "another.valid.limit";
         response.Value.Response = inner.ToByteString();
         Assert.True(RoutedFileResponseValidation.PlanRemoval(response, target, request));
+        outerTreeObservation.Error = error.Clone();
+        Assert.False(RoutedFileResponseValidation.PlanRemoval(outerTreeObservation, target, request));
         error.Details.Limit.Maximum.Value = "1000.00";
         Assert.True(NodeShapes.IsValid(error));
         response.Value.Response = inner.ToByteString();
@@ -114,5 +118,123 @@ public sealed class FileRemovalPlanConsumerTests
         error.Details.Limit.Maximum.Value = "4096";
         response.Value.Response = inner.ToByteString();
         Assert.False(RoutedFileResponseValidation.PlanRemoval(response, target, request));
+        error.Details.Limit.LimitName = "removal_plan_response_bytes";
+        error.Details.Limit.Maximum.Value = "1040384";
+        response.Value.Response = inner.ToByteString();
+        Assert.True(NodeShapes.IsValid(inner));
+        Assert.True(RoutedFileResponseValidation.PlanRemoval(response, target, request));
+        var attempt = new FileServicePlanRemovalRequest { Meta = meta.Clone(), AttemptId = CommandIds.New() };
+        Assert.True(NodeShapes.IsValid(attempt));
+        Assert.True(RoutedFileResponseValidation.PlanRemoval(response, target, attempt));
+        var outer = new FleetServicePlanNodeRemovalResponse { Meta = response.Meta.Clone(), Error = error.Clone() };
+        Assert.False(RoutedFileResponseValidation.PlanRemoval(outer, target, request));
+        error.Details.Limit.LimitName = "opaque.plan.budget";
+        response.Value.Response = inner.ToByteString();
+        Assert.True(RoutedFileResponseValidation.PlanRemoval(response, target, request));
+        outer.Error = error.Clone();
+        Assert.False(RoutedFileResponseValidation.PlanRemoval(outer, target, request));
+        error.Details.Limit.LimitName = "removal_descendants";
+        response.Value.Response = inner.ToByteString();
+        Assert.False(RoutedFileResponseValidation.PlanRemoval(response, target, request));
+        error.Details.Limit.LimitName = "removal_plan_response_bytes";
+        error.Details.Limit.Maximum.Value = "1040383";
+        response.Value.Response = inner.ToByteString();
+        Assert.False(RoutedFileResponseValidation.PlanRemoval(response, target, request));
+        error.Details.Limit.Maximum.Value = "1040384.00";
+        Assert.True(NodeShapes.IsValid(error));
+        response.Value.Response = inner.ToByteString();
+        Assert.False(RoutedFileResponseValidation.PlanRemoval(response, target, request));
+        error.Details.Limit.Maximum.Value = "1040384";
+        error.Details.Limit.LimitName = "bad name";
+        response.Value.Response = inner.ToByteString();
+        Assert.False(RoutedFileResponseValidation.PlanRemoval(response, target, request));
     }
+    [Fact]
+    public void CompleteResponseBudgetIncludesMetaTargetItemsAndAnyPopulatedAudit()
+    {
+        const int maximum = 1_040_384;
+        var target = CommandIds.New();
+        var meta = Tasks.Meta();
+        var selected = new FilePath { WorkspaceId = CommandIds.New(), Path = "tree" };
+        var request = new FileServicePlanRemovalRequest { Meta = meta.Clone(), WorkspacePath = selected.Clone() };
+        var plan = new FileRemovalPlan
+        {
+            PlanId = CommandIds.New(),
+            Digest = ByteString.CopyFrom(SHA256.HashData("exact-plan"u8)),
+            ExpiresAt = ProtoTime.ToInstant(DateTimeOffset.UtcNow.AddMinutes(60)),
+            WorkspacePath = selected.Clone(),
+            TotalBytes = 0,
+            RequiresApproval = true,
+            QuarantineAvailable = false,
+            Risk = RiskClass.High,
+        };
+        static FileRemovalItem Item(string path, FileEntryKind kind) => new()
+        {
+            Path = path,
+            Kind = kind,
+            SizeBytes = 0,
+            IdentitySha256 = ByteString.CopyFrom(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(path))),
+            OwnerVerified = false,
+        };
+        var prefix = selected.Path;
+        plan.Items.Add(Item(prefix, FileEntryKind.Directory));
+        for (var depth = 0; depth < 5; depth++)
+        {
+            prefix += "/" + new string((char)('a' + depth), 210);
+            plan.Items.Add(Item(prefix, FileEntryKind.Directory));
+        }
+        for (var index = 0; index < 920; index++)
+            plan.Items.Add(Item(prefix + "/f" + index.ToString("D4", System.Globalization.CultureInfo.InvariantCulture), FileEntryKind.File));
+        var response = new FileServicePlanRemovalResponse
+        {
+            Meta = new ResponseMeta { CorrelationId = meta.CorrelationId.Clone() },
+            Value = new FileServicePlanRemovalValue { Plan = plan },
+        };
+        var missing = maximum - response.CalculateSize();
+        Assert.InRange(missing, 0, 920 * 240);
+        foreach (var item in plan.Items.Skip(6))
+        {
+            var extra = Math.Min(missing, 240);
+            item.Path += new string('x', extra);
+            missing -= extra;
+        }
+        Assert.Equal(0, missing);
+        Assert.Equal(maximum, response.CalculateSize());
+        Assert.Equal(maximum, response.ToByteArray().Length);
+        Assert.True(NodeShapes.IsValid(plan));
+        Assert.All(plan.Items, item => Assert.True(NodeShapes.IsValid(item)));
+        Assert.True(NodeShapes.IsValid(response));
+        Assert.True(FileServiceHandler.RemovalPlanResponseFits(response));
+        var outer = new FleetServicePlanNodeRemovalResponse
+        {
+            Meta = new ResponseMeta { CorrelationId = meta.CorrelationId.Clone() },
+            Value = new FleetServicePlanNodeRemovalValue { NodeId = target.Clone(), Response = response.ToByteString() },
+        };
+        Assert.True(RoutedFileResponseValidation.PlanRemoval(outer, target, request));
+
+        var withAudit = response.Clone();
+        withAudit.Audit = new FileAuditMetadata
+        {
+            Observations = { new FileAuditObservation { Kind = FileAuditKind.ReadBytes, SizeBytes = 0,
+                DigestInputBytes = 0, Sha256 = ByteString.CopyFrom(SHA256.HashData([])) } },
+        };
+        Assert.True(NodeShapes.IsValid(withAudit.Audit));
+        Assert.True(withAudit.CalculateSize() > maximum);
+        Assert.False(FileServiceHandler.RemovalPlanResponseFits(withAudit));
+        var withMeta = response.Clone();
+        withMeta.Meta.Warnings.Add("x");
+        Assert.True(withMeta.CalculateSize() > maximum);
+        Assert.False(FileServiceHandler.RemovalPlanResponseFits(withMeta));
+
+        plan.Items[^1].Path += "x";
+        Assert.Equal(maximum + 1, response.CalculateSize());
+        Assert.Equal(maximum + 1, response.ToByteArray().Length);
+        Assert.True(NodeShapes.IsValid(plan));
+        Assert.All(plan.Items, item => Assert.True(NodeShapes.IsValid(item)));
+        Assert.False(NodeShapes.IsValid(response));
+        Assert.False(FileServiceHandler.RemovalPlanResponseFits(response));
+        outer.Value.Response = response.ToByteString();
+        Assert.False(RoutedFileResponseValidation.PlanRemoval(outer, target, request));
+    }
+
 }

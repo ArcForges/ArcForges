@@ -39,6 +39,9 @@ public sealed class WorkspaceFleetResponseValidationTests
         error.Details.Limit.LimitName = "path_bytes";
         result.Value.Response = inner.ToByteString();
         Assert.False(RoutedFileResponseValidation.RegisterWorkspace(result, target, request));
+        error.Details.Limit.LimitName = "removal_plan_response_bytes";
+        result.Value.Response = inner.ToByteString();
+        Assert.False(RoutedFileResponseValidation.RegisterWorkspace(result, target, request));
         error.Details.Limit.LimitName = "opaque";
         error.Details.Limit.Maximum.Value = "4096.00";
         Assert.True(NodeShapes.IsValid(error));

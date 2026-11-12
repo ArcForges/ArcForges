@@ -11,6 +11,7 @@ using ArcForges.Node.Core.Security;
 using ArcForges.Node.Store;
 using ArcForges.Node.Store.Policy;
 using Google.Protobuf;
+using Microsoft.Data.Sqlite;
 using NodeShapes = ArcForges.Contracts.Node.Shapes.ContractShapeValidation;
 
 namespace ArcForges.Node.Api;
@@ -21,6 +22,10 @@ internal sealed partial class FileServiceHandler
 {
     // Coordinates a test-owned transactional failure after actual plan inserts; production never sets this callback.
     internal Action? AfterRemovalPlanInsertForTests { get; set; }
+
+    // In-process tests alone inject failures before or at the return from the real FULL commit.
+    internal Action<StoreTransaction>? AfterRemovalSizeRefusalForTests { get; set; }
+    internal Action? AfterRemovalSizeCommitForTests { get; set; }
 
     internal async Task<FileServicePlanRemovalResponse> PlanRemovalAsync(Caller caller, FileServicePlanRemovalRequest request,
         CancellationToken cancellationToken)
@@ -44,6 +49,20 @@ internal sealed partial class FileServiceHandler
         {
             _ = ObserveRemovalPlanPendingAsync(pending);
             throw;
+        }
+        catch (SqliteException)
+        {
+            // The COMMIT may have taken effect even when its completion was not returned. Do not fabricate a
+            // size refusal or a rollback; only a subsequently recovered exact receipt can establish the outcome.
+            if (Expired(started, limit, token)) throw new OperationCanceledException(token);
+            var uncertain = NodeErrors.Internal(node.Clock.GetUtcNow());
+            uncertain.Retry = new RetryAdvice { Mode = RetryMode.Never };
+            RoutedFileErrors.Complete(uncertain, request.Meta, routed.CallId, node.Clock);
+            return new FileServicePlanRemovalResponse
+            {
+                Meta = new ResponseMeta { CorrelationId = uncertain.CorrelationId.Clone() },
+                Error = uncertain,
+            };
         }
 
         if (Expired(started, limit, token)) throw new OperationCanceledException(token);
@@ -155,16 +174,26 @@ internal sealed partial class FileServiceHandler
                     CheckPlanAuthority(transaction, caller);
                     var sample = RoutedFileValidationTime.Sample(transaction);
                     if (!sample.Healthy) throw new RoutedAbortException(RoutedAbort.ClockUncertain);
-                    planInsertionStarted = true;
-                    var plan = FileRemovalPlans.RecordWorkspace(transaction, commandId, rawDigest, caller.CenterCaller,
+                    var prepared = FileRemovalPlans.PrepareWorkspace(transaction, commandId, rawDigest, caller.CenterCaller,
                         caller.Actor, target, use.Root.RootPath, snapshot, sample.BoundaryMicroseconds);
-                    AfterRemovalPlanInsertForTests?.Invoke();
-                    response = new FileServicePlanRemovalResponse { Meta = meta, Value = new FileServicePlanRemovalValue { Plan = plan } };
-                    // The contract has no applicable named response-size limit. Roll the FULL transaction back and send
-                    // no verified result rather than return a partial plan or invent a different observed tree limit.
-                    if (response.CalculateSize() > ArcForges.Node.CloudLink.ResultSigner.MaxPayloadBytes || !NodeShapes.IsValid(response))
-                        throw new RemovalPlanResponseUnavailableException();
-                    Audit(PermissionDecision.Allow, "planned");
+                    response = new FileServicePlanRemovalResponse { Meta = meta, Value = new FileServicePlanRemovalValue { Plan = prepared.Plan } };
+                    // A different malformed candidate cannot be misreported as an observed response-size limit.
+                    if (!NodeShapes.IsValid(meta) || !NodeShapes.IsValid(prepared.Plan)) throw new RemovalPlanResponseUnavailableException();
+                    // Size the entire exact signed inner response before inserting any plan, item or successful receipt.
+                    if (!RemovalPlanResponseFits(response))
+                    {
+                        response = Refusal(RemovalLimit(correlation, "removal_plan_response_bytes", "1040384"));
+                        AfterRemovalSizeRefusalForTests?.Invoke(transaction);
+                        transaction.AfterCommitForTests = AfterRemovalSizeCommitForTests;
+                    }
+                    else
+                    {
+                        if (!NodeShapes.IsValid(response)) throw new RemovalPlanResponseUnavailableException();
+                        planInsertionStarted = true;
+                        FileRemovalPlans.RecordWorkspace(transaction, prepared);
+                        AfterRemovalPlanInsertForTests?.Invoke();
+                        Audit(PermissionDecision.Allow, "planned");
+                    }
                 }
             }
             catch (FilePolicyException denied)
@@ -295,6 +324,9 @@ internal sealed partial class FileServiceHandler
         // or accept a caller-provided path as a substitute.
         return Error(ErrorCategory.State, "file_access_denied", "identity_unavailable", correlation);
     }
+
+    internal static bool RemovalPlanResponseFits(FileServicePlanRemovalResponse response) =>
+        response.CalculateSize() <= ArcForges.Node.CloudLink.ResultSigner.MaxPayloadBytes;
 
     private static ArcError RemovalLimit(Id correlation, string name, string maximum) => new()
     {

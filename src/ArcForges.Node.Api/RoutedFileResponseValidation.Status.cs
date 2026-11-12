@@ -213,6 +213,7 @@ internal static partial class RoutedFileResponseValidation
             "file_edit_result_bytes" => "4194304",
             "removal_descendants" => "1000",
             "removal_total_bytes" => "67108864",
+            "removal_plan_response_bytes" => "1040384",
             _ => null,
         };
         bool Possible(string name) => name switch

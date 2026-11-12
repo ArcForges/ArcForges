@@ -17,7 +17,11 @@ internal static class FileRemovalPlans
 {
     internal const long LifetimeMicroseconds = 60L * 60 * 1_000_000;
 
-    internal static FileRemovalPlan RecordWorkspace(StoreTransaction transaction, ReadOnlySpan<byte> commandId,
+    internal sealed record PreparedWorkspacePlan(FileRemovalPlan Plan, byte[] CommandId, byte[] RawSha256,
+        byte[] CallerBytes, byte[] ActorBytes, FilePath Target, string RootPath, WorkspaceRemovalSnapshot Snapshot,
+        long ObservedTime, long ExpiresAt);
+
+    internal static PreparedWorkspacePlan PrepareWorkspace(StoreTransaction transaction, ReadOnlySpan<byte> commandId,
         ReadOnlySpan<byte> rawSha256, CenterCaller caller, ActorRef actor, FilePath target, string rootPath,
         WorkspaceRemovalSnapshot snapshot, long observedTime)
     {
@@ -61,11 +65,37 @@ internal static class FileRemovalPlans
         var callerBytes = caller.ToByteArray();
         var digest = Digest(plan, rawSha256, callerBytes, snapshot);
         plan.Digest = ByteString.CopyFrom(digest);
+        return new PreparedWorkspacePlan(plan, commandId.ToArray(), rawSha256.ToArray(), callerBytes, actor.ToByteArray(),
+            target.Clone(), rootPath, snapshot, observedTime, expires);
+    }
+
+    internal static void RecordWorkspace(StoreTransaction transaction, PreparedWorkspacePlan prepared)
+    {
+        ArgumentNullException.ThrowIfNull(transaction);
+        ArgumentNullException.ThrowIfNull(prepared);
+        if (transaction.Durability != CommitDurability.Full)
+            throw new InvalidOperationException("A removal plan requires a FULL transaction.");
+        var plan = prepared.Plan;
+        var unsigned = plan.Clone();
+        unsigned.ClearDigest();
+        var digest = Digest(unsigned, prepared.RawSha256, prepared.CallerBytes, prepared.Snapshot);
+        if (plan.PlanId?.Value.Length != 16 || !plan.HasDigest ||
+            !CryptographicOperations.FixedTimeEquals(plan.Digest.Span, digest))
+            throw new InvalidOperationException("The checked removal plan changed before persistence.");
+        var planId = plan.PlanId.Value.ToByteArray();
+        var commandId = prepared.CommandId;
+        var rawSha256 = prepared.RawSha256;
+        var callerBytes = prepared.CallerBytes;
+        var target = prepared.Target;
+        var rootPath = prepared.RootPath;
+        var snapshot = prepared.Snapshot;
+        var observedTime = prepared.ObservedTime;
+        var expires = prepared.ExpiresAt;
         transaction.Execute("""
             INSERT INTO cleanup_plan
               (plan_id, state, digest, planned_by, total_bytes, item_count, created_at, expires_at, rev)
             VALUES ($plan, 1, $digest, $actor, $total, $count, $created, $expires, 0);
-            """, ("$plan", planId), ("$digest", digest), ("$actor", actor.ToByteArray()),
+            """, ("$plan", planId), ("$digest", digest), ("$actor", prepared.ActorBytes),
             ("$total", checked((long)snapshot.TotalBytes)), ("$count", snapshot.Entries.Count),
             ("$created", observedTime), ("$expires", expires));
         transaction.Execute("""
@@ -73,7 +103,7 @@ internal static class FileRemovalPlans
               (plan_id, command_id, request_sha256, caller, target_kind, workspace_id, workspace_path,
                root_platform, root_identity, requires_approval, quarantine_available)
             VALUES ($plan, $command, $request, $caller, 1, $workspace, $path, $platform, $root, 1, 0);
-            """, ("$plan", planId), ("$command", commandId.ToArray()), ("$request", rawSha256.ToArray()),
+            """, ("$plan", planId), ("$command", commandId), ("$request", rawSha256),
             ("$caller", callerBytes), ("$workspace", target.WorkspaceId.Value.ToByteArray()), ("$path", target.Path),
             ("$platform", snapshot.RootIdentity.Platform), ("$root", snapshot.RootIdentity.Bytes));
 
@@ -106,7 +136,6 @@ internal static class FileRemovalPlans
                 ("$mode", (long)entry.Mode), ("$links", (long)entry.Links));
         }
 
-        return plan;
     }
 
     private static byte[] Digest(FileRemovalPlan plan, ReadOnlySpan<byte> rawSha256, ReadOnlySpan<byte> caller,

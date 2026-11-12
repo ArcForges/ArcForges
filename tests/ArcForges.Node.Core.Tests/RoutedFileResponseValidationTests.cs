@@ -62,6 +62,8 @@ public sealed class RoutedFileResponseValidationTests
         Assert.True(RoutedFileResponseValidation.Read(response, target, request));
         response.Error.Details.Limit.LimitName = "workspace_root_path_bytes";
         Assert.False(RoutedFileResponseValidation.Read(response, target, request));
+        response.Error.Details.Limit.LimitName = "removal_plan_response_bytes";
+        Assert.False(RoutedFileResponseValidation.Read(response, target, request));
         response.Error.Details.Limit.LimitName = "path_bytes";
         response.Error.Details.Limit.Maximum.Value = "4096.00";
         Assert.True(NodeShapes.IsValid(response.Error));

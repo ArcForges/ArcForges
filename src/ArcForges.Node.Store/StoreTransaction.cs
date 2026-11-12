@@ -94,6 +94,9 @@ public sealed class StoreTransaction : StoreReader
     /// <summary>How this transaction commits.</summary>
     public CommitDurability Durability { get; }
 
+    // Test-only fault at the commit-return boundary. The executable never assigns this callback.
+    internal Action? AfterCommitForTests { get; set; }
+
     internal void AllowDistinctFileTarget(byte[] command, byte[] held, byte[] workspace, string path, byte[] root,
         byte[] parent, byte[] target, byte[] digest, byte[] caller, long kind)
     {
