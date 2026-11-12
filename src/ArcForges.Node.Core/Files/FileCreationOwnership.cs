@@ -154,7 +154,8 @@ internal static class FileCreationOwnership
     /// other callers, HUMAN/SCRIPT records, inaccessible metadata or changed content remain unowned.
     /// </summary>
     internal static bool IsVerifiedAgent(StoreReader reader, CenterCaller caller, ReadOnlySpan<byte> workspace,
-        WorkspacePath root, WorkspaceRemovalEntry entry, CancellationToken cancellationToken)
+        WorkspacePath root, WorkspaceRemovalEntry entry, CancellationToken cancellationToken,
+        WorkspaceOwnershipInputAudit? inputAudit = null)
     {
         ArgumentNullException.ThrowIfNull(reader);
         ArgumentNullException.ThrowIfNull(caller);
@@ -192,8 +193,11 @@ internal static class FileCreationOwnership
             while (offset < record.Size)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var count = RandomAccess.Read(file, buffer.AsSpan(0, (int)Math.Min(buffer.Length, record.Size - offset)), offset);
+                var requested = (int)Math.Min(buffer.Length, record.Size - offset);
+                if (inputAudit is not null) requested = inputAudit.AllowRead(requested);
+                var count = RandomAccess.Read(file, buffer.AsSpan(0, requested), offset);
                 if (count <= 0) throw new WorkspaceRemovalPlanException("planned_tree_changed");
+                inputAudit?.Append(buffer.AsSpan(0, count));
                 hash.AppendData(buffer, 0, count);
                 offset += count;
             }

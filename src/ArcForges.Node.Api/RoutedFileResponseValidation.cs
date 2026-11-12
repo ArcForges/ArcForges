@@ -154,7 +154,7 @@ internal static partial class RoutedFileResponseValidation
         var limit = error.Details?.Limit;
         if (limit?.Maximum?.Value != "4096" || !Token(limit.LimitName) || request.Path is not { HasPath: true } path ||
             limit.LimitName is "workspace_root_path_bytes" or "file_write_bytes" or "file_edit_text_bytes" or
-                "file_existing_bytes" or "file_edit_result_bytes" or "removal_descendants" or "removal_total_bytes" or "removal_plan_response_bytes")
+                "file_existing_bytes" or "file_edit_result_bytes" or "removal_descendants" or "removal_total_bytes" or "removal_ownership_input_bytes" or "removal_plan_response_bytes")
         {
             return false;
         }

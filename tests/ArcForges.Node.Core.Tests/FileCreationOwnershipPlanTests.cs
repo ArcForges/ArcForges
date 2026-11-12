@@ -108,6 +108,39 @@ public sealed class FileCreationOwnershipPlanTests
             Assert.True(plan.RequiresApproval);
             Assert.False(plan.QuarantineAvailable);
             Assert.NotEqual(RiskClass.Low, plan.Risk);
+            if (plan.Items[0].OwnerVerified)
+            {
+                var observations = (long)node.Runtime.Store.Read(r => r.Scalar("""
+                    SELECT count(*) FROM audit_log a JOIN file_workspace_audit_observation o ON o.audit_seq = a.seq
+                    WHERE a.operation = 'cleanup.plan FileService.PlanRemoval';
+                    """))!;
+                Assert.True(response.Audit is { Observations.Count: > 0 } && observations > 0,
+                    $"A verified owner required real file reads: response audit={response.Audit is not null}, node observations={observations}.");
+                var observation = Assert.Single(response.Audit!.Observations);
+                Assert.Equal(FileAuditKind.InputBytes, observation.Kind);
+                Assert.Equal((ulong)body.Length, observation.SizeBytes);
+                Assert.Equal((ulong)body.Length, observation.DigestInputBytes);
+                Assert.False(observation.HasItemCount);
+                Assert.Equal(SHA256.HashData(body), observation.Sha256.ToByteArray());
+                node.Runtime.Store.Read(reader =>
+                {
+                    using var sql = reader.CreateCommand("""
+                        SELECT o.kind, o.size_bytes, o.digest_input_bytes, o.item_count, o.sha256
+                        FROM audit_log a JOIN file_workspace_audit_observation o ON o.audit_seq = a.seq
+                        WHERE a.operation = 'cleanup.plan FileService.PlanRemoval'
+                        ORDER BY a.seq DESC LIMIT 1;
+                        """);
+                    using var row = sql.ExecuteReader();
+                    Assert.True(row.Read());
+                    Assert.Equal((int)FileAuditKind.InputBytes, row.GetInt32(0));
+                    Assert.Equal((long)body.Length, row.GetInt64(1));
+                    Assert.Equal((long)body.Length, row.GetInt64(2));
+                    Assert.True(row.IsDBNull(3));
+                    Assert.Equal(SHA256.HashData(body), (byte[])row.GetValue(4));
+                    Assert.False(row.Read());
+                    return 0;
+                });
+            }
             return plan;
         }
 

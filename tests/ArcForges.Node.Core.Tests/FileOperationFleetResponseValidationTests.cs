@@ -73,6 +73,16 @@ public sealed class FileOperationFleetResponseValidationTests
         Assert.False(Accept());
         error.Details.Limit.LimitName = "removal_total_bytes";
         Assert.False(Accept());
+        operation.Kind = FileOperationKind.Removal;
+        error.Details.Limit.Maximum.Value = "67108864";
+        error.Details.Limit.LimitName = "removal_ownership_input_bytes";
+        Assert.False(Accept()); // Plan-only input is not an ExecuteRemoval operation outcome.
+        error.Details.Limit.LimitName = "removal_total_bytes";
+        Assert.True(Accept());
+        error.Details.Limit.LimitName = "opaque.64m";
+        Assert.True(Accept()); // The distinct ExecuteRemoval tree limit remains possible.
+        operation.Kind = FileOperationKind.Write;
+        error.Details.Limit.Maximum.Value = "4194304";
         error.Details.Limit.LimitName = "existing_file_size_bytes";
         error.Details.Limit.Maximum.Value = "4194304.00";
         Assert.True(NodeShapes.IsValid(error)); // The published validator accepts it; the consumer must reject noncanonical decimal.

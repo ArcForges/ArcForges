@@ -93,7 +93,7 @@ internal static partial class RoutedFileResponseValidation
         var limit = error.Details?.Limit;
         if (request is not { HasPath: true } || limit?.Maximum?.Value != "4096" || !Token(limit.LimitName) ||
             limit.LimitName is "path_bytes" or "file_write_bytes" or "file_edit_text_bytes" or "file_existing_bytes" or
-                "file_edit_result_bytes" or "removal_descendants" or "removal_total_bytes" or "removal_plan_response_bytes")
+                "file_edit_result_bytes" or "removal_descendants" or "removal_total_bytes" or "removal_ownership_input_bytes" or "removal_plan_response_bytes")
             return false;
         try { return StrictUtf8.GetByteCount(request.Path) > 4096; }
         catch (EncoderFallbackException) { return false; }

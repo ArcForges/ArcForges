@@ -150,6 +150,92 @@ public sealed class FileRemovalPlanConsumerTests
         Assert.False(RoutedFileResponseValidation.PlanRemoval(response, target, request));
     }
     [Fact]
+    public void PlanInputObservationAndLimitAreMethodScopedAndPreserveOpenNames()
+    {
+        var target = CommandIds.New();
+        var meta = Tasks.Meta();
+        var request = new FileServicePlanRemovalRequest
+        {
+            Meta = meta.Clone(),
+            WorkspacePath = new FilePath { WorkspaceId = CommandIds.New(), Path = "tree" },
+        };
+        var error = new ArcError
+        {
+            Category = ErrorCategory.Resource,
+            Code = "too_large",
+            MessageKey = "error.resource.too_large",
+            Retry = new RetryAdvice { Mode = RetryMode.Never },
+            Effect = EffectCertainty.DidNotHappen,
+            CorrelationId = meta.CorrelationId.Clone(),
+            Details = new ErrorDetails
+            {
+                Limit = new LimitFailure { LimitName = "removal_ownership_input_bytes", Maximum = new WireDecimal { Value = "67108864" } },
+            },
+        };
+        var observation = new FileAuditObservation
+        {
+            Kind = FileAuditKind.InputBytes,
+            SizeBytes = 67_108_864,
+            DigestInputBytes = 67_108_864,
+            Sha256 = ByteString.CopyFrom(SHA256.HashData("shape-only"u8)),
+        };
+        var inner = new FileServicePlanRemovalResponse
+        {
+            Meta = new ResponseMeta { CorrelationId = meta.CorrelationId.Clone() },
+            Error = error,
+            Audit = new FileAuditMetadata { Observations = { observation } },
+        };
+        var response = new FleetServicePlanNodeRemovalResponse
+        {
+            Meta = new ResponseMeta { CorrelationId = meta.CorrelationId.Clone() },
+            Value = new FleetServicePlanNodeRemovalValue { NodeId = target.Clone(), Response = inner.ToByteString() },
+        };
+        bool Accept()
+        {
+            response.Value.Response = inner.ToByteString();
+            return RoutedFileResponseValidation.PlanRemoval(response, target, request);
+        }
+        Assert.True(NodeShapes.IsValid(inner));
+        Assert.True(Accept());
+        error.Details.Limit.LimitName = "opaque.budget";
+        Assert.True(Accept()); // Both 64 MiB node-observed bounds remain possible.
+        error.Details.Limit.LimitName = "removal_ownership_input_bytes";
+        error.Details.Limit.Maximum.Value = "67108864.00";
+        Assert.True(NodeShapes.IsValid(inner)); // Published generic shape permits fractional trailing zeroes.
+        Assert.False(Accept()); // The AF-CTR-06 limit profile requires exact integer text.
+        error.Details.Limit.Maximum.Value = "067108864";
+        Assert.False(NodeShapes.IsValid(inner));
+        Assert.False(Accept());
+        error.Details.Limit.Maximum.Value = "67108864";
+        var outer = new FleetServicePlanNodeRemovalResponse { Meta = response.Meta.Clone(), Error = error.Clone() };
+        Assert.False(RoutedFileResponseValidation.PlanRemoval(outer, target, request));
+
+        observation.SizeBytes = 0;
+        observation.DigestInputBytes = 0;
+        Assert.False(Accept());
+        observation.SizeBytes = 67_108_865;
+        observation.DigestInputBytes = 67_108_865;
+        Assert.False(Accept());
+        observation.SizeBytes = 1;
+        observation.DigestInputBytes = 2;
+        Assert.False(Accept());
+        observation.DigestInputBytes = 1;
+        observation.ItemCount = 1;
+        Assert.False(Accept());
+        observation.ClearItemCount();
+        observation.Sha256 = ByteString.CopyFrom(new byte[31]);
+        Assert.False(Accept());
+        observation.Sha256 = ByteString.CopyFrom(SHA256.HashData("shape-only"u8));
+        observation.Kind = FileAuditKind.OperationMetadata;
+        Assert.False(Accept());
+        observation.Kind = FileAuditKind.InputBytes;
+        inner.Audit.Observations.Add(observation.Clone());
+        Assert.False(Accept());
+        inner.Audit.Observations.RemoveAt(1);
+        Assert.True(Accept());
+    }
+
+    [Fact]
     public void CompleteResponseBudgetIncludesMetaTargetItemsAndAnyPopulatedAudit()
     {
         const int maximum = 1_040_384;
@@ -163,7 +249,7 @@ public sealed class FileRemovalPlanConsumerTests
             Digest = ByteString.CopyFrom(SHA256.HashData("exact-plan"u8)),
             ExpiresAt = ProtoTime.ToInstant(DateTimeOffset.UtcNow.AddMinutes(60)),
             WorkspacePath = selected.Clone(),
-            TotalBytes = 0,
+            TotalBytes = 1,
             RequiresApproval = true,
             QuarantineAvailable = false,
             Risk = RiskClass.High,
@@ -185,10 +271,17 @@ public sealed class FileRemovalPlanConsumerTests
         }
         for (var index = 0; index < 920; index++)
             plan.Items.Add(Item(prefix + "/f" + index.ToString("D4", System.Globalization.CultureInfo.InvariantCulture), FileEntryKind.File));
+        plan.Items[^1].SizeBytes = 1;
+        plan.Items[^1].OwnerVerified = true;
         var response = new FileServicePlanRemovalResponse
         {
             Meta = new ResponseMeta { CorrelationId = meta.CorrelationId.Clone() },
             Value = new FileServicePlanRemovalValue { Plan = plan },
+            Audit = new FileAuditMetadata
+            {
+                Observations = { new FileAuditObservation { Kind = FileAuditKind.InputBytes, SizeBytes = 1,
+                    DigestInputBytes = 1, Sha256 = ByteString.CopyFrom(SHA256.HashData("x"u8)) } },
+            },
         };
         var missing = maximum - response.CalculateSize();
         Assert.InRange(missing, 0, 920 * 240);
@@ -213,11 +306,13 @@ public sealed class FileRemovalPlanConsumerTests
         Assert.True(RoutedFileResponseValidation.PlanRemoval(outer, target, request));
 
         var withAudit = response.Clone();
-        withAudit.Audit = new FileAuditMetadata
+        withAudit.Audit.Observations.Add(new FileAuditObservation
         {
-            Observations = { new FileAuditObservation { Kind = FileAuditKind.ReadBytes, SizeBytes = 0,
-                DigestInputBytes = 0, Sha256 = ByteString.CopyFrom(SHA256.HashData([])) } },
-        };
+            Kind = FileAuditKind.ReadBytes,
+            SizeBytes = 0,
+            DigestInputBytes = 0,
+            Sha256 = ByteString.CopyFrom(SHA256.HashData([]))
+        });
         Assert.True(NodeShapes.IsValid(withAudit.Audit));
         Assert.True(withAudit.CalculateSize() > maximum);
         Assert.False(FileServiceHandler.RemovalPlanResponseFits(withAudit));

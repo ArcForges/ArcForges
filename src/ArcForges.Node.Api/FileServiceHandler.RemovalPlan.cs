@@ -27,6 +27,10 @@ internal sealed partial class FileServiceHandler
     internal Action<StoreTransaction>? AfterRemovalSizeRefusalForTests { get; set; }
     internal Action? AfterRemovalSizeCommitForTests { get; set; }
 
+    // Coordinates test-owned file changes and repeated real ownership checks; production sets neither callback.
+    internal Action? AfterRemovalOwnershipReadForTests { get; set; }
+    internal Action<WorkspaceRemovalEntry, Action>? AfterRemovalOwnershipCheckForTests { get; set; }
+
     internal async Task<FileServicePlanRemovalResponse> PlanRemovalAsync(Caller caller, FileServicePlanRemovalRequest request,
         CancellationToken cancellationToken)
     {
@@ -87,6 +91,7 @@ internal sealed partial class FileServiceHandler
         var attempt = request.AttemptId is { Value.Length: 16 } attemptId &&
             attemptId.Value.Span.IndexOfAnyExcept((byte)0) >= 0 ? attemptId.Value.ToByteArray() : null;
         string? path = null;
+        using var inputAudit = new WorkspaceOwnershipInputAudit { AfterReadForTests = AfterRemovalOwnershipReadForTests };
 
         void CheckBudget()
         {
@@ -94,13 +99,13 @@ internal sealed partial class FileServiceHandler
         }
 
         void Audit(PermissionDecision decision, string outcome) => AuditLog.AppendFileWorkspace(transaction, caller.Actor,
-            "cleanup.plan FileService.PlanRemoval", workspace, attempt, path, decision, outcome, null);
+            "cleanup.plan FileService.PlanRemoval", workspace, attempt, path, decision, outcome, inputAudit.Snapshot());
 
         FileServicePlanRemovalResponse Refusal(ArcError error)
         {
             RoutedFileErrors.Complete(error, request.Meta, routed.CallId, node.Clock);
             Audit(PermissionDecision.Deny, "refused: " + error.Code);
-            return new FileServicePlanRemovalResponse { Meta = meta.Clone(), Error = error };
+            return new FileServicePlanRemovalResponse { Meta = meta.Clone(), Error = error, Audit = inputAudit.Snapshot() };
         }
 
         try
@@ -174,8 +179,10 @@ internal sealed partial class FileServiceHandler
                     foreach (var entry in snapshot.Entries)
                     {
                         CheckBudget();
-                        if (FileCreationOwnership.IsVerifiedAgent(transaction, caller.CenterCaller, workspace, use.Root, entry, token))
-                            verifiedOwners.Add(entry.Path);
+                        bool CheckOwner() => FileCreationOwnership.IsVerifiedAgent(transaction, caller.CenterCaller, workspace,
+                            use.Root, entry, token, inputAudit);
+                        if (CheckOwner()) verifiedOwners.Add(entry.Path);
+                        AfterRemovalOwnershipCheckForTests?.Invoke(entry, () => _ = CheckOwner());
                     }
                     if (verifiedOwners.Count != 0)
                     {
@@ -193,7 +200,12 @@ internal sealed partial class FileServiceHandler
                     if (!sample.Healthy) throw new RoutedAbortException(RoutedAbort.ClockUncertain);
                     var prepared = FileRemovalPlans.PrepareWorkspace(transaction, commandId, rawDigest, caller.CenterCaller,
                         caller.Actor, target, use.Root.RootPath, snapshot, sample.BoundaryMicroseconds, verifiedOwners);
-                    response = new FileServicePlanRemovalResponse { Meta = meta, Value = new FileServicePlanRemovalValue { Plan = prepared.Plan } };
+                    response = new FileServicePlanRemovalResponse
+                    {
+                        Meta = meta,
+                        Value = new FileServicePlanRemovalValue { Plan = prepared.Plan },
+                        Audit = inputAudit.Snapshot(),
+                    };
                     // A different malformed candidate cannot be misreported as an observed response-size limit.
                     if (!NodeShapes.IsValid(meta) || !NodeShapes.IsValid(prepared.Plan)) throw new RemovalPlanResponseUnavailableException();
                     // Size the entire exact signed inner response before inserting any plan, item or successful receipt.
@@ -228,12 +240,18 @@ internal sealed partial class FileServiceHandler
                 {
                     "removal_descendants" => RemovalLimit(correlation, "removal_descendants", "1000"),
                     "removal_total_bytes" => RemovalLimit(correlation, "removal_total_bytes", "67108864"),
+                    "removal_ownership_input_bytes" => RemovalLimit(correlation, "removal_ownership_input_bytes", "67108864"),
                     "planned_tree_changed" => Error(ErrorCategory.Conflict, "file_changed", "planned_tree_changed", correlation),
                     "path_link_or_special" => Error(ErrorCategory.State, "file_access_denied", "path_link_or_special", correlation),
                     "path_enforcement_unavailable" => Error(ErrorCategory.State, "file_access_denied", "path_enforcement_unavailable", correlation),
                     _ => Error(ErrorCategory.State, "file_access_denied", "file_access_denied", correlation),
                 };
                 response = Refusal(error);
+                if (failure.Reason == "removal_ownership_input_bytes")
+                {
+                    AfterRemovalSizeRefusalForTests?.Invoke(transaction);
+                    transaction.AfterCommitForTests = AfterRemovalSizeCommitForTests;
+                }
             }
             catch (WorkspacePathException failure) when (!planInsertionStarted && (failure.Reason is "directory_changed" or "directory_identity_changed" or "file_identity_changed"))
             {

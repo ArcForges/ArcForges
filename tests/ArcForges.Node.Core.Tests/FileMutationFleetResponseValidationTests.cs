@@ -170,6 +170,8 @@ public sealed class FileMutationFleetResponseValidationTests
         Assert.True(Accept()); // Existing-file size is unknown even for an expected-absent request.
         error.Details.Limit.LimitName = "removal_plan_response_bytes";
         Assert.False(Accept()); // Canonical names cannot be reinterpreted as another method's matching 4 MiB limit.
+        error.Details.Limit.LimitName = "removal_ownership_input_bytes";
+        Assert.False(Accept()); // A Plan-only canonical name cannot become an opaque write limit.
         error.Details.Limit.LimitName = "opaque.file.bound";
         Assert.True(Accept());
         error.Details.Limit.Maximum.Value = "4194304.00";

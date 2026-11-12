@@ -20,7 +20,7 @@ internal static partial class RoutedFileResponseValidation
         FileServicePlanRemovalResponse inner;
         try { inner = FileServicePlanRemovalResponse.Parser.ParseFrom(value.Response); }
         catch (InvalidProtocolBufferException) { return false; }
-        if (!NodeShapes.IsValid(inner) || !FileMetaMatches(inner.Meta, request.Meta, inner.Error) || inner.Audit is not null)
+        if (!NodeShapes.IsValid(inner) || !FileMetaMatches(inner.Meta, request.Meta, inner.Error) || !ValidRemovalPlanAudit(inner.Audit))
             return false;
         if (inner.Error is { } error) return RemovalPlanError(error, request);
         if (!NodeShapes.IsValid(request) || inner.Value?.Plan is not { } plan ||
@@ -68,6 +68,16 @@ internal static partial class RoutedFileResponseValidation
         return total == plan.TotalBytes;
     }
 
+    private static bool ValidRemovalPlanAudit(FileAuditMetadata? audit)
+    {
+        if (audit is null || audit.Observations.Count == 0) return true;
+        return audit.Observations.Count == 1 && audit.Observations[0] is
+        {
+            HasKind: true, Kind: FileAuditKind.InputBytes, HasSizeBytes: true,
+            HasDigestInputBytes: true, HasSha256: true, Sha256.Length: 32, HasItemCount: false,
+        } item && item.SizeBytes is > 0 and <= 67_108_864 && item.DigestInputBytes == item.SizeBytes;
+    }
+
     private static bool RemovalPlanError(ArcError error, FileServicePlanRemovalRequest request)
     {
         if (!CommonFileError(error) || !RemovalPlanLimit(error, request, signedInner: true)) return false;
@@ -105,7 +115,7 @@ internal static partial class RoutedFileResponseValidation
         {
             "path_bytes" => oversizedPath && maximum.Value == "4096",
             "removal_descendants" => signedInner && maximum.Value == "1000",
-            "removal_total_bytes" => signedInner && maximum.Value == "67108864",
+            "removal_total_bytes" or "removal_ownership_input_bytes" => signedInner && maximum.Value == "67108864",
             "removal_plan_response_bytes" => signedInner && maximum.Value == "1040384",
             "workspace_root_path_bytes" or "file_write_bytes" or "file_edit_text_bytes" or "file_existing_bytes" or "file_edit_result_bytes" => false,
             _ => maximum.Value switch

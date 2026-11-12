@@ -125,7 +125,7 @@ internal static partial class RoutedFileResponseValidation
         return limit.LimitName switch
         {
             "path_bytes" => maximum.Value == "4096" && possiblePath,
-            "workspace_root_path_bytes" or "removal_descendants" or "removal_total_bytes" or "removal_plan_response_bytes" => false,
+            "workspace_root_path_bytes" or "removal_descendants" or "removal_total_bytes" or "removal_ownership_input_bytes" or "removal_plan_response_bytes" => false,
             "file_write_bytes" => maximum.Value == "196608" && possibleWrite,
             "file_edit_text_bytes" => maximum.Value == "65536" && possibleEditText,
             "file_existing_bytes" => maximum.Value == "4194304" && possibleExisting,
