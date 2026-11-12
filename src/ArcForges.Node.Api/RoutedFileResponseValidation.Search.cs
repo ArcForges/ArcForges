@@ -48,7 +48,7 @@ internal static partial class RoutedFileResponseValidation
 
         if (inner.Error is { } error)
         {
-            return ReadError(error) &&  CanonicalLimits(error) && ReadLimitMatches(error, pathOnly) &&
+            return ReadError(error) && CanonicalLimits(error) && ReadLimitMatches(error, pathOnly) &&
                 (error.Details?.State?.Reason != "pattern: regex_scalar_boundary" || inner.Audit is { Observations.Count: 1 } &&
                     inner.Audit.Observations[0].SizeBytes > 0);
         }

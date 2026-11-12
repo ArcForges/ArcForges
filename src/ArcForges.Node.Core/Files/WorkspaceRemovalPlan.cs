@@ -72,6 +72,37 @@ internal static class WorkspaceRemovalPlan
         }
     }
 
+    /// <summary>A borrowed, read-only observation window. Dispose validates before the owning transaction can return.</summary>
+    internal sealed class CheckedRootWindow : IDisposable
+    {
+        private readonly WorkspacePath _root;
+        private readonly int _platform;
+        private readonly byte[] _identity;
+        internal CheckedRootWindow(WorkspacePath root, int platform, byte[] identity)
+        {
+            _root = root;
+            _platform = platform;
+            _identity = identity.ToArray();
+            Verify();
+        }
+        internal Exception? FailedObservation { get; private set; }
+        internal void Verify()
+        {
+            try { VerifyCheckedRoot(_root, _platform, _identity); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                FailedObservation = error;
+                throw;
+            }
+        }
+        public void Dispose()
+        {
+            // The first failed final observation already invalidated this window. Its caller can only refuse
+            // or unwind; repeating that same failure must not overwrite a definite pre-insert refusal.
+            if (FailedObservation is null) Verify();
+        }
+    }
+
     internal static void VerifyCheckedRoot(WorkspacePath root, int platform, byte[] expectedIdentity)
     {
         var held = WorkspacePath.Identity(root.RootHandle);

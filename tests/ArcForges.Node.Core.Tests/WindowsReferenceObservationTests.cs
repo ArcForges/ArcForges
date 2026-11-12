@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using ArcForges.Node.Core.Files;
 using ArcForges.Node.Core.Platform;
@@ -75,6 +76,30 @@ public sealed partial class WindowsReferenceObservationTests
             Assert.Equal("retained hardlink body", File.ReadAllText(outside));
         }
         finally { Directory.Delete(owned, recursive: true); }
+    }
+
+    // Real test-owned junctions require no symlink privilege. Never used by product path resolution.
+    internal static void CreateJunction(string link, string target)
+    {
+        using var process = Process.Start(new ProcessStartInfo(
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe"),
+            ["/d", "/c", "mklink", "/J", link, target])
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        }) ?? throw new InvalidOperationException("Native junction fixture did not start.");
+        var output = process.StandardOutput.ReadToEndAsync();
+        var error = process.StandardError.ReadToEndAsync();
+        if (!process.WaitForExit(10_000))
+        {
+            process.Kill();
+            Assert.True(process.WaitForExit(5_000), "Owned junction fixture process did not exit.");
+            Assert.Fail("Owned junction fixture timed out.");
+        }
+        Assert.Equal(0, process.ExitCode);
+        _ = output.GetAwaiter().GetResult();
+        _ = error.GetAwaiter().GetResult();
     }
 
     [LibraryImport("kernel32.dll", EntryPoint = "CreateHardLinkW", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]

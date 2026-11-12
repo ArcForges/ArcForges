@@ -50,7 +50,7 @@ internal static partial class RoutedFileResponseValidation
         {
             var cursorError = error.Category == ErrorCategory.Validation && error.Code == "invalid_cursor" && NodeShapes.IsValid(error) &&
                 error.Effect == EffectCertainty.DidNotHappen && error.Retry is { Mode: RetryMode.Never, RetryAt: null };
-            return (cursorError || ReadError(error)) && 
+            return (cursorError || ReadError(error)) &&
                 CanonicalLimits(error) && ReadLimitMatches(error, pathOnly) && inner.Audit is null;
         }
 

@@ -409,6 +409,14 @@ public sealed class FileRemovalPlanRoutedTests
             "SELECT count(*) FROM command_dedup WHERE command_id=$id;", ("$id", request.Meta.CommandId.Value.ToByteArray()))));
         Assert.Equal("unchanged", File.ReadAllText(Path.Combine(root, "target")));
 
+        handler.AfterRemovalPlanInsertForTests = () => throw new EncoderFallbackException("test-owned post-insert UTF8 failure");
+        await Assert.ThrowsAsync<EncoderFallbackException>(() => calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval,
+            request.ToByteArray(), request.Meta.CommandId));
+        handler.AfterRemovalPlanInsertForTests = null;
+        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_removal_plan;")));
+        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar(
+            "SELECT count(*) FROM command_dedup WHERE command_id=$id;", ("$id", request.Meta.CommandId.Value.ToByteArray()))));
+
         handler.AfterRemovalPlanInsertForTests = () => calls.Link.Reset(usableFor: 0);
         var dropped = await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval, request.ToByteArray(), request.Meta.CommandId);
         handler.AfterRemovalPlanInsertForTests = null;

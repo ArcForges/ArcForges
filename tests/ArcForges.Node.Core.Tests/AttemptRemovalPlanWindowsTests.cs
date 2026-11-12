@@ -151,8 +151,90 @@ public sealed partial class AttemptRemovalPlanWindowsTests
         Assert.Equal("command_id_reused", FileServicePlanRemovalResponse.Parser.ParseFrom((await calls.CallAsync(caller,
             RoutedMethod.PlanNodeRemoval, changedUnknownRaw, unknownRequest.Meta.CommandId)).Answer!.Response).Error.Code);
 
+        // Actual post-capture filesystem failures retain their native contract when the held identity is stable.
+        var handler = calls.Dispatcher.FileHandlerForTests!;
+        var missingParentReference = Path.Combine(node.Root, "absent-reference-parent", "child");
+        node.Runtime.Store.Write(transaction => transaction.Execute(
+            "UPDATE cache_instance SET path = $path WHERE cache_id = $id;", ("$path", missingParentReference), ("$id", cacheId)), CommitDurability.Full);
+        var accessRequest = new FileServicePlanRemovalRequest { Meta = Tasks.Meta(), AttemptId = attempt.Clone() };
+        var accessRaw = accessRequest.ToByteArray();
+        var accessAnswer = await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval, accessRaw, accessRequest.Meta.CommandId);
+        var access = FileServicePlanRemovalResponse.Parser.ParseFrom(accessAnswer.Answer!.Response);
+        Assert.Equal("file_access_denied", access.Error.Code);
+        Assert.Equal("identity_unavailable", access.Error.Details.State.Reason);
+
+        var creation = Directory.GetCreationTimeUtc(root);
+        var nativeCreated = WorkspacePath.ObserveWindowsReference(root).Final!.Value.Identity.Created;
+        void ChangeRealTargetIdentity()
+        {
+            Directory.SetCreationTimeUtc(root, creation.AddSeconds(-2));
+            Assert.NotEqual(nativeCreated, WorkspacePath.ObserveWindowsReference(root).Final!.Value.Identity.Created);
+        }
+        void AssertRolledBack(Id command)
+        {
+            Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_removal_plan;")));
+            Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM cleanup_plan;")));
+            Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar(
+                "SELECT count(*) FROM command_dedup WHERE command_id = $id;", ("$id", command.Value.ToByteArray()))));
+            Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar(
+                "SELECT count(*) FROM audit_log WHERE remote_command_id = $id;", ("$id", command.Value.ToByteArray()))));
+        }
+        var afterCapture = false;
+        handler.AfterAttemptRemovalCaptureForTests = () => { afterCapture = true; ChangeRealTargetIdentity(); };
+        var changedRequest = new FileServicePlanRemovalRequest { Meta = Tasks.Meta(), AttemptId = attempt.Clone() };
+        try
+        {
+            var changedAnswer = await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval,
+                changedRequest.ToByteArray(), changedRequest.Meta.CommandId);
+            var changedError = FileServicePlanRemovalResponse.Parser.ParseFrom(changedAnswer.Answer!.Response);
+            Assert.Equal(ErrorCategory.Conflict, changedError.Error.Category);
+            Assert.Equal("file_changed", changedError.Error.Code);
+            Assert.Equal("planned_tree_changed", changedError.Error.Details.State.Reason);
+            Assert.Equal(EffectCertainty.DidNotHappen, changedError.Error.Effect);
+            Assert.Equal(changedAnswer.Answer!.Response!.ToByteArray(), node.Runtime.Store.Read(reader => reader.Scalar(
+                "SELECT outcome FROM command_dedup WHERE command_id = $id;", ("$id", changedRequest.Meta.CommandId.Value.ToByteArray()))));
+            Assert.True(afterCapture); // The following qualifier encounters the real missing native parent above.
+        }
+        finally
+        {
+            handler.AfterAttemptRemovalCaptureForTests = null;
+            Directory.SetCreationTimeUtc(root, creation);
+            node.Runtime.Store.Write(transaction => transaction.Execute(
+                "UPDATE cache_instance SET path = $path WHERE cache_id = $id;", ("$path", unrelated), ("$id", cacheId)), CommitDurability.Full);
+        }
+        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_removal_plan;")));
+        var changedReplay = await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval, changedRequest.ToByteArray(), changedRequest.Meta.CommandId);
+        Assert.Equal("file_changed", FileServicePlanRemovalResponse.Parser.ParseFrom(changedReplay.Answer!.Response).Error.Code);
+        Assert.Equal(nativeCreated, WorkspacePath.ObserveWindowsReference(root).Final!.Value.Identity.Created);
+        Assert.Equal(accessAnswer.Answer.Response, (await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval,
+            accessRaw, accessRequest.Meta.CommandId)).Answer!.Response);
+
         var request = new FileServicePlanRemovalRequest { Meta = Tasks.Meta(), AttemptId = attempt.Clone() };
         var raw = request.ToByteArray();
+        foreach (var afterReceipt in new[] { false, true })
+        {
+            if (afterReceipt) handler.AfterRemovalPlanReceiptForTests = ChangeRealTargetIdentity;
+            else handler.AfterRemovalPlanInsertForTests = ChangeRealTargetIdentity;
+            try
+            {
+                var changedAnswer = await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval, raw, request.Meta.CommandId);
+                var changedError = FileServicePlanRemovalResponse.Parser.ParseFrom(changedAnswer.Answer!.Response);
+                Assert.Null(changedError.Value);
+                Assert.Equal(ErrorCategory.Conflict, changedError.Error.Category);
+                Assert.Equal("file_changed", changedError.Error.Code);
+                Assert.Equal("planned_tree_changed", changedError.Error.Details.State.Reason);
+                Assert.Equal(EffectCertainty.DidNotHappen, changedError.Error.Effect);
+                Assert.Equal(RetryMode.Never, changedError.Error.Retry.Mode);
+            }
+            finally
+            {
+                handler.AfterRemovalPlanInsertForTests = null;
+                handler.AfterRemovalPlanReceiptForTests = null;
+                Directory.SetCreationTimeUtc(root, creation);
+            }
+            AssertRolledBack(request.Meta.CommandId); // Includes a receipt already written but never committed.
+        }
+        // Exact same command/raw is eligible again only because both earlier transaction callbacks rolled back.
         var result = await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval, raw, request.Meta.CommandId);
         Assert.Equal(RoutedOutcome.Executed, result.Answer!.Outcome);
         var responseBytes = result.Answer.Response ?? throw new InvalidOperationException("Missing plan response.");
@@ -298,6 +380,83 @@ public sealed partial class AttemptRemovalPlanWindowsTests
             }
         }
 
+        // Successful no-follow Link observations cannot exclude session/cache/pin referents.
+        var junction = Path.Combine(node.Root, "ambiguous-reference");
+        WindowsReferenceObservationTests.CreateJunction(junction, root);
+        var junctionMetadata = WorkspacePath.ObserveWindowsReference(junction);
+        Assert.False(junctionMetadata.MissingFinal);
+        Assert.Equal(WorkspaceEntryType.Link, junctionMetadata.Final!.Value.Kind);
+        async Task AssertAmbiguousReference(Action install, Action remove)
+        {
+            install();
+            var check = new FileServicePlanRemovalRequest { Meta = Tasks.Meta(), AttemptId = attempt.Clone() };
+            var bytes = check.ToByteArray();
+            var answer = await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval, bytes, check.Meta.CommandId);
+            AssertQualification(FileServicePlanRemovalResponse.Parser.ParseFrom(answer.Answer!.Response), "attempt_references_unverified");
+            Assert.Equal(answer.Answer!.Response!.ToByteArray(), node.Runtime.Store.Read(reader => reader.Scalar(
+                "SELECT outcome FROM command_dedup WHERE command_id = $id;", ("$id", check.Meta.CommandId.Value.ToByteArray()))));
+            Assert.Equal(1L, node.Runtime.Store.Read(reader => reader.Scalar("""
+                SELECT count(*) FROM audit_log a JOIN file_workspace_audit f ON f.audit_seq = a.seq
+                WHERE a.remote_command_id = $id AND a.outcome_summary = 'refused: invalid_state';
+                """, ("$id", check.Meta.CommandId.Value.ToByteArray()))));
+            Assert.Equal(1L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_removal_plan;")));
+            Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_operation_journal;")));
+            remove();
+            Assert.Equal(answer.Answer.Response, (await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval, bytes, check.Meta.CommandId)).Answer!.Response);
+        }
+        await AssertAmbiguousReference(
+            () => node.Runtime.Store.Write(transaction => transaction.Execute(
+                "UPDATE session SET cwd=$path, workspace_id=NULL WHERE session_id=$id;", ("$path", junction), ("$id", sessionId)), CommitDurability.Full),
+            () => node.Runtime.Store.Write(transaction => transaction.Execute(
+                "UPDATE session SET cwd=$path, workspace_id=$workspace WHERE session_id=$id;", ("$path", unrelated), ("$workspace", unrelatedWorkspace.Id), ("$id", sessionId)), CommitDurability.Full));
+        await AssertAmbiguousReference(
+            () => node.Runtime.Store.Write(transaction => transaction.Execute(
+                "UPDATE cache_instance SET path=$path WHERE cache_id=$id;", ("$path", junction), ("$id", cacheId)), CommitDurability.Full),
+            () => node.Runtime.Store.Write(transaction => transaction.Execute(
+                "UPDATE cache_instance SET path=$path WHERE cache_id=$id;", ("$path", unrelated), ("$id", cacheId)), CommitDurability.Full));
+        var pinnedJunction = Path.Combine(node.DataRoot, "tmp", "ambiguous-pin");
+        WindowsReferenceObservationTests.CreateJunction(pinnedJunction, root);
+        var junctionDirectory = CommandIds.New().Value.ToByteArray();
+        await AssertAmbiguousReference(
+            () => node.Runtime.Store.Write(transaction => transaction.Execute("""
+                INSERT INTO managed_directory
+                  (directory_id, owner_kind, owner_id, root_class, relative_path, created_at, last_used_at, pinned, state, rev)
+                VALUES ($id, 5, $owner, 'tmp', 'ambiguous-pin', $now, $now, 1, 2, 0);
+                """, ("$id", junctionDirectory), ("$owner", node.Runtime.NodeId.ToArray()), ("$now", transaction.NowMicroseconds)), CommitDurability.Full),
+            () => node.Runtime.Store.Write(transaction => transaction.Execute(
+                "UPDATE managed_directory SET state=5 WHERE directory_id=$id;", ("$id", junctionDirectory)), CommitDurability.Full));
+        Directory.Delete(pinnedJunction);
+        Directory.Delete(junction);
+
+        var replacedDirectory = Directory.CreateDirectory(Path.Combine(node.Root, "stale-directory-reference")).FullName;
+        Directory.Delete(replacedDirectory);
+        File.WriteAllText(replacedDirectory, "ordinary file replacing a required directory");
+        Assert.Equal(WorkspaceEntryType.File, WorkspacePath.ObserveWindowsReference(replacedDirectory).Final!.Value.Kind);
+        await AssertAmbiguousReference(
+            () => node.Runtime.Store.Write(transaction => transaction.Execute(
+                "UPDATE session SET cwd=$path, workspace_id=NULL WHERE session_id=$id;", ("$path", replacedDirectory), ("$id", sessionId)), CommitDurability.Full),
+            () => node.Runtime.Store.Write(transaction => transaction.Execute(
+                "UPDATE session SET cwd=$path, workspace_id=$workspace WHERE session_id=$id;", ("$path", unrelated), ("$workspace", unrelatedWorkspace.Id), ("$id", sessionId)), CommitDurability.Full));
+        await AssertAmbiguousReference(
+            () => node.Runtime.Store.Write(transaction => transaction.Execute(
+                "UPDATE cache_instance SET path=$path WHERE cache_id=$id;", ("$path", replacedDirectory), ("$id", cacheId)), CommitDurability.Full),
+            () => node.Runtime.Store.Write(transaction => transaction.Execute(
+                "UPDATE cache_instance SET path=$path WHERE cache_id=$id;", ("$path", unrelated), ("$id", cacheId)), CommitDurability.Full));
+        var replacedPin = Directory.CreateDirectory(Path.Combine(node.DataRoot, "tmp", "stale-pin-directory")).FullName;
+        Directory.Delete(replacedPin);
+        File.WriteAllText(replacedPin, "ordinary pin replacement");
+        var replacedPinId = CommandIds.New().Value.ToByteArray();
+        await AssertAmbiguousReference(
+            () => node.Runtime.Store.Write(transaction => transaction.Execute("""
+                INSERT INTO managed_directory
+                  (directory_id, owner_kind, owner_id, root_class, relative_path, created_at, last_used_at, pinned, state, rev)
+                VALUES ($id, 5, $owner, 'tmp', 'stale-pin-directory', $now, $now, 1, 2, 0);
+                """, ("$id", replacedPinId), ("$owner", node.Runtime.NodeId.ToArray()), ("$now", transaction.NowMicroseconds)), CommitDurability.Full),
+            () => node.Runtime.Store.Write(transaction => transaction.Execute(
+                "UPDATE managed_directory SET state=5 WHERE directory_id=$id;", ("$id", replacedPinId)), CommitDurability.Full));
+        File.Delete(replacedPin);
+        File.Delete(replacedDirectory);
+
         // Missing root associations are real SQLite fixtures, distinct from actual native access failures.
         var missingRootDirectory = CommandIds.New().Value.ToByteArray();
         var recordedRoot = node.Runtime.Store.Read(reader => reader.Scalar(
@@ -332,6 +491,32 @@ public sealed partial class AttemptRemovalPlanWindowsTests
         Assert.Equal(trackingUnknown.Answer.Response, (await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval,
             trackingUnknownRaw, trackingUnknownRequest.Meta.CommandId)).Answer!.Response);
         Assert.Equal(1L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_removal_plan;")));
+
+        // A configured database root whose physical directory is missing cannot classify children UNTRACKED.
+        Assert.NotNull(recordedRoot);
+        var physicallyMissing = Path.Combine(node.Root, "physically-missing-tracking-root");
+        var physicalDirectory = CommandIds.New().Value.ToByteArray();
+        node.Runtime.Store.Write(transaction =>
+        {
+            transaction.Execute("UPDATE root_location SET path=$path WHERE root_class='records';", ("$path", physicallyMissing));
+            transaction.Execute("""
+                INSERT INTO managed_directory
+                  (directory_id, owner_kind, owner_id, root_class, relative_path, created_at, last_used_at, pinned, state, rev)
+                VALUES ($id, 5, $owner, 'records', 'missing-entry', $now, $now, 0, 2, 0);
+                """, ("$id", physicalDirectory), ("$owner", node.Runtime.NodeId.ToArray()), ("$now", transaction.NowMicroseconds));
+        }, CommitDurability.Full);
+        var physicalRequest = new FileServicePlanRemovalRequest { Meta = Tasks.Meta(), AttemptId = attempt.Clone() };
+        var physicalRaw = physicalRequest.ToByteArray();
+        var physicalAnswer = await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval, physicalRaw, physicalRequest.Meta.CommandId);
+        AssertQualification(FileServicePlanRemovalResponse.Parser.ParseFrom(physicalAnswer.Answer!.Response), "attempt_tracking_unverified");
+        Assert.Equal(1L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_removal_plan;")));
+        node.Runtime.Store.Write(transaction =>
+        {
+            transaction.Execute("UPDATE managed_directory SET state=5 WHERE directory_id=$id;", ("$id", physicalDirectory));
+            if (recordedRoot is not null) transaction.Execute("UPDATE root_location SET path=$path WHERE root_class='records';", ("$path", recordedRoot));
+        }, CommitDurability.Full);
+        Assert.Equal(physicalAnswer.Answer.Response, (await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval,
+            physicalRaw, physicalRequest.Meta.CommandId)).Answer!.Response);
 
         async Task AssertReferenceInUse(string reference)
         {

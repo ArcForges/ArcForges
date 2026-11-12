@@ -54,14 +54,23 @@ internal static class AttemptDirectoryTrackingObservation
                     continue;
                 }
 
-                try
+                if (!roots.TryGetValue(rootClass, out var root))
                 {
-                    if (!roots.TryGetValue(rootClass, out var root))
+                    try
                     {
                         root = WorkspacePath.OpenRoot(rows.GetString(2));
                         roots.Add(rootClass, root);
                     }
+                    catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
+                    {
+                        // The required root itself was not established; this cannot prove an absent record.
+                        incomplete = true;
+                        continue;
+                    }
+                }
 
+                try
+                {
                     var metadata = root.InspectEntry(rows.GetString(1), allowRoot: true);
                     if (metadata.Kind != WorkspaceEntryType.Directory) continue;
                     var key = Key(RegisteredWorkspaces.RootIdentity.Encode(metadata.Identity));
@@ -70,7 +79,7 @@ internal static class AttemptDirectoryTrackingObservation
                 }
                 catch (WorkspacePathException error) when (error.Reason is "native_2" or "native_3" or "native_20")
                 {
-                    // A path with a missing component cannot name a currently captured directory.
+                    // Only an entry under the successfully opened required root is known to be absent.
                 }
                 catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
                 {

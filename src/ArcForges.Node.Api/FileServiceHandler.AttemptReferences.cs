@@ -20,10 +20,10 @@ internal sealed partial class FileServiceHandler
         // A checked declared path is evidence of a relationship, not an external-use or cleanup-effect guard.
         var targetIdentity = attemptRoot.RootIdentity;
         var targetAncestors = temporaryRoot.WindowsRootAncestors();
-        var observations = new Dictionary<string, (RegisteredWorkspaces.RootIdentity? Identity, bool Overlaps, bool MissingFinal)>(StringComparer.Ordinal);
+        var observations = new Dictionary<string, (RegisteredWorkspaces.RootIdentity? Identity, bool Overlaps, WorkspaceEntryType? Kind)>(StringComparer.Ordinal);
         var incomplete = false;
 
-        bool Overlaps(string? path, bool boundWorkspace = false, int? expectedPlatform = null, byte[]? expectedIdentity = null)
+        bool Overlaps(string? path, bool boundWorkspace = false, int? expectedPlatform = null, byte[]? expectedIdentity = null, bool requireDirectory = false)
         {
             checkBudget();
             if (string.IsNullOrEmpty(path))
@@ -39,7 +39,7 @@ internal sealed partial class FileServiceHandler
                     var observed = WorkspacePath.ObserveWindowsReference(path);
                     var identity = observed.Final is { Kind: WorkspaceEntryType.Directory } final
                         ? RegisteredWorkspaces.RootIdentity.Encode(final.Identity) : null;
-                    observation = (identity, observed.OverlapsDirectory(targetIdentity, targetAncestors), observed.MissingFinal);
+                    observation = (identity, observed.OverlapsDirectory(targetIdentity, targetAncestors), observed.Final?.Kind);
                     observations.Add(path, observation);
                 }
                 catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
@@ -49,6 +49,14 @@ internal sealed partial class FileServiceHandler
                 }
             }
 
+            // cwd, managed directories and cache roots require a directory; a stale file at that name does
+            // not establish an unrelated directory association. Other structured references may be files.
+            if (observation.Kind is not (WorkspaceEntryType.File or WorkspaceEntryType.Directory) ||
+                (requireDirectory || boundWorkspace) && observation.Kind != WorkspaceEntryType.Directory)
+            {
+                incomplete = true;
+                return false;
+            }
             if (boundWorkspace && (expectedPlatform is null || expectedIdentity is null || observation.Identity is null ||
                 expectedPlatform != observation.Identity.Platform ||
                 !CryptographicOperations.FixedTimeEquals(expectedIdentity, observation.Identity.Bytes)))
@@ -56,7 +64,6 @@ internal sealed partial class FileServiceHandler
                 incomplete = true;
                 return false;
             }
-            if (!observation.Overlaps && observation.MissingFinal) incomplete = true;
             return observation.Overlaps;
         }
 
@@ -75,7 +82,7 @@ internal sealed partial class FileServiceHandler
                 var hasCwd = !rows.IsDBNull(0) && rows.GetString(0).Length != 0;
                 var hasWorkspace = !rows.IsDBNull(4);
                 if (!hasCwd && !hasWorkspace) incomplete = true;
-                if (hasCwd && Overlaps(rows.GetString(0)) ||
+                if (hasCwd && Overlaps(rows.GetString(0), requireDirectory: true) ||
                     hasWorkspace && Overlaps(rows.IsDBNull(1) ? null : rows.GetString(1), true,
                         rows.IsDBNull(2) ? null : rows.GetInt32(2), rows.IsDBNull(3) ? null : (byte[])rows.GetValue(3)))
                     return AttemptReferenceState.InUse;
@@ -98,7 +105,7 @@ internal sealed partial class FileServiceHandler
                 TaskSpec spec;
                 try { spec = TaskSpec.Parser.ParseFrom((byte[])rows.GetValue(0)); }
                 catch (InvalidProtocolBufferException) { incomplete = true; continue; }
-                if (Overlaps(spec.HasWorkingDirectory ? spec.WorkingDirectory : null) ||
+                if (Overlaps(spec.HasWorkingDirectory ? spec.WorkingDirectory : null, requireDirectory: true) ||
                     !rows.IsDBNull(4) && Overlaps(rows.IsDBNull(1) ? null : rows.GetString(1), true,
                         rows.IsDBNull(2) ? null : rows.GetInt32(2), rows.IsDBNull(3) ? null : (byte[])rows.GetValue(3)))
                     return AttemptReferenceState.InUse;
@@ -154,7 +161,7 @@ internal sealed partial class FileServiceHandler
         {
             while (rows.Read())
                 if (Overlaps(rows.IsDBNull(0) ? null : rows.GetString(0), rows.GetInt32(3) != 0,
-                    rows.IsDBNull(1) ? null : rows.GetInt32(1), rows.IsDBNull(2) ? null : (byte[])rows.GetValue(2)))
+                    rows.IsDBNull(1) ? null : rows.GetInt32(1), rows.IsDBNull(2) ? null : (byte[])rows.GetValue(2), requireDirectory: true))
                     return AttemptReferenceState.InUse;
         }
 
@@ -178,7 +185,7 @@ internal sealed partial class FileServiceHandler
                     var components = WorkspacePath.Components(rows.GetString(1), allowRoot: true);
                     var candidate = components.Length == 0 ? rows.GetString(0) :
                         Path.Combine(rows.GetString(0), string.Join(Path.DirectorySeparatorChar, components));
-                    if (Overlaps(candidate)) return AttemptReferenceState.InUse;
+                    if (Overlaps(candidate, requireDirectory: true)) return AttemptReferenceState.InUse;
                 }
                 catch (WorkspacePathException exception)
                 {

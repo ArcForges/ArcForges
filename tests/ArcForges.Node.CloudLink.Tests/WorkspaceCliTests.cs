@@ -5,6 +5,7 @@ using ArcForges.Contracts.Fleet.V1;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Contracts.Relay.V1;
+using ArcForges.Node.Api;
 using ArcForges.Node.CloudLink;
 using Google.Protobuf;
 
@@ -75,37 +76,67 @@ public sealed class WorkspaceCliTests
         Assert.Equal(Origin.Script, sent.Caller.LocalOrigin); // this test process is noninteractive, not a HUMAN claim.
         Assert.True(FakeChannelPeer.Verify(publicKey, RelaySignatures.AssertionInput(assertion, center.Endpoint)!, assertion.Signature.ToByteArray()));
 
+        // Script the same declared metadata transcript as the producer, bound to each actual CLI request.
+        // These bytes describe synthetic records only, not an observed workspace or a real Center audit.
+        async Task<(int Exit, string Output, string Error)> ReadReply(string method, string[] arguments,
+            Func<ByteString, IMessage> response)
+        {
+            var before = center.CallsOf(method).Count;
+            var releaseRead = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            center.Script(method, new FakeFault.Hold(releaseRead));
+            var pending = RunCliAsync(node, ct, arguments);
+            await Eventually.TrueAsync(() => center.CallsOf(method).Count == before + 1, "the scripted read request arrived");
+            var body = ByteString.CopyFrom(FakeCenter.Payload(center.CallsOf(method)[before].Body));
+            center.Script(method, Reply(response(body)));
+            releaseRead.TrySetResult();
+            return await pending;
+        }
         var page = new WorkspaceServiceListWorkspacesResponse
         {
-            Meta = new ResponseMeta { CorrelationId = CommandIds.New() },
             Value = new WorkspaceServiceListWorkspacesValue { Workspaces = { workspace }, Page = new PageState { HasMore = false } },
+            Audit = WorkspaceAuditMetadata.ForRecords([workspace]),
         };
-        center.Script("ListNodeWorkspaces", Reply(new FleetServiceListNodeWorkspacesResponse
+        FleetServiceListNodeWorkspacesResponse ListResponse(ByteString body)
         {
-            Meta = new ResponseMeta { CorrelationId = CommandIds.New() },
-            Value = new FleetServiceListNodeWorkspacesValue { NodeId = nodeId, Response = page.ToByteString() },
-        }));
-        var listed = await RunCliAsync(node, ct, "workspace", "list");
+            var request = WorkspaceServiceListWorkspacesRequest.Parser.ParseFrom(
+                FleetServiceListNodeWorkspacesRequest.Parser.ParseFrom(body).Request);
+            var meta = new ResponseMeta { CorrelationId = request.Meta.CorrelationId.Clone() };
+            page.Meta = meta.Clone();
+            return new FleetServiceListNodeWorkspacesResponse
+            {
+                Meta = meta,
+                Value = new FleetServiceListNodeWorkspacesValue { NodeId = nodeId, Response = page.ToByteString() },
+            };
+        }
+        var listed = await ReadReply("ListNodeWorkspaces", ["workspace", "list"], ListResponse);
         Assert.True(listed.Exit == 0, "list exit=" + listed.Exit + "; stderr=" + listed.Error);
         Assert.Contains(path, listed.Output, StringComparison.Ordinal);
         var sentList = FleetServiceListNodeWorkspacesRequest.Parser.ParseFrom(FakeCenter.Payload(Assert.Single(center.CallsOf("ListNodeWorkspaces")).Body));
         Assert.Null(sentList.Meta.CommandId);
         Assert.Null(WorkspaceServiceListWorkspacesRequest.Parser.ParseFrom(sentList.Request).Meta.CommandId);
 
-        center.Script("GetNodeWorkspace", Reply(new FleetServiceGetNodeWorkspaceResponse
+        FleetServiceGetNodeWorkspaceResponse GetResponse(ByteString body, Workspace declared)
         {
-            Meta = new ResponseMeta { CorrelationId = CommandIds.New() },
-            Value = new FleetServiceGetNodeWorkspaceValue
+            var request = WorkspaceServiceGetWorkspaceRequest.Parser.ParseFrom(
+                FleetServiceGetNodeWorkspaceRequest.Parser.ParseFrom(body).Request);
+            var meta = new ResponseMeta { CorrelationId = request.Meta.CorrelationId.Clone() };
+            return new FleetServiceGetNodeWorkspaceResponse
             {
-                NodeId = nodeId,
-                Response = new WorkspaceServiceGetWorkspaceResponse
+                Meta = meta,
+                Value = new FleetServiceGetNodeWorkspaceValue
                 {
-                    Meta = new ResponseMeta { CorrelationId = CommandIds.New() },
-                    Value = new WorkspaceServiceGetWorkspaceValue { Workspace = workspace },
-                }.ToByteString(),
-            },
-        }));
-        var shown = await RunCliAsync(node, ct, "workspace", "show", IdText.Format(workspaceId));
+                    NodeId = nodeId,
+                    Response = new WorkspaceServiceGetWorkspaceResponse
+                    {
+                        Meta = meta.Clone(),
+                        Value = new WorkspaceServiceGetWorkspaceValue { Workspace = declared },
+                        Audit = WorkspaceAuditMetadata.ForRecords([declared]),
+                    }.ToByteString(),
+                },
+            };
+        }
+        var shown = await ReadReply("GetNodeWorkspace", ["workspace", "show", IdText.Format(workspaceId)],
+            body => GetResponse(body, workspace));
         Assert.True(shown.Exit == 0, "show exit=" + shown.Exit + "; stderr=" + shown.Error);
         Assert.Contains(path, shown.Output, StringComparison.Ordinal);
         var sentGet = FleetServiceGetNodeWorkspaceRequest.Parser.ParseFrom(FakeCenter.Payload(Assert.Single(center.CallsOf("GetNodeWorkspace")).Body));
@@ -169,38 +200,29 @@ public sealed class WorkspaceCliTests
 
         var wrongWorkspace = workspace.Clone();
         wrongWorkspace.WorkspaceId = CommandIds.New();
-        center.Script("GetNodeWorkspace", Reply(new FleetServiceGetNodeWorkspaceResponse
-        {
-            Meta = new ResponseMeta { CorrelationId = CommandIds.New() },
-            Value = new FleetServiceGetNodeWorkspaceValue
-            {
-                NodeId = nodeId,
-                Response = new WorkspaceServiceGetWorkspaceResponse
-                {
-                    Value = new WorkspaceServiceGetWorkspaceValue { Workspace = wrongWorkspace },
-                }.ToByteString(),
-            },
-        }));
-        var wrongGet = await RunCliAsync(node, ct, "workspace", "show", IdText.Format(workspaceId));
+        var wrongGet = await ReadReply("GetNodeWorkspace", ["workspace", "show", IdText.Format(workspaceId)],
+            body => GetResponse(body, wrongWorkspace));
         Assert.NotEqual(0, wrongGet.Exit);
         Assert.DoesNotContain(IdText.Format(wrongWorkspace.WorkspaceId), wrongGet.Output, StringComparison.Ordinal);
 
         var missingId = workspace.Clone();
         missingId.WorkspaceId = null;
-        center.Script("ListNodeWorkspaces", Reply(new FleetServiceListNodeWorkspacesResponse
-        {
-            Meta = new ResponseMeta { CorrelationId = CommandIds.New() },
-            Value = new FleetServiceListNodeWorkspacesValue
-            {
-                NodeId = nodeId,
-                Response = new WorkspaceServiceListWorkspacesResponse
-                {
-                    Value = new WorkspaceServiceListWorkspacesValue { Workspaces = { missingId }, Page = new PageState { HasMore = false } },
-                }.ToByteString(),
-            },
-        }));
-        var wrongList = await RunCliAsync(node, ct, "workspace", "list");
+        page.Value.Workspaces.Clear();
+        page.Value.Workspaces.Add(missingId);
+        var wrongList = await ReadReply("ListNodeWorkspaces", ["workspace", "list"], ListResponse);
         Assert.NotEqual(0, wrongList.Exit);
+
+        page.Value.Workspaces.Clear();
+        page.Value.Workspaces.Add(workspace);
+        page.Audit = null;
+        var missingTranscript = await ReadReply("ListNodeWorkspaces", ["workspace", "list"], ListResponse);
+        Assert.NotEqual(0, missingTranscript.Exit);
+        Assert.DoesNotContain(path, missingTranscript.Output, StringComparison.Ordinal);
+        page.Audit = WorkspaceAuditMetadata.ForRecords([workspace]);
+        page.Audit.Observations[0].Sha256 = ByteString.CopyFrom(new byte[32]);
+        var forgedTranscript = await ReadReply("ListNodeWorkspaces", ["workspace", "list"], ListResponse);
+        Assert.NotEqual(0, forgedTranscript.Exit);
+        Assert.DoesNotContain(path, forgedTranscript.Output, StringComparison.Ordinal);
     }
 
     private static FakeFault.Raw Reply(IMessage response) => new([.. FakeCenter.DataFrame(response), .. FakeCenter.TrailerFrame(0, null)]);

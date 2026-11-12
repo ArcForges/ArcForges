@@ -39,6 +39,26 @@ public sealed class AttemptDirectoryTrackingObservationTests
                 TestContext.Current.CancellationToken.ThrowIfCancellationRequested));
             Assert.Equal(AttemptDirectoryTracking.Tracked, incomplete["tree/tracked"]);
             Assert.Equal(AttemptDirectoryTracking.Unknown, incomplete["tree/untracked"]);
+
+            var configured = Path.Combine(owned, "configured-but-missing");
+            store.Write(transaction => transaction.Execute(
+                "INSERT INTO root_location (root_class, path) VALUES ('cache', $path);", ("$path", configured)), CommitDurability.Full);
+            var missingPhysicalRoot = store.Read(reader => AttemptDirectoryTrackingObservation.Read(reader, snapshot,
+                TestContext.Current.CancellationToken.ThrowIfCancellationRequested));
+            Assert.Equal(AttemptDirectoryTracking.Unknown, missingPhysicalRoot["tree/untracked"]);
+            Assert.Equal(AttemptDirectoryTracking.Tracked, missingPhysicalRoot["tree/tracked"]);
+
+            File.WriteAllText(configured, "root is a file");
+            var fileRoot = store.Read(reader => AttemptDirectoryTrackingObservation.Read(reader, snapshot,
+                TestContext.Current.CancellationToken.ThrowIfCancellationRequested));
+            Assert.Equal(AttemptDirectoryTracking.Unknown, fileRoot["tree/untracked"]);
+            File.Delete(configured);
+            Directory.CreateDirectory(configured);
+            // In contrast, the missing final entry under a physically established root is known absent.
+            var missingEntry = store.Read(reader => AttemptDirectoryTrackingObservation.Read(reader, snapshot,
+                TestContext.Current.CancellationToken.ThrowIfCancellationRequested));
+            Assert.Equal(AttemptDirectoryTracking.Untracked, missingEntry["tree/untracked"]);
+            Assert.Equal(AttemptDirectoryTracking.Tracked, missingEntry["tree/tracked"]);
         }
         finally
         {

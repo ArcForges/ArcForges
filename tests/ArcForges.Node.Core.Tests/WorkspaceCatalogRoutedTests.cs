@@ -165,7 +165,9 @@ public sealed partial class WorkspaceCatalogRoutedTests
         var caller = calls.Relay(Origin.Human);
         var registration = new WorkspaceServiceRegisterWorkspaceRequest
         {
-            Meta = Tasks.Meta(), Path = Path.Combine(node.Root, new string('x', 4097)), Name = "too-long",
+            Meta = Tasks.Meta(),
+            Path = Path.Combine(node.Root, new string('x', 4097)),
+            Name = "too-long",
         };
         var refused = await calls.CallAsync(caller, RoutedMethod.RegisterNodeWorkspace, registration.ToByteArray(), registration.Meta.CommandId);
         var response = WorkspaceServiceRegisterWorkspaceResponse.Parser.ParseFrom(refused.Answer!.Response);

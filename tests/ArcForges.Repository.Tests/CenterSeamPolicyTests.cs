@@ -159,6 +159,11 @@ public sealed partial class CenterSeamPolicyTests
             && path != "tests/ArcForges.ClosedLoop.Tests/LinuxFileMutationHostTests.cs"
             && path != "tests/ArcForges.ClosedLoop.Tests/LinuxWorkerInterruptionHostTests.cs"
             && path != "tests/ArcForges.ClosedLoop.Tests/WindowsFileMutationHostTests.cs"
+            // AF-CTR-06: exact real-Host consumers of the same isolated peer; no production or new project use.
+            && path != "tests/ArcForges.ClosedLoop.Tests/AttemptRemovalPlanHostTests.cs"
+            && path != "tests/ArcForges.ClosedLoop.Tests/OptionalAvailableFleetHostTests.cs"
+            && path != "tests/ArcForges.ClosedLoop.Tests/PlanRemovalHostTests.cs"
+            && path != "tests/ArcForges.ClosedLoop.Tests/PlanRemovalInputAuditHostTests.cs"
             && Regex.IsMatch(File.ReadAllText(Path.Combine(RepositoryFiles.Root, path)), @"\bFakeCenter\b")).ToList();
         Assert.Empty(using_);
 

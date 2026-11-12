@@ -98,6 +98,36 @@ public sealed class WorkspaceRemovalPlanTests
     }
 
     [Fact]
+    [Trait("env", "linux-real")]
+    public void CheckedWindowRechecksAfterCaptureReturnsAndLaterNativeObservationFails()
+    {
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "This real post-capture rename/error case runs on Linux.");
+        using var fixture = new OwnedDirectory();
+        var tree = Directory.CreateDirectory(Path.Combine(fixture.Path, "tree")).FullName;
+        var moved = tree + "-moved";
+        using var target = WorkspacePath.OpenRoot(tree);
+        var expected = RegisteredWorkspaces.RootIdentity.Encode(target.RootIdentity);
+        WorkspacePathException? nativeFailure = null;
+        var captured = false;
+        var refusal = Assert.Throws<WorkspaceRemovalPlanException>(() =>
+        {
+            using var window = new WorkspaceRemovalPlan.CheckedRootWindow(target, expected.Platform, expected.Bytes);
+            _ = WorkspaceRemovalPlan.CaptureCheckedRoot(target, expected.Platform, expected.Bytes,
+                TestContext.Current.CancellationToken);
+            captured = true; // CaptureCore's own finally has already finished.
+            Directory.Move(tree, moved);
+            Directory.CreateDirectory(tree);
+            try { using var absent = WorkspacePath.OpenRoot(Path.Combine(fixture.Path, "absent-native-root")); }
+            catch (WorkspacePathException error) { nativeFailure = error; throw; }
+        });
+        Assert.True(captured);
+        Assert.Equal("native_2", Assert.IsType<WorkspacePathException>(nativeFailure).Reason);
+        Assert.Equal("planned_tree_changed", refusal.Reason);
+        Assert.True(Directory.Exists(tree));
+        Assert.True(Directory.Exists(moved));
+    }
+
+    [Fact]
     [Trait("env", "windows-real")]
     public void WindowsHeldChildIsTheCheckedTraversalRoot()
     {
