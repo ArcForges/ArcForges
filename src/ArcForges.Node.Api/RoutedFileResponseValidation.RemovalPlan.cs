@@ -37,7 +37,8 @@ internal static partial class RoutedFileResponseValidation
         }
         else if (request.AttemptId is { } attempt)
         {
-            if (plan.AttemptId is null || !plan.AttemptId.Equals(attempt) || plan.WorkspacePath is not null) return false;
+            if (plan.AttemptId is null || !plan.AttemptId.Equals(attempt) || plan.WorkspacePath is not null ||
+                plan.Items[0].Path != string.Empty || plan.Items[0].Kind != FileEntryKind.Directory) return false;
         }
         else return false;
 

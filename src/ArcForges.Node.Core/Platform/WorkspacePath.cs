@@ -43,6 +43,7 @@ internal sealed partial class WorkspacePath : IDisposable
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
     private readonly List<SafeFileHandle> _directories = [];
     private readonly List<SafeFileHandle> _files = [];
+    private int _rootAncestorCount;
     private SafeFileHandle? _rootHandle;
     private SafeFileHandle? _windowsRootParent;
     private string? _windowsRootName;
@@ -127,6 +128,7 @@ internal sealed partial class WorkspacePath : IDisposable
             }
 
             owner._rootHandle = current;
+            owner._rootAncestorCount = owner._directories.Count;
             owner.RootIdentity = Identity(current);
             if (!owner.RootIdentity.IsDirectory || owner.RootIdentity.Links == 0)
             {
@@ -147,6 +149,21 @@ internal sealed partial class WorkspacePath : IDisposable
             owner.Dispose();
             throw;
         }
+    }
+
+    /// <summary>
+    /// Reads the identities of the native handles retained while opening a Windows absolute directory. These are
+    /// metadata observations only; they are not an external namespace lock or a cleanup effect guard.
+    /// </summary>
+    internal IReadOnlyList<WorkspaceObjectIdentity> WindowsRootAncestors()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (!OperatingSystem.IsWindows() || _rootAncestorCount == 0)
+            throw new WorkspacePathException("path_enforcement_unavailable");
+        var result = new WorkspaceObjectIdentity[_rootAncestorCount];
+        for (var index = 0; index < result.Length; index++)
+            result[index] = Identity(_directories[index]);
+        return result;
     }
 
     /// <summary>Validates a portable relative path and returns its exact components.</summary>
