@@ -15,13 +15,12 @@ internal sealed partial class FileServiceHandler
     private enum AttemptReferenceState { Unrelated, InUse, Unknown }
 
     private static AttemptReferenceState QualifyAttemptReferences(StoreReader reader, WorkspacePath temporaryRoot,
-        AttemptPlanTarget target, Action checkBudget)
+        WorkspacePath attemptRoot, Action checkBudget)
     {
         // A checked declared path is evidence of a relationship, not an external-use or cleanup-effect guard.
-        var targetKey = FileCreationOwnership.StableKey(target.Platform, target.DirectoryIdentity)
-            ?? throw new WorkspacePathException("identity_unavailable");
-        var targetAncestors = temporaryRoot.WindowsRootAncestors().Select(WindowsDirectoryKey).ToArray();
-        var observations = new Dictionary<string, (RegisteredWorkspaces.RootIdentity? Identity, bool Overlaps)>(StringComparer.Ordinal);
+        var targetIdentity = attemptRoot.RootIdentity;
+        var targetAncestors = temporaryRoot.WindowsRootAncestors();
+        var observations = new Dictionary<string, (RegisteredWorkspaces.RootIdentity? Identity, bool Overlaps, bool MissingFinal)>(StringComparer.Ordinal);
         var incomplete = false;
 
         bool Overlaps(string? path, bool boundWorkspace = false, int? expectedPlatform = null, byte[]? expectedIdentity = null)
@@ -38,16 +37,9 @@ internal sealed partial class FileServiceHandler
                 try
                 {
                     var observed = WorkspacePath.ObserveWindowsReference(path);
-                    var identity = observed.Final is { } final
-                        ? RegisteredWorkspaces.RootIdentity.Encode(final.Identity, directory: final.Kind == WorkspaceEntryType.Directory)
-                        : null;
-                    var referenceKey = identity is null ? null : FileCreationOwnership.StableKey(identity.Platform, identity.Bytes);
-                    var overlaps = referenceKey is not null &&
-                        (referenceKey.AsSpan().SequenceEqual(targetKey) ||
-                         observed.Final!.Value.Kind == WorkspaceEntryType.Directory &&
-                         targetAncestors.Any(item => item.AsSpan().SequenceEqual(referenceKey))) ||
-                        observed.Ancestors.Any(item => WindowsDirectoryKey(item).AsSpan().SequenceEqual(targetKey));
-                    observation = (identity, overlaps);
+                    var identity = observed.Final is { Kind: WorkspaceEntryType.Directory } final
+                        ? RegisteredWorkspaces.RootIdentity.Encode(final.Identity) : null;
+                    observation = (identity, observed.OverlapsDirectory(targetIdentity, targetAncestors), observed.MissingFinal);
                     observations.Add(path, observation);
                 }
                 catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
@@ -64,7 +56,7 @@ internal sealed partial class FileServiceHandler
                 incomplete = true;
                 return false;
             }
-            if (!observation.Overlaps && observation.Identity is null) incomplete = true;
+            if (!observation.Overlaps && observation.MissingFinal) incomplete = true;
             return observation.Overlaps;
         }
 
@@ -198,10 +190,4 @@ internal sealed partial class FileServiceHandler
         return incomplete ? AttemptReferenceState.Unknown : AttemptReferenceState.Unrelated;
     }
 
-    private static byte[] WindowsDirectoryKey(WorkspaceObjectIdentity identity)
-    {
-        var encoded = RegisteredWorkspaces.RootIdentity.Encode(identity);
-        return encoded.Platform == 1 && FileCreationOwnership.StableKey(encoded.Platform, encoded.Bytes) is { } key
-            ? key : throw new WorkspacePathException("identity_unavailable");
-    }
 }

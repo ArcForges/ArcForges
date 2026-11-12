@@ -193,7 +193,7 @@ internal sealed partial class FileServiceHandler
                             };
                             var references = AttemptTreeHasHold(transaction, temporaryRoot, snapshot, token)
                                 ? AttemptReferenceState.InUse
-                                : QualifyAttemptReferences(transaction, temporaryRoot, target, CheckBudget);
+                                : QualifyAttemptReferences(transaction, temporaryRoot, attemptRoot, CheckBudget);
                             WorkspaceRemovalPlan.VerifyCheckedRoot(attemptRoot, target.Platform, target.DirectoryIdentity);
                             if (references == AttemptReferenceState.InUse)
                                 response = Refusal(NodeErrors.InUse("attempt_in_use"));

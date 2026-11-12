@@ -9,7 +9,20 @@ namespace ArcForges.Node.Core.Platform;
 internal sealed record WindowsReferenceObservation(
     IReadOnlyList<WorkspaceObjectIdentity> Ancestors,
     WorkspaceEntryMetadata? Final,
-    bool MissingFinal);
+    bool MissingFinal)
+{
+    // A reference comparison uses the Windows volume/file ID, including ordinary multi-link files.
+    // Ownership encoding and removal capture retain their separate, stricter link-count requirements.
+    internal bool OverlapsDirectory(WorkspaceObjectIdentity target, IReadOnlyList<WorkspaceObjectIdentity> targetAncestors)
+    {
+        static bool SameNativeObject(WorkspaceObjectIdentity left, WorkspaceObjectIdentity right) =>
+            left.Volume == right.Volume && left.Low == right.Low && left.High == right.High;
+        return Final is { } final &&
+            (SameNativeObject(final.Identity, target) || final.Kind == WorkspaceEntryType.Directory &&
+             targetAncestors.Any(item => SameNativeObject(item, final.Identity))) ||
+            Ancestors.Any(item => SameNativeObject(item, target));
+    }
+}
 
 internal sealed partial class WorkspacePath
 {

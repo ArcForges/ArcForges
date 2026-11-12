@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using ArcForges.Client;
@@ -18,10 +19,10 @@ namespace ArcForges.Node.Core.Tests;
 /// not an actual Center or a signed transport; no cleanup effect is attempted.
 /// </summary>
 [Trait("env", "windows-real")]
-public sealed class AttemptRemovalPlanWindowsTests
+public sealed partial class AttemptRemovalPlanWindowsTests
 {
     private static readonly byte[] UnknownRequestField = [0xa0, 0x06, 0x01];
-    private static readonly string[] ReferenceKinds = ["stdin", "readiness", "shell", "argv-absolute", "argv-path", "opaque"];
+    private static readonly string[] ReferenceKinds = ["stdin", "readiness", "shell", "argv-absolute", "argv-path", "opaque", "hardlink-known", "hardlink-outside"];
     private static void AssertQualification(FileServicePlanRemovalResponse response, string reason)
     {
         Assert.True(NodeShapes.IsValid(response));
@@ -222,6 +223,11 @@ public sealed class AttemptRemovalPlanWindowsTests
         // Real TaskService admission into a paused queue, not synthetic task rows. Nothing executes.
         var declaredProgram = Path.Combine(root, "declared-program.exe");
         File.Copy(Tasks.Cmd, declaredProgram);
+        var hardlinkSource = Path.Combine(unrelated, "reference-source.txt");
+        var hardlinkReference = Path.Combine(unrelated, "reference-alias.txt");
+        File.WriteAllText(hardlinkSource, "outside reference body");
+        Assert.True(CreateHardLink(hardlinkReference, hardlinkSource, 0), $"Native hardlink fixture failed: {Marshal.GetLastPInvokeError()}");
+        Assert.Equal(2u, WorkspacePath.ObserveWindowsReference(hardlinkReference).Final!.Value.Identity.Links);
         await using (var human = await node.ChannelAsync(helloAsHuman: true))
         {
             Assert.Null((await human.Queue.PausePoolAsync(new QueueServicePausePoolRequest
@@ -257,6 +263,13 @@ public sealed class AttemptRemovalPlanWindowsTests
                         spec.Environment.Set["PATH"] = root;
                         spec.Environment.Set["PATHEXT"] = ".EXE";
                         break;
+                    case "hardlink-known":
+                        spec = Tasks.Argv(root, Tasks.Cmd, "/d", "/c", "exit 0");
+                        spec.Stdin = new StdinSpec { Mode = StdinMode.File, FilePath = hardlinkReference };
+                        break;
+                    case "hardlink-outside":
+                        spec.Stdin = new StdinSpec { Mode = StdinMode.File, FilePath = hardlinkReference };
+                        break;
                     case "opaque":
                         spec.Command = new CommandSpec
                         {
@@ -273,7 +286,7 @@ public sealed class AttemptRemovalPlanWindowsTests
                 var check = new FileServicePlanRemovalRequest { Meta = Tasks.Meta(), AttemptId = attempt.Clone() };
                 var answer = await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval, check.ToByteArray(), check.Meta.CommandId);
                 var checkedResponse = FileServicePlanRemovalResponse.Parser.ParseFrom(answer.Answer!.Response);
-                if (kind == "opaque") AssertQualification(checkedResponse, "attempt_references_unverified");
+                if (kind is "opaque" or "hardlink-outside") AssertQualification(checkedResponse, "attempt_references_unverified");
                 else Assert.Equal("in_use", checkedResponse.Error.Code);
                 Assert.Null(checkedResponse.Value);
                 Assert.Null((await human.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest
@@ -555,5 +568,9 @@ public sealed class AttemptRemovalPlanWindowsTests
             "SELECT count(*) FROM file_operation_journal WHERE command_id = $id AND held = 1;", ("$id", holdId))));
         Assert.Equal("retained", File.ReadAllText(Path.Combine(node.DataRoot, "tmp", name, "keep.txt")).Trim());
     }
+
+    [LibraryImport("kernel32.dll", EntryPoint = "CreateHardLinkW", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool CreateHardLink(string name, string existing, nint security);
 
 }
