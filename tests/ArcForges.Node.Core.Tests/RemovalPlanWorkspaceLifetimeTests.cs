@@ -117,4 +117,57 @@ public sealed class RemovalPlanWorkspaceLifetimeTests
             "SELECT count(*) FROM file_removal_plan WHERE plan_id = $plan;", ("$plan", planId))));
         Assert.Equal("state predicate fixture; no removal", File.ReadAllText(target));
     }
+
+    [Theory(Timeout = 120_000)]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AWallClockJumpOrPersistedFutureFloorCannotReleaseThePlanHold(bool persistForwardObservation)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var clock = new OffsetClock();
+        await using var node = InProcessNode.Create();
+        node.Clock = clock;
+        await node.StartAsync();
+        var manager = new RegisteredWorkspaces(node.Runtime.Store);
+        var root = Directory.CreateDirectory(Path.Combine(node.Root, "clock-plan-workspace")).FullName;
+        var target = Path.Combine(root, "kept.txt");
+        File.WriteAllText(target, "clock-disagreement fixture; no removal");
+        var registered = manager.RegisterFromVerifiedHuman(root, cancellationToken: ct);
+        var calls = new RoutedCalls(node);
+        var request = new FileServicePlanRemovalRequest
+        {
+            Meta = Tasks.Meta(),
+            WorkspacePath = new FilePath
+            {
+                WorkspaceId = new ArcForges.Contracts.Foundation.V1.Id { Value = ByteString.CopyFrom(registered.Id) },
+                Path = "kept.txt",
+            },
+        };
+        var response = await calls.CallAsync(calls.Relay(Origin.Human), RoutedMethod.PlanNodeRemoval,
+            request.ToByteArray(), request.Meta.CommandId);
+        Assert.Null(FileServicePlanRemovalResponse.Parser.ParseFrom(response.Answer!.Response).Error);
+
+        // A test-only clock offset exercises the real clock-health/floor code; no host clock or product deadline changes.
+        clock.Offset = TimeSpan.FromHours(2);
+        Assert.False(node.Runtime.Store.Read(RoutedFileValidationTime.Sample).Healthy);
+        if (persistForwardObservation)
+        {
+            Assert.False(node.Runtime.Store.Write(RoutedFileValidationTime.Advance, CommitDurability.Full).Healthy);
+        }
+
+        Assert.Equal("workspace_in_use", Assert.Throws<RegisteredWorkspaceException>(
+            () => manager.UnregisterFromVerifiedHuman(registered.Id, ct)).Reason);
+        clock.Offset = TimeSpan.Zero;
+        Assert.Equal(!persistForwardObservation, node.Runtime.Store.Read(RoutedFileValidationTime.Sample).Healthy);
+        Assert.Equal("workspace_in_use", Assert.Throws<RegisteredWorkspaceException>(
+            () => manager.UnregisterFromVerifiedHuman(registered.Id, ct)).Reason);
+        Assert.Equal("clock-disagreement fixture; no removal", File.ReadAllText(target));
+    }
+
+    private sealed class OffsetClock : TimeProvider
+    {
+        public TimeSpan Offset { get; set; }
+
+        public override DateTimeOffset GetUtcNow() => TimeProvider.System.GetUtcNow() + Offset;
+    }
 }

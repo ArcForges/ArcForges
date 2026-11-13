@@ -450,15 +450,22 @@ internal sealed class RegisteredWorkspaces
             FileMutationJournal.HasWorkspaceHold(reader, id)) || PrivateStageRegistry.HasWorkspaceHold(reader, id) ||
         HasRemovalPlanHold(reader, id);
 
-    private static bool HasRemovalPlanHold(StoreReader reader, byte[] id) =>
-        reader.Scalar("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'file_removal_plan';") is not null &&
-        Convert.ToInt64(reader.Scalar("""
+    private static bool HasRemovalPlanHold(StoreReader reader, byte[] id)
+    {
+        if (reader.Scalar("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'file_removal_plan';") is null)
+            return false;
+
+        var time = RoutedFileValidationTime.Sample(reader);
+        // A clock disagreement cannot expire a pending hold; execution still holds even after its plan deadline.
+        return Convert.ToInt64(reader.Scalar("""
             SELECT EXISTS(
                 SELECT 1 FROM file_removal_plan AS p JOIN cleanup_plan AS c ON c.plan_id = p.plan_id
                 WHERE p.workspace_id = $id AND p.target_kind = 1
-                  AND (c.state = 3 OR (c.state IN (1, 2) AND c.expires_at > $now))
+                  AND (c.state = 3 OR (c.state IN (1, 2) AND ($healthy = 0 OR c.expires_at > $boundary)))
             );
-            """, ("$id", id), ("$now", reader.NowMicroseconds)), System.Globalization.CultureInfo.InvariantCulture) != 0;
+            """, ("$id", id), ("$healthy", time.Healthy), ("$boundary", time.BoundaryMicroseconds)),
+            System.Globalization.CultureInfo.InvariantCulture) != 0;
+    }
 
     internal sealed record LegacyRoot(string Id, string Path, long Revision, int Kind, int State);
 
