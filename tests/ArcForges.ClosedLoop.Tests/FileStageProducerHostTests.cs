@@ -220,10 +220,11 @@ public sealed class FileStageProducerHostTests
                 var plan = new FileServicePlanRemovalRequest { Meta = Command(), WorkspacePath = create.Path.Clone() };
                 var planned = FileServicePlanRemovalResponse.Parser.ParseFrom((await Invoke(
                     RoutedMethod.PlanNodeRemoval, plan, plan.Meta.CommandId, script)).Payload);
-                // Existing PlanRemoval globally refuses when private-stage records exist. This remains an independent
-                // gap; SCRIPT provenance also does not grant AGENT-only unattended owner verification or strict cleanup.
-                Assert.Equal("file_access_denied", planned.Error?.Code);
-                Assert.Null(planned.Value);
+                Assert.Null(planned.Error);
+                // SCRIPT provenance is durable but does not grant AGENT-only unattended owner verification or cleanup.
+                Assert.False(Assert.Single(planned.Value.Plan.Items).OwnerVerified);
+                Assert.True(planned.Value.Plan.RequiresApproval);
+                Assert.False(planned.Value.Plan.QuarantineAvailable);
             }
             Assert.Empty(connection.UnverifiedResults);
         }
