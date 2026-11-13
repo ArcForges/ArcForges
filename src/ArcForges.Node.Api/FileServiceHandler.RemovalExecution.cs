@@ -197,7 +197,8 @@ internal sealed partial class FileServiceHandler
                 throw new FilePolicyException("policy_invalid");
             if (CenterRouting.Refusal(center, node.NodeId.Span, policy.Document.CenterRouted) is { } reason)
                 throw new FilePolicyException(reason);
-            if (PermissionMatrix.DecideRouted(PermissionMatrix.FileRemove, caller.CellsOrigin, policy.Document.Permissions).Decision == PermissionDecision.Deny)
+            if (PermissionMatrix.DecideRouted(PermissionMatrix.FileRemove, caller.CellsOrigin, policy.Document.Permissions).Decision == PermissionDecision.Deny ||
+                PermissionMatrix.DecideRouted(PermissionMatrix.CleanupExecute, caller.CellsOrigin, policy.Document.Permissions).Decision == PermissionDecision.Deny)
                 throw new FilePolicyException("denied");
             caller.Routed.BeforeEffect(reader);
         }

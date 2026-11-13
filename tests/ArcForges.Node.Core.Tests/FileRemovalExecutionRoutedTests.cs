@@ -165,6 +165,54 @@ public sealed class FileRemovalExecutionRoutedTests
     }
 
     [Fact(Timeout = 120_000)]
+    public async Task CleanupExecuteDenialIsRecheckedAndItsReceiptSurvivesPermissionChange()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var node = await InProcessNode.Create().StartAsync();
+        var calls = new RoutedCalls(node);
+        var caller = calls.Relay(Origin.Script);
+        var (plan, file) = await PlanFile(node, calls, caller, ct);
+        await using var human = await node.ChannelAsync(helloAsHuman: true);
+        Assert.Null((await Sched.ChangePolicyAsync(human, policy =>
+        {
+            policy.Permissions.Add(new PermissionOverride
+            {
+                Operation = PermissionMatrix.FileRemove,
+                Origin = Origin.Script,
+                Decision = PermissionDecision.Allow,
+            });
+            policy.Permissions.Add(new PermissionOverride
+            {
+                Operation = PermissionMatrix.CleanupExecute,
+                Origin = Origin.Script,
+                Decision = PermissionDecision.Deny,
+            });
+        })).Error);
+        var request = Execution(plan);
+        var raw = request.ToByteArray();
+        var denied = await calls.CallAsync(caller, RoutedMethod.ExecuteNodeRemoval, raw, request.Meta.CommandId);
+        Assert.Equal(RoutedOutcome.RefusedByPolicy, denied.Answer!.Outcome);
+        Assert.Equal("permission_denied", denied.Answer.Error!.Code);
+        var receipt = Assert.IsType<byte[]>(node.Runtime.Store.Read(reader => reader.Scalar(
+            "SELECT outcome FROM command_dedup WHERE command_id = $id;", ("$id", request.Meta.CommandId.Value.ToByteArray()))));
+        Assert.Equal("permission_denied", FileServiceExecuteRemovalResponse.Parser.ParseFrom(receipt).Error.Code);
+        Assert.Null((await Sched.ChangePolicyAsync(human, policy =>
+            policy.Permissions.Single(item => item.Operation == PermissionMatrix.CleanupExecute && item.Origin == Origin.Script)
+                .Decision = PermissionDecision.Allow)).Error);
+        var replay = await calls.CallAsync(caller, RoutedMethod.ExecuteNodeRemoval, raw, request.Meta.CommandId);
+        Assert.Equal(RoutedOutcome.RefusedByPolicy, replay.Answer!.Outcome);
+        Assert.Equal(receipt, node.Runtime.Store.Read(reader => reader.Scalar(
+            "SELECT outcome FROM command_dedup WHERE command_id = $id;", ("$id", request.Meta.CommandId.Value.ToByteArray()))));
+        var fresh = Execution(plan);
+        var refusal = await calls.CallAsync(caller, RoutedMethod.ExecuteNodeRemoval, fresh.ToByteArray(), fresh.Meta.CommandId);
+        Assert.Equal("enforcement_unavailable", FileServiceExecuteRemovalResponse.Parser.ParseFrom(refusal.Answer!.Response).Error.Code);
+        Assert.Equal("fixture stays", File.ReadAllText(file));
+        Assert.Equal(1L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT state FROM cleanup_plan;")));
+        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_operation_journal;")));
+        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM approval;")));
+    }
+
+    [Fact(Timeout = 120_000)]
     public async Task AnUnansweredFullCommitDoesNotInventARollbackAndItsReceiptCanBeRecovered()
     {
         await using var node = await InProcessNode.Create().StartAsync();
