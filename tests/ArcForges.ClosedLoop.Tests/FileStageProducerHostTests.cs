@@ -33,6 +33,7 @@ public sealed class FileStageProducerHostTests
             await using var human = await node.HumanChannelAsync();
             var info = await human.Node.GetNodeInfoAsync(new NodeServiceGetNodeInfoRequest(), cancellationToken: ct);
             Assert.Null(info.Error);
+            Assert.Contains("files.v1", info.Value.Node.Features);
             var begun = await human.Account.BeginSignInAsync(new AccountServiceBeginSignInRequest
             {
                 Meta = Command(),
@@ -44,6 +45,7 @@ public sealed class FileStageProducerHostTests
                 new AccountServiceGetAccountStatusRequest(), cancellationToken: ct)).Value.Status.Relay == RelayState.Connected,
                 TimeSpan.FromSeconds(30), "the synthetic peer has a real signed channel");
             var connection = await center.Channel.ProvedAsync();
+            Assert.Contains("files.v1", connection.Hello!.Capabilities);
             var owner = new CenterCaller
             {
                 Kind = CenterCallerKind.NodeRelay,

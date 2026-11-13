@@ -281,6 +281,9 @@ internal interface IRoutedLink
 /// </summary>
 internal interface IRoutedDispatcher
 {
+    /// <summary>Whether the actual file and workspace handlers are available for routed file methods.</summary>
+    bool SupportsFiles => false;
+
     /// <summary>
     /// Answers a verified call, or <see langword="null"/> when the link ended under it before any effect (<paramref name="link"/> is no longer
     /// <see cref="IRoutedLink.Usable"/>): the call is then dropped, with no answer and no further row (the center answers UNKNOWN after its

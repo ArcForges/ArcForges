@@ -63,6 +63,9 @@ internal sealed class ChannelLoop : IAsyncDisposable
     /// <summary>The capability the node announces in its hello.</summary>
     public const string Capability = "routed.v1";
 
+    /// <summary>The additional method capability announced only by an available file dispatcher.</summary>
+    public const string FilesCapability = "files.v1";
+
     private static readonly TimeSpan NonceTimeout = TimeSpan.FromSeconds(10);
 
     private readonly IChannelHost _host;
@@ -612,6 +615,7 @@ internal sealed class ChannelLoop : IAsyncDisposable
             HelloSignature = ByteString.CopyFrom(session.Key.Sign(input)),
         };
         hello.Capabilities.Add(Capability);
+        if (_dispatcher.SupportsFiles) hello.Capabilities.Add(FilesCapability);
         await session.Client.SendAsync(new RelayFrame { NodeHello = hello }, timeout.Token).ConfigureAwait(false);
 
         var second = await ReceiveFrameAsync(session, timeout.Token).ConfigureAwait(false);

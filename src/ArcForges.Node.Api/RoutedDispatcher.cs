@@ -192,6 +192,9 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
     private WorkspaceServiceHandler? _workspaces;
     private FileServiceHandler? _files;
 
+    /// <inheritdoc />
+    public bool SupportsFiles => Volatile.Read(ref _files) is not null && Volatile.Read(ref _workspaces) is not null;
+
     /// <summary>Binds the actual handlers built by the host after the cloud link.</summary>
     public void Bind(TaskServiceHandler tasks, WorkspaceServiceHandler workspaces, FileServiceHandler files)
     {

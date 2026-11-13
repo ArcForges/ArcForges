@@ -178,6 +178,7 @@ internal sealed class CloudLinkService : ICloudLinkView, IChannelHost, IAsyncDis
     private static readonly TimeSpan KeyPruneAge = TimeSpan.FromDays(7);
 
     private readonly CloudLinkOptions _options;
+    private readonly IReadOnlyList<string> _features;
     private readonly CloudCredentialStore _store;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Lock _stateLock = new();
@@ -231,11 +232,11 @@ internal sealed class CloudLinkService : ICloudLinkView, IChannelHost, IAsyncDis
             {
                 StepHook = options.ChannelStepHook,
             };
-            Features = [SignInFeature, ChannelFeature];
+            _features = [SignInFeature, ChannelFeature];
         }
         else
         {
-            Features = [SignInFeature];
+            _features = [SignInFeature];
         }
     }
 
@@ -270,7 +271,9 @@ internal sealed class CloudLinkService : ICloudLinkView, IChannelHost, IAsyncDis
     public const string ChannelFeature = "center.channel.v1";
 
     /// <inheritdoc />
-    public IReadOnlyList<string> Features { get; }
+    public IReadOnlyList<string> Features => _options.RoutedCalls is not null && _options.Dispatcher?.SupportsFiles == true
+        ? [.. _features, ChannelLoop.FilesCapability]
+        : _features;
 
     /// <summary>Incremented at every rotation (the single-flight gate's generation, node-9 item 1).</summary>
     public long Generation => Interlocked.Read(ref _generation);

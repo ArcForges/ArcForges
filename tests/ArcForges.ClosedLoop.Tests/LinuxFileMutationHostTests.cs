@@ -35,7 +35,7 @@ public sealed partial class LinuxFileMutationHostTests
         await using var human = await node.HumanChannelAsync();
         var info = await human.Node.GetNodeInfoAsync(new NodeServiceGetNodeInfoRequest(), cancellationToken: ct);
         Assert.Null(info.Error);
-        Assert.DoesNotContain("files.v1", info.Value.Node.Features);
+        Assert.Contains("files.v1", info.Value.Node.Features);
         var nodeId = info.Value.Node.Node.NodeId;
         var begun = await human.Account.BeginSignInAsync(new AccountServiceBeginSignInRequest
         {
