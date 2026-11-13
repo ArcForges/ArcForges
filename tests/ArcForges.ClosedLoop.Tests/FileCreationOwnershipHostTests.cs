@@ -213,7 +213,9 @@ public sealed class FileCreationOwnershipHostTests
             var humanPlan = await Plan(owner, expectedOwner: false);
             var execution = new FileServiceExecuteRemovalRequest
             {
-                Meta = Command(), PlanId = humanPlan.PlanId.Clone(), PlanDigest = humanPlan.Digest,
+                Meta = Command(),
+                PlanId = humanPlan.PlanId.Clone(),
+                PlanDigest = humanPlan.Digest,
             };
             var namesBefore = Directory.GetFileSystemEntries(root, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal).ToArray();
             var (executionOutcome, executionBytes) = await Invoke(RoutedMethod.ExecuteNodeRemoval, execution, execution.Meta.CommandId, owner);
