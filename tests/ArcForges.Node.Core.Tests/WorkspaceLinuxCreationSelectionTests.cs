@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Runtime.InteropServices;
 using ArcForges.Node.Core.Files;
 using ArcForges.Node.Core.Platform;
 
@@ -6,7 +7,7 @@ namespace ArcForges.Node.Core.Tests;
 
 /// <summary>Real native parent references and namespace replacement; no component result grants creation authority.</summary>
 [Trait("env", "linux-real")]
-public sealed class WorkspaceLinuxCreationSelectionTests
+public sealed partial class WorkspaceLinuxCreationSelectionTests
 {
     [Fact]
     public void ReplacingAnAncestorCannotBeAcceptedByRecapturingTheSameRelativeParentName()
@@ -49,13 +50,12 @@ public sealed class WorkspaceLinuxCreationSelectionTests
             File.Delete(path);
             File.Move(Path.Combine(directory.FullName, "original.txt"), path);
             selection.CheckNames(identity);
-            using var link = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("/usr/bin/ln",
-                [path, Path.Combine(directory.FullName, "alias.txt")]) { UseShellExecute = false })
-                ?? throw new InvalidOperationException("The owned hard-link fixture did not start.");
-            Assert.True(link.WaitForExit(5000));
-            Assert.Equal(0, link.ExitCode);
+            Assert.Equal(0, Link(path, Path.Combine(directory.FullName, "alias.txt")));
             Assert.Equal("file_identity_changed", Assert.Throws<WorkspacePathException>(() => selection.CheckNames(identity)).Reason);
         }
         finally { directory.Delete(recursive: true); }
     }
+
+    [LibraryImport("libc", EntryPoint = "link", SetLastError = true, StringMarshalling = StringMarshalling.Utf8)]
+    private static partial int Link(string existing, string alias);
 }
