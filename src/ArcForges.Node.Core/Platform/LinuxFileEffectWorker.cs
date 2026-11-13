@@ -57,6 +57,7 @@ public static unsafe partial class LinuxFileEffectWorker
             if (socket.Receive(command) != 1) return 2;
             if (command[0] == 0x53) return 0;
             if (command[0] == 0x57) return LinuxFileEffectExecutor.Execute(socket);
+            if (command[0] == 0x43) return LinuxFileEffectExecutor.ExecuteCreation(socket);
             if (!testMode || command[0] != 0x54) return 2;
             using var timer = LinuxFatalDeadline.ArmAbsolute(checked(LinuxFatalDeadline.MonotonicNanoseconds() + 1_500_000_000));
             if (socket.Send([0x41]) != 1) return 2;

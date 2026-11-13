@@ -13,7 +13,7 @@ namespace ArcForges.Node.Core.Platform;
 /// cannot be silently lost. The controller never signals an unsealed pidfd or any PID/process group.
 /// </summary>
 [SupportedOSPlatform("linux")]
-internal sealed class LinuxFileEffectController
+internal sealed partial class LinuxFileEffectController
 {
     private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource _finish = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -55,7 +55,7 @@ internal sealed class LinuxFileEffectController
     /// <summary>May be used only in the FULL writer transaction that binds the original operation and policy.</summary>
     internal LinuxOwnedPidfd SealedWorker => _pidfd ?? throw new InvalidOperationException("The worker is unavailable.");
 
-    internal WorkspaceGuardedMutationResult Execute(LinuxFileEffectBinding binding, WorkspacePath root,
+    internal LinuxFileMutationResult Execute(LinuxFileEffectBinding binding, WorkspacePath root,
         WorkspaceWriteGuard target, WorkspaceAnonymousStage original, WorkspaceAnonymousStage intended,
         Action beforeEffect, Action checkNames, CancellationToken cancellationToken)
     {
@@ -108,14 +108,37 @@ internal sealed class LinuxFileEffectController
             if (size != binding.IntendedSize || hash.Length != 32 ||
                 !CryptographicOperations.FixedTimeEquals(hash, binding.IntendedSha256))
                 throw new InvalidDataException("The worker result differs from its prepared intent.");
-            checkNames();
-            cancellationToken.ThrowIfCancellationRequested();
-            writer.Write((byte)'S');
-            writer.Flush();
-            var child = _child ?? throw new InvalidOperationException("The worker is unavailable.");
-            if (!child.WaitForExit(5000) || child.ExitCode != 0)
-                throw new IOException("The worker did not finish cleanly.");
-            return new WorkspaceGuardedMutationResult(size, hash);
+            using var received = peer.ReceiveReturnedDescriptorOnce();
+            var identity = WorkspacePath.Identity(received);
+            if (!CryptographicOperations.FixedTimeEquals(binding.TargetIdentity,
+                ArcForges.Node.Core.Files.RegisteredWorkspaces.RootIdentity.Encode(identity, directory: false).Bytes))
+                throw new WorkspacePathException("file_identity_changed");
+            var owned = new Microsoft.Win32.SafeHandles.SafeFileHandle(received.DangerousGetHandle(), ownsHandle: true);
+            received.SetHandleAsInvalid();
+            WorkspaceWriteGuard? returned = null;
+            try
+            {
+                try { returned = WorkspaceWriteGuard.AdoptLinuxReturnedFile(owned, peer, identity, binding.Deadline); }
+                catch { owned.Dispose(); throw; }
+                using (var actual = returned.ReadForMutation(cancellationToken))
+                {
+                    if (actual.Bytes.Length != size || !CryptographicOperations.FixedTimeEquals(hash, actual.Sha256.Span))
+                        throw new WorkspacePathException("file_identity_changed");
+                }
+                checkNames();
+                cancellationToken.ThrowIfCancellationRequested();
+                writer.Write((byte)'S');
+                writer.Flush();
+                var child = _child ?? throw new InvalidOperationException("The worker is unavailable.");
+                if (!child.WaitForExit(5000) || child.ExitCode != 0)
+                    throw new IOException("The worker did not finish cleanly.");
+                checkNames();
+                returned.CheckIntact();
+                var result = new LinuxFileMutationResult(new WorkspaceGuardedMutationResult(size, hash), returned);
+                returned = null;
+                return result;
+            }
+            finally { returned?.Dispose(); }
         }
     }
 

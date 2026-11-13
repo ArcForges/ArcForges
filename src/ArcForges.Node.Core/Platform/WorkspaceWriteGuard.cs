@@ -25,12 +25,13 @@ internal sealed partial class WorkspaceWriteGuard : IDisposable
     private readonly bool _privateStage;
     private readonly Action<SafeFileHandle>? _verifyPrivateSecurity;
     private readonly long _started;
+    private readonly long _linuxDeadlineNanoseconds;
     private SafeFileHandle? _file;
     private Timer? _expiry;
     private string _closedReason = "file_guard_closed";
 
     private WorkspaceWriteGuard(SafeFileHandle file, WorkspaceObjectIdentity identity, bool linux, bool privateStage,
-        uint expectedLinks, Action<SafeFileHandle>? verifyPrivateSecurity)
+        uint expectedLinks, Action<SafeFileHandle>? verifyPrivateSecurity, long linuxDeadlineNanoseconds = 0)
     {
         _file = file;
         _identity = identity;
@@ -39,7 +40,12 @@ internal sealed partial class WorkspaceWriteGuard : IDisposable
         _expectedLinks = expectedLinks;
         _verifyPrivateSecurity = verifyPrivateSecurity;
         _started = Stopwatch.GetTimestamp();
-        _expiry = new Timer(static state => ((WorkspaceWriteGuard)state!).Expire(), this, Lifetime, Timeout.InfiniteTimeSpan);
+        _linuxDeadlineNanoseconds = linuxDeadlineNanoseconds;
+        var due = Lifetime;
+        if (OperatingSystem.IsLinux() && linuxDeadlineNanoseconds != 0)
+            due = TimeSpan.FromTicks(Math.Clamp((linuxDeadlineNanoseconds - LinuxFatalDeadline.MonotonicNanoseconds()) / 100,
+                TimeSpan.TicksPerMillisecond, Lifetime.Ticks));
+        _expiry = new Timer(static state => ((WorkspaceWriteGuard)state!).Expire(), this, due, Timeout.InfiniteTimeSpan);
     }
 
     /// <summary>Acquires the native guard on this same verified handle; ownership transfers only on success.</summary>
@@ -380,7 +386,8 @@ internal sealed partial class WorkspaceWriteGuard : IDisposable
             throw new WorkspacePathException(_closedReason);
         }
 
-        if (Stopwatch.GetElapsedTime(_started) >= Lifetime)
+        if (Stopwatch.GetElapsedTime(_started) >= Lifetime || OperatingSystem.IsLinux() && _linuxDeadlineNanoseconds != 0 &&
+            LinuxFatalDeadline.MonotonicNanoseconds() >= _linuxDeadlineNanoseconds)
         {
             CloseLocked("file_guard_expired");
             throw new WorkspacePathException(_closedReason);

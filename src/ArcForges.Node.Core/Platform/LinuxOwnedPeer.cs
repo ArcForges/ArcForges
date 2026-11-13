@@ -50,6 +50,9 @@ internal sealed partial class LinuxOwnedPeer
     private readonly Process _child;
     private readonly LinuxOwnedProcessIdentity _identity;
     private int _sent;
+    private int _received;
+
+    internal LinuxOwnedProcessIdentity ProcessIdentity => _identity;
 
     private LinuxOwnedPeer(Socket socket, Process child, LinuxOwnedProcessIdentity identity)
     {
@@ -101,6 +104,34 @@ internal sealed partial class LinuxOwnedPeer
             _identity.Observe() != LinuxProcessObservation.Alive)
             throw new InvalidOperationException("The original owned peer is no longer available.");
         LinuxDescriptorTransfer.Send(_socket, descriptors);
+    }
+
+    /// <summary>Checks the same challenge-sealed child; process exit or identity reuse invalidates the capability.</summary>
+    internal void RequireOriginalLivePeer()
+    {
+        var peer = LinuxPeerCredentialReader.Read(_socket);
+        if (_child.HasExited || peer.ProcessId != _identity.ProcessId || peer.UserId != GetEffectiveUserId() ||
+            _identity.Observe() != LinuxProcessObservation.Alive)
+            throw new InvalidOperationException("The original owned peer is no longer available.");
+    }
+
+    /// <summary>Receives one exact returned description, once, while that original child is still live.</summary>
+    internal SafeFileHandle ReceiveReturnedDescriptorOnce()
+    {
+        if (Interlocked.Exchange(ref _received, 1) != 0)
+            throw new InvalidOperationException("The peer return was already used.");
+        RequireOriginalLivePeer();
+        var descriptors = LinuxDescriptorTransfer.Receive(_socket, 1);
+        try
+        {
+            RequireOriginalLivePeer();
+            return descriptors[0];
+        }
+        catch
+        {
+            descriptors[0].Dispose();
+            throw;
+        }
     }
 
     [LibraryImport("libc", EntryPoint = "geteuid")]

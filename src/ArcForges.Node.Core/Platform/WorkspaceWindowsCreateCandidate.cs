@@ -18,7 +18,8 @@ internal sealed class WorkspaceCreateUncertainException(Exception inner)
     : IOException("The exclusive file creation did not complete with a verified identity.", inner);
 
 /// <summary>
-/// Owns the exact newly created, no-sharing Windows handle. This object is a native building block, not authority,
+/// Owns the exact newly created guarded handle, including an original Linux OFD returned by its owned worker.
+/// This object is a native building block, not authority,
 /// a journal, a receipt, or a public endpoint.
 /// </summary>
 internal sealed class WorkspaceCreatedTarget(WorkspaceWriteGuard guard) : IDisposable

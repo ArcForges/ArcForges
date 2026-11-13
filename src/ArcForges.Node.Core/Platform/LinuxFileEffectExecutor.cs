@@ -128,7 +128,8 @@ internal static partial class LinuxFileEffectExecutor
                 writer.Write(actual.Sha256.Span);
                 writer.Flush();
             }
-            // Keep the exact guards until the parent has checked the namespace and acknowledges this one-use result.
+            LinuxDescriptorTransfer.Send(socket, [target]);
+            // The parent adopts the same leased OFD before acknowledging; no guard is dropped or regranted.
             return reader.ReadByte() == (byte)'S' ? 0 : 2;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SocketException or

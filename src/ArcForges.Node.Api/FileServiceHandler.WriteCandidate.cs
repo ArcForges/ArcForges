@@ -18,7 +18,7 @@ namespace ArcForges.Node.Api;
 internal sealed partial class FileServiceHandler
 {
     // The routed mutation path remains unadvertised until approval, settlement and both native platform paths are complete.
-    // It executes the guarded existing-file protocol only for an authorized caller.
+    // Each guarded creation or existing-file effect still needs the exact authorized caller and durable intent.
     private readonly FileStageBudget _writeStageBudget = node.FileStages;
 
     // Test-only callbacks coordinate a real competing create and an interruption after the actual creation effect.
@@ -155,7 +155,7 @@ internal sealed partial class FileServiceHandler
             if (AfterPreparationForTests is { } afterPreparation) await afterPreparation().ConfigureAwait(false);
             if (Expired(started, limit, token)) throw new OperationCanceledException(token);
 
-            LinuxFileEffectBinding? linuxBinding = null;
+            LinuxWorkerRegistration? linuxRegistration = null;
             if (OperatingSystem.IsLinux())
             {
                 try
@@ -183,7 +183,9 @@ internal sealed partial class FileServiceHandler
                     throw;
                 }
                 if (registered.Refusal is not null) return registered.Refusal;
-                linuxBinding = registered.Binding ?? throw new InvalidOperationException("The worker operation was not registered.");
+                linuxRegistration = registered;
+                if (registered.Binding is null && registered.Creation is null)
+                    throw new InvalidOperationException("The worker operation was not registered.");
             }
 
             // PREPARED and the Linux worker fence committed before this transaction can permit a target effect.
@@ -191,7 +193,9 @@ internal sealed partial class FileServiceHandler
             try
             {
                 effect = node.Processor.ExecuteAsync(command => OperatingSystem.IsLinux()
-                    ? ApplyLinuxMutation(command.Transaction, caller, request, raw, lease, linuxBinding!, started, limit, token)
+                    ? linuxRegistration!.Creation is { } creation
+                        ? ApplyLinuxCreation(command.Transaction, caller, request, raw, lease, creation, started, limit, token)
+                        : ApplyLinuxMutation(command.Transaction, caller, request, raw, lease, linuxRegistration.Binding!, started, limit, token)
                     : ApplyMutation(command.Transaction, caller, request, raw, lease, started, limit, token), CommitDurability.Full);
             }
             catch (CommandQueueFullException)
@@ -313,13 +317,8 @@ internal sealed partial class FileServiceHandler
             }
             CheckWriteCandidateAuthority(transaction, caller);
             CheckBudget();
-            // The Linux helper currently covers existing guarded objects only. Creation and unattended ownership
-            // remain refused until their separate native and durable ownership protocols are connected.
-            if (!OperatingSystem.IsWindows() && !(OperatingSystem.IsLinux() && request.HasExpectedSha256 &&
-                LinuxFileEffectController.IsHostProcess()))
+            if (!OperatingSystem.IsWindows() && !(OperatingSystem.IsLinux() && LinuxFileEffectController.IsHostProcess()))
                 return Refuse(Error(ErrorCategory.Resource, "enforcement_unavailable", "file_guard_unavailable", correlation));
-            if (!request.HasExpectedSha256 && caller.CellsOrigin == Origin.Agent)
-                return Refuse(Error(ErrorCategory.Resource, "enforcement_unavailable", "file_ownership_unavailable", correlation));
             _ = WorkspacePath.Components(path);
             lease.Use = _workspaces.OpenForUse(transaction, workspace, beforeUse: selectedTx =>
                 CheckWriteCandidateAuthority(selectedTx, caller), token);
@@ -332,7 +331,10 @@ internal sealed partial class FileServiceHandler
                     return Refuse(Error(ErrorCategory.Resource, "enforcement_unavailable", "file_stage_capacity", correlation));
                 AfterStageBeforeJournalForTests?.Invoke();
                 var slashAt = path.LastIndexOf('/');
-                var parentHandle = lease.Use.Root.OpenDirectory(slashAt < 0 ? "" : path[..slashAt]);
+                if (OperatingSystem.IsLinux())
+                    lease.CreationSelection = lease.Use.Root.PrepareLinuxCreation(path, token);
+                var parentHandle = lease.CreationSelection?.Parent ??
+                    lease.Use.Root.OpenDirectory(slashAt < 0 ? "" : path[..slashAt]);
                 var rootId = RegisteredWorkspaces.RootIdentity.Encode(lease.Use.Root.RootIdentity);
                 var newParentIdentity = WorkspacePath.Identity(parentHandle);
                 lease.ParentIdentity = newParentIdentity;
@@ -457,7 +459,13 @@ internal sealed partial class FileServiceHandler
         if (sample.BoundaryMicroseconds >= expiry) throw new RoutedAbortException(RoutedAbort.Expired);
         var untilExpiry = checked((expiry - sample.BoundaryMicroseconds) * 1_000);
         var effectDeadline = Math.Min(linuxDeadline, checked(beforeSample + untilExpiry));
-        var binding = FileEffectWorker.BindPreparedChild(transaction, lease.Intent!, raw, lease.Worker!.SealedWorker,
+        if (lease.Intent!.TargetIdentity is null)
+        {
+            FileEffectWorker.RecordPreparedChild(transaction, lease.Intent, raw, lease.Worker!.SealedWorker);
+            return new LinuxWorkerRegistration(null, null,
+                LinuxFileCreationBinding.FromPrepared(lease.Intent, raw, effectDeadline, expiry));
+        }
+        var binding = FileEffectWorker.BindPreparedChild(transaction, lease.Intent, raw, lease.Worker!.SealedWorker,
             effectDeadline, expiry);
         return new LinuxWorkerRegistration(binding, null);
     }
@@ -481,13 +489,21 @@ internal sealed partial class FileServiceHandler
                 CheckWriteCandidateAuthority(transaction, caller);
                 if (Expired(started, limit, token)) throw new OperationCanceledException(token);
             }
+            var ownership = FileCreationOwnership.PrepareUpdate(transaction, caller.CenterCaller!,
+                request.Path!.WorkspaceId.Value.Span, root, request.Path.Path, guard, request.ExpectedSha256.Span, token);
             BeforeEffect();
             var result = worker.Execute(binding, root, guard, original, intended, BeforeEffect, checkNames, token);
+            lease.Guard = result.Guard;
             if (!FileEffectWorker.MarkEndedIfObserved(transaction, request.Meta!.CommandId.Value.Span))
                 return FileMutationJournal.MarkUnknown(transaction, request.Meta.CommandId.Value.Span);
+            BeforeEffect();
+            if (ownership is not null && !FileCreationOwnership.ConfirmUpdate(ownership, root, result.Guard,
+                result.Content.Size, result.Content.Sha256, token)) ownership = null;
             var replacements = request.Kind == FileOperationKind.Edit ? request.ExpectedOccurrences : (uint?)null;
-            return FileMutationJournal.CompleteVerifiedEffect(transaction, request.Meta.CommandId.Value.Span, raw,
-                result.Size, result.Sha256, replacements);
+            var completed = FileMutationJournal.CompleteVerifiedEffect(transaction, request.Meta.CommandId.Value.Span, raw,
+                result.Content.Size, result.Content.Sha256, replacements, ownershipUpdate: ownership);
+            result.Guard.CheckIntact();
+            return completed;
         }
         catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)
         {
@@ -658,7 +674,7 @@ internal sealed partial class FileServiceHandler
 
     private sealed record MutationPreparation(bool Ready, byte[]? Response = null, string? PolicyReason = null, bool NeedsApproval = false);
 
-    private sealed record LinuxWorkerRegistration(LinuxFileEffectBinding? Binding, byte[]? Refusal);
+    private sealed record LinuxWorkerRegistration(LinuxFileEffectBinding? Binding, byte[]? Refusal, LinuxFileCreationBinding? Creation = null);
 
     private sealed class MutationLease : IDisposable
     {
@@ -667,6 +683,7 @@ internal sealed partial class FileServiceHandler
         internal WorkspaceCreatedTarget? Created { get; set; }
         internal WorkspaceObjectIdentity? ParentIdentity { get; set; }
         internal Action? CheckNames { get; set; }
+        internal WorkspaceLinuxCreationSelection? CreationSelection { get; set; }
         internal WorkspaceStagePair? Stages { get; set; }
         internal FileJournalIntent? Intent { get; set; }
         internal LinuxFileEffectController? Worker { get; set; }
