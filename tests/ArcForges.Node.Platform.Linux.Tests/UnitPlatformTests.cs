@@ -639,6 +639,27 @@ public sealed class UnitPlatformTests
         long sampled = 0;
         var ended = new Dictionary<LinuxAttemptHandle, ExitRecord>();
         var watch = Stopwatch.StartNew();
+        var nextObservation = TimeSpan.Zero;
+        static string ReadObservation(string directory, string file)
+        {
+            try { return LinuxHarness.Read(directory, file).ReplaceLineEndings(";"); }
+            catch (IOException unavailable) { return unavailable.GetType().Name; }
+        }
+        void Observe()
+        {
+            TestContext.Current.TestOutputHelper?.WriteLine($"slice-observation elapsed-ms={watch.Elapsed.TotalMilliseconds:F0} "
+                + $"ended={ended.Count}/3 sampled={sampled} current={ReadObservation(slice, "memory.current")} "
+                + $"peak={ReadObservation(slice, "memory.peak")} events={ReadObservation(slice, "memory.events")} "
+                + $"pressure={ReadObservation(slice, "memory.pressure")}");
+            foreach (var handle in handles.Where(handle => !ended.ContainsKey(handle)))
+            {
+                var directory = handle.CgroupDirectory;
+                if (directory is null || !Directory.Exists(directory)) continue;
+                TestContext.Current.TestOutputHelper?.WriteLine($"unit={handle.Unit} current={ReadObservation(directory, "memory.current")} "
+                    + $"events={ReadObservation(directory, "memory.events")} "
+                    + $"pressure={ReadObservation(directory, "memory.pressure")}");
+            }
+        }
         while (ended.Count < handles.Count)
         {
             sampled = Math.Max(sampled, long.Parse(LinuxHarness.Read(slice, "memory.current"), CultureInfo.InvariantCulture));
@@ -651,10 +672,16 @@ public sealed class UnitPlatformTests
                 }
             }
 
+            if (watch.Elapsed >= nextObservation)
+            {
+                Observe();
+                nextObservation = watch.Elapsed + TimeSpan.FromSeconds(10);
+            }
             Assert.True(watch.Elapsed < TimeSpan.FromSeconds(120), "The units did not end.");
             Thread.Sleep(20);
         }
 
+        Observe();
         var exits = ended.Values.ToList();
 
         var peak = long.Parse(LinuxHarness.Read(slice, "memory.peak"), CultureInfo.InvariantCulture);

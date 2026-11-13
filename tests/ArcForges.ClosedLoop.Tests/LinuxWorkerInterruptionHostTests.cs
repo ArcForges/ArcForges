@@ -39,7 +39,7 @@ public sealed partial class LinuxWorkerInterruptionHostTests
         var info = await human.Node.GetNodeInfoAsync(new NodeServiceGetNodeInfoRequest(), cancellationToken: ct);
         Assert.Null(info.Error);
         Assert.Equal(host.Id, node.NodePid());
-        Assert.Equal(0, PollOnce(hostPidfd, 0));
+        Assert.Equal(0, PollForExit(hostPidfd, 0));
         var nodeId = info.Value.Node.Node.NodeId;
         var begun = await human.Account.BeginSignInAsync(new AccountServiceBeginSignInRequest
         {
@@ -101,7 +101,7 @@ public sealed partial class LinuxWorkerInterruptionHostTests
             var registered = WorkspaceServiceRegisterWorkspaceResponse.Parser.ParseFrom(registration);
             Assert.Null(registered.Error);
             Assert.Equal(host.Id, node.NodePid());
-            Assert.Equal(0, PollOnce(hostPidfd, 0));
+            Assert.Equal(0, PollForExit(hostPidfd, 0));
 
             var edit = new FileServiceEditFileRequest
             {
@@ -140,7 +140,7 @@ public sealed partial class LinuxWorkerInterruptionHostTests
             Assert.NotEqual('Z', workerAfterOpen.State);
 
             // The parent is actually stopped. A real kernel timer, not a test clock, must end this same worker.
-            Assert.True(PollOnce(workerPidfd, 15_000) > 0);
+            Assert.True(PollForExit(workerPidfd, 15_000) > 0);
             var dead = ReadProc(observation.Pid); // Node remains stopped and cannot reap this child.
             Assert.Equal(observation.StartTicks, dead.StartTicks);
             Assert.Equal('Z', dead.State);
@@ -333,10 +333,29 @@ public sealed partial class LinuxWorkerInterruptionHostTests
     private static int Signal(SafeFileHandle pidfd, int signal) =>
         checked((int)PidfdSignal(424, checked((int)pidfd.DangerousGetHandle()), signal, 0, 0));
 
-    private static int PollOnce(SafeFileHandle pidfd, int timeout)
+    private static int PollForExit(SafeFileHandle pidfd, int timeout)
     {
         var poll = new PollDescriptor { FileDescriptor = checked((int)pidfd.DangerousGetHandle()), Events = 1 };
-        return Poll(ref poll, 1, timeout);
+        var elapsed = Stopwatch.StartNew();
+        var remaining = timeout;
+        var interrupted = 0;
+        int Observed(int result)
+        {
+            TestContext.Current.TestOutputHelper?.WriteLine($"pidfd-poll timeout-ms={timeout} elapsed-ms={elapsed.Elapsed.TotalMilliseconds:F0} "
+                + $"interrupts={interrupted} result={result} revents={poll.Revents}");
+            return result;
+        }
+        while (true)
+        {
+            poll.Revents = 0;
+            var result = Poll(ref poll, 1, remaining);
+            if (result >= 0 || Marshal.GetLastPInvokeError() != 4) return Observed(result); // EINTR
+            interrupted++;
+            // A child's SIGCHLD can interrupt poll. Preserve the original absolute wait bound.
+            var left = timeout - elapsed.Elapsed.TotalMilliseconds;
+            if (left <= 0) return Observed(0);
+            remaining = (int)Math.Ceiling(left);
+        }
     }
 
     private static (long Seconds, uint Nanoseconds) Modification(string path)

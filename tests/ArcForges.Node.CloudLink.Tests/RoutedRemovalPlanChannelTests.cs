@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Diagnostics;
 using System.Security.Cryptography;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Contracts.Relay.V1;
+using ArcForges.Node.Api;
 using ArcForges.Node.Core;
 using ArcForges.Node.Core.Files;
 using Google.Protobuf;
@@ -108,8 +110,14 @@ public sealed class RoutedRemovalPlanChannelTests
     public async Task SignedOversizedPlanReturnsAndReplaysTheCommittedInnerRefusal()
     {
         var ct = TestContext.Current.CancellationToken;
+        var elapsed = Stopwatch.StartNew();
+        var output = TestContext.Current.TestOutputHelper;
+        void Observe(string phase) => output?.WriteLine($"oversized-plan elapsed-ms={elapsed.Elapsed.TotalMilliseconds:F0} {phase}");
         await using var center = await FakeCenter.StartAsync();
-        await using var node = await CloudNode.Create(center.Endpoint.Url).StartAsync();
+        var ownedNode = CloudNode.Create(center.Endpoint.Url);
+        ownedNode.WrapRoutedDispatcher = inner => new TimingDispatcher(inner, Observe);
+        await using var node = await ownedNode.StartAsync();
+        Observe("node-ready");
         var nodeId = node.Runtime.NodeId.ToArray();
         var credentials = center.Issue(nodeId);
         using (var key = NodeKeyStores.ForTestDataRoot(node.DataRoot).Load(nodeId, center.Endpoint.Origin)
@@ -120,6 +128,7 @@ public sealed class RoutedRemovalPlanChannelTests
             await node.Cloud.AdoptAsync(credentials, center.Endpoint);
         }
         var connection = await center.Channel.ProvedAsync();
+        Observe("channel-proved");
         var caller = new CenterCaller
         {
             Kind = CenterCallerKind.NodeRelay,
@@ -134,7 +143,9 @@ public sealed class RoutedRemovalPlanChannelTests
             deep = Directory.CreateDirectory(Path.Combine(deep, new string((char)('a' + depth), 210))).FullName;
         for (var index = 0; index < 980; index++)
             File.WriteAllBytes(Path.Combine(deep, "f" + index.ToString("D4", System.Globalization.CultureInfo.InvariantCulture)), []);
+        Observe("native-985-entry-tree-created");
         var workspace = new RegisteredWorkspaces(node.Runtime.Store).RegisterFromVerifiedHuman(root, cancellationToken: ct);
+        Observe("workspace-registered");
         var request = new FileServicePlanRemovalRequest
         {
             Meta = CloudNode.Command(),
@@ -151,8 +162,22 @@ public sealed class RoutedRemovalPlanChannelTests
                 CommandId = request.Meta.CommandId,
                 Lifetime = TimeSpan.FromSeconds(30),
             });
+            Observe($"call-built declared-lifetime-ms=30000 deadline-ms={ProtoTime.ToDateTimeOffset(built.Header!.Deadline)?.ToUnixTimeMilliseconds()}");
             await connection.SendCallAsync(built.Call);
-            var frame = await connection.ResultOfAsync(built.Call.CallId);
+            Observe("call-sent");
+            ChannelResult frame;
+            try
+            {
+                frame = await connection.ResultOfAsync(built.Call.CallId);
+                Observe("result-received");
+            }
+            finally
+            {
+                var receipt = node.Runtime.Store.Read(reader => reader.Scalar("SELECT outcome IS NOT NULL FROM command_dedup WHERE command_id = $id;",
+                    ("$id", request.Meta.CommandId.Value.ToByteArray())));
+                Observe($"result-wait-ended verified={connection.VerifiedResults.Count(x => x.Header.CallId.Equals(built.Call.CallId))} "
+                    + $"unverified={connection.UnverifiedResults.Count} committed-receipt={receipt}");
+            }
             await Eventually.TrueAsync(() => connection.VerifiedResults.Any(x => x.Header.CallId.Equals(built.Call.CallId)), "verified size refusal");
             Assert.Equal(RoutedOutcome.Executed, connection.VerifiedResults.Single(x => x.Header.CallId.Equals(built.Call.CallId)).Header.Outcome);
             return frame.Payload;
@@ -177,4 +202,28 @@ public sealed class RoutedRemovalPlanChannelTests
         Assert.Empty(connection.UnverifiedResults);
     }
 
+    private sealed class TimingDispatcher(IRoutedDispatcher inner, Action<string> observe) : IRoutedDispatcher
+    {
+        public async Task<RoutedAnswer?> DispatchAsync(VerifiedCall call, IRoutedLink link, CancellationToken cancellationToken)
+        {
+            if (call.Header.Method != RoutedMethod.PlanNodeRemoval)
+                return await inner.DispatchAsync(call, link, cancellationToken);
+            observe("dispatch-entered");
+            var handler = Assert.IsType<RoutedDispatcher>(inner).FileHandlerForTests;
+            Assert.NotNull(handler);
+            handler.AfterRemovalSizeRefusalForTests = _ => observe("size-refusal-before-commit");
+            handler.AfterRemovalSizeCommitForTests = () => observe("size-refusal-after-commit");
+            try
+            {
+                var answer = await inner.DispatchAsync(call, link, cancellationToken);
+                observe("dispatch-returned " + (answer?.Outcome.ToString() ?? "dropped"));
+                return answer;
+            }
+            catch (Exception failure)
+            {
+                observe("dispatch-threw " + failure.GetType().Name);
+                throw;
+            }
+        }
+    }
 }
