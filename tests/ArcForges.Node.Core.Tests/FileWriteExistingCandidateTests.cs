@@ -181,52 +181,21 @@ public sealed class FileWriteExistingCandidateTests
         var pendingApproval = Request(SHA256.HashData(unrelated), intended);
         var pendingReply = FileServiceWriteFileResponse.Parser.ParseFrom(await Invoke(pendingApproval, script));
         Assert.True(NodeShapes.IsValid(pendingReply));
-        Assert.Equal(ErrorCategory.Authorization, pendingReply.Error.Category);
-        Assert.Equal("approval_required", pendingReply.Error.Code);
-        Assert.Equal("approval_required", pendingReply.Error.Details.State.Reason);
+        // This fixture's direct candidate exercises Windows effects above, but it is not the Host executable.
+        // Actual pending/restart/deny/create/write/edit approval is covered by FileStageProducerHostTests.
+        Assert.Equal(ErrorCategory.Resource, pendingReply.Error.Category);
+        Assert.Equal("enforcement_unavailable", pendingReply.Error.Code);
+        Assert.Equal("file_guard_unavailable", pendingReply.Error.Details.State.Reason);
         Assert.Equal(EffectCertainty.DidNotHappen, pendingReply.Error.Effect);
-        Assert.Equal(RetryMode.Reconcile, pendingReply.Error.Retry.Mode);
+        Assert.Equal(RetryMode.Never, pendingReply.Error.Retry.Mode);
         Assert.Equal(pendingApproval.Meta.CorrelationId, pendingReply.Error.CorrelationId);
-        var approvalId = pendingReply.Error.Details.State.Resource.Id;
-        Assert.NotNull(approvalId);
-        var captured = node.Runtime.Store.Read(r => Approvals.ByCommand(r, pendingApproval.Meta.CommandId.Value.Span))!;
-        Assert.Equal(ApprovalState.Pending, captured.State);
-        Assert.Equal(approvalId, captured.View.ApprovalId);
-        Assert.True(CenterRouting.SameFileCaller(script, captured.View.Requester.CenterCaller));
-        Assert.Equal(SHA256.HashData(pendingApproval.ToByteArray()), captured.RequestDigest);
+        Assert.Null(node.Runtime.Store.Read(r => Approvals.ByCommand(r, pendingApproval.Meta.CommandId.Value.Span)));
         Assert.Equal(unrelated, File.ReadAllBytes(path));
         Assert.Equal(0L, node.Runtime.Store.Read(r => r.Scalar("SELECT count(*) FROM file_operation_journal WHERE command_id = $id;",
             ("$id", pendingApproval.Meta.CommandId.Value.ToByteArray()))));
-        Assert.Equal(2L, node.Runtime.Store.Read(r => r.Scalar("SELECT count(*) FROM file_private_stage_object WHERE command_id = $id AND phase = 3;",
-            ("$id", pendingApproval.Meta.CommandId.Value.ToByteArray()))));
-        Assert.Equal((1, (long)unrelated.Length + intended.Length), node.Runtime.Store.Read(PrivateStageRegistry.Usage));
+        Assert.Equal(0L, node.Runtime.Store.Read(r => r.Scalar("SELECT count(*) FROM file_private_stage_reservation;")));
+        Assert.Equal((0, 0L), node.Runtime.Store.Read(PrivateStageRegistry.Usage));
         Assert.Equal(pendingReply.ToByteArray(), await Invoke(pendingApproval, script));
-
-        await using (var human = await node.ChannelAsync(helloAsHuman: true))
-        {
-            var decision = await human.Approvals.DecideApprovalAsync(new ApprovalServiceDecideApprovalRequest
-            {
-                Meta = InProcessNode.Command(),
-                ApprovalId = approvalId.Clone(),
-                Decision = ApprovalDecisionKind.Deny,
-            }, cancellationToken: token);
-            Assert.Null(decision.Error);
-            Assert.Equal(ApprovalState.Denied, decision.Value.Approval.State);
-        }
-        var rejected = node.Runtime.Store.Read(r => FileMutationJournal.GetForCaller(r, pendingApproval.Meta.CommandId.Value.Span, script))!;
-        Assert.Equal(FileOperationState.Completed, rejected.State);
-        Assert.False(rejected.Held);
-        Assert.Equal("permission_denied", rejected.Error.Code);
-        Assert.Equal(EffectCertainty.DidNotHappen, rejected.Error.Effect);
-        Assert.Equal(pendingApproval.Meta.CorrelationId, rejected.Error.CorrelationId);
-        Assert.Equal(SHA256.HashData(pendingApproval.ToByteArray()), rejected.RequestSha256.ToByteArray());
-        Assert.Equal("target.txt", rejected.WorkspacePath.Path);
-        Assert.Equal((0, (long)unrelated.Length + intended.Length), node.Runtime.Store.Read(PrivateStageRegistry.Usage));
-        Assert.Equal(2L, node.Runtime.Store.Read(r => r.Scalar("SELECT count(*) FROM file_private_stage_object WHERE command_id = $id AND phase = 3;",
-            ("$id", pendingApproval.Meta.CommandId.Value.ToByteArray()))));
-        var rejectedReplay = FileServiceWriteFileResponse.Parser.ParseFrom(await Invoke(pendingApproval, script));
-        Assert.Equal("permission_denied", rejectedReplay.Error.Code);
-        Assert.Equal(unrelated, File.ReadAllBytes(path));
         var agent = calls.Relay(Origin.Agent);
         var deniedRequest = Request(SHA256.HashData(unrelated), intended);
         var denied = FileServiceWriteFileResponse.Parser.ParseFrom(await Invoke(deniedRequest, agent));

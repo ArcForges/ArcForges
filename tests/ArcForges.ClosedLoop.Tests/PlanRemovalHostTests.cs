@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using ArcForges.Client;
@@ -19,7 +20,9 @@ namespace ArcForges.ClosedLoop.Tests;
 [Trait("loop", "local")]
 public sealed class PlanRemovalHostTests
 {
-    [Fact(Timeout = 180_000)]
+    // The real 1001/985-entry native metadata/response proof retains its ten-second operation budget.
+    [Fact(Timeout = 180_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public async Task CompleteThousandEntryPlanAndOversizedRefusalSurviveTheRealHostRestart()
     {
         var ct = TestContext.Current.CancellationToken;
@@ -78,8 +81,10 @@ public sealed class PlanRemovalHostTests
                     CommandId = command,
                     Lifetime = TimeSpan.FromSeconds(30),
                 });
+                var elapsed = Stopwatch.StartNew();
                 await connection.SendCallAsync(call);
                 var frame = await connection.ResultOfAsync(call.CallId);
+                TestContext.Current.TestOutputHelper?.WriteLine($"plan-host method={method} response-ms={elapsed.Elapsed.TotalMilliseconds:F3}");
                 await TestNode.WaitAsync(() => connection.VerifiedResults.Any(value => value.Header.CallId.Equals(call.CallId)),
                     TimeSpan.FromSeconds(15), "the real Host result signature verifies");
                 Assert.Equal(RoutedOutcome.Executed, connection.VerifiedResults.Single(value => value.Header.CallId.Equals(call.CallId)).Header.Outcome);
