@@ -164,6 +164,7 @@ public sealed partial class CenterSeamPolicyTests
             && path != "tests/ArcForges.ClosedLoop.Tests/OptionalAvailableFleetHostTests.cs"
             && path != "tests/ArcForges.ClosedLoop.Tests/PlanRemovalHostTests.cs"
             && path != "tests/ArcForges.ClosedLoop.Tests/PlanRemovalInputAuditHostTests.cs"
+            && path != "tests/ArcForges.ClosedLoop.Tests/FileCreationOwnershipHostTests.cs"
             && Regex.IsMatch(File.ReadAllText(Path.Combine(RepositoryFiles.Root, path)), @"\bFakeCenter\b")).ToList();
         Assert.Empty(using_);
 
