@@ -207,6 +207,27 @@ public sealed class FileCreationOwnershipHostTests
             _ = await Plan(agent, expectedOwner: true);
             Assert.Equal(original.Marker, Record(node.DataRoot, workspace, request.Path.Path, request, agent, third,
                 compareCreationReceipt: false).Marker);
+            // Exercise the new execution route through the real Host. This HUMAN uses its actual local policy
+            // ALLOW and its own plan, but neither that authority nor real creation provenance supplies a strict
+            // namespace backend. The committed refusal is a real no-effect result, never a cleanup success.
+            var humanPlan = await Plan(owner, expectedOwner: false);
+            var execution = new FileServiceExecuteRemovalRequest
+            {
+                Meta = Command(), PlanId = humanPlan.PlanId.Clone(), PlanDigest = humanPlan.Digest,
+            };
+            var namesBefore = Directory.GetFileSystemEntries(root, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal).ToArray();
+            var (executionOutcome, executionBytes) = await Invoke(RoutedMethod.ExecuteNodeRemoval, execution, execution.Meta.CommandId, owner);
+            Assert.Equal(RoutedOutcome.Executed, executionOutcome);
+            var refusedExecution = FileServiceExecuteRemovalResponse.Parser.ParseFrom(executionBytes);
+            Assert.Equal("enforcement_unavailable", refusedExecution.Error.Code);
+            Assert.Equal("strict_cleanup_guard_unavailable", refusedExecution.Error.Details.State.Reason);
+            Assert.Equal(EffectCertainty.DidNotHappen, refusedExecution.Error.Effect);
+            var (_, executionReplay) = await Invoke(RoutedMethod.ExecuteNodeRemoval, execution, execution.Meta.CommandId, owner);
+            Assert.Equal(executionBytes, executionReplay);
+            Assert.Equal(namesBefore, Directory.GetFileSystemEntries(root, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal).ToArray());
+            Assert.Equal(third, File.ReadAllText(Path.Combine(root, request.Path.Path)));
+            Assert.Equal(original.Marker, Record(node.DataRoot, workspace, request.Path.Path, request, agent, third,
+                compareCreationReceipt: false).Marker);
             Assert.Empty(connection.UnverifiedResults);
             foreach (var file in new[] { StorePaths.Database(node.DataRoot), StorePaths.Database(node.DataRoot) + "-wal", node.NodeLog })
             {
