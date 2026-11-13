@@ -9,6 +9,7 @@ using ArcForges.Contracts.Relay.V1;
 using ArcForges.Node.Api;
 using ArcForges.Node.Core.Files;
 using ArcForges.Node.Core.Platform;
+using ArcForges.Node.Core.Security;
 using ArcForges.Node.Store;
 using Google.Protobuf;
 using NodeFilePath = ArcForges.Contracts.Node.V1.FilePath;
@@ -125,12 +126,36 @@ public sealed class PrivateStageRegistryRoutedTests
             PrivateStageRegistry.ReopenReadyStage(r, commandId, 2, actor, requestDigest, ct)))
             Assert.True(recovered.Guard.MatchesExpectedContent(SHA256.HashData(body), body.Length, ct));
 
+        // A pending approval keeps this READY reservation live across startup. An unraised producer is correctly
+        // fenced as abandoned on restart, and cannot exercise the separate same-object rehash requirement.
+        using (var root = WorkspacePath.OpenRoot(rootA))
+        {
+            var rootIdentity = RegisteredWorkspaces.RootIdentity.Encode(root.RootIdentity);
+            var stageIdentity = Assert.Single(node.Runtime.Store.Read(PrivateStageRegistry.LoadIdentities));
+            var intent = new FileJournalIntent(FileOperationKind.Write, commandId, request.Meta.CorrelationId.Value.ToByteArray(),
+                actor, workspaceA.Id, request.Path.Path, rootIdentity.Platform, rootIdentity.Bytes, rootIdentity.Bytes,
+                null, null, null, null, body.Length, SHA256.HashData(body), stageIdentity.Bytes);
+            var requester = new ActorRef
+            {
+                Origin = Origin.Remote,
+                CenterCaller = actor,
+                RemoteCommandId = request.Meta.CommandId.Clone(),
+            };
+            var raised = await node.Runtime.Processor.ExecuteAsync(command => PrivateStageApproval.Raise(command, intent, raw,
+                requester, root, target: null, TimeSpan.FromHours(1), ct), CommitDurability.Full);
+            Assert.True(raised.Created);
+            Assert.Null(raised.Error);
+            Assert.NotNull(raised.Approval);
+        }
+
         // A pending stage modified while the node is stopped must fail its same-object full rehash after restart.
         Assert.Equal(0, await node.StopAsync());
         var tampered = body.ToArray();
         tampered[0] ^= 1;
         File.WriteAllBytes(emptyPath, tampered);
         await node.StartAsync();
+        Assert.Equal(1L, node.Runtime.Store.Read(r => r.Scalar("SELECT active FROM file_private_stage_reservation;")));
+        Assert.False(node.Runtime.Store.Read(r => PrivateStageTerminal.IsTerminal(r, commandId)));
         Assert.Throws<WorkspacePathException>(() => node.Runtime.Store.Read(r =>
             PrivateStageRegistry.ReopenReadyStage(r, commandId, 2, actor, requestDigest, ct)));
         Assert.Equal(tampered, File.ReadAllBytes(emptyPath));
@@ -142,6 +167,19 @@ public sealed class PrivateStageRegistryRoutedTests
         await node.StartAsync();
         calls = new RoutedCalls(node);
         Assert.Single(node.Runtime.Store.Read(PrivateStageRegistry.LoadIdentities));
+        if (OperatingSystem.IsWindows())
+        {
+            await CheckPrivate(calls, workspaceB.Id, "moved.tmp", "", expectVisible: true);
+            using var root = WorkspacePath.OpenRoot(rootB);
+            var before = root.InspectEntry("moved.tmp").Identity;
+            File.SetCreationTimeUtc(moved, File.GetCreationTimeUtc(moved).AddHours(1));
+            var after = root.InspectEntry("moved.tmp").Identity;
+            Assert.Equal(before.Volume, after.Volume);
+            Assert.Equal(before.Low, after.Low);
+            Assert.Equal(before.High, after.High);
+            Assert.NotEqual(before.Created, after.Created);
+            Assert.Equal(body, File.ReadAllBytes(moved));
+        }
         Assert.Throws<WorkspacePathException>(() => node.Runtime.Store.Read(r =>
             PrivateStageRegistry.ReopenReadyStage(r, commandId, 2, actor, requestDigest, ct)));
         await CheckPrivate(calls, workspaceB.Id, "moved.tmp", "", expectVisible: true);

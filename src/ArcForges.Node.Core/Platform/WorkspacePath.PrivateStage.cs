@@ -54,8 +54,11 @@ internal sealed partial class WorkspacePath
         if (_privateStageFiles.Length == 0) return false;
         // Link count is not object identity. Matching must still work when a same-user process adds another name.
         var encoded = RegisteredWorkspaces.RootIdentity.Encode(identity with { Links = 1 }, directory: false);
+        // Creation time is mutable on Windows. A privacy denial uses its stable volume/file ID; the full
+        // recorded identity remains mandatory for ownership, reopening, approval and every mutation effect.
+        var identityLength = encoded.Platform == 1 ? 25 : encoded.Bytes.Length;
         return _privateStageFiles.Any(item => item.Platform == encoded.Platform &&
-            CryptographicOperations.FixedTimeEquals(item.Bytes, encoded.Bytes));
+            CryptographicOperations.FixedTimeEquals(item.Bytes.AsSpan(0, identityLength), encoded.Bytes.AsSpan(0, identityLength)));
     }
 
     private void RefusePrivateStageFile(WorkspaceObjectIdentity identity)
