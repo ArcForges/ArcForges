@@ -84,7 +84,7 @@ public sealed class MigrationPlan
 public static class StoreMigrations
 {
     /// <summary>The schema version this binary writes; it reads stores whose <c>min_reader_version</c> is at most this.</summary>
-    public const int SupportedSchemaVersion = 14;
+    public const int SupportedSchemaVersion = 15;
 
     /// <summary>The released steps, loaded from the embedded <c>Schema/*.sql</c> resources.</summary>
     public static MigrationPlan Released { get; } = new([
@@ -131,6 +131,9 @@ public static class StoreMigrations
 
         // AF-CTR-06: creation evidence changes ownership decisions; prior writers cannot safely share this store.
         Load(14, 14, "0014-schema-step-14.sql"),
+
+        // AF-CTR-06: native pre-target stage producers have their own FULL reservations and actual-exit fences.
+        Load(15, 15, "0015-schema-step-15.sql"),
     ]);
 
     private static StoreMigration Load(int version, int minReaderVersion, string name)

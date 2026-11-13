@@ -266,9 +266,11 @@ public sealed class NodeStore : IDisposable
             {
                 T result = default!;
                 StoreTransaction? scoped = null;
-                InTransaction(_writer, durability, transaction => result = action(
-                    scoped = new StoreTransaction(_writer, transaction, _clock, durability, _fileRetention, _fileTargetWitnesses)),
-                    () => scoped?.AfterCommitForTests?.Invoke());
+                InTransaction(_writer, durability, transaction =>
+                {
+                    RequireCurrentWriter(_writer, transaction);
+                    result = action(scoped = new StoreTransaction(_writer, transaction, _clock, durability, _fileRetention, _fileTargetWitnesses));
+                }, () => scoped?.AfterCommitForTests?.Invoke());
                 return result;
             }
             finally
@@ -349,6 +351,16 @@ public sealed class NodeStore : IDisposable
     }
 
     internal void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, this);
+
+    private static void RequireCurrentWriter(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT min_reader_version, arcforges_store_reader_version() FROM store_meta WHERE singleton = 1;";
+        using var row = command.ExecuteReader();
+        if (!row.Read() || row.GetInt64(1) < row.GetInt64(0))
+            throw new StoreIncompatibleException("The current node writer no longer satisfies the store reader floor.");
+    }
 
     private static void InTransaction(SqliteConnection connection, CommitDurability durability, Action<SqliteTransaction> action,
         Action? afterCommitForTests = null)
@@ -436,8 +448,19 @@ public sealed class NodeStore : IDisposable
                     throw new StoreIncompatibleException("The node store cannot be upgraded to schema 14 until prior node-instance exclusion is established; it was not changed.");
                 }
 
+                // Stage producers must not share a store with a pre-15 Node that can resume synchronous body IO.
+                // This remains a conservative refusal until the real native old-instance bridge is admitted.
+                if (existing is { SchemaVersion: < 15 } && plan.LatestVersion >= 15 &&
+                    plan.Steps[14].Name == "0015-schema-step-15.sql")
+                {
+                    throw new StoreIncompatibleException("The node store cannot be upgraded to schema 15 until prior node-instance exclusion is established; it was not changed.");
+                }
+
                 writer = new SqliteConnection(StorePaths.ConnectionString(path, SqliteOpenMode.ReadWriteCreate));
                 writer.Open();
+                // Register the capability of this actual migration plan before any migration/Start transaction.
+                // A previous binary cached before the floor changed lacks this function and cannot pass Start.
+                writer.CreateFunction<long>("arcforges_store_reader_version", () => plan.LatestVersion);
                 Pragma(writer, string.Create(CultureInfo.InvariantCulture, $"PRAGMA busy_timeout={BusyTimeoutMilliseconds};"));
                 var journal = Convert.ToString(Scalar(writer, "PRAGMA journal_mode=WAL;"), CultureInfo.InvariantCulture);
                 if (!string.Equals(journal, "wal", StringComparison.OrdinalIgnoreCase))
