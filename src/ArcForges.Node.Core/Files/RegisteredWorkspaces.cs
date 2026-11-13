@@ -393,7 +393,7 @@ internal sealed class RegisteredWorkspaces
 
     /// <summary>
     /// Called only after the application has verified HUMAN authority. It retains the old workspace row and all files.
-    /// Pending file plans and approvals require workspace-bound persistent checks when their records are implemented.
+    /// Pending file plans, approvals and in-flight effects retain workspace-bound persistent holds.
     /// </summary>
     internal void UnregisterFromVerifiedHuman(ReadOnlySpan<byte> id, CancellationToken cancellationToken = default)
     {
@@ -447,7 +447,25 @@ internal sealed class RegisteredWorkspaces
             SELECT EXISTS(SELECT 1 FROM task WHERE workspace_id = $id AND state IN (1, 2, 3, 4, 5, 6));
             """, ("$id", id)), System.Globalization.CultureInfo.InvariantCulture) != 0 ||
         (reader.Scalar("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'file_operation_journal';") is not null &&
-            FileMutationJournal.HasWorkspaceHold(reader, id)) || PrivateStageRegistry.HasWorkspaceHold(reader, id);
+            FileMutationJournal.HasWorkspaceHold(reader, id)) || PrivateStageRegistry.HasWorkspaceHold(reader, id) ||
+        HasRemovalPlanHold(reader, id);
+
+    private static bool HasRemovalPlanHold(StoreReader reader, byte[] id)
+    {
+        if (reader.Scalar("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'file_removal_plan';") is null)
+            return false;
+
+        var time = RoutedFileValidationTime.Sample(reader);
+        // A clock disagreement cannot expire a pending hold; execution still holds even after its plan deadline.
+        return Convert.ToInt64(reader.Scalar("""
+            SELECT EXISTS(
+                SELECT 1 FROM file_removal_plan AS p JOIN cleanup_plan AS c ON c.plan_id = p.plan_id
+                WHERE p.workspace_id = $id AND p.target_kind = 1
+                  AND (c.state = 3 OR (c.state IN (1, 2) AND ($healthy = 0 OR c.expires_at > $boundary)))
+            );
+            """, ("$id", id), ("$healthy", time.Healthy), ("$boundary", time.BoundaryMicroseconds)),
+            System.Globalization.CultureInfo.InvariantCulture) != 0;
+    }
 
     internal sealed record LegacyRoot(string Id, string Path, long Revision, int Kind, int State);
 
