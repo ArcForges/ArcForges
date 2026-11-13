@@ -871,7 +871,7 @@ internal sealed class ChannelLoop : IAsyncDisposable
             var code = answer.Error is { } error ? error.Category.ToString().ToUpperInvariant() + "/" + error.Code : answer.HandlerCode;
             var responseHash = decision == RoutedCallDecision.Executed ? SHA256.HashData(answer.Response!.Span) : null;
             var responseSize = decision == RoutedCallDecision.Executed ? answer.Response!.Length : (int?)null;
-            if (verified!.Header.Method is RoutedMethod.ReadNodeFile or RoutedMethod.WriteNodeFile or RoutedMethod.EditNodeFile or RoutedMethod.SearchNodeFiles or RoutedMethod.ListNodeDirectory or RoutedMethod.GetNodeFileOperation or RoutedMethod.PlanNodeRemoval)
+            if (verified!.Header.Method is RoutedMethod.ReadNodeFile or RoutedMethod.WriteNodeFile or RoutedMethod.EditNodeFile or RoutedMethod.SearchNodeFiles or RoutedMethod.ListNodeDirectory or RoutedMethod.GetNodeFileOperation or RoutedMethod.PlanNodeRemoval or RoutedMethod.ExecuteNodeRemoval)
             {
                 // A result-log wait consumes the same monotonic budget as the read. A late queued log update must not
                 // turn an unreturned result into a completed call, and a late result must not be sent after that wait.

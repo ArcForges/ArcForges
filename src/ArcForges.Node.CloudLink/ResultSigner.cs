@@ -65,6 +65,7 @@ internal static partial class RoutedRefusals
         RoutedMethod.ReadNodeFile or RoutedMethod.SearchNodeFiles or RoutedMethod.ListNodeDirectory or RoutedMethod.GetNodeFileOperation => "file.read",
         RoutedMethod.WriteNodeFile or RoutedMethod.EditNodeFile => "file.write",
         RoutedMethod.PlanNodeRemoval => "cleanup.plan",
+        RoutedMethod.ExecuteNodeRemoval => "file.remove",
         RoutedMethod.RegisterNodeWorkspace => "workspace.register",
         RoutedMethod.UnregisterNodeWorkspace => "workspace.unregister",
         RoutedMethod.ListNodeWorkspaces or RoutedMethod.GetNodeWorkspace => "workspace.read",

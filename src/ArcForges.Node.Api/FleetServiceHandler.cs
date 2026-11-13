@@ -873,7 +873,7 @@ internal sealed partial class FleetServiceHandler(NodeRuntime node, ClientSessio
 
             var maximum = method == RoutedMethod.WaitNodeTask ? TimeSpan.FromSeconds(55) :
                 method == RoutedMethod.ReadNodeTaskOutput ? TimeSpan.FromSeconds(30) :
-                method is RoutedMethod.ReadNodeFile or RoutedMethod.WriteNodeFile or RoutedMethod.EditNodeFile or RoutedMethod.SearchNodeFiles or RoutedMethod.ListNodeDirectory or RoutedMethod.GetNodeFileOperation or RoutedMethod.PlanNodeRemoval or RoutedMethod.RegisterNodeWorkspace or RoutedMethod.UnregisterNodeWorkspace or
+                method is RoutedMethod.ReadNodeFile or RoutedMethod.WriteNodeFile or RoutedMethod.EditNodeFile or RoutedMethod.SearchNodeFiles or RoutedMethod.ListNodeDirectory or RoutedMethod.GetNodeFileOperation or RoutedMethod.PlanNodeRemoval or RoutedMethod.ExecuteNodeRemoval or RoutedMethod.RegisterNodeWorkspace or RoutedMethod.UnregisterNodeWorkspace or
                     RoutedMethod.ListNodeWorkspaces or RoutedMethod.GetNodeWorkspace ? TimeSpan.FromSeconds(15) : TimeSpan.FromSeconds(10);
             var answer = await cloud.ForwardRelayAsync(signed,
                 (client, options) => send(caller, signed.Assertion.ToByteString(), client, options), left < maximum ? left : maximum, context.CancellationToken)
