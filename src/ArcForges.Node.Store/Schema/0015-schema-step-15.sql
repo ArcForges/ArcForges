@@ -168,10 +168,10 @@ BEGIN
   SELECT RAISE(IGNORE);
 END;
 
--- Preserve the established view name and all prior capacity triggers. A command is
--- counted once; byte deduplication requires the exact platform, slot, object and size.
-DROP VIEW file_stage_capacity_totals;
-CREATE VIEW file_stage_capacity_totals AS
+-- Keep every installed view and trigger unchanged. The new reader selects this additive
+-- view; supplementary triggers enforce its accounting even for direct writer statements.
+-- A command is counted once; byte deduplication requires platform, slot, object and size.
+CREATE VIEW file_stage_capacity_totals_v15 AS
 SELECT
   (SELECT count(*) FROM
     (SELECT command_id FROM file_private_stage_reservation WHERE active = 1
@@ -201,8 +201,8 @@ SELECT
 CREATE TRIGGER tr_file_stage_production_capacity BEFORE INSERT ON file_stage_production
 WHEN (NOT EXISTS (SELECT 1 FROM file_private_stage_reservation WHERE command_id = NEW.command_id AND active = 1) AND
       NOT EXISTS (SELECT 1 FROM file_operation_journal WHERE command_id = NEW.command_id AND held = 1) AND
-      (SELECT active_mutations FROM file_stage_capacity_totals) >= 64) OR
-     (NEW.storage_kind = 1 AND NEW.reserved_bytes > 268435456 - (SELECT reserved_bytes FROM file_stage_capacity_totals))
+      (SELECT active_mutations FROM file_stage_capacity_totals_v15) >= 64) OR
+     (NEW.storage_kind = 1 AND NEW.reserved_bytes > 268435456 - (SELECT reserved_bytes FROM file_stage_capacity_totals_v15))
 BEGIN
   SELECT RAISE(ABORT, 'file_stage_capacity');
 END;
@@ -226,8 +226,9 @@ BEGIN
   SELECT RAISE(ABORT, 'file_stage_production_pending');
 END;
 
--- Replace only the installed triggers in this new step; historical SQL stays verbatim.
--- Their admission arithmetic must account for an already FULL-reserved anonymous producer.
+-- Supplement the installed journal triggers without replacing their historical definitions.
+-- The old view omits anonymous producer reservations; a new journal's full allocation fits
+-- its old accounting whenever its already reserved allocation fits the complete v15 view.
 CREATE VIEW file_stage_reserved_identity AS
 SELECT command_id, slot, identity_platform, native_identity, expected_size
 FROM file_private_stage_object WHERE native_identity IS NOT NULL
@@ -236,13 +237,11 @@ SELECT o.command_id, o.slot, o.identity_platform, o.native_identity, o.expected_
 FROM file_stage_produced_object o JOIN file_stage_production p ON p.command_id = o.command_id
 WHERE p.storage_kind = 1 AND p.released = 0 AND o.native_identity IS NOT NULL;
 
-DROP TRIGGER tr_file_journal_stage_capacity;
-DROP TRIGGER tr_file_journal_stage_reactivate_capacity;
-CREATE TRIGGER tr_file_journal_stage_capacity BEFORE INSERT ON file_operation_journal
+CREATE TRIGGER tr_file_journal_stage_capacity_v15 BEFORE INSERT ON file_operation_journal
 WHEN NEW.held = 1 AND
  ((NOT EXISTS (SELECT 1 FROM file_private_stage_reservation r WHERE r.command_id = NEW.command_id AND r.active = 1) AND
    NOT EXISTS (SELECT 1 FROM file_stage_production p WHERE p.command_id = NEW.command_id AND p.active = 1) AND
-   (SELECT active_mutations FROM file_stage_capacity_totals) >= 64) OR
+   (SELECT active_mutations FROM file_stage_capacity_totals_v15) >= 64) OR
   ((CASE WHEN NEW.original_size IS NULL OR EXISTS
      (SELECT 1 FROM file_stage_reserved_identity o WHERE o.command_id = NEW.command_id AND o.slot = 1
       AND o.identity_platform = NEW.identity_platform AND o.native_identity = NEW.original_stage_identity
@@ -251,16 +250,16 @@ WHEN NEW.held = 1 AND
      (SELECT 1 FROM file_stage_reserved_identity o WHERE o.command_id = NEW.command_id AND o.slot = 2
       AND o.identity_platform = NEW.identity_platform AND o.native_identity = NEW.intended_stage_identity
       AND o.expected_size = NEW.intended_size) THEN 0 ELSE NEW.intended_size END)) >
-    268435456 - (SELECT reserved_bytes FROM file_stage_capacity_totals))
+    268435456 - (SELECT reserved_bytes FROM file_stage_capacity_totals_v15))
 BEGIN
   SELECT RAISE(ABORT, 'file_stage_capacity');
 END;
 
-CREATE TRIGGER tr_file_journal_stage_reactivate_capacity BEFORE UPDATE OF held ON file_operation_journal
+CREATE TRIGGER tr_file_journal_stage_reactivate_capacity_v15 BEFORE UPDATE OF held ON file_operation_journal
 WHEN OLD.held = 0 AND NEW.held = 1 AND
  ((NOT EXISTS (SELECT 1 FROM file_private_stage_reservation r WHERE r.command_id = NEW.command_id AND r.active = 1) AND
    NOT EXISTS (SELECT 1 FROM file_stage_production p WHERE p.command_id = NEW.command_id AND p.active = 1) AND
-   (SELECT active_mutations FROM file_stage_capacity_totals) >= 64) OR
+   (SELECT active_mutations FROM file_stage_capacity_totals_v15) >= 64) OR
   ((CASE WHEN NEW.original_size IS NULL OR EXISTS
      (SELECT 1 FROM file_stage_reserved_identity o WHERE o.command_id = NEW.command_id AND o.slot = 1
       AND o.identity_platform = NEW.identity_platform AND o.native_identity = NEW.original_stage_identity
@@ -269,7 +268,26 @@ WHEN OLD.held = 0 AND NEW.held = 1 AND
      (SELECT 1 FROM file_stage_reserved_identity o WHERE o.command_id = NEW.command_id AND o.slot = 2
       AND o.identity_platform = NEW.identity_platform AND o.native_identity = NEW.intended_stage_identity
       AND o.expected_size = NEW.intended_size) THEN 0 ELSE NEW.intended_size END)) >
-    268435456 - (SELECT reserved_bytes FROM file_stage_capacity_totals))
+    268435456 - (SELECT reserved_bytes FROM file_stage_capacity_totals_v15))
+BEGIN
+  SELECT RAISE(ABORT, 'file_stage_capacity');
+END;
+
+-- Existing named-stage writers must also respect an anonymous producer's reserved capacity.
+CREATE TRIGGER tr_file_stage_named_capacity_v15 BEFORE INSERT ON file_private_stage_reservation
+WHEN (NOT EXISTS (SELECT 1 FROM file_operation_journal j WHERE j.command_id = NEW.command_id AND j.held = 1) AND
+      NOT EXISTS (SELECT 1 FROM file_stage_production p WHERE p.command_id = NEW.command_id AND p.active = 1) AND
+      (SELECT active_mutations FROM file_stage_capacity_totals_v15) >= 64) OR
+     NEW.reserved_bytes > 268435456 - (SELECT reserved_bytes FROM file_stage_capacity_totals_v15)
+BEGIN
+  SELECT RAISE(ABORT, 'file_stage_capacity');
+END;
+
+CREATE TRIGGER tr_file_stage_named_reactivate_capacity_v15 BEFORE UPDATE OF active ON file_private_stage_reservation
+WHEN OLD.active = 0 AND NEW.active = 1 AND
+     NOT EXISTS (SELECT 1 FROM file_operation_journal j WHERE j.command_id = NEW.command_id AND j.held = 1) AND
+     NOT EXISTS (SELECT 1 FROM file_stage_production p WHERE p.command_id = NEW.command_id AND p.active = 1) AND
+     (SELECT active_mutations FROM file_stage_capacity_totals_v15) >= 64
 BEGIN
   SELECT RAISE(ABORT, 'file_stage_capacity');
 END;

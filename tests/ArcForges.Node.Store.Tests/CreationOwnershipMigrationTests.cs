@@ -13,7 +13,8 @@ public sealed class CreationOwnershipMigrationTests
     {
         using var root = new TemporaryDataRoot();
         var clock = new ManualClock();
-        using (var current = root.Open(clock))
+        var version14 = new MigrationPlan(StoreMigrations.Released.Steps.Take(14));
+        using (var current = root.Open(clock, version14))
         {
             Assert.Equal(14, current.Metadata.SchemaVersion);
             Assert.Equal(14, current.Metadata.MinReaderVersion);
@@ -23,7 +24,7 @@ public sealed class CreationOwnershipMigrationTests
         var older = new MigrationPlan(StoreMigrations.Released.Steps.Take(13));
         var refusal = Assert.Throws<StoreIncompatibleException>(() => root.Open(clock, older));
         Assert.Contains("schema version 14", refusal.Message, StringComparison.Ordinal);
-        using var reopened = root.Open(clock);
+        using var reopened = root.Open(clock, version14);
         Assert.Equal(14, reopened.Metadata.SchemaVersion);
     }
 

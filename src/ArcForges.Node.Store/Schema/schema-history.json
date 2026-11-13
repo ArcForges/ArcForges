@@ -117,6 +117,14 @@
       "sha256": "8d18e05bc6413c4ce61f5497757ad4aab994c5b2d1085575ccf67890074d1e21",
       "source": "AF-CTR-06 file creation marker and specific-caller provenance; local candidate, not cleanup authority.",
       "addedBy": "AF-CTR-06"
+    },
+    {
+      "version": 15,
+      "minReaderVersion": 15,
+      "file": "0015-schema-step-15.sql",
+      "sha256": "c7784dd28ea1419bc407fb844be76e18b75f9ce5ba185fa738d1c9c259d20ae6",
+      "source": "AF-CTR-06 metadata-only initial stage production reservations, actual worker lifetime fences, additive combined capacity and cached-inspection Start admission; local candidate, not old-instance upgrade qualification.",
+      "addedBy": "AF-CTR-06"
     }
   ]
 }
