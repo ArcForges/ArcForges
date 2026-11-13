@@ -156,6 +156,27 @@ public static class CenterRouting
         };
     }
 
+    /// <summary>
+    /// The caller binding for new file operations and their status (06a section 1). A valid account session may
+    /// use another valid session of the same account; a relay also binds its exact verified local session.
+    /// This is intentionally distinct from legacy task/workspace command replay classes.
+    /// </summary>
+    public static bool SameFileCaller(CenterCaller? a, CenterCaller? b)
+    {
+        if (a is null || b is null || Shape(a) is not null || Shape(b) is not null || a.Kind != b.Kind || !Equal(a.AccountId, b.AccountId))
+        {
+            return false;
+        }
+
+        return a.Kind switch
+        {
+            CenterCallerKind.AccountSession => true,
+            CenterCallerKind.NodeRelay => Equal(a.RelayingNodeId, b.RelayingNodeId) && a.LocalOrigin == b.LocalOrigin &&
+                Equal(a.LocalSessionId, b.LocalSessionId),
+            _ => false,
+        };
+    }
+
     private static bool Valid(ArcForges.Contracts.Foundation.V1.Id? id) =>
         id is { Value.Length: 16 } && id.Value.Span.IndexOfAnyExcept((byte)0) >= 0;
 

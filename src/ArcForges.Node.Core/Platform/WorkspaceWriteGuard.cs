@@ -1,0 +1,633 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Globalization;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text;
+using Microsoft.Win32.SafeHandles;
+
+namespace ArcForges.Node.Core.Platform;
+
+/// <summary>
+/// Owns one checked read/write file handle and a native open-exclusion guard. It deliberately exposes no write method:
+/// an actual mutation also needs a durable journal, authorization, staging and name revalidation. An observed intact
+/// guard is not an atomic guarantee across a later system call, and Linux leases do not lock the namespace.
+/// </summary>
+internal sealed partial class WorkspaceWriteGuard : IDisposable
+{
+    private const int MaximumExpectedBytes = 4 * 1024 * 1024;
+    private static readonly TimeSpan Lifetime = TimeSpan.FromSeconds(10);
+    private readonly object _sync = new();
+    private readonly WorkspaceObjectIdentity _identity;
+    private readonly bool _linux;
+    private readonly uint _expectedLinks;
+    private readonly bool _privateStage;
+    private readonly Action<SafeFileHandle>? _verifyPrivateSecurity;
+    private readonly long _started;
+    private readonly long _linuxDeadlineNanoseconds;
+    private SafeFileHandle? _file;
+    private Timer? _expiry;
+    private string _closedReason = "file_guard_closed";
+
+    private WorkspaceWriteGuard(SafeFileHandle file, WorkspaceObjectIdentity identity, bool linux, bool privateStage,
+        uint expectedLinks, Action<SafeFileHandle>? verifyPrivateSecurity, long linuxDeadlineNanoseconds = 0)
+    {
+        _file = file;
+        _identity = identity;
+        _linux = linux;
+        _privateStage = privateStage;
+        _expectedLinks = expectedLinks;
+        _verifyPrivateSecurity = verifyPrivateSecurity;
+        _started = Stopwatch.GetTimestamp();
+        _linuxDeadlineNanoseconds = linuxDeadlineNanoseconds;
+        var due = Lifetime;
+        if (OperatingSystem.IsLinux() && linuxDeadlineNanoseconds != 0)
+            due = TimeSpan.FromTicks(Math.Clamp((linuxDeadlineNanoseconds - LinuxFatalDeadline.MonotonicNanoseconds()) / 100,
+                TimeSpan.TicksPerMillisecond, Lifetime.Ticks));
+        _expiry = new Timer(static state => ((WorkspaceWriteGuard)state!).Expire(), this, due, Timeout.InfiniteTimeSpan);
+    }
+
+    /// <summary>Acquires the native guard on this same verified handle; ownership transfers only on success.</summary>
+    internal static WorkspaceWriteGuard Acquire(SafeFileHandle file) => Acquire(file, privateStage: false);
+
+    /// <summary>Guards a previously created unnamed Linux object; it has no name and must have no links.</summary>
+    internal static WorkspaceWriteGuard AcquireAnonymousStage(SafeFileHandle file) => Acquire(file, privateStage: true);
+
+    /// <summary>Guards a Windows stage created with no sharing; rechecks its actual owner and protected DACL.</summary>
+    internal static WorkspaceWriteGuard AcquireWindowsPrivateStage(SafeFileHandle file, Action<SafeFileHandle> verifySecurity)
+    {
+        if (!OperatingSystem.IsWindows()) throw new WorkspacePathException("file_guard_unavailable");
+        ArgumentNullException.ThrowIfNull(verifySecurity);
+        return Acquire(file, privateStage: true, verifySecurity);
+    }
+
+    /// <summary>Guards a linked Linux private stage and rechecks its actual owner and restrictive mode.</summary>
+    internal static WorkspaceWriteGuard AcquireLinuxNamedPrivateStage(SafeFileHandle file, Action<SafeFileHandle> verifySecurity)
+    {
+        if (!OperatingSystem.IsLinux()) throw new WorkspacePathException("file_guard_unavailable");
+        ArgumentNullException.ThrowIfNull(verifySecurity);
+        return Acquire(file, privateStage: true, verifySecurity, expectedLinks: 1);
+    }
+
+    private static WorkspaceWriteGuard Acquire(SafeFileHandle file, bool privateStage, Action<SafeFileHandle>? verifySecurity = null,
+        uint? expectedLinks = null)
+    {
+        ArgumentNullException.ThrowIfNull(file);
+        var identity = WorkspacePath.Identity(file);
+        var linux = OperatingSystem.IsLinux();
+        var links = expectedLinks ?? (privateStage && linux ? 0u : 1u);
+        if (!identity.IsFile || identity.Links != links ||
+            privateStage && (linux ? (identity.Mode & 0x3f) != 0 || links == 1 && verifySecurity is null
+                : !OperatingSystem.IsWindows() || verifySecurity is null))
+        {
+            throw new WorkspacePathException("file_identity_changed");
+        }
+
+        if (linux)
+        {
+            WorkspacePath.RequireLinuxLeaseBreakTime();
+            var owner = LinuxLeaseNotifications.Owner;
+            var fd = checked((int)file.DangerousGetHandle());
+            var expected = new LinuxLeaseNative.Owner { Type = 0, ProcessId = owner };
+            if (LinuxLeaseNative.SetOwner(fd, 15, ref expected) < 0 || LinuxLeaseNative.GetOwner(fd, 16, out var actual) < 0 ||
+                actual.Type != expected.Type || actual.ProcessId != expected.ProcessId ||
+                LinuxLeaseNative.Control(fd, 10, 29) < 0 || LinuxLeaseNative.Control(fd, 11, 0) != 29)
+            {
+                throw new WorkspacePathException("file_guard_unavailable");
+            }
+
+            if (LinuxLeaseNative.Control(fd, 1024, 1) < 0)
+            {
+                var error = Marshal.GetLastPInvokeError();
+                throw new WorkspacePathException(error is 11 or 26 ? "file_in_use" : "file_guard_unavailable");
+            }
+        }
+        else if (OperatingSystem.IsWindows())
+        {
+            CheckWindowsSectionReferences(file);
+        }
+        else
+        {
+            throw new WorkspacePathException("file_guard_unavailable");
+        }
+
+        var guard = new WorkspaceWriteGuard(file, identity, linux, privateStage, links, verifySecurity);
+        try
+        {
+            if (linux)
+            {
+                LinuxLeaseNotifications.Register(guard);
+            }
+
+            guard.CheckIntact();
+            return guard;
+        }
+        catch
+        {
+            guard.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Observes the current guard and object identity. On Linux F_GETLEASE also reports an initiated break. This is a
+    /// point-in-time observation, not an atomic check-and-write primitive or a directory/name protection.
+    /// </summary>
+    internal void CheckIntact() => CheckIntact(afterLeaseCheck: null);
+
+    // The callback coordinates a real external open in a component test; production passes no callback.
+    internal void CheckIntact(Action? afterLeaseCheck)
+    {
+        lock (_sync)
+        {
+            CheckLocked(afterLeaseCheck);
+        }
+    }
+
+    /// <summary>Rejects Linux targets whose supported bounded metadata cannot be preserved by this writer.</summary>
+    internal void CheckLinuxWritePreservation()
+    {
+        if (!OperatingSystem.IsLinux()) throw new WorkspacePreservationUnavailableException();
+        lock (_sync)
+        {
+            CheckLocked();
+            _ = LinuxPreservedMetadata.Capture(_file!);
+            CheckLocked();
+        }
+    }
+
+    /// <summary>
+    /// Hashes the whole bounded existing file through the guarded handle and compares a precondition. This method has
+    /// no filesystem effects; a match alone is insufficient to authorize or safely execute a later mutation.
+    /// </summary>
+    internal bool MatchesExpectedHash(ReadOnlySpan<byte> expected, CancellationToken cancellationToken) =>
+        MatchesExpectedContent(expected, expectedLength: null, cancellationToken);
+
+    internal bool MatchesExpectedContent(ReadOnlySpan<byte> expected, long? expectedLength, CancellationToken cancellationToken)
+    {
+        if (expected.Length != 32)
+        {
+            throw new ArgumentException("An expected SHA-256 must be 32 bytes.", nameof(expected));
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_sync)
+        {
+            CheckLocked();
+            var file = _file!;
+            var length = RandomAccess.GetLength(file);
+            if (length < 0 || length > MaximumExpectedBytes)
+            {
+                throw new WorkspacePathException("file_too_large");
+            }
+
+            if (expectedLength is not null && length != expectedLength.Value)
+            {
+                return false;
+            }
+
+            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            var buffer = new byte[65536];
+            long offset = 0;
+            while (offset < length)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                CheckLocked();
+                var count = RandomAccess.Read(file, buffer.AsSpan(0, (int)Math.Min(buffer.Length, length - offset)), offset);
+                if (count <= 0)
+                {
+                    throw new WorkspacePathException("file_identity_changed");
+                }
+
+                hash.AppendData(buffer, 0, count);
+                offset += count;
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            CheckLocked();
+            if (RandomAccess.GetLength(file) != length)
+            {
+                throw new WorkspacePathException("file_identity_changed");
+            }
+
+            CheckLocked();
+            cancellationToken.ThrowIfCancellationRequested();
+            var digest = hash.GetHashAndReset();
+            return CryptographicOperations.FixedTimeEquals(expected, digest);
+        }
+    }
+
+    // Allows a native component test to open the exact anonymous object from a separate process.
+    internal int AnonymousDescriptorForTests()
+    {
+        lock (_sync)
+        {
+            if (!_privateStage || !_linux || _expectedLinks != 0) throw new InvalidOperationException("Not a Linux anonymous stage.");
+            CheckLocked();
+            return checked((int)_file!.DangerousGetHandle());
+        }
+    }
+
+    // Component-only seam: transfers the existing open description to an owned test peer without authorizing an effect.
+    // Production handoff additionally needs peer authentication, an exact one-use capability and worker lifetime tracking.
+    internal void SendLinuxGuardForTests(System.Net.Sockets.Socket peer)
+    {
+        if (!OperatingSystem.IsLinux()) throw new WorkspacePathException("file_guard_unavailable");
+        lock (_sync)
+        {
+            CheckLocked();
+            LinuxDescriptorTransfer.Send(peer, [_file!]);
+        }
+    }
+
+    /// <summary>
+    /// Transfers only the three already checked open descriptions to a challenge-sealed peer. The peer still requires
+    /// committed operation authority before effects. Each guard stays live until the coordinator observes adoption.
+    /// </summary>
+    internal static void TransferLinuxToOwnedPeer(LinuxOwnedPeer peer, SafeFileHandle root, WorkspaceWriteGuard target,
+        WorkspaceWriteGuard original, WorkspaceWriteGuard intended)
+    {
+        ArgumentNullException.ThrowIfNull(peer);
+        ArgumentNullException.ThrowIfNull(root);
+        ArgumentNullException.ThrowIfNull(target);
+        ArgumentNullException.ThrowIfNull(original);
+        ArgumentNullException.ThrowIfNull(intended);
+        if (!OperatingSystem.IsLinux() || ReferenceEquals(target, original) || ReferenceEquals(target, intended) ||
+            ReferenceEquals(original, intended) || target._privateStage || !original._privateStage || !intended._privateStage)
+            throw new WorkspacePathException("file_guard_unavailable");
+        lock (target._sync)
+            lock (original._sync)
+                lock (intended._sync)
+                {
+                    target.CheckLocked();
+                    original.CheckLocked();
+                    intended.CheckLocked();
+                    peer.SendDescriptorsOnce([root, target._file!, original._file!, intended._file!]);
+                }
+    }
+
+    /// <summary>Closes the node's copy after the owned peer has adopted the shared open description.</summary>
+    internal void CloseLocalAfterLinuxHandoff()
+    {
+        if (!OperatingSystem.IsLinux()) throw new WorkspacePathException("file_guard_unavailable");
+        lock (_sync) CloseLocked("file_guard_transferred");
+    }
+
+    /// <summary>Reads the actual whole checked file through the held guard without changing it.</summary>
+    internal WorkspaceGuardedContent ReadForMutation(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_sync)
+        {
+            CheckLocked();
+            var file = _file!;
+            var length = RandomAccess.GetLength(file);
+            if (length < 0 || length > MaximumExpectedBytes)
+                throw new WorkspacePathException("file_too_large");
+
+            var bytes = new byte[checked((int)length)];
+            try
+            {
+                var offset = 0;
+                while (offset < bytes.Length)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    CheckLocked();
+                    var read = RandomAccess.Read(file, bytes.AsSpan(offset, Math.Min(65_536, bytes.Length - offset)), offset);
+                    if (read <= 0) throw new WorkspacePathException("file_identity_changed");
+                    offset += read;
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+                CheckLocked();
+                if (RandomAccess.GetLength(file) != length)
+                    throw new WorkspacePathException("file_identity_changed");
+                var digest = SHA256.HashData(bytes);
+                CheckLocked();
+                cancellationToken.ThrowIfCancellationRequested();
+                return new WorkspaceGuardedContent(bytes, digest);
+            }
+            catch
+            {
+                CryptographicOperations.ZeroMemory(bytes);
+                throw;
+            }
+        }
+    }
+
+    /// <summary>Closes the guarded description and releases its kernel lease or exclusive Windows handle.</summary>
+    public void Dispose()
+    {
+        lock (_sync)
+        {
+            CloseLocked("file_guard_closed");
+        }
+    }
+
+    // A SIGIO may describe any of our leases. F_GETLEASE supplies the actual state for each guard.
+    internal void InspectAfterSignal()
+    {
+        lock (_sync)
+        {
+            if (_file is null || !_linux)
+            {
+                return;
+            }
+
+            var result = LinuxLeaseNative.Control(checked((int)_file.DangerousGetHandle()), 1025, 0);
+            if (result != 1)
+            {
+                CloseLocked(result < 0 ? "file_guard_unavailable" : "file_guard_breaking");
+            }
+        }
+    }
+
+    private void CheckLocked(Action? afterLeaseCheck = null)
+    {
+        CheckLeaseAndDeadlineLocked();
+        afterLeaseCheck?.Invoke();
+
+        WorkspaceObjectIdentity actual;
+        try
+        {
+            actual = WorkspacePath.Identity(_file!);
+        }
+        catch (WorkspacePathException)
+        {
+            CloseLocked("file_guard_unavailable");
+            throw;
+        }
+
+        if (!actual.IsFile || actual.Links != _expectedLinks || _privateStage && _linux && (actual.Mode & 0x3f) != 0 || !_identity.SameObject(actual))
+        {
+            CloseLocked("file_identity_changed");
+            throw new WorkspacePathException(_closedReason);
+        }
+
+        try
+        {
+            _verifyPrivateSecurity?.Invoke(_file!);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)
+        {
+            CloseLocked("file_guard_unavailable");
+            throw new WorkspacePathException(_closedReason, exception);
+        }
+
+        // An identity or ACL syscall may have blocked while a conflicting open initiated a break.
+        CheckLeaseAndDeadlineLocked();
+    }
+
+    private void CheckLeaseAndDeadlineLocked()
+    {
+        if (_file is null)
+        {
+            throw new WorkspacePathException(_closedReason);
+        }
+
+        if (Stopwatch.GetElapsedTime(_started) >= Lifetime || OperatingSystem.IsLinux() && _linuxDeadlineNanoseconds != 0 &&
+            LinuxFatalDeadline.MonotonicNanoseconds() >= _linuxDeadlineNanoseconds)
+        {
+            CloseLocked("file_guard_expired");
+            throw new WorkspacePathException(_closedReason);
+        }
+
+        if (_linux)
+        {
+            if (!LinuxLeaseNotifications.IsAvailable)
+            {
+                CloseLocked("file_guard_unavailable");
+                throw new WorkspacePathException(_closedReason);
+            }
+
+            var result = LinuxLeaseNative.Control(checked((int)_file.DangerousGetHandle()), 1025, 0);
+            if (result != 1)
+            {
+                CloseLocked(result < 0 ? "file_guard_unavailable" : "file_guard_breaking");
+                throw new WorkspacePathException(_closedReason);
+            }
+        }
+    }
+
+    private void Expire()
+    {
+        lock (_sync)
+        {
+            CloseLocked("file_guard_expired");
+        }
+    }
+
+    private void CloseLocked(string reason)
+    {
+        var file = _file;
+        if (file is null)
+        {
+            return;
+        }
+
+        _file = null;
+        _closedReason = reason;
+        if (_linux)
+        {
+            LinuxLeaseNotifications.Unregister(this);
+        }
+
+        _expiry?.Dispose();
+        _expiry = null;
+        file.Dispose();
+    }
+}
+
+/// <summary>Content read from the held native guard; the owner releases its in-memory copy after staging.</summary>
+internal sealed class WorkspaceGuardedContent(byte[] bytes, byte[] sha256) : IDisposable
+{
+    internal ReadOnlyMemory<byte> Bytes { get; } = bytes;
+
+    internal ReadOnlyMemory<byte> Sha256 { get; } = sha256;
+
+    public void Dispose() => CryptographicOperations.ZeroMemory(bytes);
+}
+
+/// <summary>
+/// A dedicated thread blocks and consumes SIGIO directed specifically to its Linux TID. It does not change the
+/// process-wide signal disposition. Normal SIGIO coalescing is safe because every guard is checked with F_GETLEASE.
+/// </summary>
+internal static class LinuxLeaseNotifications
+{
+    private static readonly ConcurrentDictionary<WorkspaceWriteGuard, byte> Guards = new();
+    private static readonly ManualResetEventSlim Started = new();
+    private static readonly Thread Worker = StartWorker();
+    private static int _threadId;
+    private static int _healthy;
+    private static int _notifications;
+
+    internal static int Owner => IsAvailable ? Volatile.Read(ref _threadId) : throw new WorkspacePathException("file_guard_unavailable");
+
+    internal static bool IsAvailable => Started.Wait(TimeSpan.FromSeconds(2)) && Worker.IsAlive && Volatile.Read(ref _healthy) == 1;
+
+    internal static int NotificationCount => Volatile.Read(ref _notifications);
+
+    internal static void Register(WorkspaceWriteGuard guard)
+    {
+        if (!IsAvailable || !Guards.TryAdd(guard, 0))
+        {
+            throw new WorkspacePathException("file_guard_unavailable");
+        }
+
+        if (!IsAvailable)
+        {
+            Guards.TryRemove(guard, out _);
+            throw new WorkspacePathException("file_guard_unavailable");
+        }
+    }
+
+    internal static void Unregister(WorkspaceWriteGuard guard) => Guards.TryRemove(guard, out _);
+
+    private static Thread StartWorker()
+    {
+        var worker = new Thread(Run) { IsBackground = true, Name = "ArcForges Linux lease signal" };
+        worker.Start();
+        return worker;
+    }
+
+    private static void Inspect(WorkspaceWriteGuard guard)
+    {
+        try
+        {
+            guard.InspectAfterSignal();
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)
+        {
+            Volatile.Write(ref _healthy, 0);
+            try
+            {
+                guard.Dispose();
+            }
+            catch (Exception cleanup) when (cleanup is not OutOfMemoryException and not StackOverflowException)
+            {
+                // All future checks fail closed if the notification mechanism has become unreliable.
+            }
+        }
+    }
+
+    private static void Run()
+    {
+        try
+        {
+            var set = new LinuxLeaseNative.SignalSet();
+            if (LinuxLeaseNative.EmptySet(ref set) != 0 || LinuxLeaseNative.AddSignal(ref set, 29) != 0 ||
+                LinuxLeaseNative.ThreadSignalMask(0, ref set, 0) != 0)
+            {
+                return;
+            }
+
+            var tid = LinuxLeaseNative.GetThreadId();
+            if (tid <= 0)
+            {
+                return;
+            }
+
+            Volatile.Write(ref _threadId, tid);
+            Volatile.Write(ref _healthy, 1);
+            Started.Set();
+            while (LinuxLeaseNative.WaitSignal(ref set, out var signal) == 0 && signal == 29)
+            {
+                Interlocked.Increment(ref _notifications);
+                foreach (var guard in Guards.Keys)
+                {
+                    // One slow identity/read operation must not prevent notification processing for other files.
+                    if (!ThreadPool.UnsafeQueueUserWorkItem(static item => Inspect(item), guard, preferLocal: false))
+                    {
+                        throw new InvalidOperationException("Cannot schedule lease inspection.");
+                    }
+                }
+            }
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)
+        {
+            // Any inability to run the signal thread invalidates guards and makes future acquisitions fail closed.
+        }
+        finally
+        {
+            Volatile.Write(ref _healthy, 0);
+            Started.Set();
+            foreach (var guard in Guards.Keys)
+            {
+                guard.Dispose();
+            }
+        }
+    }
+}
+
+internal static partial class LinuxLeaseNative
+{
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct Owner
+    {
+        public int Type;
+        public int ProcessId;
+    }
+
+    [StructLayout(LayoutKind.Sequential, Size = 128)]
+    internal unsafe struct SignalSet
+    {
+        private fixed ulong _values[16];
+    }
+
+    [LibraryImport("libc", EntryPoint = "fcntl", SetLastError = true)]
+    internal static partial int Control(int fd, int command, int value);
+
+    [LibraryImport("libc", EntryPoint = "fcntl", SetLastError = true)]
+    internal static partial int SetOwner(int fd, int command, ref Owner owner);
+
+    [LibraryImport("libc", EntryPoint = "fcntl", SetLastError = true)]
+    internal static partial int GetOwner(int fd, int command, out Owner owner);
+
+    [LibraryImport("libc", EntryPoint = "sigemptyset")]
+    internal static partial int EmptySet(ref SignalSet set);
+
+    [LibraryImport("libc", EntryPoint = "sigaddset")]
+    internal static partial int AddSignal(ref SignalSet set, int signal);
+
+    [LibraryImport("libc", EntryPoint = "pthread_sigmask")]
+    internal static partial int ThreadSignalMask(int how, ref SignalSet set, nint oldSet);
+
+    [LibraryImport("libc", EntryPoint = "sigwait")]
+    internal static partial int WaitSignal(ref SignalSet set, out int signal);
+
+    [LibraryImport("libc", EntryPoint = "gettid")]
+    internal static partial int GetThreadId();
+}
+
+internal sealed partial class WorkspacePath
+{
+    internal static void RequireLinuxLeaseBreakTime()
+    {
+        try
+        {
+            var raw = OpenAt(-100, "/proc", 0x200000 | 0x80000 | 0x20000 | 0x10000, 0);
+            if (raw < 0)
+            {
+                throw new WorkspacePathException("file_guard_unavailable");
+            }
+
+            using var proc = new SafeFileHandle(raw, ownsHandle: true);
+            RequireProcFs(proc);
+            using var setting = LinuxOpenAt2(proc, "sys/fs/lease-break-time", 0x80000 | 0x20000 | 0x800, 0x08 | 0x04 | 0x02 | 0x01);
+            RequireProcFs(setting);
+            Span<byte> bytes = stackalloc byte[32];
+            var count = RandomAccess.Read(setting, bytes, 0);
+            if (count is <= 0 or >= 32 ||
+                !int.TryParse(Encoding.ASCII.GetString(bytes[..count]).Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var seconds) ||
+                seconds <= 12)
+            {
+                throw new WorkspacePathException("file_guard_unavailable");
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            throw new WorkspacePathException("file_guard_unavailable", exception);
+        }
+    }
+}

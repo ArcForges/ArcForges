@@ -31,20 +31,85 @@ public static class AuditLog
 
     /// <summary>Appends an entry in <paramref name="transaction"/>.</summary>
     public static void Append(StoreTransaction transaction, ActorRef actor, string operation, string? targetKind, ReadOnlySpan<byte> targetId,
+        PermissionDecision decision, ReadOnlySpan<byte> approvalId, string outcome) =>
+        _ = AppendRow(transaction, actor, operation, targetKind, targetId, decision, approvalId, outcome);
+
+    /// <summary>
+    /// Appends file/workspace scope and bounded observations in the same transaction as the audit entry. Values are metadata,
+    /// never file contents, patterns or replacement text. Missing observations do not acquire a synthetic digest.
+    /// </summary>
+    public static void AppendFileWorkspace(StoreTransaction transaction, ActorRef actor, string operation, byte[]? workspaceId,
+        byte[]? attemptId, string? path, PermissionDecision decision, string outcome, FileAuditMetadata? metadata)
+    {
+        ArgumentNullException.ThrowIfNull(transaction);
+        ArgumentNullException.ThrowIfNull(actor);
+        if (workspaceId is { Length: not 16 } || attemptId is { Length: not 16 } || workspaceId is not null && attemptId is not null)
+        {
+            throw new ArgumentException("An audit scope names at most one valid workspace or attempt.");
+        }
+
+        if (path is not null && new System.Text.UTF8Encoding(false, true).GetByteCount(path) > 4096)
+        {
+            throw new ArgumentException("An audit path is at most 4096 UTF-8 bytes.", nameof(path));
+        }
+
+        var observations = metadata?.Observations;
+        if (observations is { Count: > 4 } || observations is not null && observations.Select(item => item.Kind).Distinct().Count() != observations.Count)
+        {
+            throw new ArgumentException("Audit observation kinds are unique and bounded.", nameof(metadata));
+        }
+
+        if (observations is not null)
+        {
+            foreach (var item in observations)
+            {
+                if (!item.HasKind || (int)item.Kind is < 1 or > 7 ||
+                    !item.HasSizeBytes || item.SizeBytes > long.MaxValue || !item.HasDigestInputBytes || item.DigestInputBytes > long.MaxValue ||
+                    !item.HasSha256 || item.Sha256.Length != 32 || item.HasItemCount && item.ItemCount > 10_001)
+                {
+                    throw new ArgumentException("An audit observation has a valid kind, byte counts and SHA-256.", nameof(metadata));
+                }
+            }
+        }
+
+        var targetId = workspaceId ?? attemptId;
+        var seq = AppendRow(transaction, actor, operation, workspaceId is not null ? "workspace" : attemptId is not null ? "attempt" : null,
+            targetId ?? [], decision, [], outcome);
+        transaction.Execute("""
+            INSERT INTO file_workspace_audit (audit_seq, workspace_id, attempt_id, path)
+            VALUES ($seq, $workspace, $attempt, $path);
+            """, ("$seq", seq), ("$workspace", workspaceId), ("$attempt", attemptId), ("$path", path));
+        RoutedFileRetention.MarkAudit(transaction, seq);
+        if (observations is not null)
+        {
+            foreach (var item in observations)
+            {
+                transaction.Execute("""
+                    INSERT INTO file_workspace_audit_observation (audit_seq, kind, size_bytes, digest_input_bytes, item_count, sha256)
+                    VALUES ($seq, $kind, $size, $input, $items, $digest);
+                    """, ("$seq", seq), ("$kind", (int)item.Kind), ("$size", (long)item.SizeBytes),
+                    ("$input", (long)item.DigestInputBytes), ("$items", item.HasItemCount ? (long)item.ItemCount : null),
+                    ("$digest", item.Sha256.ToByteArray()));
+            }
+        }
+    }
+
+    private static long AppendRow(StoreTransaction transaction, ActorRef actor, string operation, string? targetKind, ReadOnlySpan<byte> targetId,
         PermissionDecision decision, ReadOnlySpan<byte> approvalId, string outcome)
     {
         ArgumentNullException.ThrowIfNull(transaction);
         ArgumentNullException.ThrowIfNull(actor);
-        transaction.Execute(
+        return (long)transaction.Scalar(
             """
             INSERT INTO audit_log (at, actor, operation, target_kind, target_id, decision, approval_id, remote_command_id, outcome_summary)
-            VALUES ($at, $actor, $operation, $kind, $target, $decision, $approval, $remote, $outcome);
+            VALUES ($at, $actor, $operation, $kind, $target, $decision, $approval, $remote, $outcome)
+            RETURNING seq;
             """,
             ("$at", transaction.NowMicroseconds), ("$actor", actor.ToByteArray()), ("$operation", operation), ("$kind", targetKind),
             ("$target", targetId.Length > 0 ? targetId.ToArray() : null), ("$decision", (int)decision),
             ("$approval", approvalId.Length == 16 ? approvalId.ToArray() : null),
             ("$remote", actor.RemoteCommandId is { Value.Length: 16 } remote ? remote.Value.ToByteArray() : null),
-            ("$outcome", outcome.Length <= 500 ? outcome : outcome[..500]));
+            ("$outcome", outcome.Length <= 500 ? outcome : outcome[..500]))!;
     }
 
     /// <summary>The newest entries first (tests and diagnosis; no API lists the local audit log in release 1).</summary>

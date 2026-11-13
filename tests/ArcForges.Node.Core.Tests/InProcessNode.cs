@@ -50,6 +50,9 @@ internal sealed class InProcessNode : IAsyncDisposable
 
     public int StreamBuffer { get; }
 
+    /// <summary>Test-only clock for coordinated expiry observations; default is the real system clock.</summary>
+    public TimeProvider Clock { get; set; } = TimeProvider.System;
+
     /// <summary>Launch and end steps the node's attempts get (synthetic steps in tests).</summary>
     public ILaunchStepProvider? Steps { get; }
 
@@ -188,6 +191,7 @@ internal sealed class InProcessNode : IAsyncDisposable
             ConfigPath = ConfigPath,
             Endpoint = Endpoint,
             StreamBuffer = StreamBuffer,
+            Clock = Clock,
 
             // AD-0021 section 5 (Plan decision Q8): the node's own tests submit through local SCRIPT connections (CTR5-NODE-14); never an AGENT.
             AllowLocalScriptSubmit = AllowLocalScriptSubmit,

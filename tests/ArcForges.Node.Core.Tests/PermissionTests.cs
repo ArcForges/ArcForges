@@ -38,6 +38,12 @@ public sealed class PermissionTests
         { PermissionMatrix.ParallelismLowerOwnSession, A, P, A, "set_parallelism" },
         { PermissionMatrix.PolicyChange, A, P, P, null },
         { PermissionMatrix.ApprovalDecide, A, D, D, "decide_approval" },
+        { PermissionMatrix.WorkspaceRegister, A, D, D, "register_node_workspace" },
+        { PermissionMatrix.WorkspaceUnregister, A, D, D, "unregister_node_workspace" },
+        { PermissionMatrix.WorkspaceRead, A, A, A, "list_node_workspaces" },
+        { PermissionMatrix.FileRead, A, A, A, "read_node_file" },
+        { PermissionMatrix.FileWrite, A, P, D, null },
+        { PermissionMatrix.FileRemove, A, P, D, null },
         { PermissionMatrix.CleanupPlan, A, A, A, null },
         { PermissionMatrix.CleanupExecute, A, P, P, null },
         { PermissionMatrix.ProcessAdopt, A, D, D, null },
@@ -89,6 +95,26 @@ public sealed class PermissionTests
         Assert.Equal(D, PermissionMatrix.Decide(Origin.Agent, PermissionMatrix.SignInRead, overrides).Decision);
         Assert.Equal(A, PermissionMatrix.Decide(Origin.Script, PermissionMatrix.SignInRead, overrides).Decision);
         Assert.NotNull(PermissionMatrix.Valid(overrides[0]));
+    }
+
+    [Fact]
+    public void WorkspaceMutationRemainsHumanOnlyAcrossLocalAndRoutedCells()
+    {
+        foreach (var operation in new[] { PermissionMatrix.WorkspaceRegister, PermissionMatrix.WorkspaceUnregister })
+        {
+            var attemptedOverride = new PermissionOverride { Operation = operation, Origin = Origin.Agent, Decision = A };
+            Assert.True(PermissionMatrix.Find(operation)!.Fixed);
+            Assert.NotNull(PermissionMatrix.Valid(attemptedOverride));
+            Assert.Equal(A, PermissionMatrix.Decide(Origin.Human, operation, []).Decision);
+            Assert.Equal(D, PermissionMatrix.Decide(Origin.Agent, operation, [attemptedOverride]).Decision);
+            Assert.Equal(D, PermissionMatrix.Decide(Origin.Script, operation, []).Decision);
+            Assert.Equal(A, PermissionMatrix.DecideRouted(operation, Origin.Human, []).Decision);
+            Assert.Equal(A, PermissionMatrix.DecideRouted(operation, Origin.Remote, []).Decision);
+            Assert.Equal(D, PermissionMatrix.DecideRouted(operation, Origin.Script, []).Decision);
+            Assert.Equal(D, PermissionMatrix.DecideRouted(operation, Origin.Agent, [attemptedOverride]).Decision);
+        }
+
+        Assert.Equal(A, PermissionMatrix.DecideRouted(PermissionMatrix.WorkspaceRead, Origin.Agent, []).Decision);
     }
 
     [Fact]
@@ -162,33 +188,64 @@ public sealed class PermissionTests
         Assert.Equal("invalid_policy", invalid.Error?.Code);
     }
 
+    [Fact(Timeout = 120_000)]
+    public async Task ExpiredApprovalsNeverExecute()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        // Only the expiry scenario uses a shortened TTL. Later deny/withdraw decisions must not race this clock.
+        await using var node = await InProcessNode.Create(seed: transaction => Tasks.SeedPolicy(transaction, policy => policy.Approvals.DefaultTtlMs = 1_500)).StartAsync();
+        await using var human = await node.ChannelAsync(helloAsHuman: true);
+        await using var agent = await node.ChannelAsync(kind: ClientKind.McpAdapter);
+        var late = new QueueServiceCreatePoolRequest { Meta = Tasks.Meta(), Name = "late" };
+        var raised = await agent.Queue.CreatePoolAsync(late, cancellationToken: Ct);
+        Assert.Equal("approval_required", raised.Error?.Code);
+        var expiring = raised.Error!.Details.State.Resource.Id;
+        async Task<Approval> GetAsync()
+        {
+            var response = await human.Approvals.GetApprovalAsync(new ApprovalServiceGetApprovalRequest { Meta = Tasks.Meta(), ApprovalId = expiring },
+                cancellationToken: Ct);
+            Assert.Null(response.Error);
+            return response.Value.Approval;
+        }
+
+        await Tasks.WaitForAsync(() => GetAsync().GetAwaiter().GetResult().State == ApprovalState.Expired, TimeSpan.FromSeconds(20), "the approval to expire");
+        Assert.Equal("expired", (await agent.Queue.CreatePoolAsync(late, cancellationToken: Ct)).Error?.Code);
+        var decision = await human.Approvals.DecideApprovalAsync(new ApprovalServiceDecideApprovalRequest
+        {
+            Meta = Tasks.Meta(),
+            ApprovalId = expiring,
+            Decision = ApprovalDecisionKind.Approve,
+        }, cancellationToken: Ct);
+        Assert.Equal("expired", decision.Error?.Code);
+        var listed = (await agent.Approvals.ListApprovalsAsync(new ApprovalServiceListApprovalsRequest { Meta = Tasks.Meta() }, cancellationToken: Ct)).Value.Approvals;
+        var approval = Assert.Single(listed);
+        Assert.Equal((ApprovalState.Expired, Origin.Agent), (approval.State, approval.Requester.Origin));
+        var pools = (await human.Queue.ListPoolsAsync(new QueueServiceListPoolsRequest { Meta = Tasks.Meta() }, cancellationToken: Ct)).Value.Pools;
+        Assert.DoesNotContain(pools, pool => pool.Name == "late");
+        var audit = node.Runtime.Store.Read(reader => AuditLog.Recent(reader));
+        Assert.Single(audit, entry => entry.Outcome.StartsWith("approval requested", StringComparison.Ordinal));
+        Assert.Contains(audit, entry => entry.Outcome.StartsWith("approval expired", StringComparison.Ordinal));
+        Assert.DoesNotContain(audit, entry => entry.Outcome.StartsWith("executed", StringComparison.Ordinal));
+    }
+
     /// <summary>
-    /// SM-APPROVAL apart from approval: a denied request is refused to its retry, a withdrawn one too, an expired one is
-    /// <c>STATE/expired</c>; a command ID raised for one request and reused for another is <c>CONFLICT/command_id_reused</c>; only the
+    /// SM-APPROVAL apart from approval: a denied request is refused to its retry, a withdrawn one too;
+    /// a command ID raised for one request and reused for another is <c>CONFLICT/command_id_reused</c>; only the
     /// requester or a HUMAN withdraws, only a HUMAN decides; every step is audited, and nothing executed.
     /// </summary>
     [Fact(Timeout = 120_000)]
-    public async Task DeniedWithdrawnAndExpiredApprovalsNeverExecute()
+    public async Task DeniedAndWithdrawnApprovalsNeverExecute()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        // A 1 s approval TTL (policy approvals.default_ttl_ms; default 24 h) lets one approval expire within the test.
-        await using var node = await InProcessNode.Create(seed: transaction => Tasks.SeedPolicy(transaction, policy => policy.Approvals.DefaultTtlMs = 1_500)).StartAsync();
+        // Denial and withdrawal use the normal policy TTL, independent of the bounded expiry scenario above.
+        await using var node = await InProcessNode.Create().StartAsync();
         await using var human = await node.ChannelAsync(helloAsHuman: true);
         await using var script = await node.ChannelAsync();
         await using var agent = await node.ChannelAsync(kind: ClientKind.McpAdapter);
         static QueueServiceCreatePoolRequest Pool(string name) => new() { Meta = Tasks.Meta(), Name = name };
-        async Task<Approval> GetAsync(Id id) => (await human.Approvals.GetApprovalAsync(new ApprovalServiceGetApprovalRequest { Meta = Tasks.Meta(), ApprovalId = id },
-            cancellationToken: Ct)).Value.Approval;
         async Task<ApprovalServiceDecideApprovalResponse> DecideAsync(NodeChannel channel, Id id, ApprovalDecisionKind decision) =>
             await channel.Approvals.DecideApprovalAsync(new ApprovalServiceDecideApprovalRequest { Meta = Tasks.Meta(), ApprovalId = id, Decision = decision },
                 cancellationToken: Ct);
-
-        // Expired: raised, then not decided within the TTL.
-        var late = Pool("late");
-        var expiring = (await agent.Queue.CreatePoolAsync(late, cancellationToken: Ct)).Error!.Details.State.Resource.Id;
-        await Tasks.WaitForAsync(() => GetAsync(expiring).GetAwaiter().GetResult().State == ApprovalState.Expired, TimeSpan.FromSeconds(20), "the approval to expire");
-        Assert.Equal("expired", (await agent.Queue.CreatePoolAsync(late, cancellationToken: Ct)).Error?.Code);
-        Assert.Equal("expired", (await DecideAsync(human, expiring, ApprovalDecisionKind.Approve)).Error?.Code);
 
         // Denied: the AGENT's retry is refused; the pool does not exist.
         var denied = Pool("denied");
@@ -196,6 +253,7 @@ public sealed class PermissionTests
         Assert.Equal("permission_denied", (await DecideAsync(agent, deniedId, ApprovalDecisionKind.Approve)).Error?.Code);
         Assert.Equal("permission_denied", (await DecideAsync(script, deniedId, ApprovalDecisionKind.Approve)).Error?.Code);
         var decision = await DecideAsync(human, deniedId, ApprovalDecisionKind.Deny);
+        Assert.Null(decision.Error);
         Assert.Equal(ApprovalState.Denied, decision.Value.Approval.State);
 
         // approvals.proto: a second decision returns the first.
@@ -210,6 +268,7 @@ public sealed class PermissionTests
         Assert.Equal("permission_denied", (await script.Approvals.CancelApprovalAsync(new ApprovalServiceCancelApprovalRequest { Meta = Tasks.Meta(), ApprovalId = withdrawnId },
             cancellationToken: Ct)).Error?.Code);
         var cancelled = await agent.Approvals.CancelApprovalAsync(new ApprovalServiceCancelApprovalRequest { Meta = Tasks.Meta(), ApprovalId = withdrawnId }, cancellationToken: Ct);
+        Assert.Null(cancelled.Error);
         Assert.Equal(ApprovalState.Cancelled, cancelled.Value.Approval.State);
         Assert.Equal("invalid_state", (await DecideAsync(human, withdrawnId, ApprovalDecisionKind.Approve)).Error?.Code);
         Assert.Equal("permission_denied", (await agent.Queue.CreatePoolAsync(withdrawn, cancellationToken: Ct)).Error?.Code);
@@ -220,19 +279,18 @@ public sealed class PermissionTests
 
         // An AGENT sees its own requests; nothing was created.
         var listed = (await agent.Approvals.ListApprovalsAsync(new ApprovalServiceListApprovalsRequest { Meta = Tasks.Meta() }, cancellationToken: Ct)).Value.Approvals;
-        Assert.Equal(3, listed.Count);
+        Assert.Equal(2, listed.Count);
         Assert.All(listed, approval => Assert.Equal(Origin.Agent, approval.Requester.Origin));
         Assert.Empty((await script.Approvals.ListApprovalsAsync(new ApprovalServiceListApprovalsRequest { Meta = Tasks.Meta(), States = { ApprovalState.Executed } },
             cancellationToken: Ct)).Value.Approvals);
         var pools = (await human.Queue.ListPoolsAsync(new QueueServiceListPoolsRequest { Meta = Tasks.Meta() }, cancellationToken: Ct)).Value.Pools;
-        Assert.DoesNotContain(pools, pool => pool.Name is "late" or "denied" or "withdrawn" or "another");
+        Assert.DoesNotContain(pools, pool => pool.Name is "denied" or "withdrawn" or "another");
 
-        // R-SEC-002: each request, decision, withdrawal, expiry and refused decision is in the audit log.
+        // R-SEC-002: each request, decision, withdrawal and refused decision is in the audit log.
         var audit = node.Runtime.Store.Read(reader => AuditLog.Recent(reader));
-        Assert.Equal(3, audit.Count(entry => entry.Outcome.StartsWith("approval requested", StringComparison.Ordinal)));
+        Assert.Equal(2, audit.Count(entry => entry.Outcome.StartsWith("approval requested", StringComparison.Ordinal)));
         Assert.Contains(audit, entry => entry.Outcome.StartsWith("denied: create pool 'denied'", StringComparison.Ordinal) && entry.Actor.Origin == Origin.Human);
         Assert.Contains(audit, entry => entry.Outcome.StartsWith("approval withdrawn", StringComparison.Ordinal) && entry.Actor.Origin == Origin.Agent);
-        Assert.Contains(audit, entry => entry.Outcome.StartsWith("approval expired", StringComparison.Ordinal));
         Assert.Contains(audit, entry => entry.Operation.StartsWith(PermissionMatrix.ApprovalDecide, StringComparison.Ordinal) && entry.Decision == D
             && entry.Actor.Origin == Origin.Agent);
         Assert.DoesNotContain(audit, entry => entry.Outcome.StartsWith("executed", StringComparison.Ordinal));

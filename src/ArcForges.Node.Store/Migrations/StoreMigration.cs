@@ -84,7 +84,7 @@ public sealed class MigrationPlan
 public static class StoreMigrations
 {
     /// <summary>The schema version this binary writes; it reads stores whose <c>min_reader_version</c> is at most this.</summary>
-    public const int SupportedSchemaVersion = 2;
+    public const int SupportedSchemaVersion = 15;
 
     /// <summary>The released steps, loaded from the embedded <c>Schema/*.sql</c> resources.</summary>
     public static MigrationPlan Released { get; } = new([
@@ -94,6 +94,46 @@ public static class StoreMigrations
         // Version 2 is ArcForges-Design docs/data/node-store.sql at 611dda6, the "schema step 2" block verbatim (node-store.md section 2a:
         // task.local_diagnostic and routed_call_log; AF-CTR-05 N1). Expand-only, so readers of version 1 still read the store.
         Load(2, 1, "0002-schema-step-2.sql"),
+
+        // AF-CTR-06: new bounded file receipt log and call-ID registry, enforced for compatible old writers too.
+        Load(3, 1, "0003-schema-step-3.sql"),
+
+        // AF-CTR-06: bounded file/workspace audit scope and metadata digests, cascading with the existing audit retention.
+        Load(4, 1, "0004-schema-step-4.sql"),
+
+        // AF-CTR-06: inventory changes invalidate bounded workspace-list continuation cursors.
+        Load(5, 1, "0005-schema-step-5.sql"),
+
+        // AF-CTR-06: durable time floor and protected retention for file/workspace receipts and audit.
+        Load(6, 1, "0006-schema-step-6.sql"),
+
+        // AF-CTR-06: metadata-only file effect journal and protected recovery holds.
+        Load(7, 1, "0007-schema-step-7.sql"),
+
+        // AF-CTR-06: bounded metadata-only private stage reservations and opened-object identities.
+        Load(8, 1, "0008-schema-step-8.sql"),
+
+        // AF-CTR-06: durable fence for private stages abandoned before target effects.
+        Load(9, 1, "0009-schema-step-9.sql"),
+
+        // AF-CTR-06: keep target holds until a recorded Linux effect worker has actually ended.
+        Load(10, 1, "0010-schema-step-10.sql"),
+
+        // AF-CTR-06: old writers fail closed on target holds; only a native-checked transaction can witness distinct objects.
+        Load(11, 1, "0011-schema-step-11.sql"),
+
+        // AF-CTR-06: exact removal-plan evidence and requester-bound command receipts.
+        Load(12, 1, "0012-schema-step-12.sql"),
+
+        // AF-CTR-06: prior binaries can delete untracked attempt directories without checking provenance or protection.
+        // They must not open a store whose attempt-directory retention has switched to the new semantics.
+        Load(13, 13, "0013-schema-step-13.sql"),
+
+        // AF-CTR-06: creation evidence changes ownership decisions; prior writers cannot safely share this store.
+        Load(14, 14, "0014-schema-step-14.sql"),
+
+        // AF-CTR-06: native pre-target stage producers have their own FULL reservations and actual-exit fences.
+        Load(15, 15, "0015-schema-step-15.sql"),
     ]);
 
     private static StoreMigration Load(int version, int minReaderVersion, string name)

@@ -7,7 +7,7 @@ namespace ArcForges.Node.CloudLink;
 internal interface IRoutedCallStore
 {
     /// <summary>Runs <paramref name="write"/> in one store transaction of the single writer and returns its result after the commit.</summary>
-    Task<long> WriteAsync(Func<StoreTransaction, long> write);
+    Task<long> WriteAsync(Func<StoreTransaction, long> write, CommitDurability durability = CommitDurability.Normal);
 }
 
 /// <summary>The final decision of a verified call (node-store.md section 2a, <c>routed_call_log.decision</c>).</summary>
@@ -41,13 +41,13 @@ internal sealed record VerifiedCallRow
     /// <summary>The command key that signed the call.</summary>
     public required string Kid { get; init; }
 
-    /// <summary>The routed method, 1..6.</summary>
+    /// <summary>The verified task method 1..6 or file/workspace method 9..20.</summary>
     public required int Method { get; init; }
 
     /// <summary>The node.v1 CenterCaller bytes as the call header signed them.</summary>
     public required byte[] Caller { get; init; }
 
-    /// <summary>The command ID of a submit or cancel (16 bytes), else <see langword="null"/>.</summary>
+    /// <summary>The command ID of a mutation (16 bytes), else <see langword="null"/>.</summary>
     public byte[]? CommandId { get; init; }
 
     /// <summary>SHA-256 of the payload.</summary>
@@ -90,21 +90,53 @@ internal sealed class RoutedCallLog(IRoutedCallStore store, TimeProvider clock)
         var now = StoreTime.NowMicroseconds(clock);
         var id = await store.WriteAsync(transaction =>
         {
-            if (transaction.Scalar("SELECT 1 FROM routed_call_log WHERE call_id = $call;", ("$call", row.CallId)) is not null)
+            if (transaction.Scalar("SELECT 1 FROM routed_verified_call_id WHERE call_id = $call;", ("$call", row.CallId)) is not null)
             {
                 InsertRefusal(transaction, now, row.FrameSha256, Replayed, "AUTHENTICATION/signature_invalid");
                 return 0;
             }
 
-            return (long)transaction.Scalar("""
-                INSERT INTO routed_call_log (received_at, frame_sha256, decision, call_id, signature_kid, method, caller, command_id,
-                  request_sha256, request_size)
-                VALUES ($at, $frame, 5, $call, $kid, $method, $caller, $command, $request, $size)
-                RETURNING log_id;
-                """, ("$at", now), ("$frame", row.FrameSha256), ("$call", row.CallId), ("$kid", row.Kid), ("$method", row.Method),
-                ("$caller", row.Caller), ("$command", (object?)row.CommandId ?? DBNull.Value), ("$request", row.RequestSha256), ("$size", row.RequestSize))!;
-        }).ConfigureAwait(false);
+            var sql = row.Method is >= 9 and <= 20
+                ? """
+                  INSERT INTO routed_file_call_log (received_at, frame_sha256, decision, call_id, signature_kid, method, caller, command_id,
+                    request_sha256, request_size)
+                  VALUES ($at, $frame, 5, $call, $kid, $method, $caller, $command, $request, $size)
+                  RETURNING log_id;
+                  """
+                : """
+                  INSERT INTO routed_call_log (received_at, frame_sha256, decision, call_id, signature_kid, method, caller, command_id,
+                    request_sha256, request_size)
+                  VALUES ($at, $frame, 5, $call, $kid, $method, $caller, $command, $request, $size)
+                  RETURNING log_id;
+                  """;
+            var logId = (long)transaction.Scalar(sql, ("$at", now), ("$frame", row.FrameSha256), ("$call", row.CallId), ("$kid", row.Kid),
+                ("$method", row.Method), ("$caller", row.Caller), ("$command", (object?)row.CommandId ?? DBNull.Value),
+                ("$request", row.RequestSha256), ("$size", row.RequestSize))!;
+            if (row.Method is >= 9 and <= 20)
+            {
+                RoutedFileRetention.MarkCall(transaction, logId);
+            }
+
+            return logId;
+        }, row.Method is >= 9 and <= 20 ? CommitDurability.Full : CommitDurability.Normal).ConfigureAwait(false);
         return id == 0 ? null : id;
+    }
+
+    /// <summary>Advances the durable file validation floor; an unhealthy clock records a bounded, unsigned refusal and returns no result.</summary>
+    public Task<long> ObserveFileTimeAsync(byte[] frameSha256)
+    {
+        ArgumentNullException.ThrowIfNull(frameSha256);
+        return store.WriteAsync(transaction =>
+        {
+            var sample = RoutedFileValidationTime.Advance(transaction);
+            if (!sample.Healthy)
+            {
+                InsertRefusal(transaction, StoreTime.NowMicroseconds(clock), frameSha256, "clock_unavailable", "INTERNAL/internal");
+                return long.MinValue;
+            }
+
+            return sample.BoundaryMicroseconds;
+        }, CommitDurability.Full);
     }
 
     /// <summary>Records a frame refused at verification: its digest, the failed step and <c>CATEGORY/code</c>; nothing it names.</summary>
@@ -120,21 +152,31 @@ internal sealed class RoutedCallLog(IRoutedCallStore store, TimeProvider clock)
     }
 
     /// <summary>Completes a pending row with its final decision (1, 2 or 4) and what the answer named.</summary>
-    public Task CompleteAsync(long logId, RoutedCallDecision decision, string? refusalCode, byte[]? taskId = null, int? risk = null,
-        byte[]? responseSha256 = null, long? responseSize = null)
+    public Task<long> CompleteAsync(long logId, RoutedCallDecision decision, string? refusalCode, byte[]? taskId = null, int? risk = null,
+        byte[]? responseSha256 = null, long? responseSize = null, bool fileWorkspace = false, byte[]? workspaceId = null,
+        Func<bool>? beforeCommit = null)
     {
         if (decision is not (RoutedCallDecision.Executed or RoutedCallDecision.RefusedByPolicy or RoutedCallDecision.Expired))
         {
             throw new ArgumentOutOfRangeException(nameof(decision), "A verified call ends executed, refused by policy or expired.");
         }
 
-        return store.WriteAsync(transaction => transaction.Execute("""
-            UPDATE routed_call_log SET decision = $decision, refusal_code = $code, task_id = $task, risk = $risk,
-              response_sha256 = $response, response_size = $size
-            WHERE log_id = $id AND decision = 5;
-            """, ("$decision", (int)decision), ("$code", (object?)refusalCode ?? DBNull.Value), ("$task", (object?)taskId ?? DBNull.Value),
-            ("$risk", (object?)risk ?? DBNull.Value), ("$response", (object?)responseSha256 ?? DBNull.Value), ("$size", (object?)responseSize ?? DBNull.Value),
-            ("$id", logId)));
+        var sql = fileWorkspace
+            ? """
+              UPDATE routed_file_call_log SET decision = $decision, refusal_code = $code, workspace_id = $workspace, risk = $risk,
+                response_sha256 = $response, response_size = $size
+              WHERE log_id = $id AND decision = 5;
+              """
+            : """
+              UPDATE routed_call_log SET decision = $decision, refusal_code = $code, task_id = $task, risk = $risk,
+                response_sha256 = $response, response_size = $size
+              WHERE log_id = $id AND decision = 5;
+              """;
+        return store.WriteAsync(transaction => beforeCommit is not null && !beforeCommit() ? 0 : transaction.Execute(sql,
+            ("$decision", (int)decision), ("$code", (object?)refusalCode ?? DBNull.Value),
+            (fileWorkspace ? "$workspace" : "$task", (object?)(fileWorkspace ? workspaceId : taskId) ?? DBNull.Value),
+            ("$risk", (object?)risk ?? DBNull.Value), ("$response", (object?)responseSha256 ?? DBNull.Value),
+            ("$size", (object?)responseSize ?? DBNull.Value), ("$id", logId)));
     }
 
     /// <summary>
@@ -148,6 +190,14 @@ internal sealed class RoutedCallLog(IRoutedCallStore store, TimeProvider clock)
         var removed = transaction.Execute("DELETE FROM routed_call_log WHERE received_at < $cutoff;", ("$cutoff", now - Micros(Retention)));
         removed += transaction.Execute("DELETE FROM routed_call_log WHERE decision = 1 AND method BETWEEN 2 AND 5 AND received_at < $cutoff;",
             ("$cutoff", now - Micros(ReadRetention)));
+        removed += transaction.Execute("DELETE FROM routed_file_call_log WHERE received_at < $cutoff;", ("$cutoff", now - Micros(Retention)));
+        removed += transaction.Execute("""
+            DELETE FROM routed_file_call_log WHERE decision = 1 AND method IN (9, 12, 13, 16, 19, 20) AND received_at < $cutoff;
+            """, ("$cutoff", now - Micros(ReadRetention)));
+        removed += transaction.Execute("""
+            DELETE FROM routed_file_call_log WHERE decision = 3 AND log_id NOT IN
+              (SELECT log_id FROM routed_file_call_log WHERE decision = 3 ORDER BY log_id DESC LIMIT $kept);
+            """, ("$kept", RefusalsKept));
         removed += transaction.Execute("""
             DELETE FROM routed_call_log WHERE decision = 3 AND log_id NOT IN
               (SELECT log_id FROM routed_call_log WHERE decision = 3 ORDER BY log_id DESC LIMIT $kept);
@@ -168,9 +218,9 @@ internal sealed class RoutedCallLog(IRoutedCallStore store, TimeProvider clock)
 internal sealed class ProcessorRoutedCallStore(ArcForges.Node.Core.CommandProcessor processor) : IRoutedCallStore
 {
     /// <inheritdoc />
-    public Task<long> WriteAsync(Func<StoreTransaction, long> write)
+    public Task<long> WriteAsync(Func<StoreTransaction, long> write, CommitDurability durability = CommitDurability.Normal)
     {
         ArgumentNullException.ThrowIfNull(write);
-        return processor.ExecuteAsync(context => write(context.Transaction));
+        return processor.ExecuteAsync(context => write(context.Transaction), durability);
     }
 }

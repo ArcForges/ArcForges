@@ -30,6 +30,63 @@ public sealed class CallVerifierTests
     public void AWellFormedCallPassesEveryCheck() => Assert.Null(Check(Build()).Refusal);
 
     [Fact]
+    public void SignedWorkspaceCallsRequireCommandIdsExactlyForMutations()
+    {
+        foreach (var method in new[] { RoutedMethod.RegisterNodeWorkspace, RoutedMethod.UnregisterNodeWorkspace,
+            RoutedMethod.ListNodeWorkspaces, RoutedMethod.GetNodeWorkspace })
+        {
+            var mutation = method is RoutedMethod.RegisterNodeWorkspace or RoutedMethod.UnregisterNodeWorkspace;
+            var valid = Build(lifetime: TimeSpan.FromSeconds(35), change: header =>
+            {
+                header.Method = method;
+                header.CommandId = mutation ? CommandIds.New() : null;
+            });
+            Assert.Null(Check(valid).Refusal);
+            var bad = Build(lifetime: TimeSpan.FromSeconds(35), change: header =>
+            {
+                header.Method = method;
+                header.CommandId = mutation ? null : CommandIds.New();
+            });
+            Assert.NotNull(Check(bad).Refusal);
+        }
+
+        // File reads admit no command ID; writes, edits and plan creation require it.
+        foreach (var method in new[] { RoutedMethod.ReadNodeFile, RoutedMethod.SearchNodeFiles, RoutedMethod.ListNodeDirectory, RoutedMethod.GetNodeFileOperation })
+        {
+            Assert.Null(Check(Build(lifetime: TimeSpan.FromSeconds(35), change: header => header.Method = method)).Refusal);
+            Assert.NotNull(Check(Build(lifetime: TimeSpan.FromSeconds(35), change: header =>
+            {
+                header.Method = method;
+                header.CommandId = CommandIds.New();
+            })).Refusal);
+        }
+        foreach (var method in new[] { RoutedMethod.WriteNodeFile, RoutedMethod.EditNodeFile, RoutedMethod.PlanNodeRemoval })
+        {
+            Assert.Null(Check(Build(lifetime: TimeSpan.FromSeconds(35), change: header =>
+            {
+                header.Method = method;
+                header.CommandId = CommandIds.New();
+            })).Refusal);
+            Assert.NotNull(Check(Build(lifetime: TimeSpan.FromSeconds(35), change: header => header.Method = method)).Refusal);
+        }
+    }
+
+    [Fact]
+    public void FileAndWorkspaceSignedLifetimesRespectTheirSeparateDeadlineAndExpiryBounds()
+    {
+        foreach (var method in new[] { RoutedMethod.ReadNodeFile, RoutedMethod.SearchNodeFiles, RoutedMethod.ListNodeDirectory, RoutedMethod.GetNodeFileOperation, RoutedMethod.GetNodeWorkspace })
+        {
+            Assert.Null(Check(Build(lifetime: TimeSpan.FromSeconds(35), change: header => header.Method = method)).Refusal);
+            Assert.Equal("lifetime", Step(Build(lifetime: TimeSpan.FromSeconds(36), change: header => header.Method = method)));
+            Assert.Equal("lifetime", Step(Build(lifetime: TimeSpan.FromSeconds(40), change: header =>
+            {
+                header.Method = method;
+                header.Deadline = Add(header.IssuedAt, 16);
+            })));
+        }
+    }
+
+    [Fact]
     public void ACallSignedByAnUnknownKeyIsRefusedBeforeParsing()
     {
         // N1-7 and the "verify before parse" mutant: a header that is not even a protobuf, signed by an unknown key or not at all, fails at
@@ -310,6 +367,7 @@ public sealed class CallVerifierTests
 
     private sealed class ThrowingStore : IRoutedCallStore
     {
-        public Task<long> WriteAsync(Func<ArcForges.Node.Store.StoreTransaction, long> write) => throw new InvalidOperationException("No write in this test.");
+        public Task<long> WriteAsync(Func<ArcForges.Node.Store.StoreTransaction, long> write,
+            ArcForges.Node.Store.CommitDurability durability = ArcForges.Node.Store.CommitDurability.Normal) => throw new InvalidOperationException("No write in this test.");
     }
 }

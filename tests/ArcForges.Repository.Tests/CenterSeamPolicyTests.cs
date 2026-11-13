@@ -17,11 +17,14 @@ public sealed partial class CenterSeamPolicyTests
     private const string Official = "src/ArcForges.Node.Core/CenterEndpoint.cs";
     private const string FakeCenterDirectory = "tests/ArcForges.Node.CloudLink.Tests/";
 
-    /// <summary>The Unix-domain socket sites of the local endpoint (outbound to the node, never to a network).</summary>
+    /// <summary>The explicitly reviewed local endpoint, readiness and private worker Unix-domain socket sites.</summary>
     private static readonly HashSet<string> UnixSocketSites = new(StringComparer.Ordinal)
     {
         "src/ArcForges.Client/NodeConnector.cs",
         "src/ArcForges.Node.Core/Platform/Readiness.cs",
+        "src/ArcForges.Node.Core/Platform/LinuxFileEffectController.cs",
+        "src/ArcForges.Node.Core/Platform/LinuxFileEffectWorker.cs",
+        "src/ArcForges.Node.Core/Platform/LinuxWorkerBootstrapSelfTest.cs",
     };
 
     [Fact]
@@ -47,7 +50,7 @@ public sealed partial class CenterSeamPolicyTests
 
             foreach (Match socket in SocketConstruction().Matches(text))
             {
-                if (!UnixSocketSites.Contains(path) || !socket.Value.Contains("AddressFamily.Unix", StringComparison.Ordinal))
+                if (!IsAllowedLocalSocket(path, socket.Value))
                 {
                     offenders.Add(path + " (" + socket.Value + ")");
                 }
@@ -80,6 +83,39 @@ public sealed partial class CenterSeamPolicyTests
         {
             Assert.DoesNotContain(forbidden, channel, StringComparison.Ordinal);
         }
+    }
+
+    private static bool IsAllowedLocalSocket(string path, string construction) =>
+        UnixSocketSites.Contains(path) && LocalUnixSocket().IsMatch(construction);
+
+    [Theory]
+    [InlineData("src/ArcForges.Node.Core/Platform/LinuxFileEffectController.cs", "new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified)", true)]
+    [InlineData("src/ArcForges.Node.Core/Platform/Readiness.cs", "new Socket(AddressFamily.Unix, SocketType.Dgram, ProtocolType.Unspecified)", true)]
+    [InlineData("src/ArcForges.Node.Core/Platform/LinuxFileEffectWorker.cs", "new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Unspecified)", false)]
+    [InlineData("src/ArcForges.Node.Core/Platform/LinuxFileEffectWorker.cs", "new Socket(AddressFamily.InterNetwork, /* AddressFamily.Unix */ SocketType.Stream, ProtocolType.Unspecified)", false)]
+    [InlineData("src/other.cs", "new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified)", false)]
+    public void OnlyReviewedUnixSocketConstructionsAreLocal(string path, string construction, bool allowed) =>
+        Assert.Equal(allowed, IsAllowedLocalSocket(path, construction));
+
+    [Fact]
+    public void TheFileEffectSocketsUseAuthenticatedLocalPeers()
+    {
+        var controller = File.ReadAllText(Path.Combine(RepositoryFiles.Root, "src/ArcForges.Node.Core/Platform/LinuxFileEffectController.cs"));
+        var worker = File.ReadAllText(Path.Combine(RepositoryFiles.Root, "src/ArcForges.Node.Core/Platform/LinuxFileEffectWorker.cs"));
+        var selfTest = File.ReadAllText(Path.Combine(RepositoryFiles.Root, "src/ArcForges.Node.Core/Platform/LinuxWorkerBootstrapSelfTest.cs"));
+        foreach (var source in new[] { controller, worker, selfTest })
+        {
+            Assert.DoesNotContain("IPEndPoint", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("DnsEndPoint", source, StringComparison.Ordinal);
+            Assert.All(SocketConstruction().Matches(source).Cast<Match>(),
+                socket => Assert.Matches(LocalUnixSocket(), socket.Value));
+        }
+        Assert.Contains("new UnixDomainSocketEndPoint(", controller, StringComparison.Ordinal);
+        Assert.Contains("LinuxOwnedPidfd.OpenPending(", controller, StringComparison.Ordinal);
+        Assert.Contains("AuthenticateAndSeal(", controller, StringComparison.Ordinal);
+        Assert.Contains("new UnixDomainSocketEndPoint(", worker, StringComparison.Ordinal);
+        Assert.Contains("LinuxPeerCredentialReader.Read(socket)", worker, StringComparison.Ordinal);
+        Assert.Contains("peer.ProcessId != parent", worker, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -120,6 +156,16 @@ public sealed partial class CenterSeamPolicyTests
             && path != "tests/ArcForges.ClosedLoop.Tests/CloudSignInHostTests.cs" && path != "tests/ArcForges.ClosedLoop.Tests/CloudSignInTests.cs"
             && path != "tests/ArcForges.ClosedLoop.Tests/SignInSecretsTests.cs"
             && path != "tests/ArcForges.ClosedLoop.Tests/CloudChannelTests.cs"
+            && path != "tests/ArcForges.ClosedLoop.Tests/LinuxFileMutationHostTests.cs"
+            && path != "tests/ArcForges.ClosedLoop.Tests/LinuxWorkerInterruptionHostTests.cs"
+            && path != "tests/ArcForges.ClosedLoop.Tests/WindowsFileMutationHostTests.cs"
+            // AF-CTR-06: exact real-Host consumers of the same isolated peer; no production or new project use.
+            && path != "tests/ArcForges.ClosedLoop.Tests/AttemptRemovalPlanHostTests.cs"
+            && path != "tests/ArcForges.ClosedLoop.Tests/OptionalAvailableFleetHostTests.cs"
+            && path != "tests/ArcForges.ClosedLoop.Tests/PlanRemovalHostTests.cs"
+            && path != "tests/ArcForges.ClosedLoop.Tests/PlanRemovalInputAuditHostTests.cs"
+            && path != "tests/ArcForges.ClosedLoop.Tests/FileCreationOwnershipHostTests.cs"
+            && path != "tests/ArcForges.ClosedLoop.Tests/FileStageProducerHostTests.cs"
             && Regex.IsMatch(File.ReadAllText(Path.Combine(RepositoryFiles.Root, path)), @"\bFakeCenter\b")).ToList();
         Assert.Empty(using_);
 
@@ -304,6 +350,9 @@ public sealed partial class CenterSeamPolicyTests
 
     [GeneratedRegex(@"\bnew\s+Socket\([^)]*\)")]
     private static partial Regex SocketConstruction();
+
+    [GeneratedRegex(@"^new\s+Socket\(\s*AddressFamily\.Unix\s*,")]
+    private static partial Regex LocalUnixSocket();
 
     // A credential record or link file built, a credential target named, or a record or link written (outside the store class itself).
     [GeneratedRegex(@"\bnew\s+(?:CloudCredentialStore|CloudCredentialRecord|CloudLinkFile)\b|\bCloudCredentialStore\.Target\(|\.Write(?:Record|Link)\(")]

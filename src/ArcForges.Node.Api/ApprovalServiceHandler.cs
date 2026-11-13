@@ -4,6 +4,7 @@ using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Node.Core;
+using ArcForges.Node.Core.Files;
 using ArcForges.Node.Core.Security;
 using ArcForges.Node.Store;
 using Google.Protobuf;
@@ -17,7 +18,7 @@ namespace ArcForges.Node.Api;
 /// </summary>
 internal sealed class ApprovalExecutors
 {
-    private readonly Dictionary<string, (string Operation, Func<byte[], Caller, Task<byte[]>> Run)> _executors = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (string Operation, Func<byte[], Caller, Task<byte[]?>> Run)> _executors = new(StringComparer.Ordinal);
 
     /// <summary>Registers the executor of <paramref name="method"/>, gated as the matrix operation <paramref name="operation"/>.</summary>
     public void Register<TRequest, TResponse>(string method, string operation, MessageParser<TRequest> parser, Func<TRequest, Caller, Task<TResponse>> run)
@@ -25,8 +26,12 @@ internal sealed class ApprovalExecutors
         where TResponse : IMessage<TResponse> =>
         _executors[method] = (operation, async (bytes, caller) => (await run(parser.ParseFrom(bytes), caller).ConfigureAwait(false)).ToByteArray());
 
+    /// <summary>Registers an executor of a content-free captured reference. Null defers execution without claiming an outcome.</summary>
+    internal void RegisterReference(string method, string operation, Func<byte[], Caller, Task<byte[]?>> run) =>
+        _executors[method] = (operation, run);
+
     /// <summary>The executor of <paramref name="method"/>, or <see langword="null"/>.</summary>
-    public (string Operation, Func<byte[], Caller, Task<byte[]>> Run)? Find(string method) => _executors.TryGetValue(method, out var found) ? found : null;
+    public (string Operation, Func<byte[], Caller, Task<byte[]?>> Run)? Find(string method) => _executors.TryGetValue(method, out var found) ? found : null;
 }
 
 /// <summary>
@@ -154,6 +159,7 @@ public sealed class ApprovalServiceHandler : ApprovalService.ApprovalServiceBase
             failure => new ApprovalServiceDecideApprovalResponse { Meta = ApiCommands.Meta(request.Meta), Error = failure }, command =>
             {
                 Approvals.Expire(command);
+                PrivateStageTerminal.RecoverTerminalApprovals(command.Transaction);
                 var current = Approvals.Get(command.Transaction, id);
                 ArcError? error = current?.State switch
                 {
@@ -171,6 +177,9 @@ public sealed class ApprovalServiceHandler : ApprovalService.ApprovalServiceBase
                 if (current!.State == ApprovalState.Pending)
                 {
                     current = Approvals.Decide(command, id, approve, caller.Actor, request.HasComment ? request.Comment : null);
+                    if (!approve && current.View.CommandId is { Value.Length: 16 } original)
+                        PrivateStageTerminal.RecoverTerminalApproval(command.Transaction, original.Value.Span);
+                    FileRemovalPlans.ReleaseTerminalApprovals(command.Transaction);
                     decided = current;
                 }
 
@@ -219,6 +228,7 @@ public sealed class ApprovalServiceHandler : ApprovalService.ApprovalServiceBase
             failure => new ApprovalServiceCancelApprovalResponse { Meta = ApiCommands.Meta(request.Meta), Error = failure }, command =>
             {
                 Approvals.Expire(command);
+                PrivateStageTerminal.RecoverTerminalApprovals(command.Transaction);
                 var current = Approvals.Get(command.Transaction, id);
                 ArcError? error = null;
                 if (current is null || !Visible(caller, current.View))
@@ -235,13 +245,17 @@ public sealed class ApprovalServiceHandler : ApprovalService.ApprovalServiceBase
                     error = NodeErrors.InvalidState(current.State.ToString().ToUpperInvariant(), "only a PENDING approval can be withdrawn");
                 }
 
-                return error is not null
-                    ? new ApprovalServiceCancelApprovalResponse { Meta = ApiCommands.Meta(request.Meta), Error = error }
-                    : new ApprovalServiceCancelApprovalResponse
-                    {
-                        Meta = ApiCommands.Meta(request.Meta),
-                        Value = new ApprovalServiceCancelApprovalValue { Approval = Approvals.Cancel(command, id, caller.Actor).View },
-                    };
+                if (error is not null)
+                    return new ApprovalServiceCancelApprovalResponse { Meta = ApiCommands.Meta(request.Meta), Error = error };
+                var cancelled = Approvals.Cancel(command, id, caller.Actor);
+                if (cancelled.View.CommandId is { Value.Length: 16 } original)
+                    PrivateStageTerminal.RecoverTerminalApproval(command.Transaction, original.Value.Span);
+                FileRemovalPlans.ReleaseTerminalApprovals(command.Transaction);
+                return new ApprovalServiceCancelApprovalResponse
+                {
+                    Meta = ApiCommands.Meta(request.Meta),
+                    Value = new ApprovalServiceCancelApprovalValue { Approval = cancelled.View },
+                };
             }).ConfigureAwait(false);
         return result;
     }
@@ -261,7 +275,7 @@ public sealed class ApprovalServiceHandler : ApprovalService.ApprovalServiceBase
     /// </summary>
     private async Task ExecuteAsync(StoredApproval approval)
     {
-        byte[] outcome;
+        byte[]? outcome;
         var operation = "approval.execute";
         if (_executors.Find(approval.View.Operation) is { } executor)
         {
@@ -282,9 +296,21 @@ public sealed class ApprovalServiceHandler : ApprovalService.ApprovalServiceBase
             outcome = ErrorResponse(NodeErrors.InvalidState("UNSUPPORTED", approval.View.Operation + " cannot run from an approval on this node"));
         }
 
+        if (outcome is null)
+        {
+            // A file effect may still be unresolved. Preserve APPROVED for a safe later recovery, not a fabricated failure.
+            _node.Log.Warning("api.approval.execution_deferred", new LogField("approval", IdText.Format(approval.Id)));
+            return;
+        }
+
         try
         {
-            await _node.Processor.ExecuteAsync(command => Approvals.Executed(command, approval.Id, outcome, Approvals.OutcomeError(outcome), operation), CommitDurability.Full)
+            await _node.Processor.ExecuteAsync(command =>
+            {
+                var completed = Approvals.Executed(command, approval.Id, outcome, Approvals.OutcomeError(outcome), operation);
+                FileRemovalPlans.ReleaseTerminalApprovals(command.Transaction);
+                return completed;
+            }, CommitDurability.Full)
                 .ConfigureAwait(false);
         }
         catch (CommandQueueFullException)
@@ -310,7 +336,10 @@ public sealed class ApprovalServiceHandler : ApprovalService.ApprovalServiceBase
     {
         try
         {
-            await _node.Processor.ExecuteAsync(Approvals.Expire).ConfigureAwait(false);
+            await _node.Processor.ExecuteAsync(command =>
+                Approvals.Expire(command) + PrivateStageTerminal.RecoverTerminalApprovals(command.Transaction) +
+                    FileRemovalPlans.ReleaseTerminalApprovals(command.Transaction),
+                CommitDurability.Full).ConfigureAwait(false);
         }
         catch (CommandQueueFullException)
         {

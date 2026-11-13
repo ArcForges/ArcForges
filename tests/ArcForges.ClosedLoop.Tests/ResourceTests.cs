@@ -734,7 +734,7 @@ public sealed partial class ResourceTests
 
     /// <summary>Submits <paramref name="argv"/>, or with <paramref name="script"/> a <c>cmd</c> shell script (Windows quoting is the node's).</summary>
     private static async Task<Id> SubmitAsync(NodeChannel channel, string[] argv, Priority priority = Priority.Normal, bool preemptible = false,
-        long memExpected = 0, long memCeiling = 0, string? script = null)
+        long memExpected = 0, long memCeiling = 0, string? script = null, string? gcHeapHardLimit = null)
     {
         var command = new ArgvCommand();
         command.Argv.Add(argv);
@@ -749,6 +749,11 @@ public sealed partial class ResourceTests
         if (memExpected > 0)
         {
             spec.Resources.Hint = new ResourceDemand { MemExpectedBytes = (ulong)memExpected, MemCeilingBytes = (ulong)memCeiling };
+        }
+
+        if (gcHeapHardLimit is not null)
+        {
+            spec.Environment.Set["DOTNET_GCHeapHardLimit"] = gcHeapHardLimit;
         }
 
         var submit = await channel.Tasks.SubmitTaskAsync(new TaskServiceSubmitTaskRequest { Meta = Meta(), Spec = spec },

@@ -836,7 +836,9 @@ public sealed class RoutedDispatchTests
     }
 
     /// <summary>N2-12 (CTR5-NODE-12): routed output by offset, other owners' output only by policy, the routed cap, and waits within the deadline.</summary>
-    [Fact(Timeout = 180_000)]
+    // This asserts a four-second observation bound on a three-second routed wait; run in the existing timing-sensitive tier.
+    [Fact(Timeout = 180_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public async Task RoutedOutputIsReadByOffsetWithinTheCapAndTheDeadline()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
@@ -871,6 +873,7 @@ public sealed class RoutedDispatchTests
         var (bounded, _) = await routed.CallAsync(RoutedCalls.Session(), RoutedMethod.WaitNodeTask, waitTask.ToByteArray(), null, node.Runtime.Clock.GetUtcNow().AddSeconds(3));
         Assert.Equal(RoutedOutcome.Executed, bounded!.Outcome);
         Assert.False(TaskServiceWaitTaskResponse.Parser.ParseFrom(bounded.Response).Value.Reached);
+        TestContext.Current.TestOutputHelper?.WriteLine($"routed-wait elapsed-ms={clock.Elapsed.TotalMilliseconds:F3}; original bound=4000ms");
         Assert.InRange(clock.Elapsed, TimeSpan.Zero, TimeSpan.FromSeconds(4));
         Assert.Null((await human.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = holding }, cancellationToken: Ct)).Error);
         var ended = await Tasks.WaitAsync(human, holding);

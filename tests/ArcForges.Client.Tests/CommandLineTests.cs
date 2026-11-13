@@ -69,6 +69,8 @@ public sealed class CommandLineTests
     [InlineData("run --node build-box -- /bin/echo ok")]
     [InlineData("run --local -- /bin/echo ok")]
     [InlineData("tasks")]
+    [InlineData("file-operation show 01m4zrxnr8e7d81pn7xnwfqw14")]
+    [InlineData("file-operation acknowledge 01m4zrxnr8e7d81pn7xnwfqw14 --digest 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")]
     [InlineData("tasks list --local")]
     [InlineData("tasks show 01m4zr --node build-box")]
     [InlineData("tasks wait 01m4zr --node build-box")]
@@ -99,6 +101,90 @@ public sealed class CommandLineTests
         Assert.Equal(ExitCodes.Usage, exit);
         Assert.StartsWith("error: ", error.ToString(), StringComparison.Ordinal);
         Assert.Equal(string.Empty, output.ToString());
+    }
+
+    [Fact]
+    public void RecoveryDisplayEscapesControlCharactersAndKeepsTheEffectUnknown()
+    {
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        var cli = new Cli(new CliOutput(output, error, json: false, quiet: false, color: false, verbose: false, width: 120), false, null, false);
+        var operation = new FileOperation
+        {
+            CommandId = CommandIds.New(),
+            WorkspacePath = new FilePath { WorkspaceId = CommandIds.New(), Path = "part/evil\n\u001b[31m\u202e.txt" },
+            RequestSha256 = ByteString.CopyFrom(Enumerable.Repeat((byte)0x2a, 32).ToArray()),
+            Kind = FileOperationKind.Write,
+            State = FileOperationState.Unknown,
+            Held = true,
+            Acknowledged = false,
+        };
+
+        FileOperationCommands.Render(cli, operation);
+        var text = output.ToString();
+        Assert.Contains(IdText.Format(operation.CommandId), text, StringComparison.Ordinal);
+        Assert.Contains(IdText.Format(operation.WorkspacePath.WorkspaceId), text, StringComparison.Ordinal);
+        Assert.Contains(@"part/evil\u000a\u001b[31m\u202e.txt", text, StringComparison.Ordinal);
+        Assert.DoesNotContain('\u001b', text);
+        Assert.DoesNotContain('\u202e', text);
+        Assert.Contains("effect is UNKNOWN", text, StringComparison.Ordinal);
+        Assert.Contains("other handles may retain it", text, StringComparison.Ordinal);
+        Assert.Contains("2a2a2a2a", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void LocalStageWarningShowsEscapedConfirmedOrLastKnownLocationWithoutTruncation()
+    {
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        var cli = new Cli(new CliOutput(output, error, json: false, quiet: false, color: false, verbose: false, width: 120), false, null, false);
+        var operation = new FileOperation
+        {
+            CommandId = CommandIds.New(),
+            WorkspacePath = new FilePath { WorkspaceId = CommandIds.New(), Path = "target" },
+            RequestSha256 = ByteString.CopyFrom(new byte[32]),
+            Kind = FileOperationKind.Write,
+            State = FileOperationState.Unknown,
+            Held = true,
+            Acknowledged = false,
+        };
+        var path = Path.Combine(Path.GetTempPath(), new string('x', 1500) + "\n\u001b\u202e");
+        var encoded = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(path));
+        var warning = "arcforges.file-stage.v1:2:confirmed:" + encoded;
+        Assert.True(FileOperationCommands.TryStageWarning(warning, out var location));
+        Assert.Equal(path, location!.Path);
+        FileOperationCommands.Render(cli, operation, [warning]);
+        Assert.Contains("identity confirmed at check", output.ToString(), StringComparison.Ordinal);
+        Assert.Contains(new string('x', 1500), output.ToString(), StringComparison.Ordinal);
+        Assert.Contains(@"\u000a\u001b\u202e", output.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain('\u001b', output.ToString());
+        Assert.False(FileOperationCommands.TryStageWarning("arcforges.file-stage.v1:2:confirmed:%%%", out _));
+        Assert.True(FileOperationCommands.TryStageWarning("arcforges.file-stage.v1:1:last-known:" + encoded, out var stale));
+        Assert.False(stale!.Confirmed);
+        Assert.True(stale.HasIdentity);
+        var unboundWarning = "arcforges.file-stage.v1:2:unbound:" + encoded;
+        Assert.True(FileOperationCommands.TryStageWarning(unboundWarning, out var unbound));
+        Assert.False(unbound!.HasIdentity);
+        var pathRoot = Path.GetPathRoot(path)!;
+        var maximumPath = pathRoot + new string('x', 4096 - System.Text.Encoding.UTF8.GetByteCount(pathRoot));
+        var maximumWarning = "arcforges.file-stage.v1:2:unbound:" + Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(maximumPath));
+        Assert.True(FileOperationCommands.TryStageWarning(maximumWarning, out var maximum));
+        Assert.Equal(maximumPath, maximum!.Path);
+        using var unboundOutput = new StringWriter();
+        using var unboundError = new StringWriter();
+        var unboundCli = new Cli(new CliOutput(unboundOutput, unboundError, json: false, quiet: false, color: false, verbose: false, width: 120), false, null, false);
+        FileOperationCommands.RenderStageLocations(unboundCli, [unboundWarning]);
+        Assert.Contains("object identity not recorded and object may not exist", unboundOutput.ToString(), StringComparison.Ordinal);
+        Assert.Contains(@"\u000a\u001b\u202e", unboundOutput.ToString(), StringComparison.Ordinal);
+
+        using var jsonOutput = new StringWriter();
+        using var jsonError = new StringWriter();
+        var jsonCli = new Cli(new CliOutput(jsonOutput, jsonError, json: true, quiet: false, color: false, verbose: false, width: 120), false, null, false);
+        FileOperationCommands.Render(jsonCli, operation, [warning]);
+        using var document = System.Text.Json.JsonDocument.Parse(jsonOutput.ToString());
+        Assert.Equal(path, document.RootElement.GetProperty("localStageLocations")[0].GetProperty("path").GetString());
+        Assert.DoesNotContain('\u001b', jsonOutput.ToString());
+        Assert.DoesNotContain('\u202e', jsonOutput.ToString());
     }
 
     [Fact]

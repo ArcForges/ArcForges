@@ -146,7 +146,7 @@ public sealed class CommandDeduplication
             using var row = command.ExecuteReader();
             if (row.Read())
             {
-                if (row.GetInt64(3) > now)
+                if (row.GetInt64(3) > now || RoutedFileRetention.IsHeld(transaction, id))
                 {
                     var sameMethod = string.Equals(row.GetString(0), method, StringComparison.Ordinal);
                     var samePayload = CryptographicOperations.FixedTimeEquals((byte[])row.GetValue(1), payloadDigest);
@@ -191,6 +191,9 @@ public sealed class CommandDeduplication
         {
             throw new InvalidOperationException("Complete needs a command begun in this transaction without an outcome.");
         }
+
+        // This sample is taken after the effect, so a delayed effect cannot shorten its required elapsed retention.
+        RoutedFileRetention.MarkCommand(transaction, commandId);
     }
 
     /// <summary>

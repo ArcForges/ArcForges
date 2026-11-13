@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Diagnostics;
 using System.Security.Cryptography;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Relay.V1;
 using ArcForges.Node.Core;
 using ArcForges.Node.Store;
+using ArcForges.Node.Store.Migrations;
 using Google.Protobuf;
 using RelayShapes = ArcForges.Contracts.Relay.Shapes.ContractShapeValidation;
 
@@ -180,6 +182,83 @@ public sealed class RoutedResultTests
         }
     }
 
+    [Fact]
+    public async Task WorkspaceReceiptsUseTheNewTableAndShareTheActualVerifiedCallNamespace()
+    {
+        var root = Directory.CreateTempSubdirectory("arcforges-workspace-log-").FullName;
+        try
+        {
+            var clock = new ManualClock();
+            // Keep the historical step-3 release rule as a schema-5 test; current elapsed retention is checked separately.
+            using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = root, BootIdentity = "boot-1", Clock = clock },
+                new MigrationPlan(StoreMigrations.Released.Steps.Take(5)));
+            var log = new RoutedCallLog(new DirectRoutedCallStore(store), clock);
+            var workspace = Row(17);
+            var id = await log.RecordVerifiedAsync(workspace);
+            Assert.NotNull(id);
+            Assert.Equal(0L, store.Read(reader => reader.Scalar("SELECT count(*) FROM routed_call_log;")));
+            Assert.Equal(1L, store.Read(reader => reader.Scalar("SELECT count(*) FROM routed_file_call_log;")));
+            var oldReplay = Row(2) with { CallId = workspace.CallId };
+            Assert.Null(await log.RecordVerifiedAsync(oldReplay));
+            Assert.Equal(1L, store.Read(reader => reader.Scalar("SELECT count(*) FROM routed_call_log WHERE decision=3;")));
+            var workspaceId = RandomNumberGenerator.GetBytes(16);
+            await log.CompleteAsync(id.Value, RoutedCallDecision.Executed, null, responseSha256: new byte[32], responseSize: 10,
+                fileWorkspace: true, workspaceId: workspaceId);
+            Assert.Equal(1L, store.Read(reader => reader.Scalar("SELECT count(*) FROM routed_file_call_log WHERE decision=1 AND workspace_id=$id;",
+                ("$id", workspaceId))));
+
+            var read = await log.RecordVerifiedAsync(Row(19));
+            Assert.NotNull(read);
+            await log.CompleteAsync(read.Value, RoutedCallDecision.Executed, null, responseSha256: new byte[32], responseSize: 10, fileWorkspace: true);
+            clock.Advance(TimeSpan.FromDays(8));
+            store.Write(RoutedCallLog.Prune);
+            Assert.Equal(1L, store.Read(reader => reader.Scalar("SELECT count(*) FROM routed_file_call_log;")));
+            Assert.Equal(1L, store.Read(reader => reader.Scalar("SELECT count(*) FROM routed_verified_call_id;")));
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task FileReadReceiptCannotBePrunedByWallTimeBeforeRealElapsedRetention()
+    {
+        var root = Directory.CreateTempSubdirectory("arcforges-file-elapsed-log-").FullName;
+        try
+        {
+            var clock = new OffsetSystemClock();
+            using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = root, BootIdentity = "boot-1", Clock = clock });
+            var log = new RoutedCallLog(new DirectRoutedCallStore(store), clock);
+            var row = Row(19);
+            var id = await log.RecordVerifiedAsync(row);
+            Assert.NotNull(id);
+            await log.CompleteAsync(id.Value, RoutedCallDecision.Executed, null, responseSha256: new byte[32], responseSize: 10, fileWorkspace: true);
+            var tick = (long)store.Read(reader => reader.Scalar("SELECT monotonic_start FROM routed_file_call_retention WHERE log_id = $id;", ("$id", id.Value)))!;
+            Assert.True(Stopwatch.GetElapsedTime(tick) < TimeSpan.FromDays(7));
+            clock.Offset = TimeSpan.FromDays(8);
+            store.Write(RoutedCallLog.Prune);
+            Assert.Equal(0, store.Write(RoutedFileRetention.Prune, CommitDurability.Full));
+            Assert.Equal(1L, store.Read(reader => reader.Scalar("SELECT count(*) FROM routed_file_call_log;")));
+            Assert.Equal(1L, store.Read(reader => reader.Scalar("SELECT count(*) FROM routed_verified_call_id;")));
+            Assert.Null(await log.RecordVerifiedAsync(row));
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    private sealed class OffsetSystemClock : TimeProvider
+    {
+        internal TimeSpan Offset { get; set; }
+        public override DateTimeOffset GetUtcNow() => TimeProvider.System.GetUtcNow() + Offset;
+        public override long GetTimestamp() => TimeProvider.System.GetTimestamp();
+        public override long TimestampFrequency => TimeProvider.System.TimestampFrequency;
+    }
+
     private static VerifiedCallRow Row(int method) => new()
     {
         FrameSha256 = RandomNumberGenerator.GetBytes(32),
@@ -187,7 +266,7 @@ public sealed class RoutedResultTests
         Kid = "cmd-test-0001",
         Method = method,
         Caller = [0x08, 0x01],
-        CommandId = method is 1 or 6 ? RandomNumberGenerator.GetBytes(16) : null,
+        CommandId = method is 1 or 6 or 17 or 18 ? RandomNumberGenerator.GetBytes(16) : null,
         RequestSha256 = RandomNumberGenerator.GetBytes(32),
         RequestSize = 10,
     };

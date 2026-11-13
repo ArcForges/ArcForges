@@ -4,6 +4,7 @@ using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Relay.V1;
 using ArcForges.Node.Core;
+using ArcForges.Node.Store;
 using Google.Protobuf;
 using RelayShapes = ArcForges.Contracts.Relay.Shapes.ContractShapeValidation;
 
@@ -57,7 +58,7 @@ internal sealed record CallRefusal(string Step, string Code, Id? CallId)
 /// (<c>center_mismatch</c>); the target node (<c>target_mismatch</c>); the account, the caller's included (<c>account_mismatch</c>); the
 /// windows: <c>issued_at &lt;= now + 120 s</c> (<c>not_yet_valid</c>), <c>expires_at + 120 s &gt; now</c> (<c>STATE/expired</c>), and at
 /// most 300 s of lifetime with the deadline inside it (<c>lifetime</c>); the request size and SHA-256 (<c>request_digest</c>); the method
-/// 1..6 with a command ID exactly for submit and cancel (<c>method</c>); the frame's call ID (<c>call_id_mismatch</c>); the contract's own
+/// the implemented task, file and workspace methods, with command IDs exactly for mutations (<c>method</c>); the frame's call ID (<c>call_id_mismatch</c>); the contract's own
 /// validator as a backstop (<c>header_shape</c>);</item>
 /// <item>the call ID is not already logged (<c>call_replayed</c>, also after a restart), and the pending row is written in the same step.</item>
 /// </list>
@@ -95,7 +96,32 @@ internal sealed class CallVerifier(RoutedCallLog log, TimeProvider clock)
         var (header, refusal) = Check(call, binding);
         if (refusal is { Step: "unknown_key" } && refreshKeys is not null && await refreshKeys().ConfigureAwait(false) is { } refreshed)
         {
-            (header, refusal) = Check(call, refreshed);
+            binding = refreshed;
+            (header, refusal) = Check(call, binding);
+        }
+
+        // Check returns a header only on success. A window or key refusal can occur before it checks the payload.
+        // Independently verify a known key, all bindings and the actual payload before using that signed header
+        // solely to advance the local clock floor; a known expired key never authorizes the call.
+        var timedHeader = header;
+        if (timedHeader is null && refusal?.Step is "expired" or "not_yet_valid" or "unknown_key")
+        {
+            timedHeader = SignedFileTimeCandidate(call, binding);
+        }
+
+        if (timedHeader is { Method: >= RoutedMethod.ReadNodeFile and <= RoutedMethod.GetNodeWorkspace })
+        {
+            var boundary = await log.ObserveFileTimeAsync(frameSha).ConfigureAwait(false);
+            if (boundary == long.MinValue)
+            {
+                // The durable observation and refusal audit committed, but uncertainty cannot be presented as expiry.
+                return (null, null);
+            }
+
+            if (refusal is null && !StillValid(ProtoTime.ToDateTimeOffset(timedHeader.ExpiresAt)!.Value, StoreTime.FromMicroseconds(boundary)))
+            {
+                refusal = new CallRefusal("expired", RoutedRefusals.Expired, call.CallId);
+            }
         }
 
         if (refusal is not null)
@@ -204,7 +230,8 @@ internal sealed class CallVerifier(RoutedCallLog log, TimeProvider clock)
         }
 
         // AD-0021 section 10: issued_at < expires_at <= issued_at + 300 s, and issued_at < deadline <= expires_at.
-        if (expires <= issued || expires - issued > MaxLifetime || deadline <= issued || deadline > expires)
+        if (expires <= issued || expires - issued > MaxLifetime || deadline <= issued || deadline > expires ||
+            (int)header.Method is >= 9 and <= 20 && (deadline - issued > TimeSpan.FromSeconds(15) || expires - deadline > TimeSpan.FromSeconds(30)))
         {
             return (null, Refuse("lifetime"));
         }
@@ -215,7 +242,8 @@ internal sealed class CallVerifier(RoutedCallLog log, TimeProvider clock)
         }
 
         var method = (int)header.Method;
-        if (method is < 1 or > 6 || (header.CommandId is not null) != (method is 1 or 6))
+        if (((method is < 1 or > 6) && method is not (9 or 10 or 11 or 12 or 13 or 14 or 15 or 16) && (method is < 17 or > 20))
+            || (header.CommandId is not null) != (method is 1 or 6 or 10 or 11 or 14 or 15 or 17 or 18))
         {
             return (null, Refuse("method"));
         }
@@ -232,6 +260,42 @@ internal sealed class CallVerifier(RoutedCallLog log, TimeProvider clock)
         }
 
         return (header, null);
+    }
+
+    private static CallHeader? SignedFileTimeCandidate(ChannelCall call, CallBinding binding)
+    {
+        if (!RelayShapes.IsValid(call) || call.Payload.Length > MaxPayloadBytes || call.Header.Algorithm != Algorithm ||
+            Key(binding, call.Header.Kid, DateTimeOffset.UnixEpoch, any: true) is not { } key ||
+            !RelaySignatures.Verify(key, RelaySignatures.CallInput(call.Header.Header.Span), call.Header.Signature.Span))
+        {
+            return null;
+        }
+
+        CallHeader header;
+        try { header = CallHeader.Parser.ParseFrom(call.Header.Header); }
+        catch (InvalidProtocolBufferException) { return null; }
+        if (!Shaped(header) || !RelayShapes.IsValid(header) || header.Kid != call.Header.Kid ||
+            !header.CenterUrlSha256.Span.SequenceEqual(RelaySignatures.Audience(binding.Center)) ||
+            !header.TargetNodeId.Value.Span.SequenceEqual(binding.NodeId.Span) || binding.AccountId.Length != 16 ||
+            !header.AccountId.Value.Span.SequenceEqual(binding.AccountId.Span) ||
+            !header.Caller.AccountId.Value.Span.SequenceEqual(binding.AccountId.Span) || !header.CallId.Equals(call.CallId) ||
+            header.RequestSize != call.Payload.Length || !header.RequestSha256.Span.SequenceEqual(SHA256.HashData(call.Payload.Span)))
+        {
+            return null;
+        }
+
+        var method = (int)header.Method;
+        if ((method is not (9 or 10 or 11 or 12 or 13 or 14 or 15 or 16) && method is < 17 or > 20) ||
+            (header.CommandId is not null) != (method is 10 or 11 or 14 or 15 or 17 or 18))
+        {
+            return null;
+        }
+
+        var issued = ProtoTime.ToDateTimeOffset(header.IssuedAt)!.Value;
+        var expires = ProtoTime.ToDateTimeOffset(header.ExpiresAt)!.Value;
+        var deadline = ProtoTime.ToDateTimeOffset(header.Deadline)!.Value;
+        return expires > issued && expires - issued <= MaxLifetime && deadline > issued && deadline <= expires &&
+            deadline - issued <= TimeSpan.FromSeconds(15) && expires - deadline <= TimeSpan.FromSeconds(30) ? header : null;
     }
 
     /// <summary>The longest a call may live (AD-0021 section 10).</summary>

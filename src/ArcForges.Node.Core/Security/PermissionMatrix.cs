@@ -14,7 +14,7 @@ namespace ArcForges.Node.Core.Security;
 /// <param name="Human">The HUMAN cell (fixed: overrides never change it).</param>
 /// <param name="Script">The SCRIPT cell.</param>
 /// <param name="Agent">The AGENT cell.</param>
-/// <param name="RemoteKind">The remote command kind, or <see langword="null"/> when nothing reaches the operation remotely (REMOTE D).</param>
+/// <param name="RemoteKind">The legacy remote command kind, if any; explicit center-routed file APIs use the separate routed column.</param>
 /// <param name="RemoteRisk">The remote command kind's risk class.</param>
 /// <param name="Peer">The PEER cell.</param>
 /// <param name="Fixed">True for rows no override may change (approvers, retry-safety and permission edits, integrations, rollback).</param>
@@ -100,6 +100,24 @@ public static class PermissionMatrix
     /// <summary>Decide an approval.</summary>
     public const string ApprovalDecide = "approval.decide";
 
+    /// <summary>Register an existing root; HUMAN only, including a same-node HUMAN relay.</summary>
+    public const string WorkspaceRegister = "workspace.register";
+
+    /// <summary>Forget a registered root; HUMAN only, including a same-node HUMAN relay.</summary>
+    public const string WorkspaceUnregister = "workspace.unregister";
+
+    /// <summary>Read registered workspace metadata.</summary>
+    public const string WorkspaceRead = "workspace.read";
+
+    /// <summary>Read, search or list files in a registered workspace.</summary>
+    public const string FileRead = "file.read";
+
+    /// <summary>Write or edit a workspace file; an AGENT requires an explicit ALLOW.</summary>
+    public const string FileWrite = "file.write";
+
+    /// <summary>Remove a workspace file; an AGENT requires an explicit ALLOW and the separate cleanup checks.</summary>
+    public const string FileRemove = "file.remove";
+
     /// <summary>Plan a cleanup.</summary>
     public const string CleanupPlan = "cleanup.plan";
 
@@ -160,6 +178,12 @@ public static class PermissionMatrix
         new(PolicyCenterRouted, "Change the center-routed policy and its cross-node relay opt-in (HUMAN-edited)", A, D, D, null, RiskClass.Unspecified, D, true,
             RiskClass.High),
         new(ApprovalDecide, "Decide an approval", A, D, D, "decide_approval", RiskClass.High, D, true, RiskClass.High),
+        new(WorkspaceRegister, "Register a workspace (HUMAN only)", A, D, D, "register_node_workspace", RiskClass.High, D, true, RiskClass.High),
+        new(WorkspaceUnregister, "Unregister a workspace (HUMAN only)", A, D, D, "unregister_node_workspace", RiskClass.High, D, true, RiskClass.High),
+        new(WorkspaceRead, "Read registered workspaces", A, A, A, "list_node_workspaces", RiskClass.Low, D, false, RiskClass.Low),
+        new(FileRead, "Read files in a registered workspace", A, A, A, "read_node_file", RiskClass.Low, D, false, RiskClass.Low),
+        new(FileWrite, "Write or edit a workspace file", A, P, D, null, RiskClass.Unspecified, D, false, RiskClass.High),
+        new(FileRemove, "Remove a workspace file", A, P, D, null, RiskClass.Unspecified, D, false, RiskClass.High),
         new(CleanupPlan, "Plan cleanup", A, A, A, null, RiskClass.Unspecified, D, false, RiskClass.Low),
         new(CleanupExecute, "Execute cleanup", A, P, P, null, RiskClass.Unspecified, D, false, RiskClass.High),
         new(ProcessAdopt, "Adopt a process", A, D, D, null, RiskClass.Unspecified, D, false, RiskClass.High),
@@ -209,7 +233,11 @@ public static class PermissionMatrix
             var rule = overrides[index];
             if (rule.Origin == origin && string.Equals(rule.Operation, operation, StringComparison.Ordinal) && Valid(rule) is null)
             {
-                return verdict with { Decision = rule.Decision, Source = string.Create(CultureInfo.InvariantCulture, $"policy permissions[{index}]") };
+                // Approval cannot substitute for the explicit AGENT ALLOW required by 06a section 4.
+                var decision = origin == Origin.Agent && (operation is FileWrite or FileRemove) && rule.Decision != A ? D : rule.Decision;
+                var source = string.Create(CultureInfo.InvariantCulture, $"policy permissions[{index}]");
+                if (decision != rule.Decision) source += " (explicit AGENT ALLOW required)";
+                return verdict with { Decision = decision, Source = source };
             }
         }
 
@@ -221,12 +249,14 @@ public static class PermissionMatrix
 
     /// <summary>
     /// The routed column of 11 section 1, "Center-routed operations": the node's default for a center-routed caller. Submit, the reads and
-    /// cancelling the caller's own task are A, cancelling another owner's task is P (a local HUMAN decides), and anything else is D: in
-    /// particular <c>process.terminate</c>, the routed cancel of an ADOPTED task, fixed for REMOTE (MR-08).
+    /// cancelling the caller's own task are A, cancelling another owner's task is P (a local HUMAN decides). AF-CTR-06's explicit
+    /// workspace/file methods and their cleanup checks are also A here, subject to the narrower origin cells, verified caller and the
+    /// center's separate method-bound high-risk checks. Other operations, including <c>process.terminate</c>, remain D (MR-08).
     /// </summary>
     public static PermissionDecision RoutedDefault(string operation) => operation switch
     {
-        TaskSubmit or TaskRead or TaskReadOutput or TaskCancelOwn => A,
+        TaskSubmit or TaskRead or TaskReadOutput or TaskCancelOwn or WorkspaceRegister or WorkspaceUnregister or WorkspaceRead or FileRead or
+            FileWrite or FileRemove or CleanupPlan or CleanupExecute => A,
         TaskCancelOthers => P,
         _ => D,
     };

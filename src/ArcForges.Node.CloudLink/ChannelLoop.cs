@@ -63,6 +63,9 @@ internal sealed class ChannelLoop : IAsyncDisposable
     /// <summary>The capability the node announces in its hello.</summary>
     public const string Capability = "routed.v1";
 
+    /// <summary>The additional method capability announced only by an available file dispatcher.</summary>
+    public const string FilesCapability = "files.v1";
+
     private static readonly TimeSpan NonceTimeout = TimeSpan.FromSeconds(10);
 
     private readonly IChannelHost _host;
@@ -612,6 +615,7 @@ internal sealed class ChannelLoop : IAsyncDisposable
             HelloSignature = ByteString.CopyFrom(session.Key.Sign(input)),
         };
         hello.Capabilities.Add(Capability);
+        if (_dispatcher.SupportsFiles) hello.Capabilities.Add(FilesCapability);
         await session.Client.SendAsync(new RelayFrame { NodeHello = hello }, timeout.Token).ConfigureAwait(false);
 
         var second = await ReceiveFrameAsync(session, timeout.Token).ConfigureAwait(false);
@@ -807,7 +811,14 @@ internal sealed class ChannelLoop : IAsyncDisposable
                 return;
             }
 
-            verified = verified! with { ReceivedAt = receivedAt };
+            if (verified is null)
+            {
+                // A file/workspace validation clock discontinuity was durably audited. Do not sign an invented outcome.
+                _nodeLog.Warning("cloud.channel.call_dropped", new LogField("step", "clock_unavailable"));
+                return;
+            }
+
+            verified = verified with { ReceivedAt = receivedAt };
 
             // Decisions B-3 (N1 review A C-N1, B N-12): the verification may have waited on a key refresh, so the link's state is read again
             // after it and immediately before the dispatch; a link switched off, signed out or ending drops the call (its row stays pending:
@@ -862,10 +873,50 @@ internal sealed class ChannelLoop : IAsyncDisposable
             }
 
             var code = answer.Error is { } error ? error.Category.ToString().ToUpperInvariant() + "/" + error.Code : answer.HandlerCode;
-            await _log.CompleteAsync(verified!.LogId, decision, code, answer.TaskId, answer.Risk,
-                decision == RoutedCallDecision.Executed ? SHA256.HashData(answer.Response!.Span) : null,
-                decision == RoutedCallDecision.Executed ? answer.Response!.Length : null).ConfigureAwait(false);
-            await session.Client.SendAsync(new RelayFrame { CallResult = result }, session.Token).ConfigureAwait(false);
+            var responseHash = decision == RoutedCallDecision.Executed ? SHA256.HashData(answer.Response!.Span) : null;
+            var responseSize = decision == RoutedCallDecision.Executed ? answer.Response!.Length : (int?)null;
+            if (verified!.Header.Method is RoutedMethod.ReadNodeFile or RoutedMethod.WriteNodeFile or RoutedMethod.EditNodeFile or RoutedMethod.SearchNodeFiles or RoutedMethod.ListNodeDirectory or RoutedMethod.GetNodeFileOperation or RoutedMethod.PlanNodeRemoval or RoutedMethod.ExecuteNodeRemoval)
+            {
+                // A result-log wait consumes the same monotonic budget as the read. A late queued log update must not
+                // turn an unreturned result into a completed call, and a late result must not be sent after that wait.
+                var lifetime = ProtoTime.ToDateTimeOffset(verified.Header.Deadline)!.Value - ProtoTime.ToDateTimeOffset(verified.Header.IssuedAt)!.Value;
+                var budget = lifetime < TimeSpan.FromSeconds(10) ? lifetime : TimeSpan.FromSeconds(10);
+                var remaining = budget - _clock.GetElapsedTime(receivedAt);
+                if (remaining <= TimeSpan.Zero)
+                {
+                    return;
+                }
+
+                using var deadline = new CancellationTokenSource(remaining, _clock);
+                using var linked = CancellationTokenSource.CreateLinkedTokenSource(session.Token, deadline.Token);
+                var token = linked.Token;
+                var completion = _log.CompleteAsync(verified.LogId, decision, code, answer.TaskId, answer.Risk,
+                    responseHash, responseSize, fileWorkspace: true, workspaceId: answer.WorkspaceId,
+                    beforeCommit: () => !token.IsCancellationRequested && _clock.GetElapsedTime(receivedAt) < budget);
+                try
+                {
+                    var updated = await completion.WaitAsync(token).ConfigureAwait(false);
+                    if (updated != 1 || token.IsCancellationRequested || _clock.GetElapsedTime(receivedAt) >= budget)
+                    {
+                        return;
+                    }
+
+                    await session.Client.SendAsync(new RelayFrame { CallResult = result }, token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    _ = ObserveReadCompletionAsync(completion);
+                    throw;
+                }
+            }
+            else
+            {
+                await _log.CompleteAsync(verified.LogId, decision, code, answer.TaskId, answer.Risk,
+                    responseHash, responseSize, fileWorkspace: (int)verified.Header.Method is >= 9 and <= 20,
+                    workspaceId: answer.WorkspaceId).ConfigureAwait(false);
+                await session.Client.SendAsync(new RelayFrame { CallResult = result }, session.Token).ConfigureAwait(false);
+            }
+
             _nodeLog.Info("cloud.channel.call_answered", new LogField("method", (int)verified.Header.Method), new LogField("decision", (int)decision));
         }
         catch (Exception exception) when (exception is OperationCanceledException or WebSocketException or ObjectDisposedException or IOException)
@@ -875,6 +926,19 @@ internal sealed class ChannelLoop : IAsyncDisposable
         catch (Exception exception) when (exception is not OutOfMemoryException)
         {
             _nodeLog.Error("cloud.channel.call_failed", exception);
+        }
+    }
+
+    private async Task ObserveReadCompletionAsync(Task<long> completion)
+    {
+        try
+        {
+            _ = await completion.ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            // Do not log sensitive path, file, or exception text from the abandoned result.
+            _nodeLog.Error("cloud.channel.file_read_settlement_failed");
         }
     }
 
@@ -989,6 +1053,10 @@ internal sealed class ChannelLoop : IAsyncDisposable
 
         public CancellationToken Token { get; } = cancel.Token;
 
+        private readonly CancellationTokenSource _effectsEnding = new();
+
+        public CancellationToken EffectsEnding => _effectsEnding.Token;
+
         public long Generation { get; set; } = ticket.Generation;
 
         public bool Accepted { get; set; }
@@ -1001,7 +1069,11 @@ internal sealed class ChannelLoop : IAsyncDisposable
         public bool Ending
         {
             get => Volatile.Read(ref _ending);
-            set => Volatile.Write(ref _ending, value);
+            set
+            {
+                Volatile.Write(ref _ending, value);
+                if (value) EndEffects();
+            }
         }
 
         private bool _ending;
@@ -1010,8 +1082,15 @@ internal sealed class ChannelLoop : IAsyncDisposable
 
         public CallTasks Calls { get; } = new();
 
+        private void EndEffects()
+        {
+            try { _effectsEnding.Cancel(); }
+            catch (ObjectDisposedException) { }
+        }
+
         public void Cancel()
         {
+            EndEffects();
             try
             {
                 cancel.Cancel();
@@ -1021,7 +1100,11 @@ internal sealed class ChannelLoop : IAsyncDisposable
             }
         }
 
-        public void Dispose() => cancel.Dispose();
+        public void Dispose()
+        {
+            _effectsEnding.Dispose();
+            cancel.Dispose();
+        }
     }
 
     /// <summary>The link of one session's call (decisions B-3): usable while the session is not ending or cancelled and the link gives a binding.</summary>
@@ -1030,6 +1113,8 @@ internal sealed class ChannelLoop : IAsyncDisposable
         public bool Usable => !session.Ending && !session.Token.IsCancellationRequested && loop._host.Binding() is not null;
 
         public bool Stopping => loop._host.Stopping;
+
+        public CancellationToken EffectEnding => session.EffectsEnding;
     }
 
     /// <summary>The call tasks of one connection (awaited before the connection's key is disposed).</summary>

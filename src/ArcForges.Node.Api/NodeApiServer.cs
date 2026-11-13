@@ -20,6 +20,7 @@ public static class NodeApiServer
     private const string Resources = "arcforges.node.v1.ResourceService";
     private const string Approvals = "arcforges.node.v1.ApprovalService";
     private const string Fleet = "arcforges.fleet.v1.FleetService";
+    private const string Files = "arcforges.node.v1.FileService";
 
     /// <summary>Builds the server (not started).</summary>
     /// <param name="endpoint">The node's endpoint.</param>
@@ -43,19 +44,29 @@ public static class NodeApiServer
         builder.AddService(new NodeServiceHandler(node, sessions, executors, images ?? ClientImages.ForNode(testMode: false)));
         builder.AddService(new NodeEventServiceHandler(node, streamBuffer));
         var tasks = new TaskServiceHandler(node, sessions, executors);
-        (node.RoutedDispatcher as RoutedDispatcher)?.Bind(tasks);
+        var files = new FileServiceHandler(node);
+        executors.RegisterReference("FileService.WriteFile", ArcForges.Node.Core.Security.PermissionMatrix.FileWrite, files.ExecuteApprovedReferenceAsync);
+        executors.RegisterReference("FileService.EditFile", ArcForges.Node.Core.Security.PermissionMatrix.FileWrite, files.ExecuteApprovedReferenceAsync);
+        executors.RegisterReference("FileService.ExecuteRemoval", ArcForges.Node.Core.Security.PermissionMatrix.FileRemove, files.ExecuteApprovedRemovalReferenceAsync);
+        (node.RoutedDispatcher as RoutedDispatcher)?.Bind(tasks, new WorkspaceServiceHandler(node), files);
         builder.AddService(tasks);
         builder.AddService(new ResourceServiceHandler(node, sessions, executors));
         builder.AddService(new QueueServiceHandler(node, sessions, executors));
         builder.AddService(new PolicyServiceHandler(node, sessions, executors));
         builder.AddService(approvals);
+        builder.AddService(new LocalFileOperationHandler(node, sessions));
+        foreach (var method in (ReadOnlySpan<string>)["GetFileOperation", "AcknowledgeFileOperation"])
+        {
+            builder.RegisterMethod(Files, method, new LocalRpcCallProfile(TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(30)));
+        }
         if (cloud is not null)
         {
             // account.proto deadlines: GetAccountStatus 5 s, SignOut 15 s, BeginSignIn 15 s, GetSignInFlow 5 s, CancelSignIn 5 s; the methods of later
             // tasks answer UNIMPLEMENTED.
             builder.AddService(new AccountServiceHandler(node, sessions, cloud));
             builder.AddService(new FleetServiceHandler(node, sessions, cloud));
-            foreach (var method in (ReadOnlySpan<string>)["ListNodes", "GetNode", "SubmitNodeTask", "GetNodeTask", "ListNodeTasks", "ReadNodeTaskOutput", "CancelNodeTask"])
+            foreach (var method in (ReadOnlySpan<string>)["ListNodes", "GetNode", "SubmitNodeTask", "GetNodeTask", "ListNodeTasks", "ReadNodeTaskOutput", "CancelNodeTask",
+                "ReadNodeFile", "WriteNodeFile", "EditNodeFile", "SearchNodeFiles", "ListNodeDirectory", "PlanNodeRemoval", "ExecuteNodeRemoval", "GetNodeFileOperation", "RegisterNodeWorkspace", "UnregisterNodeWorkspace", "ListNodeWorkspaces", "GetNodeWorkspace"])
             {
                 builder.RegisterMethod(Fleet, method, new LocalRpcCallProfile(TimeSpan.FromSeconds(40), TimeSpan.FromSeconds(40)));
             }

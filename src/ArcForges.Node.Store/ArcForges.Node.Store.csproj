@@ -37,6 +37,8 @@
       secret-store tier binds it to the real store.
     -->
     <InternalsVisibleTo Include="ArcForges.Node.Api" />
+    <!-- The core file journal supplies a transaction-scoped witness only after native target comparison. -->
+    <InternalsVisibleTo Include="ArcForges.Node.Core" />
     <!-- The cloud link keeps the node credential in the same injected secret store (AF-CTR-04 N1). -->
     <InternalsVisibleTo Include="ArcForges.Node.CloudLink" />
     <InternalsVisibleTo Include="ArcForges.Node.CloudLink.Tests" />

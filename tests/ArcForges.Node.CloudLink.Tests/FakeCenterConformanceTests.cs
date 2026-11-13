@@ -47,6 +47,10 @@ public sealed class FakeCenterConformanceTests
             + "(approve required) on the two browser-side approval requests, which no capture holds, and otherwise only comments (new error codes "
             + "and a state transition documented); it adds FleetService methods and FleetNode.reported_name, which no NodeEnrollmentService method "
             + "carries. The wire bytes of the 53 captured exchanges are identical; the Cloud captures stay at 424.1",
+        [("1.0.0-ci.424.1", "1.0.0-ci.450.1")] =
+            "Contracts e67a6b0..de3dba7 adds FleetService file/workspace methods and relay method numbers; "
+            + "NodeEnrollmentService and its request/reply fields are unchanged. The historic 424.1 captures "
+            + "remain unmodified and are exercised against the 450.1 codecs; no new method is covered by them",
     };
 
     public static TheoryData<string> Captures() =>

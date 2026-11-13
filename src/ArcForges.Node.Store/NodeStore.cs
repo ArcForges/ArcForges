@@ -109,9 +109,12 @@ public sealed class StoreOpening
 public sealed class NodeStore : IDisposable
 {
     private const int BusyTimeoutMilliseconds = 5000;
+    private const int LastDeliveredPreCtr06SchemaVersion = 2;
     private readonly Lock _writerGate = new();
     private readonly SqliteConnection _writer;
     private readonly TimeProvider _clock;
+    private readonly RoutedFileRetentionProcess? _fileRetention;
+    private readonly FileTargetHoldWitnesses _fileTargetWitnesses = new();
     private bool _writing;
     private bool _disposed;
 
@@ -120,8 +123,11 @@ public sealed class NodeStore : IDisposable
         DataRoot = dataRoot;
         DatabasePath = path;
         _writer = writer;
+        _writer.CreateFunction<byte[]?, byte[]?, byte[]?, string?, byte[]?, byte[]?, byte[]?, byte[]?, byte[]?, long, long>(
+            "arcforges_file_hold_witness", _fileTargetWitnesses.Matches);
         _clock = clock;
         Metadata = metadata;
+        _fileRetention = metadata.SchemaVersion >= 6 ? new RoutedFileRetentionProcess(_clock) : null;
         Opening = opening;
         Commands = new CommandDeduplication(this);
         Environments = new EnvSnapshots(this);
@@ -199,24 +205,26 @@ public sealed class NodeStore : IDisposable
             else if (existing.SchemaVersion < plan.LatestVersion)
             {
                 var backup = StoreBackups.Create(writer, dataRoot, existing.SchemaVersion, plan.LatestVersion, options.Clock);
-                foreach (var step in plan.Steps.Where(step => step.Version > existing.SchemaVersion))
+                var pending = plan.Steps.Where(step => step.Version > existing.SchemaVersion);
+                if (IsDeliveredPreCtr06Store(existing) && plan.LatestVersion >= 13 &&
+                    plan.Steps[12].Name == "0013-schema-step-13.sql")
                 {
+                    // The AF-CTR-06 intermediate schemas were never delivered. Roll the whole pending chain
+                    // back on failure so a supported predecessor cannot be stranded at an unsupported draft.
                     InTransaction(writer, CommitDurability.Full, transaction =>
                     {
-                        using (var command = writer.CreateCommand())
+                        foreach (var step in pending)
                         {
-                            command.Transaction = transaction;
-                            command.CommandText = step.Sql;
-                            command.ExecuteNonQuery();
+                            ApplyMigration(writer, transaction, step);
                         }
-
-                        using var meta = writer.CreateCommand();
-                        meta.Transaction = transaction;
-                        meta.CommandText = "UPDATE store_meta SET schema_version = $version, min_reader_version = max(min_reader_version, $minReader) WHERE singleton = 1;";
-                        meta.Parameters.AddWithValue("$version", step.Version);
-                        meta.Parameters.AddWithValue("$minReader", step.MinReaderVersion);
-                        meta.ExecuteNonQuery();
                     });
+                }
+                else
+                {
+                    foreach (var step in pending)
+                    {
+                        InTransaction(writer, CommitDurability.Full, transaction => ApplyMigration(writer, transaction, step));
+                    }
                 }
 
                 opening = new StoreOpening(created: false, existing.SchemaVersion, plan.LatestVersion, backup);
@@ -240,8 +248,9 @@ public sealed class NodeStore : IDisposable
     }
 
     /// <summary>
-    /// Runs <paramref name="action"/> in one write transaction of the single writer and commits it. An exception rolls the
-    /// transaction back. <see cref="CommitDurability.Full"/> commits with <c>synchronous=FULL</c>.
+    /// Runs <paramref name="action"/> in one write transaction of the single writer and commits it. An exception before
+    /// commit rolls the transaction back; a commit whose completion is not returned can have an uncertain outcome.
+    /// <see cref="CommitDurability.Full"/> commits with <c>synchronous=FULL</c>.
     /// </summary>
     public T Write<T>(Func<StoreTransaction, T> action, CommitDurability durability = CommitDurability.Normal)
     {
@@ -255,14 +264,22 @@ public sealed class NodeStore : IDisposable
             }
 
             _writing = true;
+            _fileTargetWitnesses.Clear();
             try
             {
                 T result = default!;
-                InTransaction(_writer, durability, transaction => result = action(new StoreTransaction(_writer, transaction, _clock, durability)));
+                StoreTransaction? scoped = null;
+                InTransaction(_writer, durability, transaction =>
+                {
+                    RequireCurrentWriter(_writer, transaction);
+                    result = action(scoped = new StoreTransaction(_writer, transaction, _clock, durability, _fileRetention, _fileTargetWitnesses));
+                }, () => scoped?.AfterCommitForTests?.Invoke());
                 return result;
             }
             finally
             {
+                // Witnesses must never survive commit, rollback, exception or a later unrelated command.
+                _fileTargetWitnesses.Clear();
                 _writing = false;
             }
         }
@@ -289,7 +306,7 @@ public sealed class NodeStore : IDisposable
         Pragma(connection, string.Create(CultureInfo.InvariantCulture, $"PRAGMA busy_timeout={BusyTimeoutMilliseconds};"));
         Pragma(connection, "PRAGMA query_only=ON;");
         using var transaction = connection.BeginTransaction(deferred: true);
-        var result = action(new StoreReader(connection, transaction, _clock));
+        var result = action(new StoreReader(connection, transaction, _clock, _fileRetention));
         transaction.Commit();
         return result;
     }
@@ -338,7 +355,18 @@ public sealed class NodeStore : IDisposable
 
     internal void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, this);
 
-    private static void InTransaction(SqliteConnection connection, CommitDurability durability, Action<SqliteTransaction> action)
+    private static void RequireCurrentWriter(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT min_reader_version, arcforges_store_reader_version() FROM store_meta WHERE singleton = 1;";
+        using var row = command.ExecuteReader();
+        if (!row.Read() || row.GetInt64(1) < row.GetInt64(0))
+            throw new StoreIncompatibleException("The current node writer no longer satisfies the store reader floor.");
+    }
+
+    private static void InTransaction(SqliteConnection connection, CommitDurability durability, Action<SqliteTransaction> action,
+        Action? afterCommitForTests = null)
     {
         if (durability == CommitDurability.Full)
         {
@@ -350,6 +378,7 @@ public sealed class NodeStore : IDisposable
             using var transaction = connection.BeginTransaction(deferred: false);
             action(transaction);
             transaction.Commit();
+            afterCommitForTests?.Invoke();
         }
         finally
         {
@@ -398,15 +427,40 @@ public sealed class NodeStore : IDisposable
             SqliteConnection? writer = null;
             try
             {
-                var existing = File.Exists(path) ? Inspect(path) : null;
+                var existing = File.Exists(path) ? Inspect(path, plan) : null;
                 if (existing is { MinReaderVersion: var minReader } && minReader > plan.LatestVersion)
                 {
                     throw new StoreIncompatibleException(string.Create(CultureInfo.InvariantCulture,
                         $"The node store needs a reader of schema version {minReader} or later; this binary reads up to version {plan.LatestVersion}. Install a newer ArcForges version (13-distribution-updates section 6)."));
                 }
 
+                // NodeHost takes the normal single-instance guard before opening a delivered schema-1/2
+                // store. Unpublished AF-CTR-06 intermediate stores remain unsupported upgrade inputs.
+                if (!IsDeliveredPreCtr06Store(existing) && existing is { SchemaVersion: < 13 } && plan.LatestVersion >= 13 &&
+                    plan.Steps[12].Name == "0013-schema-step-13.sql")
+                {
+                    throw new StoreIncompatibleException("The node store cannot be upgraded to schema 13 until prior node-instance exclusion is established; it was not changed.");
+                }
+
+                // The draft schema-13 ownership layout is not a delivered predecessor.
+                if (!IsDeliveredPreCtr06Store(existing) && existing is { SchemaVersion: < 14 } && plan.LatestVersion >= 14 &&
+                    plan.Steps[13].Name == "0014-schema-step-14.sql")
+                {
+                    throw new StoreIncompatibleException("The node store cannot be upgraded to schema 14 until prior node-instance exclusion is established; it was not changed.");
+                }
+
+                // The draft schema-14 producer layout is not a delivered predecessor.
+                if (!IsDeliveredPreCtr06Store(existing) && existing is { SchemaVersion: < 15 } && plan.LatestVersion >= 15 &&
+                    plan.Steps[14].Name == "0015-schema-step-15.sql")
+                {
+                    throw new StoreIncompatibleException("The node store cannot be upgraded to schema 15 until prior node-instance exclusion is established; it was not changed.");
+                }
+
                 writer = new SqliteConnection(StorePaths.ConnectionString(path, SqliteOpenMode.ReadWriteCreate));
                 writer.Open();
+                // Register the capability of this actual migration plan before any migration/Start transaction.
+                // A previous binary cached before the floor changed lacks this function and cannot pass Start.
+                writer.CreateFunction<long>("arcforges_store_reader_version", () => plan.LatestVersion);
                 Pragma(writer, string.Create(CultureInfo.InvariantCulture, $"PRAGMA busy_timeout={BusyTimeoutMilliseconds};"));
                 var journal = Convert.ToString(Scalar(writer, "PRAGMA journal_mode=WAL;"), CultureInfo.InvariantCulture);
                 if (!string.Equals(journal, "wal", StringComparison.OrdinalIgnoreCase))
@@ -431,7 +485,7 @@ public sealed class NodeStore : IDisposable
         }
     }
 
-    private static ExistingStore? Inspect(string path)
+    private static ExistingStore? Inspect(string path, MigrationPlan plan)
     {
         using var connection = new SqliteConnection(StorePaths.ConnectionString(path, SqliteOpenMode.ReadOnly));
         connection.Open();
@@ -448,15 +502,98 @@ public sealed class NodeStore : IDisposable
             throw new StoreIncompatibleException($"{path} is a SQLite database but not an ArcForges node store (no store_meta table); it was not changed.");
         }
 
-        using var command = connection.CreateCommand();
-        command.CommandText = "SELECT schema_version, min_reader_version FROM store_meta WHERE singleton = 1;";
-        using var reader = command.ExecuteReader();
-        if (!reader.Read())
+        int version, minimum;
+        using (var command = connection.CreateCommand())
         {
-            throw new StoreIncompatibleException($"{path} has no store_meta row; it was not changed.");
+            command.CommandText = "SELECT schema_version, min_reader_version FROM store_meta WHERE singleton = 1;";
+            using var reader = command.ExecuteReader();
+            if (!reader.Read())
+            {
+                throw new StoreIncompatibleException($"{path} has no store_meta row; it was not changed.");
+            }
+
+            version = checked((int)reader.GetInt64(0));
+            minimum = checked((int)reader.GetInt64(1));
         }
 
-        return new ExistingStore(checked((int)reader.GetInt64(0)), checked((int)reader.GetInt64(1)));
+        // Step 8 has never been released. A previous local author draft used the same version with different
+        // private-stage capacity semantics. Refuse that draft while the database is still open read-only; neither
+        // migrate it by pretending its version matches nor adopt or delete its potentially retained stages.
+        if (version >= 8 && plan.LatestVersion >= 8 && minimum <= plan.LatestVersion &&
+            plan.Steps[7].Sql.Contains("ctr06-stage-combined-v3", StringComparison.Ordinal))
+        {
+            var hasLayout = Convert.ToInt64(Scalar(connection, """
+                SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name = 'file_private_stage_layout';
+                """), CultureInfo.InvariantCulture) == 1;
+            var hasGuards = Convert.ToInt64(Scalar(connection, """
+                SELECT count(*) FROM sqlite_schema WHERE type = 'trigger' AND name IN
+                  ('tr_file_private_stage_capacity', 'tr_file_private_stage_reactivate_capacity',
+                   'tr_file_journal_stage_capacity', 'tr_file_journal_stage_reactivate_capacity');
+                """), CultureInfo.InvariantCulture) == 4;
+            var hasCapacityView = Convert.ToInt64(Scalar(connection, """
+                SELECT count(*) FROM sqlite_schema WHERE type = 'view' AND name = 'file_stage_capacity_totals';
+                """), CultureInfo.InvariantCulture) == 1;
+            if (!hasLayout || !hasGuards || !hasCapacityView || !string.Equals(Convert.ToString(Scalar(connection,
+                "SELECT layout FROM file_private_stage_layout WHERE singleton = 1;"), CultureInfo.InvariantCulture),
+                "ctr06-stage-combined-v3", StringComparison.Ordinal))
+            {
+                throw new StoreIncompatibleException("The node store has an unrecognized private-stage draft layout; it was not changed.");
+            }
+        }
+
+        // Step 12 is still an unmerged AF-CTR-06 candidate. A separate protected draft used the same version
+        // for a different layout. Check this candidate's required removal-plan objects while still read-only;
+        // never advance an unknown step-12 database by assigning it this candidate's meaning.
+        if (version >= 12 && plan.LatestVersion >= 12 && minimum <= plan.LatestVersion &&
+            plan.Steps[11].Sql.Contains("CREATE TABLE file_removal_plan (", StringComparison.Ordinal))
+        {
+            var tables = Convert.ToInt64(Scalar(connection, """
+                SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name IN
+                  ('file_removal_plan', 'file_removal_plan_item', 'file_removal_command_owner');
+                """), CultureInfo.InvariantCulture);
+            var planColumns = Convert.ToInt64(Scalar(connection, """
+                SELECT count(*) FROM pragma_table_info('file_removal_plan') WHERE name IN
+                  ('plan_id', 'command_id', 'request_sha256', 'caller', 'target_kind', 'workspace_id',
+                   'workspace_path', 'attempt_id', 'root_platform', 'root_identity', 'requires_approval', 'quarantine_available');
+                """), CultureInfo.InvariantCulture);
+            var itemColumns = Convert.ToInt64(Scalar(connection, """
+                SELECT count(*) FROM pragma_table_info('file_removal_plan_item') WHERE name IN
+                  ('plan_id', 'item_id', 'ordinal', 'relative_path', 'entry_kind', 'native_platform', 'native_identity',
+                   'identity_sha256', 'fingerprint_sha256', 'stamp_size', 'stamp_mtime', 'stamp_mtime_nsec',
+                   'stamp_change', 'stamp_change_nsec', 'mode', 'link_count', 'owner_verified');
+                """), CultureInfo.InvariantCulture);
+            var ownerColumns = Convert.ToInt64(Scalar(connection, """
+                SELECT count(*) FROM pragma_table_info('file_removal_command_owner') WHERE name IN
+                  ('command_id', 'caller', 'policy_reason');
+                """), CultureInfo.InvariantCulture);
+            var index = Convert.ToInt64(Scalar(connection, """
+                SELECT count(*) FROM sqlite_schema WHERE type = 'index' AND name = 'ix_file_removal_plan__command';
+                """), CultureInfo.InvariantCulture);
+            if (tables != 3 || planColumns != 12 || itemColumns != 17 || ownerColumns != 3 || index != 1)
+                throw new StoreIncompatibleException("The node store has an unrecognized removal-plan draft layout; it was not changed.");
+        }
+
+        return new ExistingStore(version, minimum);
+    }
+
+    private static bool IsDeliveredPreCtr06Store(ExistingStore? existing) =>
+        existing is { SchemaVersion: >= 1 and <= LastDeliveredPreCtr06SchemaVersion };
+
+    private static void ApplyMigration(SqliteConnection writer, SqliteTransaction transaction, StoreMigration step)
+    {
+        using (var command = writer.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = step.Sql;
+            command.ExecuteNonQuery();
+        }
+
+        using var meta = writer.CreateCommand();
+        meta.Transaction = transaction;
+        meta.CommandText = "UPDATE store_meta SET schema_version = $version, min_reader_version = max(min_reader_version, $minReader) WHERE singleton = 1;";
+        meta.Parameters.AddWithValue("$version", step.Version);
+        meta.Parameters.AddWithValue("$minReader", step.MinReaderVersion);
+        meta.ExecuteNonQuery();
     }
 
     private static void Create(SqliteConnection writer, MigrationPlan plan, NodeStoreOptions options)

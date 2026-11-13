@@ -7,6 +7,7 @@ using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using Google.Protobuf;
 using Grpc.Core;
+using NodeShapes = ArcForges.Contracts.Node.Shapes.ContractShapeValidation;
 
 namespace ArcForges.CommandLine;
 
@@ -79,7 +80,7 @@ internal sealed class TaskRoute(Cli cli, NodeSession session, Id nodeId, bool lo
     }
 
     /// <summary>Prints a routed refusal without ever claiming an uncertain mutation did not happen.</summary>
-    public static int Fail(Cli cli, ArcError error, Id? correlation, Id? commandId = null, bool submission = false)
+    public static int Fail(Cli cli, ArcError error, Id? correlation, Id? commandId = null, bool submission = false, bool workspace = false)
     {
         if (error.Code is "not_signed_in" or "cloud_unreachable" && error.Effect == EffectCertainty.DidNotHappen)
         {
@@ -89,7 +90,9 @@ internal sealed class TaskRoute(Cli cli, NodeSession session, Id nodeId, bool lo
                 cli.Output.Fail(error, correlation);
             }
 
-            cli.Output.Error.WriteLine("arcforges: " + state + "; use 'arcforges run --local' for HUMAN diagnostics");
+            cli.Output.Error.WriteLine("arcforges: " + state + (workspace
+                ? "; connect the center and retry this workspace operation"
+                : "; use 'arcforges run --local' for HUMAN diagnostics"));
             return ExitCodes.NotFound;
         }
 
@@ -97,8 +100,10 @@ internal sealed class TaskRoute(Cli cli, NodeSession session, Id nodeId, bool lo
         {
             cli.Output.Fail(error, correlation);
             var task = error.Details.State.Resource?.Id;
-            cli.Output.Error.WriteLine("arcforges: the command may have run; inspect the named task"
-                + (task is null ? string.Empty : " " + IdText.Format(task)) + CommandText(commandId));
+            cli.Output.Error.WriteLine(workspace
+                ? "arcforges: the command may have run; inspect workspace registration before taking further action" + CommandText(commandId)
+                : "arcforges: the command may have run; inspect the named task"
+                    + (task is null ? string.Empty : " " + IdText.Format(task)) + CommandText(commandId));
             return ExitCodes.Failed;
         }
 
@@ -135,6 +140,8 @@ internal sealed class TaskRoute(Cli cli, NodeSession session, Id nodeId, bool lo
 
         return submission ? error.Code == "program_not_found" ? TaskText.ProgramNotFound : TaskText.NotStarted : exit;
     }
+
+    internal static ArcError MalformedResponse() => Internal();
 
     private static void WarnUncertain(Cli cli, Id commandId) =>
         cli.Output.Error.WriteLine("arcforges: the command may have run; do not submit a new command" + CommandText(commandId));
@@ -254,6 +261,59 @@ internal sealed class TaskRoute(Cli cli, NodeSession session, Id nodeId, bool lo
             answer => answer.Error, answer => answer.Value?.Response, TaskServiceCancelTaskResponse.Parser,
             answer => answer.Error is not null || answer.Value is not null, answer => answer.Error,
             error => new TaskServiceCancelTaskResponse { Meta = Meta(request.Meta), Error = error }, request.Meta!.CommandId, TimeSpan.FromSeconds(25), cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+
+    public async Task<WorkspaceServiceRegisterWorkspaceResponse> RegisterWorkspaceAsync(WorkspaceServiceRegisterWorkspaceRequest request, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (Local) throw new InvalidOperationException("Workspace operations require the center route.");
+        var routed = new FleetServiceRegisterNodeWorkspaceRequest { Meta = request.Meta?.Clone() ?? Cli.Meta(), NodeId = NodeId.Clone(), Request = request.ToByteString() };
+        return await MutationAsync(
+            (deadline, token) => _fleet.RegisterNodeWorkspaceAsync(routed, deadline: deadline, cancellationToken: token).ResponseAsync,
+            answer => answer.Error, answer => answer.Value?.Response, WorkspaceServiceRegisterWorkspaceResponse.Parser,
+            answer => NodeShapes.IsValid(answer), answer => answer.Error,
+            error => new WorkspaceServiceRegisterWorkspaceResponse { Meta = Meta(request.Meta), Error = error }, request.Meta!.CommandId, TimeSpan.FromSeconds(20), cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<WorkspaceServiceUnregisterWorkspaceResponse> UnregisterWorkspaceAsync(WorkspaceServiceUnregisterWorkspaceRequest request, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (Local) throw new InvalidOperationException("Workspace operations require the center route.");
+        var routed = new FleetServiceUnregisterNodeWorkspaceRequest { Meta = request.Meta?.Clone() ?? Cli.Meta(), NodeId = NodeId.Clone(), Request = request.ToByteString() };
+        return await MutationAsync(
+            (deadline, token) => _fleet.UnregisterNodeWorkspaceAsync(routed, deadline: deadline, cancellationToken: token).ResponseAsync,
+            answer => answer.Error, answer => answer.Value?.Response, WorkspaceServiceUnregisterWorkspaceResponse.Parser,
+            answer => NodeShapes.IsValid(answer), answer => answer.Error,
+            error => new WorkspaceServiceUnregisterWorkspaceResponse { Meta = Meta(request.Meta), Error = error }, request.Meta!.CommandId, TimeSpan.FromSeconds(20), cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<WorkspaceServiceListWorkspacesResponse> ListWorkspacesAsync(WorkspaceServiceListWorkspacesRequest request, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (Local) throw new InvalidOperationException("Workspace operations require the center route.");
+        var routed = new FleetServiceListNodeWorkspacesRequest { Meta = request.Meta?.Clone() ?? Cli.Meta(), NodeId = NodeId.Clone(), Request = request.ToByteString() };
+        return await ReadAsync(
+            (deadline, token) => _fleet.ListNodeWorkspacesAsync(routed, deadline: deadline, cancellationToken: token).ResponseAsync,
+            answer => answer.Error, answer => answer.Value?.Response, WorkspaceServiceListWorkspacesResponse.Parser,
+            answer => NodeShapes.IsValid(answer),
+            error => new WorkspaceServiceListWorkspacesResponse { Meta = Meta(request.Meta), Error = error }, TimeSpan.FromSeconds(20), cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<WorkspaceServiceGetWorkspaceResponse> GetWorkspaceAsync(WorkspaceServiceGetWorkspaceRequest request, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (Local) throw new InvalidOperationException("Workspace operations require the center route.");
+        var routed = new FleetServiceGetNodeWorkspaceRequest { Meta = request.Meta?.Clone() ?? Cli.Meta(), NodeId = NodeId.Clone(), Request = request.ToByteString() };
+        return await ReadAsync(
+            (deadline, token) => _fleet.GetNodeWorkspaceAsync(routed, deadline: deadline, cancellationToken: token).ResponseAsync,
+            answer => answer.Error, answer => answer.Value?.Response, WorkspaceServiceGetWorkspaceResponse.Parser,
+            answer => NodeShapes.IsValid(answer),
+            error => new WorkspaceServiceGetWorkspaceResponse { Meta = Meta(request.Meta), Error = error }, TimeSpan.FromSeconds(20), cancellationToken)
             .ConfigureAwait(false);
     }
 

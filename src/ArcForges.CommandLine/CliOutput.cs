@@ -69,6 +69,19 @@ public sealed class CliOutput
     /// <summary>Writes one JSON document built from named protobuf parts and plain values.</summary>
     public void Document(JsonObject document) => WriteJson(document, indented: true);
 
+    /// <summary>Writes a JSON document with terminal-safe escaping for untrusted recovery locations.</summary>
+    internal void DocumentTerminalSafe(JsonObject document)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        using var buffer = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(buffer, new JsonWriterOptions { Indented = true }))
+        {
+            document.WriteTo(writer);
+        }
+
+        _out.WriteLine(Encoding.UTF8.GetString(buffer.ToArray()));
+    }
+
     /// <summary>Writes one JSON document through <paramref name="write"/> (documents written without protobuf reflection).</summary>
     public void Document(Action<Utf8JsonWriter> write)
     {

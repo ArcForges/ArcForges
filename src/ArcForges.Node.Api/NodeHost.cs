@@ -8,6 +8,7 @@ using ArcForges.Node.CloudLink;
 using ArcForges.Node.Core;
 using ArcForges.Node.Core.Events;
 using ArcForges.Node.Core.Execution;
+using ArcForges.Node.Core.Files;
 using ArcForges.Node.Core.Platform;
 using ArcForges.Node.Core.Security;
 using ArcForges.Node.Platform;
@@ -367,7 +368,7 @@ public static class NodeHost
         };
 
         // AF-CTR-05 N2b: the center-routed dispatcher, bound to the TaskService once the local server builds it.
-        var routed = new RoutedDispatcher(node);
+        using var routed = new RoutedDispatcher(node);
         node.RoutedDispatcher = routed;
         var versionDirectory = options.VersionDirectory
             ?? (options.HelperExecutable is { } helperPath ? Path.GetDirectoryName(Path.GetFullPath(helperPath)) : null)
@@ -439,6 +440,22 @@ public static class NodeHost
             log.Info("node.recovering", new LogField("uncleanShutdown", unclean), new LogField("bootChanged", bootChanged),
                 new LogField("storeCreated", store.Opening.Created), new LogField("migratedFrom", store.Opening.MigratedFrom ?? 0),
                 new LogField("generation", journal.Generation));
+            // No endpoint or cloud link is serving yet. A previous PREPARED file effect may have happened;
+            // persist UNKNOWN before any new call can observe or mutate its target.
+            var interruptedFiles = await processor.ExecuteAsync(context =>
+                FileMutationJournal.RecoverInterrupted(context.Transaction), CommitDurability.Full).ConfigureAwait(false);
+            if (interruptedFiles > 0)
+            {
+                log.Warning("node.file_recovery.pending", new LogField("count", interruptedFiles));
+            }
+
+            // The FULL writer fences only unraised reservations without a target journal; active approvals remain.
+            var recoveredStages = await processor.ExecuteAsync(context =>
+                PrivateStageTerminal.RecoverUnraised(context.Transaction) +
+                PrivateStageTerminal.RecoverTerminalApprovals(context.Transaction), CommitDurability.Full).ConfigureAwait(false);
+            if (recoveredStages > 0)
+                log.Warning("node.file_recovery.stages_terminal", new LogField("count", recoveredStages));
+
             foreach (var participant in options.Recovery.Prepend(execution))
             {
                 await participant.RecoverAsync(recovery, processor, node.Stopping).ConfigureAwait(false);
@@ -654,8 +671,9 @@ public static class NodeHost
                     // are pruned (node-store.md).
                     var removed = await node.Processor.ExecuteAsync(context =>
                         EventJournal.Prune(context.Transaction) + Notifications.Prune(context.Transaction) + Jobs.Prune(context.Transaction)
-                        + Approvals.Expire(context) + Approvals.Prune(context.Transaction) + AuditLog.Prune(context.Transaction)
-                        + RoutedCallLog.Prune(context.Transaction)).ConfigureAwait(false);
+                        + Approvals.Expire(context) + PrivateStageTerminal.RecoverTerminalApprovals(context.Transaction)
+                        + Approvals.Prune(context.Transaction) + AuditLog.Prune(context.Transaction)
+                        + RoutedCallLog.Prune(context.Transaction) + RoutedFileRetention.Prune(context.Transaction), CommitDurability.Full).ConfigureAwait(false);
                     var commands = node.Store.Commands.PurgeExpired();
 
                     // Sealed secret values past storage.secret_retention_hours (04 section 2) and kept temporary directories of failed attempts.

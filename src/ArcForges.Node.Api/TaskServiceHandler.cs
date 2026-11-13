@@ -244,17 +244,6 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
             source = SideEffectSource.Default;
         }
 
-        // 03 section 4 and 04 section 1: the workspace is the registered root that contains the working directory (longest prefix).
-        var workspace = _node.Store.Read(reader => ExecutionSupervisor.WorkspaceOf(reader, spec.WorkingDirectory));
-
-        // AD-0006 section 4: a HUMAN-edited retry_safety rule may assert PURE or IDEMPOTENT for a command no caller classified.
-        if (source == SideEffectSource.Default && settings.RetrySafetyRules.Count > 0
-            && PolicyRules.RetrySafety(settings.RetrySafetyRules, CommandLine(spec.Command), workspace ?? []) is { } ruled)
-        {
-            sideEffect = ruled;
-            source = SideEffectSource.Policy;
-        }
-
         var (keys, _) = KeyHolders.FromSpec(spec.Concurrency?.ExclusiveKeys ?? [], spec.Concurrency?.SharedKeys ?? []);
         var pool = spec.HasPool ? spec.Pool : "default";
         var poolPolicy = settings.PoolPolicies.FirstOrDefault(candidate => candidate.Name == pool);
@@ -276,37 +265,75 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
             warnings.Add("join_existing joins only tasks of the same session; sessions arrive with AF-AI-01, so the task was queued as a new task.");
         }
 
-        var summary = CommandText.Summary(spec.Command, settings.SecretNames);
-        var plan = new SubmitPlan
-        {
-            Parts = parts,
+        // The policy snapshot is fixed for this call, but the workspace is selected only inside the write transaction.
+        // Do all command-dependent matching and digest/serialization work before acquiring that writer.
+        var matchedRules = source == SideEffectSource.Default && settings.RetrySafetyRules.Count > 0
+            ? PolicyRules.PrepareRetrySafety(settings.RetrySafetyRules, CommandLine(spec.Command), execution.AfterRetryMatchForTests, cancellationToken)
+            : [];
+        var fingerprint = CommandText.Fingerprint(spec.Command);
+        var commandDigest = CommandText.Digest(spec, EnvironmentDigest(spec.Environment));
+        var storage = PreparedSubmitStorage.Create(parts);
+        var dependencies = spec.DependsOn.Select(dependency => (dependency.TaskId.Value.ToByteArray(),
+            dependency.HasCondition ? dependency.Condition : DependencyCondition.Succeeded)).ToArray();
+        cancellationToken.ThrowIfCancellationRequested();
 
-            // The caller's ActorRef: a center-routed owner carries its center_caller and the routed command ID (CTR5-NODE-10).
-            Owner = caller.Actor,
-            LocalDiagnostic = caller.CenterCaller is null,
-            RemoteCommandId = caller.CenterCaller is null ? null : request.Meta.CommandId.Value.ToByteArray(),
-            Title = spec.HasTitle && spec.Title.Length > 0 ? spec.Title : summary,
-            Summary = summary,
-            Fingerprint = CommandText.Fingerprint(spec.Command),
-            CommandDigest = CommandText.Digest(spec, EnvironmentDigest(spec.Environment)),
-            Kind = spec.HasKind ? spec.Kind : TaskKind.Command,
-            Pool = pool,
-            Priority = spec.HasPriority ? spec.Priority : poolPolicy is { HasDefaultPriority: true, DefaultPriority: not Priority.Unspecified } ? poolPolicy.DefaultPriority : Priority.Normal,
-            SideEffect = sideEffect,
-            SideEffectSource = source,
-            Warnings = warnings,
-            CommandId = request.Meta.CommandId,
-            Dependencies = [.. spec.DependsOn.Select(dependency => (dependency.TaskId.Value.ToByteArray(),
-                dependency.HasCondition ? dependency.Condition : DependencyCondition.Succeeded))],
-            Keys = keys,
-            WorkspaceId = workspace,
-        };
+        var summary = CommandText.Summary(spec.Command, settings.SecretNames);
         CallerKey? binding = request.CancelWhenCallerGone && session is not null
             ? new CallerKey(session.Peer.ProcessId, session.Peer.ProcessStartTime.UtcTicks)
             : null;
+        if (execution.BeforeSubmitTransactionForTests is { } beforeTransaction)
+        {
+            // Tests coordinate real registry changes here; production never sets the callback.
+            await beforeTransaction(cancellationToken).ConfigureAwait(false);
+        }
+
         var (result, replayed) = await Idempotent(request, request.Meta, caller, "SubmitTask", TaskServiceSubmitTaskResponse.Parser,
             failure => new TaskServiceSubmitTaskResponse { Meta = Meta(request.Meta), Error = failure },
-            command => new TaskServiceSubmitTaskResponse { Meta = Meta(request.Meta), Value = execution.Submit(command, plan) }).ConfigureAwait(false);
+            command =>
+            {
+                // Select the current longest active root in the very transaction that inserts the task. Unregister uses
+                // the same SQLite writer, so it either sees this live task or commits before this fresh selection.
+                var workspace = ExecutionSupervisor.WorkspaceOf(command.Transaction, spec.WorkingDirectory);
+                var effectiveSideEffect = sideEffect;
+                var effectiveSource = source;
+                // Workspace-scoped retry safety must be derived from that same selection, not an earlier read snapshot.
+                if (effectiveSource == SideEffectSource.Default
+                    && PolicyRules.PreparedRetrySafety(matchedRules, workspace ?? []) is { } ruled)
+                {
+                    effectiveSideEffect = ruled;
+                    effectiveSource = SideEffectSource.Policy;
+                }
+
+                var plan = new SubmitPlan
+                {
+                    Parts = parts,
+                    Storage = storage,
+
+                    // The caller's ActorRef: a center-routed owner carries its center_caller and the routed command ID (CTR5-NODE-10).
+                    Owner = caller.Actor,
+                    LocalDiagnostic = caller.CenterCaller is null,
+                    RemoteCommandId = caller.CenterCaller is null ? null : request.Meta.CommandId.Value.ToByteArray(),
+                    Title = spec.HasTitle && spec.Title.Length > 0 ? spec.Title : summary,
+                    Summary = summary,
+                    Fingerprint = fingerprint,
+                    CommandDigest = commandDigest,
+                    Kind = spec.HasKind ? spec.Kind : TaskKind.Command,
+                    Pool = pool,
+                    Priority = spec.HasPriority ? spec.Priority : poolPolicy is { HasDefaultPriority: true, DefaultPriority: not Priority.Unspecified } ? poolPolicy.DefaultPriority : Priority.Normal,
+                    SideEffect = effectiveSideEffect,
+                    SideEffectSource = effectiveSource,
+                    Warnings = warnings,
+                    CommandId = request.Meta.CommandId,
+                    Dependencies = dependencies,
+                    Keys = keys,
+                    WorkspaceId = workspace,
+                };
+                return new TaskServiceSubmitTaskResponse
+                {
+                    Meta = Meta(request.Meta),
+                    Value = execution.Submit(command, plan, caller.Routed is { } routed ? routed.BeforeEffect : null),
+                };
+            }).ConfigureAwait(false);
         if (result.OutcomeCase == TaskServiceSubmitTaskResponse.OutcomeOneofCase.Value && !replayed)
         {
             execution.Submitted(result.Value.TaskId.Value.Span, binding);

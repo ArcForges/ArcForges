@@ -7,6 +7,7 @@ using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Node.Core.Events;
+using ArcForges.Node.Core.Platform;
 using ArcForges.Node.Core.Resources;
 using ArcForges.Node.Platform;
 using ArcForges.Node.Store;
@@ -95,6 +96,9 @@ public sealed class SubmitPlan
     /// <summary>The spec split into its stored parts.</summary>
     public required SubmittedEnvironment Parts { get; init; }
 
+    /// <summary>Pre-serialized task metadata and digest, prepared outside the writer.</summary>
+    public required PreparedSubmitStorage Storage { get; init; }
+
     /// <summary>The owner (set by the node from the connection).</summary>
     public required ActorRef Owner { get; init; }
 
@@ -148,6 +152,39 @@ public sealed class SubmitPlan
 
     /// <summary>The task's workspace (the longest registered root containing the working directory), or <see langword="null"/>.</summary>
     public byte[]? WorkspaceId { get; init; }
+}
+
+/// <summary>The persisted spec and labels prepared before a submit transaction.</summary>
+public sealed class PreparedSubmitStorage
+{
+    private readonly SubmittedEnvironment _parts;
+
+    private PreparedSubmitStorage(SubmittedEnvironment parts, byte[] spec, byte[] digest, string labels)
+    {
+        _parts = parts;
+        Spec = spec;
+        Digest = digest;
+        Labels = labels;
+    }
+
+    internal byte[] Spec { get; }
+
+    internal byte[] Digest { get; }
+
+    internal string Labels { get; }
+
+    internal bool BelongsTo(SubmittedEnvironment parts) => ReferenceEquals(_parts, parts);
+
+    /// <summary>Serializes and hashes the redacted spec without holding the SQLite writer.</summary>
+    public static PreparedSubmitStorage Create(SubmittedEnvironment parts)
+    {
+        ArgumentNullException.ThrowIfNull(parts);
+        var spec = parts.RedactedSpec;
+        var bytes = spec.ToByteArray();
+        var labels = JsonSerializer.Serialize(new Dictionary<string, string>(spec.Labels, StringComparer.Ordinal),
+            ExecutionJsonContext.Default.DictionaryStringString);
+        return new PreparedSubmitStorage(parts, bytes, System.Security.Cryptography.SHA256.HashData(bytes), labels);
+    }
 }
 
 /// <summary>A caller of <c>cancel_when_caller_gone</c>: the submitting client process.</summary>
@@ -723,21 +760,42 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
 
     // --------------------------------------------------------------------------------------------------------------------- submit
 
+    /// <summary>
+    /// Test seam: pauses a real SubmitTask after validation but before its transaction, to coordinate a real workspace change.
+    /// Production never sets this callback; it does not supply or replace workspace, task, storage or policy behavior.
+    /// </summary>
+    internal Func<CancellationToken, Task>? BeforeSubmitTransactionForTests { get; set; }
+
+    /// <summary>Tests coordinate after an actual retry-rule match, outside the writer. Production never sets it.</summary>
+    internal Action<int>? AfterRetryMatchForTests { get; set; }
+
+    /// <summary>Tests coordinate immediately before the final routed check and task insertion. Production never sets it.</summary>
+    internal Action? BeforeSubmitEffectForTests { get; set; }
+
     /// <summary>Persists a submission in the writer (AD-0006 section 1: before the receipt) and journals it.</summary>
-    public TaskServiceSubmitTaskValue Submit(CommandContext context, SubmitPlan plan)
+    public TaskServiceSubmitTaskValue Submit(CommandContext context, SubmitPlan plan, Action? beforeEffect = null)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(plan);
+        if (!plan.Storage.BelongsTo(plan.Parts))
+        {
+            throw new ArgumentException("The prepared metadata must belong to this submission.", nameof(plan));
+        }
+
         var transaction = context.Transaction;
         var now = transaction.NowMicroseconds;
         var taskId = StoreIds.NewUuid7(transaction.Clock);
         var spec = plan.Parts.RedactedSpec;
         byte[]? envDigest = plan.Parts.Snapshot is { } snapshot ? EnvSnapshots.Reference(transaction, snapshot) : null;
-        var specBytes = spec.ToByteArray();
-        var labels = JsonSerializer.Serialize(new Dictionary<string, string>(spec.Labels, StringComparer.Ordinal), ExecutionJsonContext.Default.DictionaryStringString);
+        var specBytes = plan.Storage.Spec;
+        var labels = plan.Storage.Labels;
 
         // 04 section 8: a task with dependencies starts in WAITING_DEPENDENCY; the admission pass queues or cancels it.
         var waiting = plan.Dependencies.Count > 0;
+        // Any environment reference above is in this same transaction and is rolled back on refusal.
+        // Recheck immediately before the actual task insertion, after all preparation possible here.
+        BeforeSubmitEffectForTests?.Invoke();
+        beforeEffect?.Invoke();
         transaction.Execute(
             """
             INSERT INTO task (task_id, state, state_reason, kind, title, command_summary, spec, env_digest, spec_digest, owner, owner_origin, owner_session_id,
@@ -748,7 +806,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             """,
             ("$id", taskId), ("$state", waiting ? (int)TaskState.WaitingDependency : (int)TaskState.Queued), ("$reason", waiting ? Scheduling.BlockingReasons.Dependency : null),
             ("$kind", (int)plan.Kind), ("$title", plan.Title), ("$summary", plan.Summary), ("$spec", specBytes), ("$env", envDigest),
-            ("$specDigest", System.Security.Cryptography.SHA256.HashData(specBytes)), ("$owner", plan.Owner.ToByteArray()), ("$origin", (int)plan.Owner.Origin),
+            ("$specDigest", plan.Storage.Digest), ("$owner", plan.Owner.ToByteArray()), ("$origin", (int)plan.Owner.Origin),
             ("$session", plan.SessionId), ("$workspace", plan.WorkspaceId), ("$pool", plan.Pool), ("$priority", (int)plan.Priority), ("$sideEffect", (int)plan.SideEffect),
             ("$source", (int)plan.SideEffectSource), ("$fingerprint", plan.Fingerprint), ("$digest", plan.CommandDigest), ("$now", now),
             ("$pinned", spec.Output?.Pin == true ? 1 : 0), ("$labels", labels), ("$localDiagnostic", plan.LocalDiagnostic ? 1 : 0),
@@ -1964,7 +2022,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
 
     // ---------------------------------------------------------------------------------------------------------------- admission
 
-    private void Launch(RunningAttempt attempt, Admitted admitted, IExecutionPlatform platform, ExecutionSettings settings, Scheduling.ToolInvocation? tool)
+    private async Task LaunchAsync(RunningAttempt attempt, Admitted admitted, IExecutionPlatform platform, ExecutionSettings settings, Scheduling.ToolInvocation? tool)
     {
         var row = admitted.Row;
         var files = attempt.Files;
@@ -1983,7 +2041,34 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             spec.Command.Argv.Argv.Add(tool.Argv);
         }
         Directory.CreateDirectory(files.Directory);
-        Directory.CreateDirectory(files.TempDirectory);
+        if (OperatingSystem.IsWindows())
+        {
+            // FILE_CREATE returns the exact newly created directory handle. Persist its identity and the real task
+            // owner before exposing it to the attempt. A collision is never adopted as node-created provenance.
+            var temporaryRoot = Path.Combine(_dataRoot, "tmp");
+            StorePaths.CreatePrivateDirectory(temporaryRoot);
+            using var root = WorkspacePath.OpenRoot(temporaryRoot);
+            using var directory = root.CreateWindowsAttemptDirectory(attempt.Name);
+            try
+            {
+                await _processor.ExecuteAsync(context =>
+                {
+                    AttemptTempProvenance.Record(context.Transaction, root, directory, attempt.Name, attempt.AttemptId, attempt.TaskId);
+                    return 0;
+                }, CommitDurability.Full).ConfigureAwait(false);
+            }
+            catch (Microsoft.Data.Sqlite.SqliteException exception)
+            {
+                // A failed or uncertain registration never authorizes cleanup. Leave the directory untouched.
+                throw new InvalidOperationException("The attempt directory provenance could not be committed.", exception);
+            }
+        }
+        else
+        {
+            // Linux mkdir followed by a name-based open does not return an identity for the exact create.
+            // Preserve task execution but make no ownership claim and never auto-clean this unproven directory.
+            Directory.CreateDirectory(files.TempDirectory);
+        }
         var environment = ResolveEnvironment(spec, row, attempt, platform);
         var prepared = platform.Prepare(new CommandRequest
         {
@@ -2531,6 +2616,10 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             ("$write", exit?.IoWriteBytes ?? accounting?.IoWriteBytes ?? 0), ("$stdout", attempt.StdoutIndexed), ("$stderr", attempt.StderrIndexed),
             ("$index", attempt.IndexRecords), ("$limitBy", outcome.LimitEnforcedBy), ("$pid", root?.Pid), ("$start", root is null ? null : StoreTime.ToMicroseconds(root.StartTime)),
             ("$id", attempt.AttemptId));
+        // A recorded exit is only a lifecycle fact; a later plan still checks every remaining user, pin and lease.
+        // Missing exit evidence, surviving processes or a recorded leftover keep the directory conservatively active.
+        if (exit is not null && outcome.Reason != TerminationReason.TerminationIncomplete && leftovers.Count == 0)
+            AttemptTempProvenance.MarkIdle(transaction, attempt.AttemptId);
         var state = outcome.Reason switch
         {
             TerminationReason.Exited when outcome.ExitCode == 0 => TaskState.Succeeded,
@@ -2685,57 +2774,24 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
 
     private void CleanupTemp(RunningAttempt attempt)
     {
-        try
+        // A task exit does not prove that this name still denotes the directory the node created, or that its
+        // descendants and ancestors are protected against replacement. Retain the directory until an authorized,
+        // identity-checked cleanup can establish the required native protection for the whole operation.
+        if (Directory.Exists(attempt.Files.TempDirectory))
         {
-            var failed = _store.Read(reader => TaskRecords.GetAttemptRow(reader, attempt.AttemptId))?.Reason is { } reason && reason != TerminationReason.Exited;
-            if (failed && Settings.KeepFailedTmp)
-            {
-                return;
-            }
-
-            if (Directory.Exists(attempt.Files.TempDirectory))
-            {
-                Directory.Delete(attempt.Files.TempDirectory, recursive: true);
-            }
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or Microsoft.Data.Sqlite.SqliteException)
-        {
-            _log.Debug("execution.tmp.cleanup_failed", new LogField("attempt", attempt.Name), new LogField("errorType", exception.GetType().Name));
+            _log.Warning("execution.tmp.cleanup_unavailable", new LogField("attempt", attempt.Name),
+                new LogField("reason", "native_identity_and_tree_protection_unavailable"));
         }
     }
 
-    /// <summary>Housekeeping: removes kept temporary directories of failed attempts older than <c>keep_failed_tmp_hours</c>.</summary>
+    /// <summary>
+    /// Runs retained-attempt housekeeping. No directory is removed until its durable provenance and the required native
+    /// protection are available; age and a name under the temporary root are not removal authority.
+    /// </summary>
     public int RemoveExpiredTemp()
     {
-        var root = Path.Combine(_dataRoot, "tmp");
-        if (!Directory.Exists(root))
-        {
-            return 0;
-        }
-
-        var removed = 0;
-        var cutoff = _clock.GetUtcNow().UtcDateTime - TimeSpan.FromHours(Settings.KeepFailedTmpHours);
-        foreach (var directory in Directory.EnumerateDirectories(root))
-        {
-            if (_running.ContainsKey(Path.GetFileName(directory)))
-            {
-                continue;
-            }
-
-            try
-            {
-                if (Directory.GetLastWriteTimeUtc(directory) < cutoff)
-                {
-                    Directory.Delete(directory, recursive: true);
-                    removed++;
-                }
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-            {
-            }
-        }
-
-        return removed;
+        _log.Debug("execution.tmp.housekeeping_deferred", new LogField("reason", "native_identity_and_tree_protection_unavailable"));
+        return 0;
     }
 
     private RunningAttempt? StdinAttempt(ReadOnlySpan<byte> taskId, string attachId, out ArcError? error)

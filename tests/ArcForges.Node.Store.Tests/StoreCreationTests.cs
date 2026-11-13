@@ -67,7 +67,7 @@ public sealed partial class StoreCreationTests
             Assert.Equal(0x70, nodeId[6] & 0xF0); // UUIDv7
             Assert.Equal(NodeRole.Host, store.Metadata.Role);
             Assert.Equal(StoreMigrations.SupportedSchemaVersion, store.Metadata.SchemaVersion);
-            Assert.Equal(1, store.Metadata.MinReaderVersion);
+            Assert.Equal(StoreMigrations.SupportedSchemaVersion, store.Metadata.MinReaderVersion);
             Assert.Equal(StoreTime.ToMicroseconds(clock.Now), store.Metadata.CreatedAt);
             Assert.True(store.Metadata.PreviousShutdownClean);
             Assert.Equal(1, store.Metadata.JournalGeneration);

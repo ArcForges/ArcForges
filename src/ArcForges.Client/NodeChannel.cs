@@ -32,6 +32,7 @@ public sealed class NodeChannel : IAsyncDisposable
         Policy = new PolicyService.PolicyServiceClient(_channel.CallInvoker);
         Approvals = new ApprovalService.ApprovalServiceClient(_channel.CallInvoker);
         Account = new AccountService.AccountServiceClient(_channel.CallInvoker);
+        Files = new FileService.FileServiceClient(_channel.CallInvoker);
     }
 
     /// <summary>The call invoker for additional services served on this same authenticated local connection.</summary>
@@ -63,6 +64,9 @@ public sealed class NodeChannel : IAsyncDisposable
 
     /// <summary>The generated AccountService client (AF-CTR-04: account status and sign-out; sign-in arrives with part N2).</summary>
     public AccountService.AccountServiceClient Account { get; }
+
+    /// <summary>The local file-operation recovery client; ordinary file operations route through the center.</summary>
+    public FileService.FileServiceClient Files { get; }
 
     /// <summary>True once an operating-system connection to the endpoint was opened.</summary>
     public bool EverConnected => Volatile.Read(ref _connected) != 0;

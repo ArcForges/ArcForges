@@ -29,11 +29,11 @@ public static class RoutedCommandOwnership
         }
 
         long createdAt;
+        long expiresAt;
         Origin origin;
-        using (var command = reader.CreateCommand("SELECT origin, created_at FROM command_dedup WHERE command_id = $id AND expires_at > $now;"))
+        using (var command = reader.CreateCommand("SELECT origin, created_at, expires_at FROM command_dedup WHERE command_id = $id;"))
         {
             command.Parameters.AddWithValue("$id", id);
-            command.Parameters.AddWithValue("$now", reader.NowMicroseconds);
             using var row = command.ExecuteReader();
             if (!row.Read())
             {
@@ -42,6 +42,12 @@ public static class RoutedCommandOwnership
 
             origin = (Origin)row.GetInt32(0);
             createdAt = row.GetInt64(1);
+            expiresAt = row.GetInt64(2);
+        }
+
+        if (expiresAt <= reader.NowMicroseconds && !RoutedFileRetention.IsHeld(reader, id))
+        {
+            return true;
         }
 
         if (origin != Origin.Remote)
@@ -106,9 +112,13 @@ public static class RoutedCommandOwnership
         // If a clock adjustment recreated a generation at an identical timestamp, remove only an exact stale marker before replacing it.
         transaction.Execute("DELETE FROM audit_log WHERE at = $at AND target_kind = $kind AND remote_command_id = $id;",
             ("$at", at), ("$kind", TargetKind), ("$id", id));
-        transaction.Execute("""
+        var seq = (long)transaction.Scalar("""
             INSERT INTO audit_log (at, actor, operation, target_kind, target_id, decision, approval_id, remote_command_id, outcome_summary)
-            VALUES ($at, $actor, 'routed.command.outcome', $kind, NULL, $decision, NULL, $id, 'routed command outcome recorded');
-            """, ("$at", at), ("$actor", actor.ToByteArray()), ("$kind", TargetKind), ("$decision", (int)PermissionDecision.Unspecified), ("$id", id));
+            VALUES ($at, $actor, 'routed.command.outcome', $kind, NULL, $decision, NULL, $id, 'routed command outcome recorded') RETURNING seq;
+            """, ("$at", at), ("$actor", actor.ToByteArray()), ("$kind", TargetKind), ("$decision", (int)PermissionDecision.Unspecified), ("$id", id))!;
+        if (RoutedFileRetention.IsHeld(transaction, id))
+        {
+            RoutedFileRetention.MarkAudit(transaction, seq);
+        }
     }
 }

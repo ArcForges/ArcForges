@@ -3,6 +3,7 @@ using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Node.Core.Events;
+using ArcForges.Node.Core.Files;
 using ArcForges.Node.Store;
 using Google.Protobuf;
 
@@ -85,6 +86,9 @@ public sealed class NodeRuntime : IDisposable
 
     /// <summary>The node ID (16 bytes).</summary>
     public ReadOnlyMemory<byte> NodeId => Store.Metadata.NodeId;
+
+    // All file handlers of this runtime share the actual in-process stage leases.
+    internal FileStageBudget FileStages { get; } = new();
 
     /// <summary>The execution supervisor (set by the host before the API listens).</summary>
     public Execution.ExecutionSupervisor? Execution { get; set; }

@@ -752,8 +752,11 @@ public sealed partial class ExecutionSupervisor
         while (rows.Read())
         {
             var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(rows.GetString(1)));
+            // Native filesystem roots already end in a separator ("/", "C:\\", UNC roots). Do not double it.
+            var prefix = Path.EndsInDirectorySeparator(root) ? root : root + Path.DirectorySeparatorChar;
+            var alternate = Path.EndsInDirectorySeparator(root) ? root : root + Path.AltDirectorySeparatorChar;
             var inside = string.Equals(directory, root, comparison)
-                || directory.StartsWith(root + Path.DirectorySeparatorChar, comparison) || directory.StartsWith(root + Path.AltDirectorySeparatorChar, comparison);
+                || directory.StartsWith(prefix, comparison) || directory.StartsWith(alternate, comparison);
             if (inside && root.Length > bestLength)
             {
                 best = (byte[])rows.GetValue(0);
@@ -780,6 +783,7 @@ public sealed partial class ExecutionSupervisor
     private async Task StartAttemptAsync(QueuedRow queued, Admission grant, (long Cpu, long Expected, long Ceiling, EstimateSource Source) request,
         IReadOnlyList<HeldKey> keys, ExecutionSettings settings)
     {
+        using var fileCleanupAdmission = await CoordinateFileCleanupAsync(_stopping).ConfigureAwait(false);
         var platform = Platform!;
         var taskId = queued.TaskId;
         var attemptId = StoreIds.NewUuid7(_clock);
@@ -899,7 +903,7 @@ public sealed partial class ExecutionSupervisor
                 new LogField("cpuGrant", grant.CpuGrant), new LogField("memExpected", request.Expected),
                 new LogField("accountedAfter", _running.Values.Sum(running => running.AccountedMemory)), new LogField("budgetMemory", Queue?.BudgetMemory ?? -1),
                 new LogField("toolParallelism", tool?.Parallelism ?? 0));
-            Launch(attempt, admitted, platform, settings, tool);
+            await LaunchAsync(attempt, admitted, platform, settings, tool).ConfigureAwait(false);
         }
         catch (CommandRefusedException exception)
         {

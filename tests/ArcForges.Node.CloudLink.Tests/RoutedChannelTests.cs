@@ -51,6 +51,26 @@ public sealed class RoutedChannelTests
         }
     }
 
+    [Fact(Timeout = 30_000)]
+    public async Task SessionEndingSignalsFileEffectsBeforeWaitingForTheCloseFrame()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var dispatcher = new EndingProbe();
+        var (link, connection) = await ChannelTests.ConnectedAsync(configured => configured.Dispatcher = dispatcher);
+        await using (link)
+        {
+            var (call, _) = link.Center.Channel.BuildCall(connection, new FakeCallSpec { Method = RoutedMethod.GetNodeTask });
+            await connection.SendCallAsync(call);
+            await dispatcher.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10), ct);
+            Assert.True(await link.Service.SetCloudLinkAsync(false));
+            var observation = await dispatcher.Signaled.Task.WaitAsync(TimeSpan.FromSeconds(10), ct);
+            Assert.False(observation.Usable);
+            Assert.False(observation.SessionCanceled); // Ending signals synchronously before the ordinary close/cancel path.
+            await connection.Done.WaitAsync(TimeSpan.FromSeconds(10), ct);
+            Assert.Empty(connection.VerifiedResults);
+        }
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -265,6 +285,22 @@ public sealed class RoutedChannelTests
             Assert.Equal(("approval_required", "approval"), (refused.Error.Code, refused.Error.Details.State.Resource.Kind));
             Assert.Equal(new List<(long, string?, string?, bool)> { (1L, null, "VALIDATION/invalid_argument", true), (2L, null, "AUTHORIZATION/approval_required", true) },
                 link.RoutedLog());
+        }
+    }
+
+    private sealed class EndingProbe : IRoutedDispatcher
+    {
+        internal TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource<(bool Usable, bool SessionCanceled)> Signaled { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task<RoutedAnswer?> DispatchAsync(VerifiedCall call, IRoutedLink link, CancellationToken cancellationToken)
+        {
+            using var registration = link.EffectEnding.Register(() =>
+                Signaled.TrySetResult((link.Usable, cancellationToken.IsCancellationRequested)));
+            Entered.TrySetResult();
+            await Signaled.Task.ConfigureAwait(false);
+            return null;
         }
     }
 

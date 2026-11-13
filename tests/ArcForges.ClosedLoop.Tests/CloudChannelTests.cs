@@ -143,6 +143,8 @@ public sealed class CloudChannelTests
             Meta = new RequestMeta { CommandId = CommandIds.New(), CorrelationId = CommandIds.New() },
         }, cancellationToken: ct)).Error);
         await node.StopNodeAsync();
+        // The stop command has returned; wait for this node and its supervisor to release the database before scanning every file.
+        await TestNode.WaitAsync(() => node.LiveProcesses().Count == 0, TimeSpan.FromSeconds(30), "the node and its supervisor to exit");
 
         var secrets = Path.Combine(node.DataRoot, "run", "test-secrets") + Path.DirectorySeparatorChar;
         var markerBytes = System.Text.Encoding.UTF8.GetBytes(marker);
