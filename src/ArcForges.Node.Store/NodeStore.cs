@@ -109,6 +109,7 @@ public sealed class StoreOpening
 public sealed class NodeStore : IDisposable
 {
     private const int BusyTimeoutMilliseconds = 5000;
+    private const int LastDeliveredPreCtr06SchemaVersion = 2;
     private readonly Lock _writerGate = new();
     private readonly SqliteConnection _writer;
     private readonly TimeProvider _clock;
@@ -204,24 +205,26 @@ public sealed class NodeStore : IDisposable
             else if (existing.SchemaVersion < plan.LatestVersion)
             {
                 var backup = StoreBackups.Create(writer, dataRoot, existing.SchemaVersion, plan.LatestVersion, options.Clock);
-                foreach (var step in plan.Steps.Where(step => step.Version > existing.SchemaVersion))
+                var pending = plan.Steps.Where(step => step.Version > existing.SchemaVersion);
+                if (IsDeliveredPreCtr06Store(existing) && plan.LatestVersion >= 13 &&
+                    plan.Steps[12].Name == "0013-schema-step-13.sql")
                 {
+                    // The AF-CTR-06 intermediate schemas were never delivered. Roll the whole pending chain
+                    // back on failure so a supported predecessor cannot be stranded at an unsupported draft.
                     InTransaction(writer, CommitDurability.Full, transaction =>
                     {
-                        using (var command = writer.CreateCommand())
+                        foreach (var step in pending)
                         {
-                            command.Transaction = transaction;
-                            command.CommandText = step.Sql;
-                            command.ExecuteNonQuery();
+                            ApplyMigration(writer, transaction, step);
                         }
-
-                        using var meta = writer.CreateCommand();
-                        meta.Transaction = transaction;
-                        meta.CommandText = "UPDATE store_meta SET schema_version = $version, min_reader_version = max(min_reader_version, $minReader) WHERE singleton = 1;";
-                        meta.Parameters.AddWithValue("$version", step.Version);
-                        meta.Parameters.AddWithValue("$minReader", step.MinReaderVersion);
-                        meta.ExecuteNonQuery();
                     });
+                }
+                else
+                {
+                    foreach (var step in pending)
+                    {
+                        InTransaction(writer, CommitDurability.Full, transaction => ApplyMigration(writer, transaction, step));
+                    }
                 }
 
                 opening = new StoreOpening(created: false, existing.SchemaVersion, plan.LatestVersion, backup);
@@ -431,26 +434,23 @@ public sealed class NodeStore : IDisposable
                         $"The node store needs a reader of schema version {minReader} or later; this binary reads up to version {plan.LatestVersion}. Install a newer ArcForges version (13-distribution-updates section 6)."));
                 }
 
-                // A prior binary may already have this store open and continue its old path-based housekeeping
-                // after a schema upgrade. A new minimum-reader version only prevents later opens. Until the upgrade
-                // path can prove exclusion of all prior node instances, do not migrate an existing store to step 13.
-                if (existing is { SchemaVersion: < 13 } && plan.LatestVersion >= 13 &&
+                // NodeHost takes the normal single-instance guard before opening a delivered schema-1/2
+                // store. Unpublished AF-CTR-06 intermediate stores remain unsupported upgrade inputs.
+                if (!IsDeliveredPreCtr06Store(existing) && existing is { SchemaVersion: < 13 } && plan.LatestVersion >= 13 &&
                     plan.Steps[12].Name == "0013-schema-step-13.sql")
                 {
                     throw new StoreIncompatibleException("The node store cannot be upgraded to schema 13 until prior node-instance exclusion is established; it was not changed.");
                 }
 
-                // A schema-13 instance already open could act on files without the new ownership rules. A reader
-                // floor does not stop that instance, so existing stores stay unchanged until process exclusion exists.
-                if (existing is { SchemaVersion: < 14 } && plan.LatestVersion >= 14 &&
+                // The draft schema-13 ownership layout is not a delivered predecessor.
+                if (!IsDeliveredPreCtr06Store(existing) && existing is { SchemaVersion: < 14 } && plan.LatestVersion >= 14 &&
                     plan.Steps[13].Name == "0014-schema-step-14.sql")
                 {
                     throw new StoreIncompatibleException("The node store cannot be upgraded to schema 14 until prior node-instance exclusion is established; it was not changed.");
                 }
 
-                // Stage producers must not share a store with a pre-15 Node that can resume synchronous body IO.
-                // This remains a conservative refusal until the real native old-instance bridge is admitted.
-                if (existing is { SchemaVersion: < 15 } && plan.LatestVersion >= 15 &&
+                // The draft schema-14 producer layout is not a delivered predecessor.
+                if (!IsDeliveredPreCtr06Store(existing) && existing is { SchemaVersion: < 15 } && plan.LatestVersion >= 15 &&
                     plan.Steps[14].Name == "0015-schema-step-15.sql")
                 {
                     throw new StoreIncompatibleException("The node store cannot be upgraded to schema 15 until prior node-instance exclusion is established; it was not changed.");
@@ -574,6 +574,26 @@ public sealed class NodeStore : IDisposable
         }
 
         return new ExistingStore(version, minimum);
+    }
+
+    private static bool IsDeliveredPreCtr06Store(ExistingStore? existing) =>
+        existing is { SchemaVersion: >= 1 and <= LastDeliveredPreCtr06SchemaVersion };
+
+    private static void ApplyMigration(SqliteConnection writer, SqliteTransaction transaction, StoreMigration step)
+    {
+        using (var command = writer.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = step.Sql;
+            command.ExecuteNonQuery();
+        }
+
+        using var meta = writer.CreateCommand();
+        meta.Transaction = transaction;
+        meta.CommandText = "UPDATE store_meta SET schema_version = $version, min_reader_version = max(min_reader_version, $minReader) WHERE singleton = 1;";
+        meta.Parameters.AddWithValue("$version", step.Version);
+        meta.Parameters.AddWithValue("$minReader", step.MinReaderVersion);
+        meta.ExecuteNonQuery();
     }
 
     private static void Create(SqliteConnection writer, MigrationPlan plan, NodeStoreOptions options)
