@@ -139,6 +139,92 @@ public sealed class FileStageProducerHostTests
             Assert.Equal(ApprovalState.Denied, denied.Value.Approval.State);
             Assert.False(File.Exists(Path.Combine(root, write.Path.Path)));
             Assert.Equal(body, File.ReadAllBytes(Path.Combine(root, stageName)));
+            if (OperatingSystem.IsLinux())
+            {
+                // Linux approval effects use the same reopened private source FDs, rather than staging new copies.
+                // Windows final target worker qualification is separate from its initial private-stage producer.
+                async Task<byte[]> Approve(IMessage request, RequestMeta meta, RoutedMethod method)
+                {
+                    var (header, payload) = await Invoke(method, request, meta.CommandId, script);
+                    Assert.Equal(RoutedOutcome.RefusedByPolicy, header.Outcome);
+                    Assert.Equal("approval_required", header.Error?.Code);
+                    Assert.Empty(payload);
+                    var actualApproval = await restartedHuman.Approvals.GetApprovalAsync(new ApprovalServiceGetApprovalRequest
+                    {
+                        ApprovalId = header.Error!.Details.State.Resource.Id.Clone(),
+                    }, cancellationToken: ct);
+                    Assert.Null(actualApproval.Error);
+                    var expires = ProtoTime.ToDateTimeOffset(actualApproval.Value.Approval.ExpiresAt)!.Value;
+                    var remainingSeconds = (expires - DateTimeOffset.UtcNow).TotalSeconds;
+                    TestContext.Current.TestOutputHelper?.WriteLine($"actual approval remaining seconds={remainingSeconds:F3}; execution native budget remains 10 seconds");
+                    Assert.True(remainingSeconds > 300); // The real default approval TTL is not a routed signature lifetime.
+                    var decision = await restartedHuman.Approvals.DecideApprovalAsync(new ApprovalServiceDecideApprovalRequest
+                    {
+                        Meta = Command(),
+                        ApprovalId = header.Error!.Details.State.Resource.Id.Clone(),
+                        Decision = ApprovalDecisionKind.Approve,
+                    }, cancellationToken: ct);
+                    Assert.Null(decision.Error);
+                    var (replayHeader, replay) = await Invoke(method, request, meta.CommandId, script);
+                    var error = request is FileServiceWriteFileRequest ? FileServiceWriteFileResponse.Parser.ParseFrom(replay).Error :
+                        FileServiceEditFileResponse.Parser.ParseFrom(replay).Error;
+                    TestContext.Current.TestOutputHelper?.WriteLine($"approved state={decision.Value.Approval.State}; outer={replayHeader.Error?.Code}; inner={error?.Code}/{error?.Details?.State?.Reason}");
+                    Assert.Equal(ApprovalState.Executed, decision.Value.Approval.State);
+                    Assert.Equal(RoutedOutcome.Executed, replayHeader.Outcome);
+                    return replay;
+                }
+                var create = write.Clone();
+                create.Meta = Command();
+                create.Path.Path = "script-approved-created.txt";
+                create.Data = ByteString.CopyFromUtf8("REAL_APPROVED_SOURCE_fd28 hello");
+                var created = FileServiceWriteFileResponse.Parser.ParseFrom(await Approve(create, create.Meta, RoutedMethod.WriteNodeFile));
+                Assert.Null(created.Error);
+                Assert.Equal(create.Data.ToByteArray(), File.ReadAllBytes(Path.Combine(root, create.Path.Path)));
+                var ownerBefore = AssertCreatedOwner(node.DataRoot, create, script, create.Data.ToByteArray());
+                var update = new FileServiceWriteFileRequest
+                {
+                    Meta = Command(),
+                    Path = create.Path.Clone(),
+                    ExpectedSha256 = created.Value.Result.Sha256,
+                    Data = ByteString.CopyFromUtf8("REAL_APPROVED_SOURCE_fd28 updated hello"),
+                };
+                var updated = FileServiceWriteFileResponse.Parser.ParseFrom(await Approve(update, update.Meta, RoutedMethod.WriteNodeFile));
+                Assert.Null(updated.Error);
+                Assert.Equal(update.Data.ToByteArray(), File.ReadAllBytes(Path.Combine(root, create.Path.Path)));
+                Assert.Equal(ownerBefore, AssertCreatedOwner(node.DataRoot, create, script, update.Data.ToByteArray()));
+                var edit = new FileServiceEditFileRequest
+                {
+                    Meta = Command(),
+                    Path = create.Path.Clone(),
+                    ExpectedSha256 = updated.Value.Result.Sha256,
+                    OldText = "hello",
+                    NewText = "world",
+                    ExpectedOccurrences = 1,
+                };
+                var edited = FileServiceEditFileResponse.Parser.ParseFrom(await Approve(edit, edit.Meta, RoutedMethod.EditNodeFile));
+                Assert.Null(edited.Error);
+                Assert.Equal(1U, edited.Value.Result.Replacements);
+                var final = Encoding.UTF8.GetBytes("REAL_APPROVED_SOURCE_fd28 updated world");
+                Assert.Equal(final, File.ReadAllBytes(Path.Combine(root, create.Path.Path)));
+                Assert.Equal(ownerBefore, AssertCreatedOwner(node.DataRoot, create, script, final));
+                var readFinal = new FileServiceReadFileRequest
+                {
+                    Meta = new RequestMeta { CorrelationId = CommandIds.New() },
+                    Path = create.Path.Clone(),
+                    Offset = 0,
+                    Length = checked((uint)final.Length),
+                };
+                var readBack = FileServiceReadFileResponse.Parser.ParseFrom((await Invoke(RoutedMethod.ReadNodeFile, readFinal, null, script)).Payload);
+                Assert.Null(readBack.Error);
+                Assert.Equal(final, readBack.Value.Data.ToByteArray());
+                var plan = new FileServicePlanRemovalRequest { Meta = Command(), WorkspacePath = create.Path.Clone() };
+                var planned = FileServicePlanRemovalResponse.Parser.ParseFrom((await Invoke(
+                    RoutedMethod.PlanNodeRemoval, plan, plan.Meta.CommandId, script)).Payload);
+                // Existing PlanRemoval globally refuses when private-stage records exist. This remains an independent
+                // gap; SCRIPT provenance also does not grant AGENT-only unattended owner verification or strict cleanup.
+                Assert.Equal("file_access_denied", planned.Error?.Code);
+                Assert.Null(planned.Value);
+            }
             Assert.Empty(connection.UnverifiedResults);
         }
         finally
@@ -194,6 +280,41 @@ public sealed class FileStageProducerHostTests
         Assert.Equal((byte[])row.GetValue(6), (byte[])row.GetValue(16));
         Assert.Equal(0, row.GetInt64(17)); // Stage reservation is not a fabricated target PREPARED.
         Assert.False(row.Read());
+    }
+
+    private static byte[] AssertCreatedOwner(string dataRoot, FileServiceWriteFileRequest create, CenterCaller caller, byte[] body)
+    {
+        using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = StorePaths.Database(dataRoot),
+            Mode = SqliteOpenMode.ReadOnly,
+            Pooling = false,
+        }.ToString());
+        connection.Open();
+        using var query = connection.CreateCommand();
+        query.CommandText = """
+            SELECT c.caller, c.object_identity, c.creation_marker, c.last_written_size, c.last_written_sha256,
+                   j.phase, j.held, w.ended FROM file_creation_ownership c
+            JOIN file_operation_journal j ON j.command_id = c.creation_command_id
+            JOIN file_effect_worker w ON w.command_id = j.command_id
+            WHERE c.creation_command_id = $id AND c.workspace_id = $workspace AND c.relative_path = $path;
+            """;
+        query.Parameters.AddWithValue("$id", create.Meta.CommandId.Value.ToByteArray());
+        query.Parameters.AddWithValue("$workspace", create.Path.WorkspaceId.Value.ToByteArray());
+        query.Parameters.AddWithValue("$path", create.Path.Path);
+        using var row = query.ExecuteReader();
+        Assert.True(row.Read(), "Only a real approved creation can generate its durable provenance.");
+        Assert.Equal(caller, CenterCaller.Parser.ParseFrom((byte[])row.GetValue(0)));
+        var identity = (byte[])row.GetValue(1);
+        Assert.Equal(53, identity.Length);
+        Assert.Equal(32, ((byte[])row.GetValue(2)).Length);
+        Assert.Equal(body.Length, row.GetInt64(3));
+        Assert.Equal(SHA256.HashData(body), (byte[])row.GetValue(4));
+        Assert.Equal(2, row.GetInt32(5));
+        Assert.Equal(0, row.GetInt32(6));
+        Assert.Equal(1, row.GetInt32(7));
+        Assert.False(row.Read());
+        return identity;
     }
 
     private static RequestMeta Command() => new() { CommandId = CommandIds.New(), CorrelationId = CommandIds.New() };

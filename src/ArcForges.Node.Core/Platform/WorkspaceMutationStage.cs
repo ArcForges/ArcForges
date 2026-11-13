@@ -12,5 +12,6 @@ internal abstract class WorkspaceMutationStage : IDisposable
     internal abstract ReadOnlyMemory<byte> Sha256 { get; }
     internal abstract WorkspaceGuardedContent ReadVerified(CancellationToken cancellationToken);
     internal abstract void CheckIntact();
+    internal abstract WorkspaceWriteGuard GuardForLinuxHandoff { get; }
     public abstract void Dispose();
 }

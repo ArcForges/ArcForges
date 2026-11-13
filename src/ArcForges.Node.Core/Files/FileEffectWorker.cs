@@ -9,7 +9,7 @@ namespace ArcForges.Node.Core.Files;
 /// Metadata-only lifetime fence for a Linux effect worker. It does not authorize a worker or perform an effect:
 /// the caller must complete peer/capability binding and commit PREPARED before any effect can be permitted.
 /// </summary>
-internal static class FileEffectWorker
+internal static partial class FileEffectWorker
 {
     /// <summary>
     /// Records a challenge-sealed live child against the exact PREPARED intent, in the same FULL transaction in which

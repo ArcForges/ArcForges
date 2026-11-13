@@ -48,7 +48,7 @@ internal sealed class WorkspaceAnonymousStage : WorkspaceMutationStage
 
     internal override void CheckIntact() => _guard.CheckIntact();
 
-    internal WorkspaceWriteGuard GuardForLinuxHandoff => _guard;
+    internal override WorkspaceWriteGuard GuardForLinuxHandoff => _guard;
 
     internal int DescriptorForTests() => _guard.AnonymousDescriptorForTests();
 

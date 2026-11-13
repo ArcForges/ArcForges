@@ -27,6 +27,7 @@ internal sealed class RecoveredPrivateStage(WorkspacePath directory, WorkspaceWr
         throw new WorkspacePathException("file_identity_changed");
     }
     internal override void CheckIntact() => Guard.CheckIntact();
+    internal override WorkspaceWriteGuard GuardForLinuxHandoff => Guard;
     public override void Dispose()
     {
         try { Guard.Dispose(); }

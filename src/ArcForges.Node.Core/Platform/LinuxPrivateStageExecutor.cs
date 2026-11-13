@@ -24,7 +24,7 @@ internal static partial class LinuxFileEffectExecutor
             using var writer = new BinaryWriter(stream, System.Text.Encoding.UTF8, leaveOpen: true);
             var binding = LinuxPrivateStageBinding.Read(reader);
             using var timer = LinuxFatalDeadline.ArmAbsolute(binding.Deadline);
-            using var expiryTimer = LinuxFatalDeadline.ArmRealtimeExpiry(binding.ExpiryMicroseconds);
+            using var expiryTimer = LinuxFatalDeadline.ArmRealtimeExpiry(binding.ExpiryMicroseconds, binding.Deadline);
             if (binding.WorkerIdentity.ProcessId != Environment.ProcessId ||
                 binding.WorkerIdentity.Observe() != LinuxProcessObservation.Alive)
                 throw new InvalidOperationException("The producer generation does not match this actual child.");

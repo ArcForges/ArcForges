@@ -25,15 +25,13 @@ internal static partial class LinuxFileEffectExecutor
             using var writer = new BinaryWriter(stream, System.Text.Encoding.UTF8, leaveOpen: true);
             var binding = LinuxFileCreationBinding.Read(reader);
             using var timer = LinuxFatalDeadline.ArmAbsolute(binding.Deadline);
-            using var expiryTimer = LinuxFatalDeadline.ArmRealtimeExpiry(binding.ExpiryMicroseconds);
+            using var expiryTimer = LinuxFatalDeadline.ArmRealtimeExpiry(binding.ExpiryMicroseconds, binding.Deadline);
             socket.ReceiveTimeout = 0;
             EnsureOriginalSignalIsFatal();
             handles = LinuxDescriptorTransfer.Receive(socket, 3);
             var root = handles[0];
             var parent = handles[1];
             var stage = handles[2];
-            // The named approval-source protocol is connected separately; never reinterpret it as anonymous.
-            if (binding.DurableStage) throw new WorkspacePathException("file_guard_unavailable");
             AdoptCreationLease(stage);
             WorkspaceObjectIdentity? created = null;
             void Check()
@@ -44,13 +42,14 @@ internal static partial class LinuxFileEffectExecutor
                 var parentId = WorkspacePath.Identity(parent);
                 var stageId = WorkspacePath.Identity(stage);
                 if (!rootId.IsDirectory || rootId.Links == 0 || !parentId.IsDirectory || parentId.Links == 0 ||
-                    !stageId.IsFile || stageId.Links != 0 || (stageId.Mode & 0x3f) != 0 ||
+                    !stageId.IsFile || stageId.Links != (binding.DurableStage ? 1u : 0u) || (stageId.Mode & 0x3f) != 0 ||
                     rootId.Volume != parentId.Volume || rootId.High != parentId.High ||
                     rootId.Volume != stageId.Volume || rootId.High != stageId.High ||
                     !Matches(rootId, binding.RootIdentity, directory: true, anonymous: false) ||
                     !Matches(parentId, binding.ParentIdentity, directory: true, anonymous: false) ||
-                    !Matches(stageId, binding.IntendedStageIdentity, directory: false, anonymous: true))
+                    !Matches(stageId, binding.IntendedStageIdentity, directory: false, anonymous: !binding.DurableStage))
                     throw new WorkspacePathException("file_identity_changed");
+                if (binding.DurableStage) WorkspacePath.CheckPrivateLinuxNamedStageSecurity(stage);
                 CheckCreationLease(stage);
                 if (target is not null && created is { } expected)
                 {

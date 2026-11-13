@@ -31,6 +31,21 @@ internal sealed unsafe partial class LinuxFatalDeadline : IDisposable
     internal static LinuxFatalDeadline ArmRealtimeExpiry(long expiryMicroseconds) =>
         Arm(0, checked(expiryMicroseconds * 1_000), 300 * NanosecondsPerSecond);
 
+    /// <summary>
+    /// An approval may outlive the routed-signature lifetime. Its realtime kill timer is conservatively capped by
+    /// this execution's already bound monotonic remainder; neither a long approval TTL nor a clock rollback renews
+    /// the independent original monotonic SIGKILL timer. This method never changes the durable approval expiry.
+    /// </summary>
+    internal static LinuxFatalDeadline ArmRealtimeExpiry(long expiryMicroseconds, long monotonicDeadline)
+    {
+        var beforeRealtime = MonotonicNanoseconds();
+        var realtime = ClockNanoseconds(0);
+        var remaining = checked(monotonicDeadline - beforeRealtime);
+        if (remaining is <= 0 or > MaximumDuration) throw new ArgumentOutOfRangeException(nameof(monotonicDeadline));
+        var cappedExpiry = Math.Min(checked(expiryMicroseconds * 1000), checked(realtime + remaining));
+        return Arm(0, cappedExpiry, MaximumDuration);
+    }
+
     private static long ClockNanoseconds(int clock)
     {
         if (ClockGetTime(clock, out var time) != 0 || time.Seconds < 0 || time.Nanoseconds is < 0 or >= NanosecondsPerSecond)

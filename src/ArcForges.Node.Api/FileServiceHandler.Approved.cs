@@ -28,6 +28,7 @@ internal sealed partial class FileServiceHandler
             !caller.Approved || caller.Routed is not null)
             return null;
 
+        var nativeDeadline = OperatingSystem.IsLinux() ? checked(LinuxFatalDeadline.MonotonicNanoseconds() + 10_000_000_000) : 0;
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10), node.Clock);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token, node.Stopping);
         var token = linked.Token;
@@ -40,6 +41,19 @@ internal sealed partial class FileServiceHandler
             var start = await node.Processor.ExecuteAsync(command =>
                 BeginApproved(command.Transaction, approvalId, reference, caller, lease, token), CommitDurability.Full).ConfigureAwait(false);
             if (!start.Ready) return start.Outcome;
+            if (OperatingSystem.IsLinux())
+            {
+                try { lease.Worker = await LinuxFileEffectController.StartAsync(node.Settings.TestMode, token).ConfigureAwait(false); }
+                catch (Exception failure) when (failure is not OutOfMemoryException and not StackOverflowException)
+                {
+                    // This child has received no binding or target descriptor, so no target effect was possible.
+                    return await node.Processor.ExecuteAsync(command => FileMutationJournal.CompleteApprovedPreparedRefusal(
+                        command.Transaction, approvalId, ApprovedFileRefusal.EnforcementUnavailable), CommitDurability.Full).ConfigureAwait(false);
+                }
+                var registered = await node.Processor.ExecuteAsync(command => RegisterApprovedLinuxWorker(command.Transaction,
+                    approvalId, reference.AsSpan(1).ToArray(), caller, lease, nativeDeadline, token), CommitDurability.Full).ConfigureAwait(false);
+                if (registered is not null) return registered;
+            }
             // Never dispose a held target or stage while this callback may still be doing native I/O.
             return await node.Processor.ExecuteAsync(command =>
                 ApplyApproved(command.Transaction, approvalId, caller, lease, token), CommitDurability.Full).ConfigureAwait(false);
@@ -78,7 +92,7 @@ internal sealed partial class FileServiceHandler
         if (!ApprovedWriteAllowed(transaction, caller, plan))
             return new ApprovedMutationStart(false, FileMutationJournal.RecordApprovedPreEffectRefusal(transaction,
                 approvalId, ApprovedFileRefusal.PolicyDenied));
-        if (!OperatingSystem.IsWindows())
+        if (!OperatingSystem.IsWindows() && !(OperatingSystem.IsLinux() && LinuxFileEffectController.IsHostProcess()))
             return new ApprovedMutationStart(false, FileMutationJournal.RecordApprovedPreEffectRefusal(transaction,
                 approvalId, ApprovedFileRefusal.EnforcementUnavailable));
         try
@@ -90,18 +104,29 @@ internal sealed partial class FileServiceHandler
                 }, token);
             if (plan.Intent.TargetIdentity is not null)
             {
-                lease.Target = lease.Use.Root.OpenExistingWriteGuard(plan.Intent.RelativePath);
+                if (OperatingSystem.IsLinux())
+                {
+                    var selection = lease.Use.Root.OpenExistingWriteGuardWithNames(plan.Intent.RelativePath, token);
+                    lease.Target = selection.Guard;
+                    lease.ParentIdentity = selection.ParentIdentity;
+                    lease.CheckNames = selection.CheckNames;
+                    lease.Target.CheckLinuxWritePreservation();
+                }
+                else lease.Target = lease.Use.Root.OpenExistingWriteGuard(plan.Intent.RelativePath);
                 lease.Original = PrivateStageRegistry.ReopenReadyStage(transaction, plan.Intent.CommandId, 1,
                     plan.Intent.Caller, plan.RequestSha256, token);
             }
             else
             {
                 var slash = plan.Intent.RelativePath.LastIndexOf('/');
-                lease.ParentIdentity = WorkspacePath.Identity(lease.Use.Root.OpenDirectory(
+                if (OperatingSystem.IsLinux()) lease.CreationSelection = lease.Use.Root.PrepareLinuxCreation(plan.Intent.RelativePath, token);
+                lease.ParentIdentity = WorkspacePath.Identity(lease.CreationSelection?.Parent ?? lease.Use.Root.OpenDirectory(
                     slash < 0 ? "" : plan.Intent.RelativePath[..slash]));
             }
             lease.Intended = PrivateStageRegistry.ReopenReadyStage(transaction, plan.Intent.CommandId, 2,
                 plan.Intent.Caller, plan.RequestSha256, token);
+            lease.CheckNames?.Invoke();
+            lease.CreationSelection?.CheckNames(null);
             var prepared = FileMutationJournal.PrepareApproved(transaction, approvalId, lease.Use.Root, lease.Target,
                 lease.Original, lease.Intended, token);
             return prepared.Status switch
@@ -150,7 +175,11 @@ internal sealed partial class FileServiceHandler
             if (!time.Healthy) throw new InvalidOperationException("File validation time is unavailable.");
             if (time.BoundaryMicroseconds >= plan.ApprovalExpiresAt) throw new ApprovedFileExpiredException();
             if (!ApprovedWriteAllowed(transaction, caller, plan)) throw new FilePolicyException("denied");
+            if (OperatingSystem.IsLinux() && LinuxFatalDeadline.MonotonicNanoseconds() >= lease.NativeDeadline)
+                throw new OperationCanceledException(token);
         }
+
+        if (OperatingSystem.IsLinux()) return ApplyApprovedLinux(transaction, approvalId, caller, lease, plan, BeforeEffect, token);
 
         if (plan.Intent.TargetIdentity is null)
         {
@@ -262,8 +291,32 @@ internal sealed partial class FileServiceHandler
         internal WorkspaceObjectIdentity? ParentIdentity { get; set; }
         internal RecoveredPrivateStage? Original { get; set; }
         internal RecoveredPrivateStage? Intended { get; set; }
+        internal LinuxFileEffectController? Worker { get; set; }
+        internal LinuxFileEffectBinding? LinuxBinding { get; set; }
+        internal LinuxFileCreationBinding? LinuxCreation { get; set; }
+        internal WorkspaceLinuxCreationSelection? CreationSelection { get; set; }
+        internal Action? CheckNames { get; set; }
+        internal long NativeDeadline { get; set; }
+        internal bool WorkerEnded { get; set; }
 
         public void Dispose()
+        {
+            if (OperatingSystem.IsLinux() && Worker is { } worker)
+            {
+                Worker = null;
+                if (WorkerEnded)
+                {
+                    // The FULL effect callback has independently observed the exact original generation ended.
+                    // Release our target guard before a completed RPC becomes visible to the next operation.
+                    worker.Shutdown(afterExit: null);
+                    DisposeObjects();
+                }
+                else worker.Shutdown(DisposeObjects);
+            }
+            else DisposeObjects();
+        }
+
+        private void DisposeObjects()
         {
             try { Intended?.Dispose(); }
             finally

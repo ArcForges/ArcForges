@@ -56,7 +56,7 @@ internal sealed partial class LinuxFileEffectController
     internal LinuxOwnedPidfd SealedWorker => _pidfd ?? throw new InvalidOperationException("The worker is unavailable.");
 
     internal LinuxFileMutationResult Execute(LinuxFileEffectBinding binding, WorkspacePath root,
-        WorkspaceWriteGuard target, WorkspaceAnonymousStage original, WorkspaceAnonymousStage intended,
+        WorkspaceWriteGuard target, WorkspaceMutationStage original, WorkspaceMutationStage intended,
         Action beforeEffect, Action checkNames, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(binding);

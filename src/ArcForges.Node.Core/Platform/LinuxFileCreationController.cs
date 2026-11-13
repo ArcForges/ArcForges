@@ -17,7 +17,7 @@ internal sealed record LinuxFileCreationResult(WorkspaceCreatedTarget Target, Wo
 internal sealed partial class LinuxFileEffectController
 {
     internal LinuxFileCreationResult ExecuteCreation(LinuxFileCreationBinding binding, WorkspacePath root,
-        string relativePath, WorkspaceLinuxCreationSelection selection, WorkspaceAnonymousStage intended,
+        string relativePath, WorkspaceLinuxCreationSelection selection, WorkspaceMutationStage intended,
         Action beforeEffect, Action? beforeCreate, Action? afterCreate, CancellationToken cancellationToken)
     {
         var socket = _socket ?? throw new InvalidOperationException("The worker channel is unavailable.");

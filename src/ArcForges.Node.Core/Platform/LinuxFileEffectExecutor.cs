@@ -27,7 +27,7 @@ internal static partial class LinuxFileEffectExecutor
             using var writer = new BinaryWriter(stream, System.Text.Encoding.UTF8, leaveOpen: true);
             var binding = LinuxFileEffectBinding.Read(reader);
             using var timer = LinuxFatalDeadline.ArmAbsolute(binding.Deadline);
-            using var expiryTimer = LinuxFatalDeadline.ArmRealtimeExpiry(binding.ExpiryMicroseconds);
+            using var expiryTimer = LinuxFatalDeadline.ArmRealtimeExpiry(binding.ExpiryMicroseconds, binding.Deadline);
             // The kernel timers now bound this child's wait even while its parent is stopped or unscheduled.
             socket.ReceiveTimeout = 0;
             EnsureOriginalSignalIsFatal();
@@ -62,8 +62,8 @@ internal static partial class LinuxFileEffectExecutor
                 var stageIdentity = WorkspacePath.Identity(stage);
                 if (!rootIdentity.IsDirectory || rootIdentity.Links == 0 ||
                     !targetIdentity.IsFile || targetIdentity.Links != 1 || targetIdentity.Mode != targetMode ||
-                    !originalIdentity.IsFile || originalIdentity.Links != 0 || (originalIdentity.Mode & 0x3f) != 0 ||
-                    !stageIdentity.IsFile || stageIdentity.Links != 0 || (stageIdentity.Mode & 0x3f) != 0 ||
+                    !originalIdentity.IsFile || originalIdentity.Links != (binding.DurableStages ? 1u : 0u) || (originalIdentity.Mode & 0x3f) != 0 ||
+                    !stageIdentity.IsFile || stageIdentity.Links != (binding.DurableStages ? 1u : 0u) || (stageIdentity.Mode & 0x3f) != 0 ||
                     targetIdentity.Volume != rootIdentity.Volume || targetIdentity.High != rootIdentity.High ||
                     originalIdentity.Volume != rootIdentity.Volume || originalIdentity.High != rootIdentity.High ||
                     stageIdentity.Volume != rootIdentity.Volume || stageIdentity.High != rootIdentity.High ||
@@ -71,9 +71,14 @@ internal static partial class LinuxFileEffectExecutor
                     originalIdentity.SameObject(stageIdentity) ||
                     !Matches(rootIdentity, binding.RootIdentity, directory: true, anonymous: false) ||
                     !Matches(targetIdentity, binding.TargetIdentity, directory: false, anonymous: false) ||
-                    !Matches(originalIdentity, binding.OriginalStageIdentity, directory: false, anonymous: true) ||
-                    !Matches(stageIdentity, binding.IntendedStageIdentity, directory: false, anonymous: true))
+                    !Matches(originalIdentity, binding.OriginalStageIdentity, directory: false, anonymous: !binding.DurableStages) ||
+                    !Matches(stageIdentity, binding.IntendedStageIdentity, directory: false, anonymous: !binding.DurableStages))
                     throw new WorkspacePathException("file_identity_changed");
+                if (binding.DurableStages)
+                {
+                    WorkspacePath.CheckPrivateLinuxNamedStageSecurity(original);
+                    WorkspacePath.CheckPrivateLinuxNamedStageSecurity(stage);
+                }
                 if (!preserved.SameAs(LinuxPreservedMetadata.Capture(target)))
                     throw new WorkspacePreservationUnavailableException();
                 foreach (var file in new[] { target, original, stage })
