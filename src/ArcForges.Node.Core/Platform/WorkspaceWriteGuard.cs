@@ -97,7 +97,11 @@ internal sealed partial class WorkspaceWriteGuard : IDisposable
                 throw new WorkspacePathException(error is 11 or 26 ? "file_in_use" : "file_guard_unavailable");
             }
         }
-        else if (!OperatingSystem.IsWindows())
+        else if (OperatingSystem.IsWindows())
+        {
+            CheckWindowsSectionReferences(file);
+        }
+        else
         {
             throw new WorkspacePathException("file_guard_unavailable");
         }
