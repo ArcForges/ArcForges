@@ -93,13 +93,14 @@ public sealed class RoutedRemovalExecutionChannelTests
         Assert.Null(first.Error);
         Assert.Equal(2, first.Value.Plan.Items.Count);
         Assert.True(first.Value.Plan.RequiresApproval);
-        Assert.False(first.Value.Plan.QuarantineAvailable);
+        Assert.True(first.Value.Plan.QuarantineAvailable);
 
         var execute = new FileServiceExecuteRemovalRequest
         {
             Meta = CloudNode.Command(),
             PlanId = first.Value.Plan.PlanId.Clone(),
             PlanDigest = first.Value.Plan.Digest,
+            DeleteWithoutQuarantine = true,
         };
         var executionRaw = execute.ToByteArray();
         async Task<ByteString> Execute(CenterCaller source)

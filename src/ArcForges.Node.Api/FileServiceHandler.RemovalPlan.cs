@@ -256,7 +256,8 @@ internal sealed partial class FileServiceHandler
                                             if (!sample.Healthy) throw new RoutedAbortException(RoutedAbort.ClockUncertain);
                                             var prepared = FileRemovalPlans.PrepareAttempt(transaction, commandId, rawDigest, caller.CenterCaller,
                                                 caller.Actor, request.AttemptId!, Path.Combine(temporaryRoot.RootPath, target.Name),
-                                                relativeSnapshot, sample.BoundaryMicroseconds, tracking);
+                                                relativeSnapshot, sample.BoundaryMicroseconds, tracking,
+                                                RemovalQuarantineAvailable(transaction, attemptRoot.RootIdentity));
                                             response = new FileServicePlanRemovalResponse
                                             {
                                                 Meta = meta,
@@ -321,7 +322,14 @@ internal sealed partial class FileServiceHandler
                             var sample = RoutedFileValidationTime.Sample(transaction);
                             if (!sample.Healthy) throw new RoutedAbortException(RoutedAbort.ClockUncertain);
                             var prepared = FileRemovalPlans.PrepareWorkspace(transaction, commandId, rawDigest, caller.CenterCaller,
-                                caller.Actor, target, use.Root.RootPath, snapshot, sample.BoundaryMicroseconds, verifiedOwners);
+                                caller.Actor, target, use.Root.RootPath, snapshot, sample.BoundaryMicroseconds, verifiedOwners,
+                                RemovalQuarantineAvailable(transaction, use.Root.RootIdentity),
+                                verifiedOwners.Count != snapshot.Entries.Count ||
+                                PolicyRules.Current(transaction).Document.Cleanup.AgentExecute != AgentCleanupMode.LowRiskOnly ||
+                                PermissionMatrix.DecideRouted(PermissionMatrix.FileRemove, caller.CellsOrigin,
+                                    PolicyRules.Current(transaction).Document.Permissions).Decision == PermissionDecision.Approval ||
+                                PermissionMatrix.DecideRouted(PermissionMatrix.CleanupExecute, caller.CellsOrigin,
+                                    PolicyRules.Current(transaction).Document.Permissions).Decision == PermissionDecision.Approval);
                             response = new FileServicePlanRemovalResponse
                             {
                                 Meta = meta,

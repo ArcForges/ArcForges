@@ -127,7 +127,7 @@ public sealed class AttemptRemovalPlanHostTests
             Assert.Null(plan.WorkspacePath);
             Assert.Equal(RiskClass.High, plan.Risk);
             Assert.True(plan.RequiresApproval);
-            Assert.False(plan.QuarantineAvailable);
+            Assert.True(plan.QuarantineAvailable);
             Assert.Equal(4, plan.Items.Count);
             Assert.Equal((ulong)(new FileInfo(file).Length + new FileInfo(Path.Combine(directory, "child.txt")).Length), plan.TotalBytes);
             Assert.Equal("", plan.Items[0].Path);

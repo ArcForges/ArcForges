@@ -23,7 +23,7 @@ internal static class FileRemovalPlans
 
     internal static PreparedWorkspacePlan PrepareWorkspace(StoreTransaction transaction, ReadOnlySpan<byte> commandId,
         ReadOnlySpan<byte> rawSha256, CenterCaller caller, ActorRef actor, FilePath target, string rootPath,
-        WorkspaceRemovalSnapshot snapshot, long observedTime, IReadOnlySet<string>? verifiedOwnedPaths = null)
+        WorkspaceRemovalSnapshot snapshot, long observedTime, IReadOnlySet<string>? verifiedOwnedPaths = null, bool quarantineAvailable = false, bool requiresApproval = true)
     {
         ArgumentNullException.ThrowIfNull(transaction);
         ArgumentNullException.ThrowIfNull(caller);
@@ -44,11 +44,9 @@ internal static class FileRemovalPlans
             ExpiresAt = ProtoTime.ToInstant(StoreTime.FromMicroseconds(expires)),
             WorkspacePath = target.Clone(),
             TotalBytes = snapshot.TotalBytes,
-            // Ownership observations do not prove strict cleanup protection or a usable quarantine.
-            // This candidate therefore keeps the plan high-risk and requires approval.
-            RequiresApproval = true,
-            QuarantineAvailable = false,
-            Risk = RiskClass.High,
+            RequiresApproval = requiresApproval,
+            QuarantineAvailable = quarantineAvailable,
+            Risk = requiresApproval ? RiskClass.High : RiskClass.Low,
         };
         foreach (var entry in snapshot.Entries)
         {
@@ -102,10 +100,11 @@ internal static class FileRemovalPlans
             INSERT INTO file_removal_plan
               (plan_id, command_id, request_sha256, caller, target_kind, workspace_id, workspace_path,
                root_platform, root_identity, requires_approval, quarantine_available)
-            VALUES ($plan, $command, $request, $caller, 1, $workspace, $path, $platform, $root, 1, 0);
+            VALUES ($plan, $command, $request, $caller, 1, $workspace, $path, $platform, $root, $approval, $quarantine);
             """, ("$plan", planId), ("$command", commandId), ("$request", rawSha256),
             ("$caller", callerBytes), ("$workspace", target.WorkspaceId.Value.ToByteArray()), ("$path", target.Path),
-            ("$platform", snapshot.RootIdentity.Platform), ("$root", snapshot.RootIdentity.Bytes));
+            ("$platform", snapshot.RootIdentity.Platform), ("$root", snapshot.RootIdentity.Bytes),
+            ("$approval", plan.RequiresApproval ? 1 : 0), ("$quarantine", plan.QuarantineAvailable ? 1 : 0));
 
         for (var index = 0; index < snapshot.Entries.Count; index++)
         {
@@ -118,11 +117,11 @@ internal static class FileRemovalPlans
                 INSERT INTO cleanup_item
                   (plan_id, item_id, path, size_bytes, item_class, reason, risk, action,
                    fp_mtime, fp_size, fp_owner_state, external)
-                VALUES ($plan, $item, $path, $size, 10, $reason, 3, 1,
+                VALUES ($plan, $item, $path, $size, 10, $reason, $risk, 1,
                         $mtime, $size, $owner, 1);
                 """, ("$plan", planId), ("$item", itemId), ("$path", displayPath), ("$size", checked((long)entry.Size)),
                 ("$mtime", entry.Stamp.Modification), ("$reason", ownerVerified ? "ownership_verified" : "ownership_unverified"),
-                ("$owner", ownerVerified ? "verified" : "unverified"));
+                ("$owner", ownerVerified ? "verified" : "unverified"), ("$risk", ownerVerified ? 1 : 3));
             transaction.Execute("""
                 INSERT INTO file_removal_plan_item
                   (plan_id, item_id, ordinal, relative_path, entry_kind, native_platform, native_identity,
@@ -147,7 +146,8 @@ internal static class FileRemovalPlans
     /// <summary>Prepares metadata for the exact verified task-temp tree; it does not grant cleanup authority.</summary>
     internal static PreparedAttemptPlan PrepareAttempt(StoreTransaction transaction, ReadOnlySpan<byte> commandId,
         ReadOnlySpan<byte> rawSha256, CenterCaller caller, ActorRef actor, Id attemptId, string attemptRootPath,
-        WorkspaceRemovalSnapshot snapshot, long observedTime, IReadOnlyDictionary<string, AttemptDirectoryTracking> tracking)
+        WorkspaceRemovalSnapshot snapshot, long observedTime, IReadOnlyDictionary<string, AttemptDirectoryTracking> tracking,
+        bool quarantineAvailable = false)
     {
         ArgumentNullException.ThrowIfNull(transaction);
         ArgumentNullException.ThrowIfNull(caller);
@@ -187,9 +187,8 @@ internal static class FileRemovalPlans
             ExpiresAt = ProtoTime.ToInstant(StoreTime.FromMicroseconds(expires)),
             AttemptId = attemptId.Clone(),
             TotalBytes = snapshot.TotalBytes,
-            // The exact task-temp provenance is not a strict cleanup guard or a usable quarantine.
             RequiresApproval = true,
-            QuarantineAvailable = false,
+            QuarantineAvailable = quarantineAvailable,
             Risk = RiskClass.High,
         };
         foreach (var entry in snapshot.Entries)
@@ -241,10 +240,10 @@ internal static class FileRemovalPlans
             INSERT INTO file_removal_plan
               (plan_id, command_id, request_sha256, caller, target_kind, attempt_id,
                root_platform, root_identity, requires_approval, quarantine_available)
-            VALUES ($plan, $command, $request, $caller, 2, $attempt, $platform, $root, 1, 0);
+            VALUES ($plan, $command, $request, $caller, 2, $attempt, $platform, $root, 1, $quarantine);
             """, ("$plan", planId), ("$command", prepared.CommandId), ("$request", prepared.RawSha256),
             ("$caller", prepared.CallerBytes), ("$attempt", prepared.AttemptId.Value.ToByteArray()),
-            ("$platform", snapshot.RootIdentity.Platform), ("$root", snapshot.RootIdentity.Bytes));
+            ("$platform", snapshot.RootIdentity.Platform), ("$root", snapshot.RootIdentity.Bytes), ("$quarantine", plan.QuarantineAvailable ? 1 : 0));
 
         for (var index = 0; index < snapshot.Entries.Count; index++)
         {
@@ -280,6 +279,12 @@ internal static class FileRemovalPlans
                 ("$mode", (long)entry.Mode), ("$links", (long)entry.Links), ("$owner", index == 0 ? 1 : 0));
         }
     }
+
+    /// <summary>A terminal local decision releases a pending plan; an executing/unknown effect keeps its journal hold.</summary>
+    internal static int ReleaseTerminalApprovals(StoreTransaction transaction) => transaction.Execute("""
+        UPDATE cleanup_plan SET state = 7, rev = rev + 1 WHERE state = 2 AND approval_id IN
+          (SELECT approval_id FROM approval WHERE state NOT IN (1, 2));
+        """);
 
     private static byte[] Digest(FileRemovalPlan plan, ReadOnlySpan<byte> rawSha256, ReadOnlySpan<byte> caller,
         WorkspaceRemovalSnapshot snapshot)

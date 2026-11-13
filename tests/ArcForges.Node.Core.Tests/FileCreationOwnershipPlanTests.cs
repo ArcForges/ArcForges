@@ -106,7 +106,7 @@ public sealed class FileCreationOwnershipPlanTests
             var plan = response.Value.Plan;
             Assert.Single(plan.Items);
             Assert.True(plan.RequiresApproval);
-            Assert.False(plan.QuarantineAvailable);
+            Assert.True(plan.QuarantineAvailable);
             Assert.NotEqual(RiskClass.Low, plan.Risk);
             if (plan.Items[0].OwnerVerified)
             {

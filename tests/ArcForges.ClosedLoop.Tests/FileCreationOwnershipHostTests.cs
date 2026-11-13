@@ -150,9 +150,9 @@ public sealed class FileCreationOwnershipHostTests
                 var response = FileServicePlanRemovalResponse.Parser.ParseFrom(bytes);
                 Assert.Null(response.Error);
                 Assert.Equal(expectedOwner, Assert.Single(response.Value.Plan.Items).OwnerVerified);
-                // Verified provenance is not proof of the separate strict namespace/cleanup capability.
+                // The current default cleanup policy still requires the separate approval decision.
                 Assert.True(response.Value.Plan.RequiresApproval);
-                Assert.False(response.Value.Plan.QuarantineAvailable);
+                Assert.True(response.Value.Plan.QuarantineAvailable);
                 return response.Value.Plan;
             }
             _ = await Plan(agent, expectedOwner: true);
@@ -207,29 +207,60 @@ public sealed class FileCreationOwnershipHostTests
             _ = await Plan(agent, expectedOwner: true);
             Assert.Equal(original.Marker, Record(node.DataRoot, workspace, request.Path.Path, request, agent, third,
                 compareCreationReceipt: false).Marker);
-            // Exercise the new execution route through the real Host. This HUMAN uses its actual local policy
-            // ALLOW and its own plan, but neither that authority nor real creation provenance supplies a strict
-            // namespace backend. The committed refusal is a real no-effect result, never a cleanup success.
-            var humanPlan = await Plan(owner, expectedOwner: false);
+
+            await using var restartedHuman = await node.HumanChannelAsync();
+            // This is the same actual AGENT's native API-created file, including its marker and durable evidence.
+            // Grant the separate cleanup authorities and restricted LOW_RISK_ONLY policy, then execute without a HUMAN substitute.
+            current = await restartedHuman.Policy.GetPolicyAsync(new PolicyServiceGetPolicyRequest { Meta = Command() }, cancellationToken: ct);
+            Assert.Null(current.Error);
+            policy = current.Value.Document.Clone();
+            policy.Cleanup.AgentExecute = AgentCleanupMode.LowRiskOnly;
+            foreach (var operation in new[] { "file.remove", "cleanup.execute" })
+                policy.Permissions.Add(new PermissionOverride { Operation = operation, Origin = Origin.Agent, Decision = PermissionDecision.Allow });
+            policyMeta = Command();
+            policyMeta.ExpectedRev = current.Value.Revision.Revision;
+            Assert.Null((await restartedHuman.Policy.UpdatePolicyAsync(new PolicyServiceUpdatePolicyRequest
+            {
+                Meta = policyMeta,
+                Document = policy,
+                Comment = "owned native cleanup fixture",
+            }, cancellationToken: ct)).Error);
+            var removalRequest = new FileServicePlanRemovalRequest { Meta = Command(), WorkspacePath = request.Path.Clone() };
+            var (_, removalPlanBytes) = await Invoke(RoutedMethod.PlanNodeRemoval, removalRequest, removalRequest.Meta.CommandId, agent);
+            var removalPlan = FileServicePlanRemovalResponse.Parser.ParseFrom(removalPlanBytes);
+            Assert.Null(removalPlan.Error);
+            Assert.True(Assert.Single(removalPlan.Value.Plan.Items).OwnerVerified);
+            Assert.False(removalPlan.Value.Plan.RequiresApproval);
+            Assert.True(removalPlan.Value.Plan.QuarantineAvailable);
             var execution = new FileServiceExecuteRemovalRequest
             {
                 Meta = Command(),
-                PlanId = humanPlan.PlanId.Clone(),
-                PlanDigest = humanPlan.Digest,
+                PlanId = removalPlan.Value.Plan.PlanId.Clone(),
+                PlanDigest = removalPlan.Value.Plan.Digest,
             };
-            var namesBefore = Directory.GetFileSystemEntries(root, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal).ToArray();
-            var (executionOutcome, executionBytes) = await Invoke(RoutedMethod.ExecuteNodeRemoval, execution, execution.Meta.CommandId, owner);
+            var (executionOutcome, executionBytes) = await Invoke(RoutedMethod.ExecuteNodeRemoval, execution, execution.Meta.CommandId, agent);
             Assert.Equal(RoutedOutcome.Executed, executionOutcome);
-            var refusedExecution = FileServiceExecuteRemovalResponse.Parser.ParseFrom(executionBytes);
-            Assert.Equal("enforcement_unavailable", refusedExecution.Error.Code);
-            Assert.Equal("strict_cleanup_guard_unavailable", refusedExecution.Error.Details.State.Reason);
-            Assert.Equal(EffectCertainty.DidNotHappen, refusedExecution.Error.Effect);
-            var (_, executionReplay) = await Invoke(RoutedMethod.ExecuteNodeRemoval, execution, execution.Meta.CommandId, owner);
+            var removed = FileServiceExecuteRemovalResponse.Parser.ParseFrom(executionBytes);
+            Assert.Null(removed.Error);
+            Assert.True(removed.Value.Result.Quarantined);
+            Assert.False(File.Exists(Path.Combine(root, request.Path.Path)));
+            var quarantine = Path.Combine(node.DataRoot, "staging", "quarantine",
+                Convert.ToHexStringLower(execution.PlanId.Value.Span), Convert.ToHexStringLower(removed.Value.Result.QuarantineId.Value.Span));
+            Assert.Equal(third, File.ReadAllText(quarantine));
+            File.WriteAllText(Path.Combine(root, request.Path.Path), "later same name is untouched");
+            var (_, executionReplay) = await Invoke(RoutedMethod.ExecuteNodeRemoval, execution, execution.Meta.CommandId, agent);
             Assert.Equal(executionBytes, executionReplay);
-            Assert.Equal(namesBefore, Directory.GetFileSystemEntries(root, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal).ToArray());
-            Assert.Equal(third, File.ReadAllText(Path.Combine(root, request.Path.Path)));
-            Assert.Equal(original.Marker, Record(node.DataRoot, workspace, request.Path.Path, request, agent, third,
-                compareCreationReceipt: false).Marker);
+            Assert.Equal("later same name is untouched", File.ReadAllText(Path.Combine(root, request.Path.Path)));
+            Assert.Equal(third, File.ReadAllText(quarantine));
+            var status = await restartedHuman.Files.GetFileOperationAsync(new FileServiceGetFileOperationRequest
+            {
+                Meta = new RequestMeta { CorrelationId = CommandIds.New() },
+                OperationCommandId = execution.Meta.CommandId.Clone(),
+            }, cancellationToken: ct);
+            Assert.Null(status.Error);
+            Assert.Equal(FileOperationKind.Removal, status.Value.Operation.Kind);
+            Assert.Equal(FileOperationState.Completed, status.Value.Operation.State);
+            Assert.Equal(removed.Value.Result, status.Value.Operation.Removal);
             Assert.Empty(connection.UnverifiedResults);
             foreach (var file in new[] { StorePaths.Database(node.DataRoot), StorePaths.Database(node.DataRoot) + "-wal", node.NodeLog })
             {

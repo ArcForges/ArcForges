@@ -155,6 +155,7 @@ internal static partial class FileMutationJournal
         if (commandId.IndexOfAnyExcept((byte)0) < 0 || kind is not (FileOperationKind.Write or FileOperationKind.Edit) ||
             CenterRouting.Shape(caller) is not null || transmitted.Length is < 1 or > MaximumRequestBytes)
             throw new ArgumentException("A valid verified command, caller and bounded request are required.");
+        if (IsRemoval(reader, commandId)) return FileJournalPreparation.Conflict;
         var existing = ReadRow(reader, commandId);
         if (existing is null) return PrivateStageTerminal.Find(reader, kind, commandId, caller, transmitted);
         return existing.Kind == kind && CryptographicOperations.FixedTimeEquals(existing.RequestSha256, SHA256.HashData(transmitted)) &&
@@ -188,6 +189,7 @@ internal static partial class FileMutationJournal
         ArgumentNullException.ThrowIfNull(reader);
         StoreIds.Validate(commandId, nameof(commandId));
         ArgumentNullException.ThrowIfNull(caller);
+        if (IsRemoval(reader, commandId)) return RemovalOperation(reader, commandId, caller);
         var row = ReadRow(reader, commandId);
         return row is null ? PrivateStageTerminal.Get(reader, commandId, caller) :
             CenterRouting.SameFileCaller(row.Caller, caller) ? ToOperation(row) : null;
@@ -198,6 +200,7 @@ internal static partial class FileMutationJournal
     {
         ArgumentNullException.ThrowIfNull(reader);
         StoreIds.Validate(commandId, nameof(commandId));
+        if (IsRemoval(reader, commandId)) return RemovalOperation(reader, commandId, caller: null);
         var row = ReadRow(reader, commandId);
         return row is null ? PrivateStageTerminal.Get(reader, commandId, caller: null) : ToOperation(row);
     }
@@ -216,6 +219,7 @@ internal static partial class FileMutationJournal
         var actor = new ActorRef { Origin = Origin.Human, ClientKind = verifiedHuman.ClientKind };
         StoreIds.Validate(commandId, nameof(commandId));
         if (requestSha256.Length != 32) throw new ArgumentException("A request SHA-256 has 32 bytes.", nameof(requestSha256));
+        if (IsRemoval(transaction, commandId)) return AcknowledgeRemoval(transaction, commandId, requestSha256, actor);
         var row = ReadRow(transaction, commandId);
         void Audit(PermissionDecision decision, string outcome) => AuditLog.AppendFileWorkspace(transaction, actor,
             "file.acknowledge FileService.AcknowledgeFileOperation", row?.WorkspaceId, null, row?.Path, decision, outcome, null);

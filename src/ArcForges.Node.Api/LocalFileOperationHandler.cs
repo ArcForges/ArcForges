@@ -62,8 +62,11 @@ internal sealed class LocalFileOperationHandler(NodeRuntime node, ClientSessions
             // Retained named stages can outlive both UNKNOWN and terminal outcomes. Only a verified local HUMAN
             // receives their checked or last-known locations, regardless of whether safe disposition is available.
             var warnings = PrivateStageLocations.ForVerifiedHuman(command.Transaction, request.OperationCommandId.Value.Span, context.CancellationToken)
-                .Select(PrivateStageLocations.ToWarning).ToArray();
-            return (Operation: operation, Warnings: warnings);
+                .Select(PrivateStageLocations.ToWarning).ToList();
+            if (operation?.Kind == FileOperationKind.Removal &&
+                FileMutationJournal.RemovalRecoveryLocation(command.Transaction, request.OperationCommandId.Value.Span) is { } location)
+                warnings.Add("arcforges.file-removal.v1:" + Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(location)));
+            return (Operation: operation, Warnings: warnings.ToArray());
         }, CommitDurability.Full);
         (FileOperation? Operation, string[] Warnings) value;
         try

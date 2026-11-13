@@ -783,6 +783,7 @@ public sealed partial class ExecutionSupervisor
     private async Task StartAttemptAsync(QueuedRow queued, Admission grant, (long Cpu, long Expected, long Ceiling, EstimateSource Source) request,
         IReadOnlyList<HeldKey> keys, ExecutionSettings settings)
     {
+        using var fileCleanupAdmission = await CoordinateFileCleanupAsync(_stopping).ConfigureAwait(false);
         var platform = Platform!;
         var taskId = queued.TaskId;
         var attemptId = StoreIds.NewUuid7(_clock);

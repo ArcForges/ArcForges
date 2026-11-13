@@ -179,6 +179,7 @@ public sealed class ApprovalServiceHandler : ApprovalService.ApprovalServiceBase
                     current = Approvals.Decide(command, id, approve, caller.Actor, request.HasComment ? request.Comment : null);
                     if (!approve && current.View.CommandId is { Value.Length: 16 } original)
                         PrivateStageTerminal.RecoverTerminalApproval(command.Transaction, original.Value.Span);
+                    FileRemovalPlans.ReleaseTerminalApprovals(command.Transaction);
                     decided = current;
                 }
 
@@ -249,6 +250,7 @@ public sealed class ApprovalServiceHandler : ApprovalService.ApprovalServiceBase
                 var cancelled = Approvals.Cancel(command, id, caller.Actor);
                 if (cancelled.View.CommandId is { Value.Length: 16 } original)
                     PrivateStageTerminal.RecoverTerminalApproval(command.Transaction, original.Value.Span);
+                FileRemovalPlans.ReleaseTerminalApprovals(command.Transaction);
                 return new ApprovalServiceCancelApprovalResponse
                 {
                     Meta = ApiCommands.Meta(request.Meta),
@@ -303,7 +305,12 @@ public sealed class ApprovalServiceHandler : ApprovalService.ApprovalServiceBase
 
         try
         {
-            await _node.Processor.ExecuteAsync(command => Approvals.Executed(command, approval.Id, outcome, Approvals.OutcomeError(outcome), operation), CommitDurability.Full)
+            await _node.Processor.ExecuteAsync(command =>
+            {
+                var completed = Approvals.Executed(command, approval.Id, outcome, Approvals.OutcomeError(outcome), operation);
+                FileRemovalPlans.ReleaseTerminalApprovals(command.Transaction);
+                return completed;
+            }, CommitDurability.Full)
                 .ConfigureAwait(false);
         }
         catch (CommandQueueFullException)
@@ -330,7 +337,8 @@ public sealed class ApprovalServiceHandler : ApprovalService.ApprovalServiceBase
         try
         {
             await _node.Processor.ExecuteAsync(command =>
-                Approvals.Expire(command) + PrivateStageTerminal.RecoverTerminalApprovals(command.Transaction),
+                Approvals.Expire(command) + PrivateStageTerminal.RecoverTerminalApprovals(command.Transaction) +
+                    FileRemovalPlans.ReleaseTerminalApprovals(command.Transaction),
                 CommitDurability.Full).ConfigureAwait(false);
         }
         catch (CommandQueueFullException)

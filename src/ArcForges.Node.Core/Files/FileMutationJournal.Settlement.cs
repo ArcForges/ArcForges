@@ -136,6 +136,7 @@ internal static partial class FileMutationJournal
     {
         RequireFull(transaction);
         StoreIds.Validate(commandId, nameof(commandId));
+        if (IsRemoval(transaction, commandId)) return MarkRemovalUnknown(transaction, commandId);
         var row = ReadRow(transaction, commandId) ?? throw new InvalidOperationException("The file intent is missing.");
         if (row.State != FileOperationState.Prepared || row.Outcome is not null)
             throw new InvalidOperationException("Only an unresolved file intent can become UNKNOWN.");

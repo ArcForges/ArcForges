@@ -67,7 +67,7 @@ public sealed class PrivateStageRegistryRoutedTests
             Assert.Equal(bytes, plan.TotalBytes);
             Assert.False(Assert.Single(plan.Items).OwnerVerified);
             Assert.True(plan.RequiresApproval);
-            Assert.False(plan.QuarantineAvailable);
+            Assert.True(plan.QuarantineAvailable);
         }
         using (var workspaceRoot = WorkspacePath.OpenRoot(rootA))
         using (var stageDir = WorkspacePath.OpenRoot(privateDir))

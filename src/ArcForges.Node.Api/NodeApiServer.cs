@@ -47,6 +47,7 @@ public static class NodeApiServer
         var files = new FileServiceHandler(node);
         executors.RegisterReference("FileService.WriteFile", ArcForges.Node.Core.Security.PermissionMatrix.FileWrite, files.ExecuteApprovedReferenceAsync);
         executors.RegisterReference("FileService.EditFile", ArcForges.Node.Core.Security.PermissionMatrix.FileWrite, files.ExecuteApprovedReferenceAsync);
+        executors.RegisterReference("FileService.ExecuteRemoval", ArcForges.Node.Core.Security.PermissionMatrix.FileRemove, files.ExecuteApprovedRemovalReferenceAsync);
         (node.RoutedDispatcher as RoutedDispatcher)?.Bind(tasks, new WorkspaceServiceHandler(node), files);
         builder.AddService(tasks);
         builder.AddService(new ResourceServiceHandler(node, sessions, executors));

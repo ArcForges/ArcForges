@@ -223,7 +223,7 @@ public sealed class FileStageProducerHostTests
             // SCRIPT provenance is durable but does not grant AGENT-only unattended owner verification or cleanup.
             Assert.False(Assert.Single(planned.Value.Plan.Items).OwnerVerified);
             Assert.True(planned.Value.Plan.RequiresApproval);
-            Assert.False(planned.Value.Plan.QuarantineAvailable);
+            Assert.True(planned.Value.Plan.QuarantineAvailable);
             Assert.Empty(connection.UnverifiedResults);
         }
         finally

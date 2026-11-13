@@ -148,7 +148,7 @@ public sealed class FileRemovalPlanPrivateCountTests
         Assert.Single(ordinary.Value.Plan.Items);
         Assert.False(ordinary.Value.Plan.Items[0].OwnerVerified);
         Assert.True(ordinary.Value.Plan.RequiresApproval);
-        Assert.False(ordinary.Value.Plan.QuarantineAvailable);
+        Assert.True(ordinary.Value.Plan.QuarantineAvailable);
         Assert.Equal(namesBefore, Directory.GetFileSystemEntries(rootPath, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal));
         Assert.Equal(body, File.ReadAllBytes(alias));
         if (hardLink) Assert.Equal(body, File.ReadAllBytes(source));

@@ -13,11 +13,11 @@ using NodeShapes = ArcForges.Contracts.Node.Shapes.ContractShapeValidation;
 
 namespace ArcForges.Node.Core.Tests;
 
-/// <summary>Real routing, native files and durable SQLite; synthetic callers, no successful cleanup claim.</summary>
+/// <summary>Real routing, native files and durable SQLite; synthetic callers, unsupported direct-delete and authority receipts.</summary>
 public sealed class FileRemovalExecutionRoutedTests
 {
     [Fact(Timeout = 120_000)]
-    public async Task ARealPlanRefusesBeforeEffectAndReplaysItsExactReceiptAcrossRestart()
+    public async Task UnsupportedDirectDeletionRefusesBeforeEffectAndReplaysItsExactReceiptAcrossRestart()
     {
         var ct = TestContext.Current.CancellationToken;
         await using var node = await InProcessNode.Create().StartAsync();
@@ -43,6 +43,7 @@ public sealed class FileRemovalExecutionRoutedTests
             Meta = Tasks.Meta(),
             PlanId = plan.PlanId.Clone(),
             PlanDigest = plan.Digest,
+            DeleteWithoutQuarantine = true,
         };
         var raw = request.ToByteArray();
         var first = await calls.CallAsync(caller, RoutedMethod.ExecuteNodeRemoval, raw, request.Meta.CommandId);
@@ -91,6 +92,7 @@ public sealed class FileRemovalExecutionRoutedTests
         Assert.Equal(first.Answer.Response, replay.Answer!.Response);
         var fresh = request.Clone();
         fresh.Meta = Tasks.Meta();
+        fresh.DeleteWithoutQuarantine = false;
         var changed = await calls.CallAsync(caller, RoutedMethod.ExecuteNodeRemoval, fresh.ToByteArray(), fresh.Meta.CommandId);
         Assert.Equal("file_changed", FileServiceExecuteRemovalResponse.Parser.ParseFrom(changed.Answer!.Response).Error.Code);
         Assert.Equal(body, File.ReadAllText(file));
@@ -133,7 +135,7 @@ public sealed class FileRemovalExecutionRoutedTests
     }
 
     [Fact(Timeout = 120_000)]
-    public async Task AgentDenialIsDurableAndExplicitAllowStillCannotSupplyTheMissingGuard()
+    public async Task AgentDenialIsDurableAndExplicitAllowDoesNotAuthorizeUnsupportedDirectDeletion()
     {
         await using var node = await InProcessNode.Create().StartAsync();
         var calls = new RoutedCalls(node);
@@ -241,6 +243,7 @@ public sealed class FileRemovalExecutionRoutedTests
         Meta = Tasks.Meta(),
         PlanId = plan.PlanId.Clone(),
         PlanDigest = plan.Digest,
+        DeleteWithoutQuarantine = true,
     };
 
     private static async Task<(FileRemovalPlan Plan, string File)> PlanFile(InProcessNode node, RoutedCalls calls, CenterCaller caller, CancellationToken token)

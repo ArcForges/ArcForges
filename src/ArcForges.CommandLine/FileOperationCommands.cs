@@ -135,6 +135,7 @@ internal static class FileOperationCommands
     internal static void Render(Cli cli, FileOperation operation, IReadOnlyList<string>? warnings = null)
     {
         var locations = StageLocations(warnings);
+        var quarantine = warnings?.Select(RemovalLocation).FirstOrDefault(path => path is not null);
         if (cli.Output.Json)
         {
             var document = (JsonObject)CliOutput.ToJsonNode(operation);
@@ -145,6 +146,7 @@ internal static class FileOperationCommands
                     stages.Add((JsonNode)new JsonObject { ["slot"] = location.Slot, ["path"] = location.Path, ["confirmedAtCheck"] = location.Confirmed, ["identityBound"] = location.HasIdentity });
                 document["localStageLocations"] = stages;
             }
+            if (quarantine is not null) document["localQuarantineIntentLocation"] = quarantine;
             cli.Output.DocumentTerminalSafe(document);
             return;
         }
@@ -157,7 +159,11 @@ internal static class FileOperationCommands
         if (operation.State == FileOperationState.Unknown)
         {
             cli.Output.Essential("The effect is UNKNOWN. Do not automatically repeat the operation.");
-            if (locations.Count == 0)
+            if (quarantine is not null)
+                cli.Output.Essential("Quarantine intent location (inspect; presence is not established): " + Escaped(quarantine));
+            else if (operation.Kind == FileOperationKind.Removal)
+                cli.Output.Essential("No quarantine intent location was reported.");
+            else if (locations.Count == 0)
                 cli.Output.Essential("No named-stage location was reported. An anonymous stage may be unavailable; other handles may retain it.");
             RenderStageLocations(cli, warnings);
             if (operation.Held)
@@ -167,6 +173,20 @@ internal static class FileOperationCommands
         {
             cli.Output.Essential("The effect may be in progress. Do not automatically repeat the operation.");
         }
+    }
+
+    private static string? RemovalLocation(string warning)
+    {
+        const string Prefix = "arcforges.file-removal.v1:";
+        if (!warning.StartsWith(Prefix, StringComparison.Ordinal) || warning.Length > 5600) return null;
+        try
+        {
+            var bytes = Convert.FromBase64String(warning[Prefix.Length..]);
+            if (bytes.Length is < 1 or > 4096 || Convert.ToBase64String(bytes) != warning[Prefix.Length..]) return null;
+            var path = StrictStageUtf8.GetString(bytes);
+            return Path.IsPathFullyQualified(path) && !path.Contains('\0') ? path : null;
+        }
+        catch (Exception failure) when (failure is FormatException or DecoderFallbackException or ArgumentException) { return null; }
     }
 
     private const string StageWarningPrefix = "arcforges.file-stage.v1:";

@@ -51,7 +51,7 @@ public sealed class FileRemovalPlanRoutedTests
         Assert.Equal(2, plan.Items.Count);
         Assert.Equal((ulong)Encoding.UTF8.GetByteCount(body), plan.TotalBytes);
         Assert.True(plan.RequiresApproval);
-        Assert.False(plan.QuarantineAvailable);
+        Assert.True(plan.QuarantineAvailable);
         Assert.NotEqual(RiskClass.Low, plan.Risk);
         Assert.All(plan.Items, item => Assert.False(item.OwnerVerified));
         Assert.Equal(body, File.ReadAllText(Path.Combine(tree, "content.txt")));

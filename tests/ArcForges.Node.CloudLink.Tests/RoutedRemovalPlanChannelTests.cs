@@ -92,7 +92,7 @@ public sealed class RoutedRemovalPlanChannelTests
         Assert.Null(first.Error);
         Assert.Equal(2, first.Value.Plan.Items.Count);
         Assert.True(first.Value.Plan.RequiresApproval);
-        Assert.False(first.Value.Plan.QuarantineAvailable);
+        Assert.True(first.Value.Plan.QuarantineAvailable);
         var replay = await Invoke(caller);
         Assert.Equal(first.ToByteString(), replay.ToByteString());
         var foreign = caller.Clone();

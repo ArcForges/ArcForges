@@ -155,7 +155,7 @@ internal static class FileCreationOwnership
     /// </summary>
     internal static bool IsVerifiedAgent(StoreReader reader, CenterCaller caller, ReadOnlySpan<byte> workspace,
         WorkspacePath root, WorkspaceRemovalEntry entry, CancellationToken cancellationToken,
-        WorkspaceOwnershipInputAudit? inputAudit = null)
+        WorkspaceOwnershipInputAudit? inputAudit = null, byte[]? preparedRemoval = null)
     {
         ArgumentNullException.ThrowIfNull(reader);
         ArgumentNullException.ThrowIfNull(caller);
@@ -169,7 +169,7 @@ internal static class FileCreationOwnership
         if (record is null || !CenterRouting.SameFileCaller(record.Caller, caller) ||
             record.RootPlatform != entry.NativeIdentity.Platform || record.ObjectPlatform != entry.NativeIdentity.Platform ||
             !record.ObjectIdentity.AsSpan().SequenceEqual(entry.NativeIdentity.Bytes) ||
-            record.Size != (long)entry.Size || HasUnresolvedConflict(reader, workspace, entry))
+            record.Size != (long)entry.Size || HasUnresolvedConflict(reader, workspace, entry, caller, preparedRemoval))
             return false;
         var selectedRoot = RegisteredWorkspaces.RootIdentity.Encode(root.RootIdentity);
         if (selectedRoot.Platform != record.RootPlatform || !selectedRoot.Bytes.AsSpan().SequenceEqual(record.RootIdentity))
@@ -273,14 +273,22 @@ internal static class FileCreationOwnership
             ("$workspace", workspace.ToArray()), ("$path", path));
     }
 
-    private static bool HasUnresolvedConflict(StoreReader reader, ReadOnlySpan<byte> workspace, WorkspaceRemovalEntry entry)
+    private static bool HasUnresolvedConflict(StoreReader reader, ReadOnlySpan<byte> workspace, WorkspaceRemovalEntry entry,
+        CenterCaller caller, byte[]? preparedRemoval)
     {
         var selected = StableKey(entry.NativeIdentity.Platform, entry.NativeIdentity.Bytes);
         if (selected is null) return true;
+        // Rechecking this removal after its FULL intent must not treat that same caller-bound intent as a foreign use.
+        // Every other held write/edit/removal or UNKNOWN still conflicts exactly as before.
+        var own = preparedRemoval is { Length: 16 } &&
+            FileMutationJournal.GetForCaller(reader, preparedRemoval, caller) is
+            { Kind: FileOperationKind.Removal, State: FileOperationState.Prepared, Held: true, WorkspacePath: { } target } &&
+            target.WorkspaceId.Value.Span.SequenceEqual(workspace) ? preparedRemoval : null;
         using var command = reader.CreateCommand("""
             SELECT workspace_id, relative_path, identity_platform, target_identity, expected_absent
-            FROM file_operation_journal WHERE phase IN (1, 3) AND held = 1;
+            FROM file_operation_journal WHERE phase IN (1, 3) AND held = 1 AND ($own IS NULL OR command_id <> $own);
             """);
+        command.Parameters.AddWithValue("$own", (object?)own ?? DBNull.Value);
         using var rows = command.ExecuteReader();
         while (rows.Read())
         {
