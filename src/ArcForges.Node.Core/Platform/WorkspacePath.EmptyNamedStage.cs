@@ -95,7 +95,7 @@ internal sealed partial class WorkspacePath
     }
 
     [SupportedOSPlatform("linux")]
-    private static unsafe void CheckPrivateLinuxNamedStageSecurity(SafeFileHandle file)
+    internal static unsafe void CheckPrivateLinuxNamedStageSecurity(SafeFileHandle file)
     {
         const uint Required = 0x8 | 0x2; // STATX_UID and STATX_MODE
         var buffer = stackalloc byte[256];

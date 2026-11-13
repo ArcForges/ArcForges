@@ -143,14 +143,14 @@ internal static class FileStageProduction
         var hash = (byte[])row.GetValue(2);
         row.Close();
         var nonce = RandomNumberGenerator.GetBytes(16);
+        var identity = worker.SealedIdentity();
         var binding = new LinuxPrivateStageBinding(reservation.CommandId, reservation.ProducerNonce, nonce,
             reservation.RequestSha256, reservation.CallerDigest, reservation.WorkspaceId, reservation.CorrelationId,
             slot, reservation.RootIdentity, reservation.ParentIdentity, name, size, hash,
-            reservation.DeadlineTicks, reservation.ExpiryMicroseconds);
+            reservation.DeadlineTicks, reservation.ExpiryMicroseconds, identity);
         binding.Validate();
         if (LinuxFatalDeadline.MonotonicNanoseconds() >= binding.Deadline)
             throw new OperationCanceledException();
-        var identity = worker.SealedIdentity();
         transaction.Execute("""
             INSERT INTO file_stage_worker
               (command_id, slot, worker_nonce, producer_nonce, identity_platform, boot_identity, pid_namespace,
@@ -159,6 +159,59 @@ internal static class FileStageProduction
             """, ("$id", reservation.CommandId), ("$slot", slot), ("$nonce", nonce),
             ("$producer", reservation.ProducerNonce), ("$boot", identity.BootId.ToString("D")),
             ("$namespace", identity.PidNamespace), ("$pid", identity.ProcessId), ("$start", identity.StartTicks));
+        return binding;
+    }
+
+    /// <summary>Seals the actual live child in FULL before it receives any creation descriptor or body permission.</summary>
+    internal static WindowsPrivateStageBinding RecordWindowsChild(StoreTransaction transaction,
+        FileStageProductionReservation reservation, int slot, WindowsOwnedStageProcess worker)
+    {
+        RequireFull(transaction);
+        ArgumentNullException.ThrowIfNull(worker);
+        if (!OperatingSystem.IsWindows() || reservation.Platform != 1 || slot is not (1 or 2))
+            throw new InvalidOperationException("The Windows stage producer is unavailable.");
+        using var query = transaction.CreateCommand("""
+            SELECT o.stage_path, o.expected_size, o.expected_sha256, p.producer_nonce, p.request_sha256, p.caller,
+                   p.workspace_id, p.correlation_id, p.root_identity, p.parent_identity, p.deadline_ticks,
+                   p.expiry_microseconds
+            FROM file_stage_production p JOIN file_stage_produced_object o ON o.command_id = p.command_id
+            WHERE p.command_id = $id AND o.slot = $slot AND p.storage_kind = 2 AND p.identity_platform = 1
+              AND p.active = 1 AND p.released = 0 AND p.deadline_clock = 2 AND o.phase = 0;
+            """);
+        query.Parameters.AddWithValue("$id", reservation.CommandId);
+        query.Parameters.AddWithValue("$slot", slot);
+        using var row = query.ExecuteReader();
+        if (!row.Read() || row.IsDBNull(0) ||
+            !CryptographicOperations.FixedTimeEquals((byte[])row.GetValue(3), reservation.ProducerNonce) ||
+            !CryptographicOperations.FixedTimeEquals((byte[])row.GetValue(4), reservation.RequestSha256) ||
+            !CryptographicOperations.FixedTimeEquals(SHA256.HashData((byte[])row.GetValue(5)), reservation.CallerDigest) ||
+            !CryptographicOperations.FixedTimeEquals((byte[])row.GetValue(6), reservation.WorkspaceId) ||
+            !CryptographicOperations.FixedTimeEquals((byte[])row.GetValue(7), reservation.CorrelationId) ||
+            !CryptographicOperations.FixedTimeEquals((byte[])row.GetValue(8), reservation.RootIdentity) ||
+            !CryptographicOperations.FixedTimeEquals((byte[])row.GetValue(9), reservation.ParentIdentity) ||
+            row.GetInt64(10) != reservation.DeadlineTicks || row.GetInt64(11) != reservation.ExpiryMicroseconds)
+            throw new InvalidOperationException("The private producer does not bind this original operation.");
+        var name = Path.GetFileName(row.GetString(0));
+        var size = row.GetInt64(1);
+        var hash = (byte[])row.GetValue(2);
+        row.Close();
+        var nonce = RandomNumberGenerator.GetBytes(16);
+        var identity = worker.SealedIdentity();
+        var binding = new WindowsPrivateStageBinding(reservation.CommandId, reservation.ProducerNonce, nonce,
+            reservation.RequestSha256, reservation.CallerDigest, reservation.WorkspaceId, reservation.CorrelationId,
+            slot, reservation.RootIdentity, reservation.ParentIdentity, name, size, hash,
+            reservation.DeadlineTicks, reservation.ExpiryMicroseconds, identity);
+        binding.Validate();
+        if (System.Diagnostics.Stopwatch.GetTimestamp() >= binding.Deadline)
+            throw new OperationCanceledException();
+        transaction.Execute("""
+            INSERT INTO file_stage_worker
+              (command_id, slot, worker_nonce, producer_nonce, identity_platform, boot_identity, pid_namespace,
+               process_id, start_ticks, ended)
+            VALUES ($id, $slot, $nonce, $producer, 1, $boot, NULL, $pid, $start, 0);
+            """, ("$id", reservation.CommandId), ("$slot", slot), ("$nonce", nonce),
+            ("$producer", reservation.ProducerNonce), ("$boot", identity.BootIdentity),
+            ("$pid", identity.ProcessId), ("$start", identity.CreationTime));
         return binding;
     }
 
@@ -227,10 +280,11 @@ internal static class FileStageProduction
         var allEnded = true;
         foreach (var worker in workers)
         {
-            // Windows requires its actual native process/creation identity observer before that producer is enabled.
             var ended = OperatingSystem.IsLinux() && worker.Platform == 2 && worker.Namespace is not null &&
                 Guid.TryParseExact(worker.Boot, "D", out var boot) &&
                 new LinuxOwnedProcessIdentity(boot, worker.Namespace, worker.Pid, worker.Start).Observe() == LinuxProcessObservation.Ended;
+            if (OperatingSystem.IsWindows() && worker.Platform == 1 && worker.Namespace is null)
+                ended = new WindowsOwnedStageIdentity(worker.Boot, worker.Pid, worker.Start).Observe() == WindowsStageProcessObservation.Ended;
             if (!ended) { allEnded = false; continue; }
             transaction.Execute("UPDATE file_stage_worker SET ended = 1 WHERE command_id = $id AND slot = $slot AND ended = 0;",
                 ("$id", id), ("$slot", worker.Slot));
