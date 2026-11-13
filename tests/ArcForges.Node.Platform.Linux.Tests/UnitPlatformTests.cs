@@ -622,8 +622,9 @@ public sealed class UnitPlatformTests
 
     /// <summary>
     /// R-RES-014 and 15 section 4 at the platform: the slice's MemoryMax bounds managed work alone, and attempts under it stop at their own
-    /// MemoryMax; MemorySwapMax 0 keeps them out of swap. Three units each demanding 600 MiB (a pipe into <c>tail</c>, which buffers it) under
-    /// 512 MiB unit limits press a 768 MiB slice. The node-level scenario keeps the attempt bounds; since admission (AF-SCHED-01) keeps the
+    /// MemoryMax; MemorySwapMax 0 keeps them out of swap. Three units each requesting a 600 MiB bulk read into a single buffer under
+    /// 512 MiB unit limits press a 768 MiB slice. Small repeated allocations can spend the completion budget throttled at MemoryHigh without
+    /// reaching MemoryMax. The node-level scenario keeps the attempt bounds; since admission (AF-SCHED-01) keeps the
     /// declared demand within <c>B_mem</c>, saturating the slice is proven here, without admission.
     /// </summary>
     [Fact(Timeout = 180_000)]
@@ -633,7 +634,7 @@ public sealed class UnitPlatformTests
         RequireUnits();
         const long SliceMax = 768L << 20;
         using var harness = LinuxHarness.Start(new RootLimits(5_000, 16L << 30, SliceMax) { HardMemoryBytes = SliceMax, SwapAllowanceBytes = 0 });
-        var handles = Enumerable.Range(0, 3).Select(_ => (LinuxAttemptHandle)harness.Launch(["/bin/sh", "-c", "head -c 600M /dev/zero | tail > /dev/null; sleep 2"],
+        var handles = Enumerable.Range(0, 3).Select(_ => (LinuxAttemptHandle)harness.Launch(["/bin/sh", "-c", "dd if=/dev/zero of=/dev/null bs=600M count=1 status=none; sleep 2"],
             new ContainerLimits { MemoryHighBytes = 500L << 20, MemoryMaxBytes = 512L << 20, SwapMaxBytes = 0 })).ToList();
         var slice = Path.Combine("/sys/fs/cgroup" + SystemdTestEnvironment.RequiredProperty(harness.Slice, "ControlGroup"));
         long sampled = 0;

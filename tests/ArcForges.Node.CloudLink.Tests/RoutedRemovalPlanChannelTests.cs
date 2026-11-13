@@ -106,7 +106,9 @@ public sealed class RoutedRemovalPlanChannelTests
             "SELECT request_sha256 FROM file_removal_plan WHERE command_id = $id;", ("$id", request.Meta.CommandId.Value.ToByteArray()))));
         Assert.Empty(connection.UnverifiedResults);
     }
-    [Fact(Timeout = 120_000)]
+    // The real 985-entry size proof is timing-sensitive under concurrent project I/O; keep the file-operation budget unchanged.
+    [Fact(Timeout = 120_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public async Task SignedOversizedPlanReturnsAndReplaysTheCommittedInnerRefusal()
     {
         var ct = TestContext.Current.CancellationToken;
