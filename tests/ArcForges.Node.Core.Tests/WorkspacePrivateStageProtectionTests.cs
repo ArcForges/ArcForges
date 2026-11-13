@@ -33,6 +33,11 @@ public sealed class WorkspacePrivateStageProtectionTests
                 Assert.Throws<WorkspacePathException>(() => root.OpenRead("private-a/stage.txt")).Reason);
             Assert.Equal("file_access_denied",
                 Assert.Throws<WorkspacePathException>(() => root.OpenExistingWriteGuard("private-a/stage.txt")).Reason);
+            Assert.Equal("file_access_denied", Assert.Throws<WorkspaceRemovalPlanException>(() =>
+                WorkspaceRemovalPlan.Capture(root, "private-a/stage.txt", ct)).Reason);
+            Assert.Equal("file_access_denied", Assert.Throws<WorkspaceRemovalPlanException>(() =>
+                WorkspaceRemovalPlan.Capture(root, "private-a", ct)).Reason);
+            Assert.Equal((ulong)"ordinary-safe".Length, WorkspaceRemovalPlan.Capture(root, "ordinary.txt", ct).TotalBytes);
             using var query = new WorkspaceFileQueries();
             var search = query.Search(root, "", marker, N.FileSearchMode.Literal, cancellationToken: ct);
             Assert.Empty(search.Value.Matches);
@@ -70,6 +75,11 @@ public sealed class WorkspacePrivateStageProtectionTests
             Assert.True(root.IsPrivateStageFile(root.InspectEntry("alias.txt").Identity));
             Assert.True(root.IsPrivateStageFile(root.InspectEntry("private-b/renamed.txt").Identity));
             Assert.Throws<WorkspacePathException>(() => root.OpenRead("alias.txt"));
+            Assert.Equal("file_access_denied", Assert.Throws<WorkspaceRemovalPlanException>(() =>
+                WorkspaceRemovalPlan.Capture(root, "alias.txt", ct)).Reason);
+            Assert.Equal("file_access_denied", Assert.Throws<WorkspaceRemovalPlanException>(() =>
+                WorkspaceRemovalPlan.Capture(root, "private-b", ct)).Reason);
+            Assert.Single(WorkspaceRemovalPlan.Capture(root, "ordinary.txt", ct).Entries);
             using var query = new WorkspaceFileQueries();
             Assert.Empty(query.Search(root, "", marker, N.FileSearchMode.Literal, cancellationToken: ct).Value.Matches);
             var page = query.ListDirectory(root, Guid.NewGuid().ToByteArray(), SHA256.HashData("caller"u8), "",

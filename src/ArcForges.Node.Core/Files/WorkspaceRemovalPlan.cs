@@ -147,6 +147,10 @@ internal static class WorkspaceRemovalPlan
                 throw new WorkspaceRemovalPlanException("planned_tree_changed", exception);
             }
 
+            // Metadata is private too. Match the opened identity before type/link/size classification so a
+            // renamed or hard-linked stage cannot appear in a plan or reveal its size through a limit error.
+            if (root.IsPrivateStageFile(entry.Identity))
+                throw new WorkspaceRemovalPlanException("file_access_denied");
             if (entry.Kind is not (WorkspaceEntryType.File or WorkspaceEntryType.Directory) ||
                 entry.Kind == WorkspaceEntryType.File && entry.Identity.Links != 1 ||
                 entry.Kind == WorkspaceEntryType.Directory && entry.Identity.Links == 0)
@@ -202,6 +206,8 @@ internal static class WorkspaceRemovalPlan
                 throw new WorkspaceRemovalPlanException("planned_tree_changed", exception);
             }
 
+            if (root.IsPrivateStageFile(current.Identity))
+                throw new WorkspaceRemovalPlanException("file_access_denied");
             if (current.Kind != original.Kind || !current.Identity.SameObject(original.Identity) ||
                 current.Identity.Links != original.Identity.Links || current.Identity.Mode != original.Identity.Mode ||
                 current.Stamp != original.Stamp || current.Size != original.Size)
