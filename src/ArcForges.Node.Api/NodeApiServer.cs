@@ -65,7 +65,7 @@ public static class NodeApiServer
             builder.AddService(new AccountServiceHandler(node, sessions, cloud));
             builder.AddService(new FleetServiceHandler(node, sessions, cloud));
             foreach (var method in (ReadOnlySpan<string>)["ListNodes", "GetNode", "SubmitNodeTask", "GetNodeTask", "ListNodeTasks", "ReadNodeTaskOutput", "CancelNodeTask",
-                "ReadNodeFile", "WriteNodeFile", "EditNodeFile", "SearchNodeFiles", "ListNodeDirectory", "PlanNodeRemoval", "GetNodeFileOperation", "RegisterNodeWorkspace", "UnregisterNodeWorkspace", "ListNodeWorkspaces", "GetNodeWorkspace"])
+                "ReadNodeFile", "WriteNodeFile", "EditNodeFile", "SearchNodeFiles", "ListNodeDirectory", "PlanNodeRemoval", "ExecuteNodeRemoval", "GetNodeFileOperation", "RegisterNodeWorkspace", "UnregisterNodeWorkspace", "ListNodeWorkspaces", "GetNodeWorkspace"])
             {
                 builder.RegisterMethod(Fleet, method, new LocalRpcCallProfile(TimeSpan.FromSeconds(40), TimeSpan.FromSeconds(40)));
             }
