@@ -231,6 +231,7 @@ public sealed class FileRemovalQuarantineRoutedTests
             Decision = ApprovalDecisionKind.Approve,
         }, cancellationToken: token);
         Assert.Null(decision.Error);
+        TestContext.Current.TestOutputHelper?.WriteLine($"managed-maintenance related={related}; approval={decision.Value.Approval.State}; outcome={decision.Value.Approval.OutcomeError}");
         var result = await Invoke(calls, actor, request);
         if (related)
         {
@@ -243,6 +244,7 @@ public sealed class FileRemovalQuarantineRoutedTests
         }
         else
         {
+            Assert.Null(decision.Value.Approval.OutcomeError);
             Assert.Equal(ApprovalState.Executed, decision.Value.Approval.State);
             Assert.Null(result.Error);
             Assert.True(result.Value.Result.Quarantined);
