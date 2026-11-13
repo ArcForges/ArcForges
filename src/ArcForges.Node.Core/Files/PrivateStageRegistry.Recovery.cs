@@ -49,6 +49,13 @@ internal static partial class PrivateStageRegistry
         StoreIds.Validate(commandId, nameof(commandId));
         if (slot is not (1 or 2) || CenterRouting.Shape(caller) is not null || requestSha256.Length != 32)
             throw new ArgumentException("A verified caller and exact request digest are required.");
+        if (FileStageProduction.HasSchema(reader) && reader.Scalar("""
+            SELECT 1 FROM file_stage_production p WHERE p.command_id = $id AND
+              NOT EXISTS (SELECT 1 FROM file_stage_produced_object o JOIN file_stage_worker w
+                          ON w.command_id = o.command_id AND w.slot = o.slot
+                          WHERE o.command_id = p.command_id AND o.slot = $slot AND o.phase = 2 AND w.ended = 1);
+            """, ("$id", commandId.ToArray()), ("$slot", slot)) is not null)
+            throw new InvalidOperationException("The exact private stage producer has not actually finished.");
         string path;
         int platform;
         byte[] fileId, parentId, hash;

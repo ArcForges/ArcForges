@@ -97,11 +97,15 @@ internal sealed partial class FileServiceHandler
     private async Task<byte[]?> MutateExistingCandidateAsync(Caller caller, byte[] raw, MutationRequest request, CancellationToken cancellationToken)
     {
         var routed = caller.Routed ?? throw new InvalidOperationException("A file mutation requires a verified routed caller.");
+        // Sample the native clock before computing the remaining call budget. A pause here cannot extend the worker deadline.
+        var nativeStarted = OperatingSystem.IsLinux() ? LinuxFatalDeadline.MonotonicNanoseconds() : System.Diagnostics.Stopwatch.GetTimestamp();
         var limit = routed.RemainingFileOperation();
         if (limit <= TimeSpan.Zero) throw new OperationCanceledException(cancellationToken);
         var started = node.Clock.GetTimestamp();
-        var linuxDeadline = OperatingSystem.IsLinux()
-            ? checked(LinuxFatalDeadline.MonotonicNanoseconds() + limit.Ticks * 100) : 0;
+        var producerDeadline = OperatingSystem.IsLinux()
+            ? checked(nativeStarted + limit.Ticks * 100)
+            : checked(nativeStarted + limit.Ticks * System.Diagnostics.Stopwatch.Frequency / TimeSpan.TicksPerSecond);
+        var linuxDeadline = OperatingSystem.IsLinux() ? producerDeadline : 0;
         using var deadline = new CancellationTokenSource(limit, node.Clock);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token, node.Stopping, routed.Link.EffectEnding);
         var token = linked.Token;
@@ -135,7 +139,7 @@ internal sealed partial class FileServiceHandler
                 // Dispose an earlier anonymous attempt before making a separately durable named approval stage.
                 lease.Dispose();
                 ownsLease = false;
-                var pendingApproval = Task.Run(() => ProduceApprovalAsync(caller, request, raw, started, limit, token));
+                var pendingApproval = Task.Run(() => ProduceApprovalAsync(caller, request, raw, producerDeadline, started, limit, token));
                 if (AfterApprovalReservationForTests is not null) LastApprovalProducerForTests = pendingApproval;
                 MutationPreparation approval;
                 try { approval = await pendingApproval.WaitAsync(token).ConfigureAwait(false); }

@@ -31,7 +31,7 @@ internal static partial class PrivateStageRegistry
     internal static bool HasWorkspaceHold(StoreReader reader, ReadOnlySpan<byte> workspaceId)
     {
         ArgumentNullException.ThrowIfNull(reader);
-        return HasSchema(reader) && reader.Scalar("""
+        return FileStageProduction.HasWorkspaceHold(reader, workspaceId) || HasSchema(reader) && reader.Scalar("""
             SELECT 1 FROM file_private_stage_reservation WHERE workspace_id = $id AND active = 1 LIMIT 1;
             """, ("$id", workspaceId.ToArray())) is not null;
     }

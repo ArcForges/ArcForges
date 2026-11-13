@@ -8,8 +8,9 @@ using Microsoft.Win32.SafeHandles;
 namespace ArcForges.Node.Core.Platform;
 
 /// <summary>
-/// An empty named object held by its native exclusive guard. It is not an approval, contains no file body and must
-/// not receive bytes until its identity has been durably registered. Disposal closes this handle and does not delete
+/// A named object held by its native exclusive guard. Creation returns it empty; a bounded worker may return it
+/// after producing its registered body. It is not an approval. No body may precede FULL identity registration.
+/// Disposal closes this handle and does not delete
 /// the named object or prove that an independently held reference disappeared.
 /// </summary>
 internal enum NamedStageDurabilityEvidence

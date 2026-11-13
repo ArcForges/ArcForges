@@ -74,13 +74,13 @@ internal sealed partial class FileServiceHandler
     }
 
     private async Task<MutationPreparation> ProduceApprovalAsync(Caller caller, MutationRequest request, byte[] raw,
-        long started, TimeSpan limit, CancellationToken token)
+        long nativeDeadline, long started, TimeSpan limit, CancellationToken token)
     {
         using var lease = new ApprovalProducerLease();
         try
         {
             var begin = await node.Processor.ExecuteAsync(command =>
-                BeginApprovalStage(command.Transaction, caller, request, raw, lease, started, limit, token), CommitDurability.Full)
+                BeginApprovalStage(command.Transaction, caller, request, raw, lease, nativeDeadline, started, limit, token), CommitDurability.Full)
                 .ConfigureAwait(false);
             if (!begin.Ready) return begin;
             if (AfterApprovalReservationForTests is { } afterReservation) await afterReservation().ConfigureAwait(false);
@@ -88,21 +88,11 @@ internal sealed partial class FileServiceHandler
 
             if (lease.OriginalBytes is { } original)
             {
-                using var stage = await PrivateStageProducer.CreateBoundAsync(node.Processor, request.Meta!.CommandId.Value.Memory,
-                    1, lease.Use!.Root, lease.StageDirectory!, lease.OriginalName!, token,
-                    beforeCreate: tx => CheckStageApprovalAuthority(tx, caller, started, limit, token)).ConfigureAwait(false);
+                using var stage = await ProduceApprovalObjectAsync(caller, lease, 1, original, started, limit, token).ConfigureAwait(false);
                 lease.OriginalIdentity = stage.Identity;
-                PrivateStageRegistry.WriteBoundStage(node.Store, request.Meta.CommandId.Value.Span, 1, caller.CenterCaller!,
-                    raw, stage, original, token, beforeWrite: tx => CheckStageApprovalAuthority(tx, caller, started, limit, token));
             }
-            using (var stage = await PrivateStageProducer.CreateBoundAsync(node.Processor, request.Meta!.CommandId.Value.Memory,
-                2, lease.Use!.Root, lease.StageDirectory!, lease.IntendedName!, token,
-                beforeCreate: tx => CheckStageApprovalAuthority(tx, caller, started, limit, token)).ConfigureAwait(false))
-            {
+            using (var stage = await ProduceApprovalObjectAsync(caller, lease, 2, lease.IntendedBytes!, started, limit, token).ConfigureAwait(false))
                 lease.IntendedIdentity = stage.Identity;
-                PrivateStageRegistry.WriteBoundStage(node.Store, request.Meta.CommandId.Value.Span, 2, caller.CenterCaller!,
-                    raw, stage, lease.IntendedBytes!, token, beforeWrite: tx => CheckStageApprovalAuthority(tx, caller, started, limit, token));
-            }
 
             return await node.Processor.ExecuteAsync(command =>
                 RaiseFileApproval(command, caller, request, raw, lease, started, limit, token), CommitDurability.Full).ConfigureAwait(false);
@@ -127,7 +117,7 @@ internal sealed partial class FileServiceHandler
     }
 
     private MutationPreparation BeginApprovalStage(StoreTransaction transaction, Caller caller, MutationRequest request, byte[] raw,
-        ApprovalProducerLease lease, long started, TimeSpan limit, CancellationToken token)
+        ApprovalProducerLease lease, long nativeDeadline, long started, TimeSpan limit, CancellationToken token)
     {
         var routed = caller.Routed!;
         var correlation = routed.Correlation(request.Meta);
@@ -169,8 +159,10 @@ internal sealed partial class FileServiceHandler
                     return new MutationPreparation(false); // A producer or recovery still owns this exact reservation.
                 return Refuse(Error(ErrorCategory.Conflict, "command_id_reused", "command_id_reused", correlation));
             }
-            // Linux staging awaits the dedicated exact-FD lease-break coordinator; do not use a check/write gap.
-            if (!OperatingSystem.IsWindows())
+            // The dedicated Host worker must enforce the original native deadline before any stage creation/body.
+            if (!OperatingSystem.IsWindows() && !OperatingSystem.IsLinux() ||
+                OperatingSystem.IsLinux() && !LinuxFileEffectController.IsHostProcess() ||
+                OperatingSystem.IsWindows() && !WindowsStageWorkerController.IsHostProcess())
                 return Refuse(Error(ErrorCategory.Resource, "enforcement_unavailable", "file_guard_unavailable", correlation));
 
             _ = WorkspacePath.Components(path);
@@ -178,6 +170,7 @@ internal sealed partial class FileServiceHandler
                 beforeUse: tx => CheckStageApprovalAuthority(tx, caller, started, limit, token), token);
             var slash = path.LastIndexOf('/');
             var parentName = slash < 0 ? "" : path[..slash];
+            lease.ParentRelativePath = parentName;
             var parent = lease.Use.Root.OpenDirectory(parentName);
             lease.ParentIdentity = WorkspacePath.Identity(parent);
             var parentPath = parentName.Length == 0 ? lease.Use.Root.RootPath :
@@ -237,9 +230,25 @@ internal sealed partial class FileServiceHandler
                 lease.IntendedBytes.Length, SHA256.HashData(lease.IntendedBytes)));
             var reserved = PrivateStageRegistry.Reserve(transaction, _writeStageBudget, request.Kind, id, workspace,
                 correlation.Value.Span, caller.CenterCaller!, raw, stages);
+            if (reserved == PrivateStageReservationResult.Reserved)
+            {
+                // Convert the signed/persistent validity boundary from a point sampled before the wall sample.
+                var beforeSample = OperatingSystem.IsLinux() ? LinuxFatalDeadline.MonotonicNanoseconds() : System.Diagnostics.Stopwatch.GetTimestamp();
+                var sample = RoutedFileValidationTime.Sample(transaction);
+                if (!sample.Healthy) throw new RoutedAbortException(RoutedAbort.ClockUncertain);
+                var expiry = routed.FileExpiryMicroseconds;
+                if (sample.BoundaryMicroseconds >= expiry) throw new RoutedAbortException(RoutedAbort.Expired);
+                var remaining = checked(expiry - sample.BoundaryMicroseconds);
+                var untilExpiry = OperatingSystem.IsLinux() ? checked(remaining * 1000) :
+                    checked(remaining * System.Diagnostics.Stopwatch.Frequency / 1_000_000);
+                var effectiveDeadline = Math.Min(nativeDeadline, checked(beforeSample + untilExpiry));
+                lease.Production = FileStageProduction.ReserveNamed(transaction, id, caller.CenterCaller!, raw,
+                    lease.Use.Root, lease.StageDirectory, lease.Target?.ObjectIdentity, effectiveDeadline, expiry);
+                RequireOriginalProducerDeadline(lease.Production, token);
+                return new MutationPreparation(true);
+            }
             return reserved switch
             {
-                PrivateStageReservationResult.Reserved => new MutationPreparation(true),
                 PrivateStageReservationResult.Existing => new MutationPreparation(false),
                 PrivateStageReservationResult.Capacity => Refuse(Error(ErrorCategory.Resource, "enforcement_unavailable", "file_stage_capacity", correlation)),
                 _ => Refuse(Error(ErrorCategory.Conflict, "command_id_reused", "command_id_reused", correlation)),
@@ -291,6 +300,8 @@ internal sealed partial class FileServiceHandler
         if (result.Error is not null || result.Approval is null) return new MutationPreparation(false);
         // The final transaction rechecks the live call after the expensive stage/target verification.
         CheckStageApprovalAuthority(tx, caller, started, limit, token);
+        RequireOriginalProducerDeadline(lease.Production!, token);
+        FileStageProduction.FinishNamed(tx, lease.Production!);
         AuditLog.AppendFileWorkspace(tx, caller.Actor, PermissionMatrix.FileWrite + " FileService." +
             (request.Kind == FileOperationKind.Write ? "WriteFile" : "EditFile"), intent.WorkspaceId, null, intent.RelativePath,
             PermissionDecision.Approval, "refused: approval_required", lease.Observation);
@@ -343,6 +354,8 @@ internal sealed partial class FileServiceHandler
         internal WorkspacePath? StageDirectory { get; set; }
         internal WorkspaceWriteGuard? Target { get; set; }
         internal WorkspaceObjectIdentity? ParentIdentity { get; set; }
+        internal string? ParentRelativePath { get; set; }
+        internal FileStageProductionReservation? Production { get; set; }
         internal string? OriginalName { get; set; }
         internal string? IntendedName { get; set; }
         internal byte[]? OriginalBytes { get; set; }

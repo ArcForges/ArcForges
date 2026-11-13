@@ -66,8 +66,10 @@ internal static class PrivateStageTerminal
             while (row.Read()) ids.Add(((byte[])row.GetValue(0), (Reason)row.GetInt32(1)));
         }
 
+        var completedCount = 0;
         foreach (var (id, why) in ids)
         {
+            if (!FileStageProduction.TryFinishFailedNamed(transaction, id)) continue;
             using var query = transaction.CreateCommand("""
                 SELECT r.kind, r.request_sha256, r.caller, r.correlation_id, r.workspace_id, r.relative_path, r.created_at,
                        d.method, d.payload_digest, d.origin, d.outcome
@@ -106,8 +108,9 @@ internal static class PrivateStageTerminal
             AuditLog.AppendFileWorkspace(transaction, actor, "file.recovery FileService." +
                 (kind == FileOperationKind.Write ? "WriteFile" : "EditFile"), workspace, null, path,
                 PermissionDecision.Deny, "refused: " + error.Code, null);
+            completedCount++;
         }
-        return ids.Count;
+        return completedCount;
     }
 
     internal static FileJournalPreparation? Find(StoreReader reader, FileOperationKind kind, ReadOnlySpan<byte> id,

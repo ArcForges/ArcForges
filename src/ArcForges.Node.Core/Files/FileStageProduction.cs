@@ -228,7 +228,9 @@ internal static class FileStageProduction
             WHERE command_id = $id AND slot = $slot AND phase = 0 AND native_identity IS NULL
               AND identity_platform = $platform AND EXISTS
                 (SELECT 1 FROM file_stage_production p WHERE p.command_id = $id AND p.producer_nonce = $nonce
-                 AND p.request_sha256 = $digest AND p.active = 1 AND p.released = 0);
+                 AND p.request_sha256 = $digest AND p.active = 1 AND p.released = 0)
+              AND EXISTS (SELECT 1 FROM file_stage_worker w WHERE w.command_id = $id AND w.slot = $slot
+                          AND w.producer_nonce = $nonce AND w.identity_platform = $platform AND w.ended = 0);
             """, ("$id", reservation.CommandId), ("$slot", slot), ("$identity", identity.Bytes),
             ("$platform", identity.Platform), ("$nonce", reservation.ProducerNonce), ("$digest", reservation.RequestSha256)) != 1)
             throw new InvalidOperationException("The producer object could not be identity bound.");
@@ -258,6 +260,33 @@ internal static class FileStageProduction
             """, ("$id", reservation.CommandId), ("$slot", slot), ("$platform", identity.Platform),
             ("$identity", identity.Bytes), ("$size", size), ("$hash", sha256.ToArray())) != 1)
             throw new InvalidOperationException("The private named stage differs from its producer binding.");
+    }
+
+    /// <summary>The named reservation keeps its privacy and byte charge after the producer's active slot ends.</summary>
+    internal static void FinishNamed(StoreTransaction transaction, FileStageProductionReservation reservation)
+    {
+        RequireFull(transaction);
+        if (!ObserveEndedWorkers(transaction, reservation.CommandId) || transaction.Execute("""
+            UPDATE file_stage_production SET active = 0
+            WHERE command_id = $id AND producer_nonce = $nonce AND request_sha256 = $digest
+              AND storage_kind = 2 AND active = 1 AND released = 0
+              AND object_count = (SELECT count(*) FROM file_stage_produced_object o
+                                  WHERE o.command_id = $id AND o.phase = 2);
+            """, ("$id", reservation.CommandId), ("$nonce", reservation.ProducerNonce), ("$digest", reservation.RequestSha256)) != 1)
+            throw new InvalidOperationException("The complete named producer has not actually finished.");
+    }
+
+    /// <summary>Only actual native exit permits a no-target-effect settlement. An unknown observation keeps all holds.</summary>
+    internal static bool TryFinishFailedNamed(StoreTransaction transaction, ReadOnlySpan<byte> commandId)
+    {
+        RequireFull(transaction);
+        if (!HasSchema(transaction) || transaction.Scalar("""
+            SELECT 1 FROM file_stage_production WHERE command_id = $id AND storage_kind = 2;
+            """, ("$id", commandId.ToArray())) is null) return true;
+        if (!ObserveEndedWorkers(transaction, commandId)) return false;
+        transaction.Execute("UPDATE file_stage_production SET active = 0 WHERE command_id = $id AND active = 1 AND storage_kind = 2;",
+            ("$id", commandId.ToArray()));
+        return true;
     }
 
     /// <summary>A new reader floor is not an old-worker retirement proof. Unknown process observations retain the fence.</summary>
