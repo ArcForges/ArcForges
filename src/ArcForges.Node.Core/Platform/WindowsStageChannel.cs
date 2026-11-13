@@ -49,14 +49,20 @@ internal static partial class WindowsStageChannel
         if (reader.BaseStream.Position != reader.BaseStream.Length) throw new InvalidDataException("The stage message has trailing bytes.");
     }
 
-    internal static CancellationTokenSource Budget(long deadline, long expiryMicroseconds, CancellationToken token)
+    internal static TimeSpan Remaining(long deadline, long expiryMicroseconds)
     {
         var monotonic = (double)(deadline - Stopwatch.GetTimestamp()) / Stopwatch.Frequency * 1000;
         var real = (expiryMicroseconds - (DateTime.UtcNow.Ticks - DateTime.UnixEpoch.Ticks) / 10) / 1000d;
         var remaining = Math.Min(monotonic, real);
         if (remaining <= 0 || remaining > 10_000) throw new WorkspacePathException("file_guard_expired");
+        return TimeSpan.FromMilliseconds(remaining);
+    }
+
+    internal static CancellationTokenSource Budget(long deadline, long expiryMicroseconds, CancellationToken token)
+    {
+        var remaining = Remaining(deadline, expiryMicroseconds);
         var result = CancellationTokenSource.CreateLinkedTokenSource(token);
-        result.CancelAfter(TimeSpan.FromMilliseconds(remaining));
+        result.CancelAfter(remaining);
         return result;
     }
 

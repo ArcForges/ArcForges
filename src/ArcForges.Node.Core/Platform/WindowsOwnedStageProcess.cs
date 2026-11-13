@@ -78,6 +78,13 @@ internal sealed partial class WindowsOwnedStageProcess : IDisposable
         return WaitForSingleObject(Handle, checked((uint)Math.Ceiling(bound.TotalMilliseconds))) == 0;
     }
 
+    /// <summary>Reaper-only wait: no managed exit event substitutes for the actual process becoming signaled.</summary>
+    internal bool WaitForActualExit()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return WaitForSingleObject(Handle, uint.MaxValue) == 0;
+    }
+
     internal void TerminateOwnedProcess()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);

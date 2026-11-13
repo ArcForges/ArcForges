@@ -138,7 +138,7 @@ internal sealed class WindowsStageWorkerController : IDisposable
             await WindowsStageChannel.SendAsync(_pipe, (byte)'S', ReadOnlyMemory<byte>.Empty, token).ConfigureAwait(false);
             var process = _process ?? throw new InvalidOperationException("The stage worker is unavailable.");
             await process.WaitForExitAsync(token).ConfigureAwait(false);
-            if (!SealedWorker.WaitForActualExit(TimeSpan.Zero) || process.ExitCode != 0)
+            if (!SealedWorker.WaitForActualExit(WindowsStageChannel.Remaining(binding.Deadline, binding.ExpiryMicroseconds)) || process.ExitCode != 0)
                 throw new IOException("The private producer did not finish cleanly.");
             token.ThrowIfCancellationRequested();
             WorkspacePath.RequireWindowsStageDirectory(workspaceRoot.RootHandle, binding.RootIdentity);
@@ -197,7 +197,7 @@ internal sealed class WindowsStageWorkerController : IDisposable
                 {
                     _process.StandardInput.Close();
                     _process.WaitForExit();
-                    ended = _owned is null || _owned.WaitForActualExit(TimeSpan.Zero);
+                    ended = _owned is null || _owned.WaitForActualExit();
                 }
             }
             catch (Exception exception) when (exception is IOException or InvalidOperationException) { }

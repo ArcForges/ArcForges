@@ -87,9 +87,11 @@ public sealed class WindowsStageProcessLifetimeTests
             using var actualChild = Process.GetProcessById(identity.ProcessId);
             Assert.Equal(identity.CreationTime, WindowsOwnedStageProcess.CreationTimeOf(actualChild.SafeHandle));
             Assert.Equal(WindowsStageProcessObservation.Running, WindowsOwnedStageProcess.ObserveHandle(actualChild.SafeHandle));
+            using var ownedDescendant = new WindowsOwnedStageProcess(actualChild);
             parent.TerminateOwnedProcess();
             Assert.True(parent.WaitForActualExit(TimeSpan.FromSeconds(5)));
-            await actualChild.WaitForExitAsync(token).WaitAsync(TimeSpan.FromSeconds(5), token);
+            // A managed exit notification may precede the actual native process becoming signaled.
+            Assert.True(ownedDescendant.WaitForActualExit(TimeSpan.FromSeconds(5)), "The actual descendant did not exit.");
             Assert.Equal(WindowsStageProcessObservation.Ended, WindowsOwnedStageProcess.ObserveHandle(actualChild.SafeHandle));
             Assert.Equal(WindowsStageProcessObservation.Ended, identity.Observe());
         }
