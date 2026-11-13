@@ -136,7 +136,7 @@ internal static class WorkspaceRemovalPlan
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (entries.Count >= MaximumDescendants + 1)
-                throw new WorkspaceRemovalPlanException("removal_descendants");
+                throw new WorkspaceRemovalPlanException(root.HasPrivateStageFiles ? "file_access_denied" : "removal_descendants");
             WorkspaceEntryMetadata entry;
             try
             {
@@ -175,8 +175,9 @@ internal static class WorkspaceRemovalPlan
 
             var remaining = MaximumDescendants + 1 - entries.Count - pending.Count;
             var page = ReadDirectory(root, current, Math.Max(1, remaining), cancellationToken);
+            // Unqualified child names may include a private alias; do not expose its contribution to this limit.
             if (page.Truncated || page.Names.Count > remaining)
-                throw new WorkspaceRemovalPlanException("removal_descendants");
+                throw new WorkspaceRemovalPlanException(root.HasPrivateStageFiles ? "file_access_denied" : "removal_descendants");
             var names = page.Names.ToArray();
             directories.Add(current, (names, handle));
             for (var index = names.Length - 1; index >= 0; index--)

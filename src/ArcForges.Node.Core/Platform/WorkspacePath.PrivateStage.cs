@@ -9,7 +9,7 @@ internal sealed partial class WorkspacePath
     private RegisteredWorkspaces.RootIdentity[] _privateStageFiles = [];
     private bool _privateStageProtectionInstalled;
     private Func<WorkspaceObjectIdentity, bool>? _privateStageLookup;
-    private bool HasPrivateStageFiles => _privateStageLookup is not null || _privateStageFiles.Length != 0;
+    internal bool HasPrivateStageFiles => _privateStageLookup is not null || _privateStageFiles.Length != 0;
 
     /// <summary>
     /// Installs the already durable private-file identities for this workspace use before any data open. Identity,
