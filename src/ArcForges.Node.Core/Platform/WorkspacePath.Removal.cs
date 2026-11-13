@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Globalization;
 using System.Runtime.InteropServices;
-using System.Text;
 using System.Security.Principal;
+using System.Text;
 using Microsoft.Win32.SafeHandles;
 
 namespace ArcForges.Node.Core.Platform;

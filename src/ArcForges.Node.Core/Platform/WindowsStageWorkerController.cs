@@ -207,7 +207,8 @@ internal sealed class WindowsStageWorkerController : IDisposable
             else _process?.Dispose();
             try { afterExit?.Invoke(); }
             catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException) { }
-        }) { IsBackground = true, Name = "windows-stage-worker-reaper" };
+        })
+        { IsBackground = true, Name = "windows-stage-worker-reaper" };
         reaper.Start();
     }
 
