@@ -199,14 +199,17 @@ internal sealed partial class FileServiceHandler
                                 else
                                 {
                                     var target = attemptTarget ?? throw new InvalidDataException("Attempt provenance is unavailable.");
-                                    // Preserve the existing private-stage fail-closed boundary; an unbound reservation is
-                                    // also ambiguous. This does not establish privacy of other file endpoints.
-                                    if (transaction.Scalar("SELECT 1 FROM file_private_stage_object LIMIT 1;") is not null ||
-                                        transaction.Scalar("SELECT 1 FROM file_private_stage_reservation LIMIT 1;") is not null)
+                                    // An unbound legacy producer cannot yet be excluded by native identity.
+                                    if (transaction.Scalar("SELECT 1 FROM file_private_stage_object WHERE native_identity IS NULL LIMIT 1;") is not null)
                                         throw new WorkspaceRemovalPlanException("file_access_denied");
 
                                     var temporaryRoot = attemptTemporaryRoot = OpenAttemptPlanRoot(target);
                                     var attemptRoot = checkedAttemptRoot = temporaryRoot.OpenWindowsHeldChildRoot(target.Name);
+                                    var protectedStages = PrivateStageRegistry.TryLoadIdentitiesForUse(transaction);
+                                    if (protectedStages is null)
+                                        attemptRoot.ProtectPrivateStageFiles(identity => PrivateStageRegistry.ContainsIdentity(transaction, identity));
+                                    else
+                                        attemptRoot.ProtectPrivateStageFiles(protectedStages);
                                     attemptWindow = new WorkspaceRemovalPlan.CheckedRootWindow(attemptRoot, target.Platform, target.DirectoryIdentity);
                                     // Bind the persisted target identity to the held no-follow handle before enumeration.
                                     var captured = WorkspaceRemovalPlan.CaptureCheckedRoot(attemptRoot, target.Platform,
@@ -287,11 +290,11 @@ internal sealed partial class FileServiceHandler
                         }
                         else
                         {
-                            // A separate known, unresolved protection gap means this new endpoint cannot establish that a
-                            // recorded private object is outside the proposed tree. Refuse rather than disclose its metadata.
-                            using var use = _workspaces.OpenForUse(transaction, workspace,
+                            // Keep unknown legacy stage identities closed. Known identities are checked against every
+                            // observed entry by Capture, using this same transaction's complete registry protection.
+                            using var use = _workspaces.OpenForQuery(transaction, workspace,
                                 beforeUse: selected => CheckPlanAuthority(selected, caller), token);
-                            if (transaction.Scalar("SELECT 1 FROM file_private_stage_object LIMIT 1;") is not null)
+                            if (transaction.Scalar("SELECT 1 FROM file_private_stage_object WHERE native_identity IS NULL LIMIT 1;") is not null)
                                 throw new WorkspaceRemovalPlanException("file_access_denied");
                             var snapshot = WorkspaceRemovalPlan.Capture(use.Root, target.Path, token);
                             var verifiedOwners = new HashSet<string>(StringComparer.Ordinal);
