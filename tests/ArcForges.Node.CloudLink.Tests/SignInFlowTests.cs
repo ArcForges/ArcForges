@@ -555,6 +555,9 @@ public sealed class SignInFlowTests
         var flow = (await BeginAsync(link, SignInMethod.Browser)).Flow!;
         await ScriptedBrowser.GetAsync(link.Center.ApproveFlow());
         await Eventually.TrueAsync(() => link.Service.AccountLinked, "signed in");
+        // Adoption publishes the live link before DeliveredAsync finishes this particular sign-in flow.
+        await Eventually.TrueAsync(() => link.Service.SignIn.Get(flow.FlowId)!.State == SignInFlowState.SignedIn,
+            "the replacement flow reached its signed-in terminal state");
         Assert.Equal(link.Center.LatestDelivered, link.StoredRecord()!.RefreshToken);
         Assert.DoesNotContain("center_rejected_credential", link.Service.Status().Warnings);
         Assert.Equal(SignInFlowState.SignedIn, link.Service.SignIn.Get(flow.FlowId)!.State);

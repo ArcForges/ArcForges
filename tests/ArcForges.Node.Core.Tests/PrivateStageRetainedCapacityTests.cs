@@ -18,7 +18,10 @@ namespace ArcForges.Node.Core.Tests;
 /// <summary>Real retained native stages, SQLite journal acknowledgments and routed file privacy; caller is synthetic.</summary>
 public sealed class PrivateStageRetainedCapacityTests
 {
-    [Fact(Timeout = 300_000)]
+    // isolation=exclusive: unrelated forks in this test process temporarily inherit even CLOEXEC stage descriptions.
+    // This positive fixture requires no competing reference across 130 close/reopen/lease cycles; real conflicts still refuse.
+    [Fact(Timeout = 300_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public async Task ManyAcknowledgedStagesKeepBytesAndPrivacyWithoutConsumingActiveSlots()
     {
         var ct = TestContext.Current.CancellationToken;
