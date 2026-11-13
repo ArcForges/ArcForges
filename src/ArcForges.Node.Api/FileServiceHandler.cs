@@ -148,7 +148,7 @@ internal sealed partial class FileServiceHandler(NodeRuntime node) : IDisposable
             path = filePath.Path;
             CheckAuthority(transaction, caller);
             CheckBudget();
-            using var use = _workspaces.OpenForUse(transaction, workspace, beforeUse: selected => CheckAuthority(selected, caller), token);
+            using var use = _workspaces.OpenForQuery(transaction, workspace, beforeUse: selected => CheckAuthority(selected, caller), token);
             AfterWorkspaceSnapshotForTests?.Invoke();
             CheckBudget();
             var selected = use.Root.InspectEntry(path);

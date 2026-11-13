@@ -315,7 +315,20 @@ internal sealed class RegisteredWorkspaces
 
     /// <summary>Opens and leases a verified root inside a caller-owned write transaction, without nesting store writes.</summary>
     internal RegisteredWorkspaceUse OpenForUse(StoreTransaction transaction, ReadOnlySpan<byte> id,
-        Action<StoreTransaction>? beforeUse, CancellationToken cancellationToken = default)
+        Action<StoreTransaction>? beforeUse, CancellationToken cancellationToken = default) =>
+        OpenForUseCore(transaction, id, beforeUse, privateStagesInTransaction: false, cancellationToken);
+
+    /// <summary>
+    /// A query use must be disposed before its writer transaction ends. Large private-stage registries use that
+    /// same transaction's indexed reader rather than opening a new unpooled SQLite connection for every entry.
+    /// Mutation uses can outlive their preparation transaction and retain the separate live lookup above.
+    /// </summary>
+    internal RegisteredWorkspaceUse OpenForQuery(StoreTransaction transaction, ReadOnlySpan<byte> id,
+        Action<StoreTransaction>? beforeUse, CancellationToken cancellationToken = default) =>
+        OpenForUseCore(transaction, id, beforeUse, privateStagesInTransaction: true, cancellationToken);
+
+    private RegisteredWorkspaceUse OpenForUseCore(StoreTransaction transaction, ReadOnlySpan<byte> id,
+        Action<StoreTransaction>? beforeUse, bool privateStagesInTransaction, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(transaction);
         cancellationToken.ThrowIfCancellationRequested();
@@ -332,7 +345,9 @@ internal sealed class RegisteredWorkspaces
                 root = OpenVerified(row);
                 var protectedStages = PrivateStageRegistry.TryLoadIdentitiesForUse(transaction);
                 if (protectedStages is null)
-                    root.ProtectPrivateStageFiles(identity => _store.Read(reader => PrivateStageRegistry.ContainsIdentity(reader, identity)));
+                    root.ProtectPrivateStageFiles(privateStagesInTransaction
+                        ? identity => PrivateStageRegistry.ContainsIdentity(transaction, identity)
+                        : identity => _store.Read(reader => PrivateStageRegistry.ContainsIdentity(reader, identity)));
                 else
                     root.ProtectPrivateStageFiles(protectedStages);
                 cancellationToken.ThrowIfCancellationRequested();

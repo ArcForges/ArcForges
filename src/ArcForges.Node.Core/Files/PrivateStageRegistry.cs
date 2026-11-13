@@ -69,6 +69,22 @@ internal static partial class PrivateStageRegistry
         if (!identity.IsFile || !HasSchema(reader)) return false;
         // A newly added hard link does not change the identity of the protected native file.
         var encoded = RegisteredWorkspaces.RootIdentity.Encode(identity with { Links = 1 }, directory: false);
+        if (encoded.Platform == 1)
+        {
+            // Windows creation time is mutable through an independent metadata handle. Privacy exclusion binds
+            // the durable volume/file ID, even if that time changed; it never authorizes reopening or an effect.
+            // The existing composite identity index serves this fixed-length BLOB range without a registry scan.
+            var lower = encoded.Bytes.ToArray();
+            var upper = encoded.Bytes.ToArray();
+            lower.AsSpan(25).Clear();
+            upper.AsSpan(25).Fill(byte.MaxValue);
+            return reader.Scalar("""
+                SELECT 1 FROM file_private_stage_object
+                WHERE identity_platform = 1 AND native_identity >= $lower AND native_identity <= $upper
+                  AND length(native_identity) = 33
+                LIMIT 1;
+                """, ("$lower", lower), ("$upper", upper)) is not null;
+        }
         return reader.Scalar("""
             SELECT 1 FROM file_private_stage_object WHERE identity_platform = $platform AND native_identity = $identity LIMIT 1;
             """, ("$platform", encoded.Platform), ("$identity", encoded.Bytes)) is not null;

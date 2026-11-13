@@ -119,7 +119,7 @@ internal sealed partial class FileServiceHandler
             path = selected.Path;
             CheckAuthority(transaction, caller);
             CheckBudget();
-            using var use = _workspaces.OpenForUse(transaction, workspace, beforeUse: value => CheckAuthority(value, caller), token);
+            using var use = _workspaces.OpenForQuery(transaction, workspace, beforeUse: value => CheckAuthority(value, caller), token);
             AfterWorkspaceSnapshotForTests?.Invoke();
             CheckBudget();
             var result = _queries.Search(use.Root, path, request.Pattern, request.Mode,

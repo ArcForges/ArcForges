@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using ArcForges.Client;
@@ -25,6 +26,7 @@ public sealed class PrivateStageRetainedCapacityTests
         var calls = new RoutedCalls(node);
         var caller = calls.Relay(Origin.Script);
         var rootPath = Directory.CreateDirectory(Path.Combine(node.Root, "retained-capacity")).FullName;
+        File.WriteAllText(Path.Combine(rootPath, "visible.txt"), "ordinary-retained-capacity-positive");
         var workspace = new RegisteredWorkspaces(node.Runtime.Store).RegisterFromVerifiedHuman(rootPath, cancellationToken: ct);
         using var root = WorkspacePath.OpenRoot(rootPath);
         var rootId = RegisteredWorkspaces.RootIdentity.Encode(root.RootIdentity);
@@ -32,6 +34,7 @@ public sealed class PrivateStageRetainedCapacityTests
         var requester = new ActorRef { Origin = Origin.Remote, CenterCaller = caller };
         var human = new ActorRef { Origin = Origin.Human, ClientKind = ClientKind.Cli };
         long bytes = 0;
+        var phase = Stopwatch.StartNew();
         for (var index = 0; index < 130; index++)
         {
             ct.ThrowIfCancellationRequested();
@@ -82,6 +85,8 @@ public sealed class PrivateStageRetainedCapacityTests
             Assert.Equal((0, bytes), node.Runtime.Store.Read(PrivateStageRegistry.Usage));
         }
 
+        TestContext.Current.TestOutputHelper?.WriteLine($"130 retained stage setup: {phase.Elapsed.TotalMilliseconds:F0} ms");
+        phase.Restart();
         Assert.Equal(130L, node.Runtime.Store.Read(r => r.Scalar("SELECT count(*) FROM file_private_stage_object WHERE phase = 3;")));
         Assert.Null(node.Runtime.Store.Read(PrivateStageRegistry.TryLoadIdentitiesForUse));
         Assert.Equal(0, await node.StopAsync());
@@ -89,12 +94,48 @@ public sealed class PrivateStageRetainedCapacityTests
         calls = new RoutedCalls(node);
         Assert.Equal((0, bytes), node.Runtime.Store.Read(PrivateStageRegistry.Usage));
         Assert.Null(node.Runtime.Store.Read(PrivateStageRegistry.TryLoadIdentitiesForUse));
-        // Verify SQLite uses its real unique native-identity index rather than scanning or truncating retained identities.
+        // Neither the first nor the last retained object may escape indexed privacy when Windows metadata changes.
+        foreach (var name in new[] { "stage-000", "stage-129" })
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                var before = root.InspectEntry(name).Identity;
+                var retainedPath = Path.Combine(rootPath, name);
+                File.SetCreationTimeUtc(retainedPath, File.GetCreationTimeUtc(retainedPath).AddHours(1));
+                var after = root.InspectEntry(name).Identity;
+                Assert.Equal(before.Volume, after.Volume);
+                Assert.Equal(before.Low, after.Low);
+                Assert.Equal(before.High, after.High);
+                Assert.NotEqual(before.Created, after.Created);
+            }
+            Assert.True(node.Runtime.Store.Read(r => PrivateStageRegistry.ContainsIdentity(r, root.InspectEntry(name).Identity)));
+        }
+        // Verify the actual platform-specific lookup uses the existing identity index, including the Windows BLOB range.
+        var observed = RegisteredWorkspaces.RootIdentity.Encode(root.InspectEntry("stage-000").Identity, directory: false);
         var indexUsed = node.Runtime.Store.Read(r =>
         {
-            using var query = r.CreateCommand("""
-                EXPLAIN QUERY PLAN SELECT 1 FROM file_private_stage_object WHERE identity_platform = 1 AND native_identity = x'00' LIMIT 1;
+            using var query = r.CreateCommand(OperatingSystem.IsWindows() ? """
+                EXPLAIN QUERY PLAN SELECT 1 FROM file_private_stage_object
+                WHERE identity_platform = 1 AND native_identity >= $lower AND native_identity <= $upper
+                  AND length(native_identity) = 33 LIMIT 1;
+                """ : """
+                EXPLAIN QUERY PLAN SELECT 1 FROM file_private_stage_object
+                WHERE identity_platform = $platform AND native_identity = $identity LIMIT 1;
                 """);
+            if (OperatingSystem.IsWindows())
+            {
+                var lower = observed.Bytes.ToArray();
+                var upper = observed.Bytes.ToArray();
+                lower.AsSpan(25).Clear();
+                upper.AsSpan(25).Fill(byte.MaxValue);
+                query.Parameters.AddWithValue("$lower", lower);
+                query.Parameters.AddWithValue("$upper", upper);
+            }
+            else
+            {
+                query.Parameters.AddWithValue("$platform", observed.Platform);
+                query.Parameters.AddWithValue("$identity", observed.Bytes);
+            }
             using var row = query.ExecuteReader();
             return row.Read() && row.GetString(3).Contains("INDEX", StringComparison.OrdinalIgnoreCase);
         });
@@ -129,19 +170,32 @@ public sealed class PrivateStageRetainedCapacityTests
             Pattern = "private-retained-stage",
             Mode = FileSearchMode.Literal,
         };
+        TestContext.Current.TestOutputHelper?.WriteLine($"Restart and two retained file checks: {phase.Elapsed.TotalMilliseconds:F0} ms");
+        phase.Restart();
         var searchResult = await calls.CallAsync(caller, RoutedMethod.SearchNodeFiles, search.ToByteArray());
+        TestContext.Current.TestOutputHelper?.WriteLine($"130-entry routed search: {phase.Elapsed.TotalMilliseconds:F0} ms");
         var searchResponse = FileServiceSearchFilesResponse.Parser.ParseFrom(searchResult.Answer!.Response);
         Assert.Null(searchResponse.Error);
         Assert.Empty(searchResponse.Value.Matches);
+        Assert.False(searchResponse.Value.Truncated);
         var list = new FileServiceListDirectoryRequest
         {
             Meta = new RequestMeta { CorrelationId = CommandIds.New() },
             Path = new NodeFilePath { WorkspaceId = new Id { Value = ByteString.CopyFrom(workspace.Id) }, Path = "" },
         };
-        var listResult = await calls.CallAsync(caller, RoutedMethod.ListNodeDirectory, list.ToByteArray());
-        var listResponse = FileServiceListDirectoryResponse.Parser.ParseFrom(listResult.Answer!.Response);
-        Assert.Null(listResponse.Error);
-        Assert.DoesNotContain(listResponse.Value.Entries, entry => entry.Name.StartsWith("stage-", StringComparison.Ordinal));
+        phase.Restart();
+        try
+        {
+            var listResult = await calls.CallAsync(caller, RoutedMethod.ListNodeDirectory, list.ToByteArray());
+            var listResponse = FileServiceListDirectoryResponse.Parser.ParseFrom(listResult.Answer!.Response);
+            Assert.Null(listResponse.Error);
+            Assert.DoesNotContain(listResponse.Value.Entries, entry => entry.Name.StartsWith("stage-", StringComparison.Ordinal));
+            Assert.Contains(listResponse.Value.Entries, entry => entry.Name == "visible.txt");
+        }
+        finally
+        {
+            TestContext.Current.TestOutputHelper?.WriteLine($"130-entry routed directory listing: {phase.Elapsed.TotalMilliseconds:F0} ms");
+        }
         var marker = Encoding.UTF8.GetBytes("private-retained-stage");
         foreach (var database in new[] { node.Runtime.Store.DatabasePath, node.Runtime.Store.DatabasePath + "-wal" })
         {
