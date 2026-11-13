@@ -21,6 +21,8 @@ internal sealed partial class FileServiceHandler
 {
     // Exercises the real FULL commit return boundary against exclusively test-owned metadata.
     internal Action? AfterRemovalExecutionCommitForTests { get; set; }
+    // Coordinates a native replacement of a test-owned target after the metadata snapshot.
+    internal Action? AfterRemovalExecutionCaptureForTests { get; set; }
 
     /// <summary>
     /// Executes the currently supported, metadata-only preflight. Neither native platform has an admitted strict
@@ -239,8 +241,19 @@ internal sealed partial class FileServiceHandler
                 beforeUse: selected => CheckRemovalPreflightAuthority(selected, caller), token);
             if (reader.Scalar("SELECT 1 FROM file_private_stage_object LIMIT 1;") is not null)
                 throw new WorkspaceRemovalPlanException("file_access_denied");
-            snapshot = WorkspaceRemovalPlan.Capture(use.Root, path, token);
-            MatchRemovalExecutionSnapshot(reader, id, plan, snapshot);
+            VerifyRemovalExecutionTarget(reader, use.Root, id, path);
+            try
+            {
+                snapshot = WorkspaceRemovalPlan.Capture(use.Root, path, token);
+                AfterRemovalExecutionCaptureForTests?.Invoke();
+                MatchRemovalExecutionSnapshot(reader, id, plan, snapshot);
+            }
+            finally
+            {
+                // A replacement observed while enumeration fails must not become a limit or access claim
+                // about the original planned object. This remains metadata-only, not a namespace guard.
+                VerifyRemovalExecutionTarget(reader, use.Root, id, path);
+            }
         }
         else if (plan.TargetKind == 2 && plan.Attempt is not null)
         {
@@ -249,6 +262,31 @@ internal sealed partial class FileServiceHandler
             throw new WorkspaceRemovalPlanException("strict_cleanup_guard_unavailable");
         }
         else throw new WorkspaceRemovalPlanException("planned_tree_changed");
+    }
+
+    private static void VerifyRemovalExecutionTarget(StoreReader reader, WorkspacePath root, byte[] id, string path)
+    {
+        using var command = reader.CreateCommand("""
+            SELECT relative_path, entry_kind, native_platform, native_identity, stamp_size, stamp_mtime,
+                   stamp_mtime_nsec, stamp_change, stamp_change_nsec, mode, link_count
+            FROM file_removal_plan_item WHERE plan_id = $id AND ordinal = 0;
+            """);
+        command.Parameters.AddWithValue("$id", id);
+        using var row = command.ExecuteReader();
+        if (!row.Read() || row.GetString(0) != path)
+            throw new WorkspaceRemovalPlanException("planned_tree_changed");
+        var current = root.InspectEntry(path);
+        var expectedKind = (WorkspaceEntryType)row.GetInt32(1);
+        if (current.Kind != expectedKind || expectedKind is not (WorkspaceEntryType.File or WorkspaceEntryType.Directory))
+            throw new WorkspaceRemovalPlanException("planned_tree_changed");
+        var identity = RegisteredWorkspaces.RootIdentity.Encode(current.Identity, directory: expectedKind == WorkspaceEntryType.Directory);
+        var expectedStamp = new WorkspaceFileStamp(row.GetInt64(4), row.GetInt64(5), checked((uint)row.GetInt64(6)),
+            row.GetInt64(7), checked((uint)row.GetInt64(8)));
+        if (identity.Platform != row.GetInt32(2) ||
+            !CryptographicOperations.FixedTimeEquals(identity.Bytes, (byte[])row.GetValue(3)) ||
+            current.Stamp != expectedStamp || current.Identity.Mode != checked((uint)row.GetInt64(9)) ||
+            current.Identity.Links != checked((uint)row.GetInt64(10)))
+            throw new WorkspaceRemovalPlanException("planned_tree_changed");
     }
 
     private static void MatchRemovalExecutionSnapshot(StoreReader reader, byte[] id, RemovalExecutionPlan plan,
