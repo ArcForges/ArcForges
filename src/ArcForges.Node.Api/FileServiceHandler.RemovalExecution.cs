@@ -279,13 +279,15 @@ internal sealed partial class FileServiceHandler
         var expectedKind = (WorkspaceEntryType)row.GetInt32(1);
         if (current.Kind != expectedKind || expectedKind is not (WorkspaceEntryType.File or WorkspaceEntryType.Directory))
             throw new WorkspaceRemovalPlanException("planned_tree_changed");
-        var identity = RegisteredWorkspaces.RootIdentity.Encode(current.Identity, directory: expectedKind == WorkspaceEntryType.Directory);
         var expectedStamp = new WorkspaceFileStamp(row.GetInt64(4), row.GetInt64(5), checked((uint)row.GetInt64(6)),
             row.GetInt64(7), checked((uint)row.GetInt64(8)));
-        if (identity.Platform != row.GetInt32(2) ||
-            !CryptographicOperations.FixedTimeEquals(identity.Bytes, (byte[])row.GetValue(3)) ||
-            current.Stamp != expectedStamp || current.Identity.Mode != checked((uint)row.GetInt64(9)) ||
+        // Compare observed changes before the encoder requires the planned single-link file shape.
+        if (current.Stamp != expectedStamp || current.Identity.Mode != checked((uint)row.GetInt64(9)) ||
             current.Identity.Links != checked((uint)row.GetInt64(10)))
+            throw new WorkspaceRemovalPlanException("planned_tree_changed");
+        var identity = RegisteredWorkspaces.RootIdentity.Encode(current.Identity, directory: expectedKind == WorkspaceEntryType.Directory);
+        if (identity.Platform != row.GetInt32(2) ||
+            !CryptographicOperations.FixedTimeEquals(identity.Bytes, (byte[])row.GetValue(3)))
             throw new WorkspaceRemovalPlanException("planned_tree_changed");
     }
 
