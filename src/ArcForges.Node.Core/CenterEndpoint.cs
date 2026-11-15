@@ -113,7 +113,7 @@ public sealed class CenterEndpoint : IEquatable<CenterEndpoint>
         var path = slash < 0 ? string.Empty : rest[slash..];
         string host;
         string? portText = null;
-        if (authority.StartsWith('['))
+        if (authority.StartsWith('[', StringComparison.Ordinal))
         {
             var close = authority.IndexOf(']', StringComparison.Ordinal);
             if (close < 0)
@@ -179,7 +179,7 @@ public sealed class CenterEndpoint : IEquatable<CenterEndpoint>
 
         if (path.Length > 0)
         {
-            if (path.EndsWith('/'))
+            if (path.EndsWith('/', StringComparison.Ordinal))
             {
                 reason = "the path has a trailing slash";
                 return false;
@@ -255,14 +255,14 @@ public sealed class CenterEndpoint : IEquatable<CenterEndpoint>
 
     private static bool IsHostName(string host)
     {
-        if (host.Length is 0 or > 253 || host.EndsWith('.') || host.StartsWith('.'))
+        if (host.Length is 0 or > 253 || host.EndsWith('.', StringComparison.Ordinal) || host.StartsWith('.', StringComparison.Ordinal))
         {
             return false;
         }
 
         foreach (var label in host.Split('.'))
         {
-            if (label.Length is 0 or > 63 || label.StartsWith('-') || label.EndsWith('-')
+            if (label.Length is 0 or > 63 || label.StartsWith('-', StringComparison.Ordinal) || label.EndsWith('-', StringComparison.Ordinal)
                 || !label.All(c => char.IsAsciiLetterLower(c) || char.IsAsciiDigit(c) || c == '-'))
             {
                 return false;

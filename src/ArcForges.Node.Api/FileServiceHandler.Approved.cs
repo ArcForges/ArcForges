@@ -118,7 +118,7 @@ internal sealed partial class FileServiceHandler
             }
             else
             {
-                var slash = plan.Intent.RelativePath.LastIndexOf('/');
+                var slash = plan.Intent.RelativePath.LastIndexOf('/', StringComparison.Ordinal);
                 if (OperatingSystem.IsLinux()) lease.CreationSelection = lease.Use.Root.PrepareLinuxCreation(plan.Intent.RelativePath, token);
                 lease.ParentIdentity = WorkspacePath.Identity(lease.CreationSelection?.Parent ?? lease.Use.Root.OpenDirectory(
                     slash < 0 ? "" : plan.Intent.RelativePath[..slash]));

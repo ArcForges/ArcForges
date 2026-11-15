@@ -121,7 +121,7 @@ public sealed class LinuxExecutionTests
         Assert.Equal("0", Read(slice, "memory.swap.max"));
         Assert.Equal("32768", Read(slice, "pids.max"));
         Assert.Equal(0, (await node.CliBytesAsync(Bound, "tasks", "cancel", id)).ExitCode);
-        Assert.Equal("TASK_STATE_CANCELLED", JsonDocument.Parse((await node.CliAsync("tasks", "wait", id, "--json")).Output).RootElement.GetProperty("state").GetString());
+        Assert.Equal("TASK_STATE_CANCELLED", JsonElement.Parse((await node.CliAsync("tasks", "wait", id, "--json")).Output).GetProperty("state").GetString());
     }
 
     [Fact(Timeout = 300_000)]
@@ -160,14 +160,14 @@ public sealed class LinuxExecutionTests
         Assert.True(root.IsRunning(), "The attempt survived the node.");
 
         await node.StartNodeAsync();
-        var shortTask = JsonDocument.Parse((await node.CliAsync("tasks", "wait", shortId, "--json")).Output).RootElement;
+        var shortTask = JsonElement.Parse((await node.CliAsync("tasks", "wait", shortId, "--json")).Output);
         Assert.Equal(5, shortTask.GetProperty("currentAttempt").GetProperty("result").GetProperty("exitCode").GetInt32());
         Assert.True(shortTask.GetProperty("currentAttempt").GetProperty("nodeGap").GetBoolean());
-        var shown = JsonDocument.Parse((await node.CliAsync("tasks", "show", id, "--json")).Output).RootElement.GetProperty("task");
+        var shown = JsonElement.Parse((await node.CliAsync("tasks", "show", id, "--json")).Output).GetProperty("task");
         Assert.Equal("TASK_STATE_RUNNING", shown.GetProperty("state").GetString());
         Assert.True(shown.GetProperty("currentAttempt").GetProperty("nodeGap").GetBoolean());
         Assert.Equal(0, (await node.CliBytesAsync(Bound, "tasks", "cancel", id)).ExitCode);
-        var cancelled = JsonDocument.Parse((await node.CliAsync("tasks", "wait", id, "--json")).Output).RootElement;
+        var cancelled = JsonElement.Parse((await node.CliAsync("tasks", "wait", id, "--json")).Output);
         Assert.Equal("TASK_STATE_CANCELLED", cancelled.GetProperty("state").GetString());
         Assert.True(long.Parse(cancelled.GetProperty("currentAttempt").GetProperty("usage").GetProperty("memPeakBytes").GetString()!, CultureInfo.InvariantCulture) > 0);
         Assert.False(root.IsRunning());
@@ -210,11 +210,11 @@ public sealed class LinuxExecutionTests
         await node.WaitReadyAsync();
         Assert.NotEqual(before, SystemdTestEnvironment.Property(unit, "MainPID"));
         Assert.True(root.IsRunning(), "The attempt survived the restart of the node unit.");
-        var shortTask = JsonDocument.Parse((await node.CliAsync("tasks", "wait", shortId, "--json")).Output).RootElement;
+        var shortTask = JsonElement.Parse((await node.CliAsync("tasks", "wait", shortId, "--json")).Output);
         Assert.Equal(9, shortTask.GetProperty("currentAttempt").GetProperty("result").GetProperty("exitCode").GetInt32());
-        Assert.Equal("TASK_STATE_RUNNING", JsonDocument.Parse((await node.CliAsync("tasks", "show", id, "--json")).Output).RootElement.GetProperty("task").GetProperty("state").GetString());
+        Assert.Equal("TASK_STATE_RUNNING", JsonElement.Parse((await node.CliAsync("tasks", "show", id, "--json")).Output).GetProperty("task").GetProperty("state").GetString());
         Assert.Equal(0, (await node.CliBytesAsync(Bound, "tasks", "cancel", id)).ExitCode);
-        Assert.Equal("TASK_STATE_CANCELLED", JsonDocument.Parse((await node.CliAsync("tasks", "wait", id, "--json")).Output).RootElement.GetProperty("state").GetString());
+        Assert.Equal("TASK_STATE_CANCELLED", JsonElement.Parse((await node.CliAsync("tasks", "wait", id, "--json")).Output).GetProperty("state").GetString());
         Assert.Equal(0, (await node.CliAsync("node", "stop")).ExitCode);
         await TestNode.WaitAsync(() => SystemdTestEnvironment.Property(unit, "ActiveState") is "inactive" or "failed", Bound, "the node unit to stop");
     }
@@ -239,7 +239,7 @@ public sealed class LinuxExecutionTests
         Assert.Contains("enforcement_unavailable", Encoding.UTF8.GetString(refused.Stderr), StringComparison.Ordinal);
         var labelled = await node.CliBytesAsync(Bound, "run", "--detach", "--", "/bin/sh", "-c", "exit 3");
         var id = Encoding.UTF8.GetString(labelled.Stdout).Trim();
-        var task = JsonDocument.Parse((await node.CliAsync("tasks", "wait", id, "--json")).Output).RootElement;
+        var task = JsonElement.Parse((await node.CliAsync("tasks", "wait", id, "--json")).Output);
         Assert.Equal(3, task.GetProperty("currentAttempt").GetProperty("result").GetProperty("exitCode").GetInt32());
         Assert.True(task.GetProperty("currentAttempt").GetProperty("unenforced").GetBoolean());
     }
@@ -258,7 +258,7 @@ public sealed class LinuxExecutionTests
         Assert.Contains("no memory delegation", capabilities.GetProperty("memoryReason").GetString(), StringComparison.Ordinal);
         Assert.Equal(125, (await node.CliBytesAsync(Bound, "run", "--require-enforcement", "memory", "--", "/bin/true")).ExitCode);
         var cpu = await node.CliBytesAsync(Bound, "run", "--require-enforcement", "cpu", "--detach", "--", "/bin/true");
-        var task = JsonDocument.Parse((await node.CliAsync("tasks", "wait", Encoding.UTF8.GetString(cpu.Stdout).Trim(), "--json")).Output).RootElement;
+        var task = JsonElement.Parse((await node.CliAsync("tasks", "wait", Encoding.UTF8.GetString(cpu.Stdout).Trim(), "--json")).Output);
         Assert.Equal("TASK_STATE_SUCCEEDED", task.GetProperty("state").GetString());
         Assert.True(task.GetProperty("currentAttempt").GetProperty("unenforced").GetBoolean());
     }
@@ -329,7 +329,7 @@ public sealed class LinuxExecutionTests
         Assert.True(output - Limit <= Rate / 2, $"The overshoot {output - Limit} exceeds the rate over one interval plus the stop latency.");
 
         await node.StartNodeAsync();
-        var task = JsonDocument.Parse((await node.CliAsync("tasks", "wait", id, "--json")).Output).RootElement;
+        var task = JsonElement.Parse((await node.CliAsync("tasks", "wait", id, "--json")).Output);
         Assert.Equal("TERMINATION_REASON_OUTPUT_LIMIT", task.GetProperty("currentAttempt").GetProperty("result").GetProperty("terminationReason").GetString());
         Assert.Equal("GUARD", task.GetProperty("currentAttempt").GetProperty("limitEnforcedBy").GetString());
     }
@@ -377,7 +377,7 @@ public sealed class LinuxExecutionTests
 
         SystemdTestEnvironment.Systemctl("reset-failed", unit);
         await node.StartNodeAsync();
-        var task = JsonDocument.Parse((await node.CliAsync("tasks", "wait", id, "--json")).Output).RootElement;
+        var task = JsonElement.Parse((await node.CliAsync("tasks", "wait", id, "--json")).Output);
         Assert.Equal("TERMINATION_REASON_OUTPUT_LIMIT", task.GetProperty("currentAttempt").GetProperty("result").GetProperty("terminationReason").GetString());
         Assert.Equal("GUARD", task.GetProperty("currentAttempt").GetProperty("limitEnforcedBy").GetString());
     }
@@ -431,7 +431,7 @@ public sealed class LinuxExecutionTests
         }
 
         await node.StartNodeAsync();
-        var task = JsonDocument.Parse((await node.CliAsync("tasks", "wait", id, "--json")).Output).RootElement;
+        var task = JsonElement.Parse((await node.CliAsync("tasks", "wait", id, "--json")).Output);
         Assert.Equal("TERMINATION_REASON_OUTPUT_LIMIT", task.GetProperty("currentAttempt").GetProperty("result").GetProperty("terminationReason").GetString());
         Assert.Equal(guardStop is null ? "NODE" : "GUARD", task.GetProperty("currentAttempt").GetProperty("limitEnforcedBy").GetString());
     }
@@ -537,7 +537,7 @@ public sealed class LinuxExecutionTests
         var watch = Stopwatch.StartNew();
         while (true)
         {
-            var shown = JsonDocument.Parse((await node.CliAsync("tasks", "show", id, "--json")).Output).RootElement.GetProperty("task");
+            var shown = JsonElement.Parse((await node.CliAsync("tasks", "show", id, "--json")).Output).GetProperty("task");
             if (shown.TryGetProperty("currentAttempt", out var attempt) && attempt.GetProperty("state").GetString() == "ATTEMPT_STATE_RUNNING")
             {
                 return attempt.GetProperty("attemptId").GetString()!;

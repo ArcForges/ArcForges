@@ -234,7 +234,7 @@ public sealed class CloudSignInTests
             ["kind"] = name.StartsWith("pkce", StringComparison.Ordinal) ? "pkce" : "device",
             ["passed"] = true,
             ["steps"] = steps,
-            ["requests"] = new JsonArray([.. lines.Select(line => (JsonNode?)line[(line.LastIndexOf(' ') + 1)..])]),
+            ["requests"] = new JsonArray([.. lines.Select(line => (JsonNode?)line[(line.LastIndexOf(' ', StringComparison.Ordinal) + 1)..])]),
         };
         Write(handshake, name + ".result.json", result);
     }

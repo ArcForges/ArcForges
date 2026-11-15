@@ -92,7 +92,7 @@ public static partial class ProcFs
     public static string CgroupDirectory(string cgroupPath)
     {
         ArgumentNullException.ThrowIfNull(cgroupPath);
-        return CgroupRoot + (cgroupPath.StartsWith('/') ? cgroupPath : "/" + cgroupPath);
+        return CgroupRoot + (cgroupPath.StartsWith('/', StringComparison.Ordinal) ? cgroupPath : "/" + cgroupPath);
     }
 
     /// <summary>The process IDs in a cgroup directory (its <c>cgroup.procs</c>); empty when it is gone.</summary>
@@ -263,7 +263,7 @@ public static partial class ProcFs
             return null;
         }
 
-        var close = text.LastIndexOf(')');
+        var close = text.LastIndexOf(')', StringComparison.Ordinal);
         if (close < 0 || close + 2 >= text.Length)
         {
             return null;

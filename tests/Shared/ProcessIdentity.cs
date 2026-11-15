@@ -107,7 +107,7 @@ internal readonly record struct ProcessIdentity
         {
             // Fields after the parenthesised command name: state (3), ppid (4), ..., starttime (22).
             var stat = File.ReadAllText($"/proc/{pid.ToString(CultureInfo.InvariantCulture)}/stat");
-            var fields = stat[(stat.LastIndexOf(')') + 2)..].Split(' ');
+            var fields = stat[(stat.LastIndexOf(')', StringComparison.Ordinal) + 2)..].Split(' ');
             return fields[0] is "Z" or "X" ? null : long.Parse(fields[19], CultureInfo.InvariantCulture);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or FormatException or IndexOutOfRangeException)

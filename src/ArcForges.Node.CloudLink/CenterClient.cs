@@ -198,7 +198,7 @@ internal sealed class CenterClient(CenterHttpClient http, TimeProvider clock)
         if (code.Contains("HTTP status code: 404", StringComparison.Ordinal) || code.Contains("HTTP status code: 415", StringComparison.Ordinal)
             || code.Contains("HTTP status code: 405", StringComparison.Ordinal))
         {
-            return (CenterOutcome.ProtocolMismatch, null, false, "the center path answered HTTP " + code[(code.LastIndexOf(' ') + 1)..]);
+            return (CenterOutcome.ProtocolMismatch, null, false, "the center path answered HTTP " + code[(code.LastIndexOf(' ', StringComparison.Ordinal) + 1)..]);
         }
 
         return (CenterOutcome.Unreachable, null, true, "no center answer (" + status + ")");

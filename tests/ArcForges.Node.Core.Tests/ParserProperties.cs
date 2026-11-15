@@ -18,7 +18,7 @@ public sealed class ParserProperties
 {
     /// <summary>Text near the cursor grammar: digits, dots, the prefix, signs, spaces and other characters.</summary>
     private static readonly Gen<string> NearCursor = Gen.Frequency(
-        (3, Gen.Select(Gen.OneOfConst("v1.", "v1", "V1.", "v2.", string.Empty), Gen.String[Gen.Char["0123456789.-+ x"], 0, 30], (prefix, rest) => prefix + rest)),
+        (3, Gen.Select(Gen.OneOf("v1.", "v1", "V1.", "v2.", string.Empty), Gen.String[Gen.Char["0123456789.-+ x"], 0, 30], (prefix, rest) => prefix + rest)),
         (1, Gen.String[Gen.Char["v1.0123456789abcdef"], 0, 70]),
         (1, Gen.String));
 
@@ -69,10 +69,10 @@ public sealed class ParserProperties
     public void ACommandSummaryNeverShowsASecretShapedValueAndStaysOneShortLine()
     {
         const string Marker = "secret-value-";
-        var secretName = Gen.Select(Gen.String[Gen.Char["AB_x"], 0, 4], Gen.OneOfConst("TOKEN", "Secret", "PASSWORD", "_KEY", "APIKEY"), (head, word) => head + word);
+        var secretName = Gen.Select(Gen.String[Gen.Char["AB_x"], 0, 4], Gen.OneOf("TOKEN", "Secret", "PASSWORD", "_KEY", "APIKEY"), (head, word) => head + word);
         var argument = Gen.Frequency(
             (3, Gen.String[Gen.Char["abc -=/\\\"\r\n中"], 0, 20]),
-            (2, Gen.Select(Gen.OneOfConst(string.Empty, "-", "--"), secretName, Gen.String[Gen.Char["abc =/\"\n中"], 0, 20],
+            (2, Gen.Select(Gen.OneOf(string.Empty, "-", "--"), secretName, Gen.String[Gen.Char["abc =/\"\n中"], 0, 20],
                 (dashes, name, value) => dashes + name + "=" + Marker + value)));
         Gen.Select(argument.Array[1, 12], Gen.Bool).Sample((arguments, shell) =>
         {

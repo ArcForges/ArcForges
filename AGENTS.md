@@ -36,8 +36,10 @@ any change. They are binding; this file summarizes them and adds the repository 
 ## 3. Standing constraints
 
 - Never read or print secrets; no credentials in files, logs or prompts.
-- No proxy or network changes; no installs by agents (installs are the user's); reuse installed
-  toolchains and caches.
+- No proxy or network changes; reuse installed toolchains and caches. Outside the
+  owner-authorized AFV2-ENV-01 prerequisite upgrades, installs are the user's. The
+  current Plan ENV authorization allows verified side-by-side tools while preserving
+  older installations and historical reproduction.
 - No macOS, device, GUI, browser, live-service or inference CI. Desktop UI tests are Avalonia headless.
 - Linux tests run on the Linux MCP host, through the Linux MCP server (the Linux leg, [§5](#5-verification-after-the-push-ad-0020);
   [AD-0019](https://github.com/ArcForges/ArcForges-Design/blob/main/docs/decisions/AD-0019-mcp-first-verification.md)). Local WSL is never used for development or verification, not even as a fallback, and need
@@ -56,7 +58,8 @@ any change. They are binding; this file summarizes them and adds the repository 
   `arcforges-desktop` (`src/ArcForges.Desktop`), plus the tools `arcforges-testload` and
   `arcforges-bench`. Names must stay distinct on case-insensitive file systems.
 - **Build policy:** `Directory.Build.props` references DesktopPlatform's build-only
-  `ArcForges.Build.Policy` (`PrivateAssets="all"`): C# 14, nullable, deterministic,
+  `ArcForges.Build.Policy` (`PrivateAssets="all"`): explicit C# 15 / .NET 11 from
+  `global.json`, nullable, deterministic,
   warnings-as-errors, analyzers (`latest-recommended`), central exact versions and locked
   restores. `Directory.Build.targets` makes every `src/` and `tools/` executable Native AOT with
   trim and AOT warnings as errors.
@@ -216,8 +219,11 @@ The cross-repository rules are the Plan [AGENTS.md](https://github.com/ArcForges
   - Not reproduced: CodeQL (external PRs and weekly) and dependency review (external PRs), GitHub services; win-arm64
     and linux-arm64 (removed from the owner path by the user's instruction; a manual `workflow_dispatch` runs them).
 - **Prerequisites** (installs are the user's):
-  - **Windows:** the .NET SDK selected by `global.json`, PowerShell 7, Python, and Visual Studio with the MSVC x64 tools.
-  - **Linux host:** the same .NET SDK, clang and zlib, Python (`python` on PATH), a systemd user manager with cpu, memory
+  - **Windows:** the .NET SDK selected by `global.json` (11.0.100), PowerShell 7,
+    Python 3.15.2 (`.python-version`), and Visual Studio with the reviewed MSVC x64 tools.
+  - **Linux host:** the same .NET SDK, private LLVM23.1.5/binutils2.47 from
+    `eng/native-toolchain.json` (exact formal GNU banner2.47.20260726) and zlib,
+    Python 3.15.2 (`python` on PATH), a systemd user manager with cpu, memory
     and pids delegated on cgroups v2, and Docker with the pinned gitleaks image.
   - **Both:** `gh` with a credential that can write commit statuses, and network access to GitHub and NuGet (and once to
     the actionlint release).

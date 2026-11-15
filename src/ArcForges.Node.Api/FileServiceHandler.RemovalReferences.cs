@@ -130,7 +130,7 @@ internal sealed partial class FileServiceHandler
             {
                 if (rows.IsDBNull(0)) throw new WorkspaceRemovalPlanException("file_access_denied");
                 var components = WorkspacePath.Components(rows.GetString(1), allowRoot: true);
-                var path = components.Length == 0 ? rows.GetString(0) : Path.Combine(rows.GetString(0), Path.Combine(components));
+                var path = components.Length == 0 ? rows.GetString(0) : Path.Combine([rows.GetString(0), .. components]);
                 if (Related(path, requireDirectory: true)) return false;
             }
         }

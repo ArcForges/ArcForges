@@ -168,7 +168,9 @@ internal static class ForkScenario
             }
 
             // Let the collectors observe the killed processes before their handles are released.
-            await Task.WhenAny(Task.WhenAll(runs), Task.Delay(TimeSpan.FromSeconds(5))).ConfigureAwait(false);
+            using var collectorWait = new CancellationTokenSource();
+            await Task.WhenAny(Task.WhenAll(runs), Task.Delay(TimeSpan.FromSeconds(5), collectorWait.Token)).ConfigureAwait(false);
+            await collectorWait.CancelAsync().ConfigureAwait(false);
             foreach (var process in started)
             {
                 process.Dispose();

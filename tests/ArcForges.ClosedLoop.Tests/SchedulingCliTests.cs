@@ -47,7 +47,7 @@ public sealed class SchedulingCliTests
         }
 
         async Task<string> StateAsync(string id) =>
-            JsonDocument.Parse((await node.CliAsync("tasks", "wait", id, "--json")).Output).RootElement.GetProperty("state").GetString()!;
+            JsonElement.Parse((await node.CliAsync("tasks", "wait", id, "--json")).Output).GetProperty("state").GetString()!;
 
         async Task<JsonElement> ExplainedAsync(string id, string reason)
         {

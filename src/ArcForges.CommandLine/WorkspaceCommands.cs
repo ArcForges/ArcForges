@@ -141,7 +141,7 @@ internal static class WorkspaceCommands
         if (Guid.TryParseExact(selection, "D", out var guid) && guid != Guid.Empty)
             return (new Id { Value = ByteString.CopyFrom(guid.ToByteArray(bigEndian: true)) }, ExitCodes.Success);
 
-        var path = allowPath && (selection.StartsWith('/') || selection.Length >= 3 && char.IsAsciiLetter(selection[0]) && selection[1] == ':' &&
+        var path = allowPath && (selection.StartsWith('/', StringComparison.Ordinal) || selection.Length >= 3 && char.IsAsciiLetter(selection[0]) && selection[1] == ':' &&
             (selection[2] is '/' or '\\'));
         if (!path && (!IdText.TryNormalizePrefix(selection, out _) || selection.Length < 6))
             return (null, cli.Output.Usage("workspace ID: give a full ID or a prefix of at least six characters."));

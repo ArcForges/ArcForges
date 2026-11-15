@@ -170,7 +170,7 @@ internal static class PrivateStageApproval
     {
         token.ThrowIfCancellationRequested();
         var actualRoot = RegisteredWorkspaces.RootIdentity.Encode(root.RootIdentity);
-        var slash = intent.RelativePath.LastIndexOf('/');
+        var slash = intent.RelativePath.LastIndexOf('/', StringComparison.Ordinal);
         var parent = root.OpenDirectory(slash < 0 ? "" : intent.RelativePath[..slash]);
         var actualParent = RegisteredWorkspaces.RootIdentity.Encode(WorkspacePath.Identity(parent));
         if (actualRoot.Platform != intent.IdentityPlatform || actualParent.Platform != intent.IdentityPlatform ||

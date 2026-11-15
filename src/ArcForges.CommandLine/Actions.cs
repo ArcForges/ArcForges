@@ -17,8 +17,8 @@ internal static class Actions
             catch (UsageException exception)
             {
                 var error = result.InvocationConfiguration.Error;
-                await error.WriteLineAsync("error: " + exception.Message).ConfigureAwait(false);
-                await error.WriteLineAsync("Run 'arcforges --help' for usage.").ConfigureAwait(false);
+                await error.WriteLineAsync(("error: " + exception.Message).AsMemory(), cancellationToken).ConfigureAwait(false);
+                await error.WriteLineAsync("Run 'arcforges --help' for usage.".AsMemory(), cancellationToken).ConfigureAwait(false);
                 return ExitCodes.Usage;
             }
 

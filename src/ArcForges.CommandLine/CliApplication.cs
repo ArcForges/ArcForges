@@ -15,7 +15,7 @@ public delegate Task<int> NodeRunner(NodeRunRequest request, CancellationToken c
 
 /// <summary>
 /// The <c>arcforges</c> command line (experience/cli.md): <c>arcforges [global options] &lt;group&gt; &lt;command&gt; [arguments] [options]</c>,
-/// parsed with System.CommandLine 2.x (F-N02: its Native AOT publish is warning-free and its cold start is within 15 section 1).
+/// parsed with System.CommandLine 3.x (AFV2-ENV-01); current Native AOT and cold-start gates remain required.
 /// Global options may also follow the command. Usage errors exit 2.
 /// </summary>
 public static class CliApplication

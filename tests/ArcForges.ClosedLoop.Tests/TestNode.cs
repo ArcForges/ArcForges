@@ -15,7 +15,7 @@ namespace ArcForges.ClosedLoop.Tests;
 /// <summary>One run of a CLI or node process.</summary>
 internal sealed record ProcessRun(int ExitCode, string Output, string Error)
 {
-    public JsonElement Json() => JsonDocument.Parse(Output).RootElement.Clone();
+    public JsonElement Json() => JsonElement.Parse(Output).Clone();
 
     public override string ToString() => $"exit {ExitCode}; stdout: {Output}; stderr: {Error}";
 }
@@ -341,7 +341,7 @@ internal sealed class TestNode : IAsyncDisposable
             }
             else
             {
-                return value.StartsWith('-') ? -1 : i;
+                return value.StartsWith('-', StringComparison.Ordinal) ? -1 : i;
             }
         }
 

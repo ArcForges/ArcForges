@@ -27,6 +27,9 @@ import threading
 import uuid
 from pathlib import Path
 
+sys.dont_write_bytecode = True
+import native_toolchain
+
 RID = "linux-x64"
 REPOSITORY = Path(__file__).resolve().parent.parent
 PUBLISH = REPOSITORY / "artifacts" / "publish" / RID
@@ -62,9 +65,10 @@ def publish_group(components: list[str], out: list[str]) -> str:
         output = PUBLISH / name
         shutil.rmtree(output, ignore_errors=True)
         argv = ["dotnet", "publish", str(REPOSITORY / PROJECTS[name]), "-c", "Release", "-r", RID, "-o", str(output),
-                "-warnaserror", "-tl:off", "-clp:Summary;ForceNoAlign", "-p:TrimmerSingleWarn=false", "--no-restore"]
+                "-warnaserror", "-tl:off", "-clp:Summary;ForceNoAlign", "-p:TrimmerSingleWarn=false", "--no-restore",
+                *native_toolchain.aot_arguments()]
         out.append(f"==> publish {name} ({RID})")
-        result = subprocess.run(argv, cwd=REPOSITORY, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        result = subprocess.run(argv, cwd=REPOSITORY, env=native_toolchain.aot_environment(), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                                 encoding="utf-8", errors="replace")
         lines = result.stdout.splitlines()
         out.extend(lines)

@@ -85,7 +85,7 @@ FINGERPRINT = {
 }
 
 # The environment of ci.yml, without CI=true (see above).
-ENV = {"DOTNET_CLI_TELEMETRY_OPTOUT": "1", "DOTNET_NOLOGO": "1", "AVALONIA_TELEMETRY_OPTOUT": "1"}
+ENV = {"DOTNET_CLI_TELEMETRY_OPTOUT": "1", "DOTNET_NOLOGO": "1", "AVALONIA_TELEMETRY_OPTOUT": "1", "PYTHONDONTWRITEBYTECODE": "1"}
 
 # Timeouts are five to ten times the cold durations measured on the workstation (18 logical processors, the Windows and
 # Linux lanes then ran concurrently on it, fresh verification checkouts), with a floor of five minutes.
@@ -143,9 +143,10 @@ WIN_BASE_HOST = (
     "Write-Host \"The host of the merge base {base} is current: $exe\"; exit 0 } "
     "else { git -C $base checkout --force --detach {base}; if ($LASTEXITCODE) { throw 'git checkout failed' }; "
     "git -C $base clean -ffdq; if ($LASTEXITCODE) { throw 'git clean failed' } } "
+    "$sdkSelector = Join-Path $PWD 'eng/baseline_sdk.py'; "
     "Remove-Item -LiteralPath $marker -ErrorAction SilentlyContinue; Set-Location $base; "
-    "dotnet restore src/ArcForges.Host/ArcForges.Host.csproj --locked-mode; if ($LASTEXITCODE) { throw 'restore failed' }; "
-    f"dotnet publish src/ArcForges.Host/ArcForges.Host.csproj -c Release -r {RID_WIN} --no-restore -tl:off "
+    "python $sdkSelector --source $base restore src/ArcForges.Host/ArcForges.Host.csproj --locked-mode; if ($LASTEXITCODE) { throw 'restore failed' }; "
+    f"python $sdkSelector --source $base publish src/ArcForges.Host/ArcForges.Host.csproj -c Release -r {RID_WIN} --no-restore -tl:off "
     "-p:IlcUseEnvironmentalTools=true -o (Split-Path $exe); if ($LASTEXITCODE) { throw 'publish failed' }; "
     "Set-Content -LiteralPath $marker -Value '{base}'"
 )
@@ -156,9 +157,9 @@ LINUX_BASE_HOST = (
     "elif [ \"$(git -C \"$b\" rev-parse HEAD)\" = {base} ] && [ -x \"$exe\" ] && [ \"$(cat \"$marker\" 2>/dev/null)\" = {base} ]; "
     "then echo \"The host of the merge base {base} is current: $exe\"; exit 0; "
     "else git -C \"$b\" checkout -q --force --detach {base}; git -C \"$b\" clean -ffdq; fi; "
-    "rm -f \"$marker\"; cd \"$b\"; "
-    "dotnet restore src/ArcForges.Host/ArcForges.Host.csproj --locked-mode; "
-    f"dotnet publish src/ArcForges.Host/ArcForges.Host.csproj -c Release -r {RID_LINUX} --no-restore -tl:off "
+    "h=\"$PWD/eng/baseline_sdk.py\"; rm -f \"$marker\"; cd \"$b\"; "
+    "python \"$h\" --source \"$b\" restore src/ArcForges.Host/ArcForges.Host.csproj --locked-mode; "
+    f"python \"$h\" --source \"$b\" publish src/ArcForges.Host/ArcForges.Host.csproj -c Release -r {RID_LINUX} --no-restore -tl:off "
     "-o \"$(dirname \"$exe\")\"; echo {base} > \"$marker\""
 )
 
@@ -184,7 +185,7 @@ ACTIONLINT = (
     "echo \"$sum  $t.part\" | sha256sum --check --quiet; mv \"$t.part\" \"$t\"; fi; "
     "echo \"$sum  $t\" | sha256sum --check --quiet; "
     "mkdir -p \"$d/actionlint-$v\"; tar -xzf \"$t\" -C \"$d/actionlint-$v\" actionlint; "
-    "\"$d/actionlint-$v/actionlint\""
+    "\"$d/actionlint-$v/actionlint\" -config-file eng/actionlint.yaml"
 )
 
 CODE = ("src/", "tests/", "tools/", "eng/", ".github/")
@@ -229,6 +230,12 @@ LINUX_REAL_OS = (
 )
 
 STEPS = [
+    win("win-toolchain", ["python", "eng/check_toolchain.py"], 120),
+    linux("linux-toolchain", "python eng/check_toolchain.py", 120),
+    win("win-toolchain-tests", ["python", "-m", "unittest", "discover", "-s", "eng", "-p", "test_toolchain.py", "-v"], 180),
+    linux("linux-toolchain-tests", "python -m unittest discover -s eng -p test_toolchain.py -v", 180),
+    linux("linux-native-toolchain", "python eng/native_toolchain.py check", 120),
+    linux("linux-native-toolchain-tests", "python -m unittest discover -s eng -p test_native_toolchain.py -v", 120),
     # ci.yml, Native (win-x64)
     win("win-restore", ["dotnet", "restore", "ArcForges.slnx", "--locked-mode"], 600),
     win("win-build", ["dotnet", "build", "ArcForges.slnx", "-c", "Release", "--no-restore"], 900),

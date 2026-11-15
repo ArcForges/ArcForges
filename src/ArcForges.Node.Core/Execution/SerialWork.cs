@@ -47,7 +47,9 @@ internal sealed class SerialWork : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         _queue.Writer.TryComplete();
-        await Task.WhenAny(_runner, Task.Delay(TimeSpan.FromSeconds(5))).ConfigureAwait(false);
+        using var wait = new CancellationTokenSource();
+        await Task.WhenAny(_runner, Task.Delay(TimeSpan.FromSeconds(5), wait.Token)).ConfigureAwait(false);
+        await wait.CancelAsync().ConfigureAwait(false);
     }
 
     private async Task RunAsync()

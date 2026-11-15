@@ -97,7 +97,7 @@ public sealed class ResourceSamplerTests
         Array.Fill(held, (byte)1);
         var entry = Assert.Single(sampler.Processes(), process => process.Pid == Environment.ProcessId);
         var stat = File.ReadAllText($"/proc/{Environment.ProcessId}/stat");
-        var parent = int.Parse(stat[(stat.LastIndexOf(')') + 2)..].Split(' ')[1], CultureInfo.InvariantCulture);
+        var parent = int.Parse(stat[(stat.LastIndexOf(')', StringComparison.Ordinal) + 2)..].Split(' ')[1], CultureInfo.InvariantCulture);
         Assert.Equal(parent, entry.ParentPid);
         Assert.InRange((entry.StartTime - self.StartTime.ToUniversalTime()).Duration(), TimeSpan.Zero, TimeSpan.FromSeconds(1.5));
         self.Refresh();

@@ -24,16 +24,17 @@ env:
   DOTNET_CLI_TELEMETRY_OPTOUT: "1"
   DOTNET_NOLOGO: "1"
   AVALONIA_TELEMETRY_OPTOUT: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
 
 jobs:
   workflow-lint:
     name: Workflow lint
     # Validation, not security analysis: the schedule skips it (workflows change only through PRs, which run it).
     if: ${{ github.event_name != 'schedule' && !(github.event_name == 'pull_request' && github.event.pull_request.user.login == 'deku2026') }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Validate GitHub Actions definitions
@@ -41,28 +42,28 @@ jobs:
           curl --fail --silent --show-error --location https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz --output "$RUNNER_TEMP/actionlint.tar.gz"
           echo '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  '"$RUNNER_TEMP/actionlint.tar.gz" | sha256sum --check
           tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
-          "$RUNNER_TEMP/actionlint" -color
+          "$RUNNER_TEMP/actionlint" -config-file eng/actionlint.yaml -color
 
   secret-scan:
     name: Secret scan
     if: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.user.login == 'deku2026') }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
       - name: Scan Git history without network access
-        run: docker run --rm --network none -v "$PWD:/repo:ro" zricethezav/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f git /repo --redact=100 --no-banner
+        run: docker run --rm --network none -v "$PWD:/repo:ro" ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f git /repo --redact=100 --no-banner
 
   dependency-review:
     name: Dependency review
     if: github.event_name == 'pull_request' && github.event.pull_request.user.login != 'deku2026'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
@@ -72,7 +73,7 @@ jobs:
   codeql:
     name: CodeQL (${{ matrix.language }})
     if: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.user.login == 'deku2026') }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -86,16 +87,24 @@ jobs:
           - language: actions
             build-mode: none
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: .python-version
+      - name: Verify effective Python selection
+        run: python eng/check_toolchain.py --tools python
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         if: matrix.language == 'csharp'
         with:
           global-json-file: global.json
           cache: true
           cache-dependency-path: '**/packages.lock.json'
-      - uses: github/codeql-action/init@f3c49fd1ef3281abc41069b3dd22807a60c963f6 # v4
+      - name: Verify effective managed SDK and lock identities
+        if: matrix.language == 'csharp'
+        run: python eng/check_toolchain.py
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
@@ -104,6 +113,6 @@ jobs:
         run: |
           dotnet restore ArcForges.slnx --locked-mode
           dotnet build ArcForges.slnx -c Release --no-restore -p:UseSharedCompilation=false
-      - uses: github/codeql-action/analyze@f3c49fd1ef3281abc41069b3dd22807a60c963f6 # v4
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           category: /language:${{ matrix.language }}

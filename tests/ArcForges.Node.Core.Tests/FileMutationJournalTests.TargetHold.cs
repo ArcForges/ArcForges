@@ -264,7 +264,7 @@ public sealed partial class FileMutationJournalTests
             WriteFlushed(newPath, content);
             using var root = WorkspacePath.OpenRoot(workspace);
             var rootId = RegisteredWorkspaces.RootIdentity.Encode(root.RootIdentity);
-            var slash = relative.LastIndexOf('/');
+            var slash = relative.LastIndexOf('/', StringComparison.Ordinal);
             var parent = root.OpenDirectory(slash < 0 ? "" : relative[..slash]);
             var parentId = RegisteredWorkspaces.RootIdentity.Encode(WorkspacePath.Identity(parent));
             using var target = File.OpenHandle(targetPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);

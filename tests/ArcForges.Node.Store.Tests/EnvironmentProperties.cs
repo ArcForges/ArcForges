@@ -18,10 +18,10 @@ public sealed class EnvironmentProperties
 
     private static readonly Gen<string> Name = Gen.Frequency(
         (3, Gen.String[Gen.Char["ABCZ_ab12"], 1, 8]),
-        (2, Gen.Select(Gen.String[Gen.Char["AB_x"], 0, 4], Gen.OneOfConst("TOKEN", "secret", "Password", "PASSWD", "_KEY", "APIKEY", "_key"), Gen.String[Gen.Char["AB_"], 0, 3],
+        (2, Gen.Select(Gen.String[Gen.Char["AB_x"], 0, 4], Gen.OneOf("TOKEN", "secret", "Password", "PASSWD", "_KEY", "APIKEY", "_key"), Gen.String[Gen.Char["AB_"], 0, 3],
             (head, word, tail) => head + word + tail)),
-        (1, Gen.Select(Gen.OneOfConst("AWS_", "aws_", "AZURE_", "GH_", "gh_"), Gen.String[Gen.Char["ABC_"], 0, 5], (prefix, rest) => prefix + rest)),
-        (1, Gen.OneOfConst("GITHUB_TOKEN", "NPM_TOKEN", "PATH", "HOME", "KEYBOARD", "SSH_AUTH_SOCK")));
+        (1, Gen.Select(Gen.OneOf("AWS_", "aws_", "AZURE_", "GH_", "gh_"), Gen.String[Gen.Char["ABC_"], 0, 5], (prefix, rest) => prefix + rest)),
+        (1, Gen.OneOf("GITHUB_TOKEN", "NPM_TOKEN", "PATH", "HOME", "KEYBOARD", "SSH_AUTH_SOCK")));
 
     private static readonly Gen<string> Value = Gen.String[Gen.Char["abc /:=;-_\\\"é中"], 0, 10];
 

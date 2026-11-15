@@ -2,13 +2,13 @@
   <!-- SPDX-License-Identifier: AGPL-3.0-only -->
   <!--
     Repository build policy. ArcForges.Build.Policy (DesktopPlatform, build-only, AGPL) enforces
-    C# 14, nullable, deterministic warnings-as-errors builds, central exact package versions,
+    C# 15, nullable, deterministic warnings-as-errors builds, central exact package versions,
     per-project locks with locked CI restores (AFP001-AFP005) and CI build identity (AFP006).
     The explicit values below satisfy that policy; the package rejects any project that relaxes them.
   -->
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
-    <LangVersion>14</LangVersion>
+    <TargetFramework>net11.0</TargetFramework>
+    <LangVersion>15</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>

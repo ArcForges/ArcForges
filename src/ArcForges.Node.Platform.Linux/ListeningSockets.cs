@@ -43,7 +43,7 @@ internal static class ListeningSockets
                 }
 
                 var local = fields[1];
-                var colon = local.LastIndexOf(':');
+                var colon = local.LastIndexOf(':', StringComparison.Ordinal);
                 if (colon <= 0 || !int.TryParse(local.AsSpan(colon + 1), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var listening) || listening != port)
                 {
                     continue;

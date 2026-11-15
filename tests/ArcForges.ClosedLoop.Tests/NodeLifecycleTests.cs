@@ -344,7 +344,7 @@ public sealed class NodeLifecycleTests
         {
             while (read.Count < frames && await process.StandardOutput.ReadLineAsync(timeout.Token) is { } line)
             {
-                var frame = System.Text.Json.JsonDocument.Parse(line).RootElement.Clone();
+                var frame = System.Text.Json.JsonElement.Parse(line).Clone();
                 read.Add(frame);
                 if (until?.Invoke(frame) == true)
                 {

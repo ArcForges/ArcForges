@@ -334,7 +334,7 @@ internal sealed partial class FileServiceHandler
                 if (lease.Stages is null)
                     return Refuse(Error(ErrorCategory.Resource, "enforcement_unavailable", "file_stage_capacity", correlation));
                 AfterStageBeforeJournalForTests?.Invoke();
-                var slashAt = path.LastIndexOf('/');
+                var slashAt = path.LastIndexOf('/', StringComparison.Ordinal);
                 if (OperatingSystem.IsLinux())
                     lease.CreationSelection = lease.Use.Root.PrepareLinuxCreation(path, token);
                 var parentHandle = lease.CreationSelection?.Parent ??
@@ -389,7 +389,7 @@ internal sealed partial class FileServiceHandler
                 return Refuse(Error(ErrorCategory.Resource, "enforcement_unavailable", "file_stage_capacity", correlation));
             AfterStageBeforeJournalForTests?.Invoke();
             lease.CheckNames?.Invoke();
-            var slash = path.LastIndexOf('/');
+            var slash = path.LastIndexOf('/', StringComparison.Ordinal);
             var parent = lease.ParentIdentity ?? WorkspacePath.Identity(lease.Use.Root.OpenDirectory(slash < 0 ? "" : path[..slash]));
             var rootIdentity = RegisteredWorkspaces.RootIdentity.Encode(lease.Use.Root.RootIdentity);
             var parentIdentity = RegisteredWorkspaces.RootIdentity.Encode(parent);

@@ -295,7 +295,7 @@ public sealed partial class LinuxWorkerInterruptionHostTests
     private static (char State, int Parent, long StartTicks, int ExitCode) ReadProc(int pid)
     {
         var text = File.ReadAllText("/proc/" + pid.ToString(System.Globalization.CultureInfo.InvariantCulture) + "/stat");
-        var close = text.LastIndexOf(')');
+        var close = text.LastIndexOf(')', StringComparison.Ordinal);
         Assert.True(close > 0);
         var fields = text[(close + 2)..].Split(' ', StringSplitOptions.RemoveEmptyEntries);
         Assert.True(fields.Length > 49);

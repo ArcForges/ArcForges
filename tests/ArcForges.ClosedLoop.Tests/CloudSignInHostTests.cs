@@ -353,7 +353,7 @@ public sealed class CloudSignInHostTests
             await cli.WaitForAsync("\"userCode\"");
             center.DenyDevice();
             Assert.Equal(1, await cli.ExitAsync());
-            var lines = cli.Text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Where(line => line.StartsWith('{')).ToList();
+            var lines = cli.Text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Where(line => line.StartsWith('{', StringComparison.Ordinal)).ToList();
             Assert.True(lines.Count >= 2, cli.Text);
             Assert.Contains("SIGN_IN_FLOW_STATE_PENDING", lines[0], StringComparison.Ordinal);
             Assert.Contains("SIGN_IN_FLOW_STATE_DENIED", lines[^1], StringComparison.Ordinal);

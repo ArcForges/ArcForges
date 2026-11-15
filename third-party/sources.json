@@ -22,5 +22,11 @@
     "Package": ".NET 10.0.14",
     "Source": "https://raw.githubusercontent.com/dotnet/dotnet/0427b9abbead3fa64c6655eb4290c537397131fa/LICENSE.TXT",
     "Sha256": "cfc21f5e8bd655ae997eec916138b707b1d290b83272c02a95c9f821b8c87310"
+  },
+  {
+    "File": "Contracts.NativeTooling.LICENSE.txt",
+    "Package": "Contracts original Apache native build tooling (not a runtime package)",
+    "Source": "https://raw.githubusercontent.com/ArcForges/Contracts/0b9114435bd4677c256714b864b8cb8f970c2d57/LICENSE",
+    "Sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
   }
 ]

@@ -39,14 +39,23 @@ delivery plan: [Plan](https://github.com/ArcForges/Plan).
 
 ## Build and test
 
-Use the .NET SDK in `global.json` (10.0.403) on Windows 11 or Linux.
+Use the .NET SDK in `global.json` (11.0.100), C# 15 and Python 3.15.2 from
+`.python-version` on Windows 11 or Linux. Select the same SDK/Python roots as CI.
 
 ```sh
+python eng/check_toolchain.py
 dotnet restore ArcForges.slnx --locked-mode
 dotnet build ArcForges.slnx -c Release --no-restore
 dotnet format ArcForges.slnx --verify-no-changes --no-restore
 ./eng/test.ps1 -Suite ci          # or: eng/test.sh --suite ci   (-List / --list shows every suite)
 ```
+
+The toolchain preflight checks invoking/PATH Python, the actual SDK and effective
+MSBuild roots, and records every committed lock hash. A conflicting SDK override
+fails. The startup regression gate retains the merge base's own exact SDK through
+`eng/baseline_sdk.py`; that immutable baseline is not the current build selector.
+The [dependency upgrade inventory](docs/dependency-upgrade/current.json) records
+current selections and pending qualification; it does not replace native checks.
 
 Native AOT publish (fails on any build, trim or AOT warning), benchmarks and the desktop package:
 
