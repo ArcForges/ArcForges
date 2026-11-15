@@ -2535,11 +2535,11 @@
         "center/internal/hello"
       ],
       "projects": [],
-      "disposition": "REWORK",
+      "disposition": "KEEP",
       "owner_tasks": [
         "AFV2-BASE-01"
       ],
-      "retained_responsibility": "Existing bounded Hello/probe behavior is historical infrastructure, not delivered Dashboard; reconcile unused public probe routes at typed product cutover.",
+      "retained_responsibility": "Retain the bounded Hello module. Any public probe route cutover belongs only to later tasks with explicit server/routes scope; BASE-01 inventory does not authorize module rework.",
       "retirement_boundary": "No whole-module removal is assigned; only the owning task may adapt declared scope.",
       "consumers": {
         "local_project_inputs": [],
@@ -2746,7 +2746,9 @@
       "projects": [],
       "disposition": "REWORK",
       "owner_tasks": [
-        "AFV2-BASE-01"
+        "AFV2-CENTER-03",
+        "AFV2-CENTER-04",
+        "AFV2-HOST-02"
       ],
       "retained_responsibility": "Keep Go business authority and bounded transport; integrate explicit V2 routes and generated Worker table without business decisions in Worker.",
       "retirement_boundary": "No whole-module removal is assigned; only the owning task may adapt declared scope.",
