@@ -103,7 +103,7 @@ internal static class CloudSignInChecks
         JsonElement root;
         try
         {
-            root = JsonDocument.Parse(json).RootElement.Clone();
+            root = JsonElement.Parse(json).Clone();
         }
         catch (JsonException)
         {

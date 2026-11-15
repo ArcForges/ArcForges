@@ -119,7 +119,9 @@ internal sealed class CloudNode : IAsyncDisposable
         };
         var stop = _stop.Token;
         _run = Task.Run(() => NodeHost.RunAsync(options, stop));
-        var first = await Task.WhenAny(_ready.Task, _run, Task.Delay(TimeSpan.FromSeconds(30)));
+        using var readinessWait = new CancellationTokenSource();
+        var first = await Task.WhenAny(_ready.Task, _run, Task.Delay(TimeSpan.FromSeconds(30), readinessWait.Token));
+        await readinessWait.CancelAsync();
         if (first != _ready.Task)
         {
             throw new InvalidOperationException(_run.IsCompleted ? $"The node exited with {_run.Result}." : "The node was not ready within 30 s.");

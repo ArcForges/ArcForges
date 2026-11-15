@@ -112,7 +112,7 @@ public sealed partial class ResourceTests
             await CancelAsync(channel, worker);
         }
 
-        var result = JsonDocument.Parse(File.ReadAllText(report)).RootElement;
+        var result = JsonElement.Parse(File.ReadAllText(report));
         var periods = result.GetProperty("results").GetProperty("periods").GetInt64();
         var misses = result.GetProperty("results").GetProperty("misses").GetInt64();
         var measured = result.GetProperty("measured");

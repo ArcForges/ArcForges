@@ -213,7 +213,7 @@ public static class NodeHost
         }
         catch (Exception exception) when (exception is NodeConfigurationException or IOException or UnauthorizedAccessException or InvalidOperationException)
         {
-            await options.Error.WriteLineAsync($"arcforges: the node cannot start: {exception.Message}").ConfigureAwait(false);
+            await options.Error.WriteLineAsync($"arcforges: the node cannot start: {exception.Message}".AsMemory(), cancellationToken).ConfigureAwait(false);
             return NodeExitCodes.Failure;
         }
 
@@ -224,8 +224,8 @@ public static class NodeHost
         {
             var running = EndpointDescriptor.TryRead(NodeLocations.EndpointDescriptorFile(dataRoot));
             var address = running is not null && running.ProcessIsAlive() ? running.Endpoint : endpoint.Address;
-            await options.Output.WriteLineAsync(address).ConfigureAwait(false);
-            await options.Error.WriteLineAsync($"arcforges: the node is already running (endpoint {address})").ConfigureAwait(false);
+            await options.Output.WriteLineAsync(address.AsMemory(), cancellationToken).ConfigureAwait(false);
+            await options.Error.WriteLineAsync($"arcforges: the node is already running (endpoint {address})".AsMemory(), cancellationToken).ConfigureAwait(false);
             return NodeExitCodes.AlreadyRunning;
         }
 
@@ -252,7 +252,7 @@ public static class NodeHost
             or UnauthorizedAccessException)
         {
             log.Error("node.store.failed", exception);
-            await options.Error.WriteLineAsync($"arcforges: the node store cannot be opened: {exception.Message}").ConfigureAwait(false);
+            await options.Error.WriteLineAsync($"arcforges: the node store cannot be opened: {exception.Message}".AsMemory(), cancellationToken).ConfigureAwait(false);
             return NodeExitCodes.Failure;
         }
 
@@ -279,7 +279,7 @@ public static class NodeHost
         if (integrity is not null && integrity != "ok")
         {
             log.Error("node.store.corrupt", new LogField("quickCheck", NodeLog.OneLine(integrity)));
-            await options.Error.WriteLineAsync($"arcforges: the node store failed its integrity check: {NodeLog.OneLine(integrity)}").ConfigureAwait(false);
+            await options.Error.WriteLineAsync($"arcforges: the node store failed its integrity check: {NodeLog.OneLine(integrity)}".AsMemory(), cancellationToken).ConfigureAwait(false);
             return NodeExitCodes.Failure;
         }
 
@@ -476,7 +476,7 @@ public static class NodeHost
             catch (Exception exception) when (exception is IOException or InvalidOperationException or UnauthorizedAccessException)
             {
                 log.Error("node.endpoint.failed", exception);
-                await options.Error.WriteLineAsync($"arcforges: the node endpoint {endpoint.Address} cannot be opened: {exception.Message}").ConfigureAwait(false);
+                await options.Error.WriteLineAsync($"arcforges: the node endpoint {endpoint.Address} cannot be opened: {exception.Message}".AsMemory(), cancellationToken).ConfigureAwait(false);
                 return NodeExitCodes.Failure;
             }
 
@@ -609,7 +609,9 @@ public static class NodeHost
         }
 
         await loops.CancelAsync().ConfigureAwait(false);
-        await Task.WhenAny(Task.WhenAll(background), Task.Delay(TimeSpan.FromSeconds(2))).ConfigureAwait(false);
+        using var backgroundWait = new CancellationTokenSource();
+        await Task.WhenAny(Task.WhenAll(background), Task.Delay(TimeSpan.FromSeconds(2), backgroundWait.Token)).ConfigureAwait(false);
+        await backgroundWait.CancelAsync().ConfigureAwait(false);
 
         // The cloud link stops within the bound begun above and flushes a rotated credential whose write failed (AF-CTR-04 CTR4-NODE-05).
         await cloud.DisposeAsync().ConfigureAwait(false);

@@ -218,7 +218,9 @@ internal sealed class InProcessNode : IAsyncDisposable
         var stop = _stop.Token;
         var firstStart = _run is null;
         _run = Task.Run(() => NodeHost.RunAsync(options, stop));
-        var first = await Task.WhenAny(_ready.Task, _run, Task.Delay(TimeSpan.FromSeconds(30))).ConfigureAwait(false);
+        using var readinessWait = new CancellationTokenSource();
+        var first = await Task.WhenAny(_ready.Task, _run, Task.Delay(TimeSpan.FromSeconds(30), readinessWait.Token)).ConfigureAwait(false);
+        await readinessWait.CancelAsync().ConfigureAwait(false);
         if (first != _ready.Task)
         {
             var message = _run.IsCompleted ? $"The node exited with {_run.Result} before it was ready." : "The node was not ready within 30 s.";

@@ -56,10 +56,10 @@ public sealed class FaultInjectionTests
         // The node notices the dead peers and drops their streams and sessions (the health call itself is one session in both counts).
         var after = before;
         await TestNode.WaitAsync(async () => (after = await HealthAsync(node)) == before, Bound, $"the node to release the killed clients' streams and sessions ({before})");
-        var shown = JsonDocument.Parse((await node.CliAsync("tasks", "show", id, "--json")).Output).RootElement.GetProperty("task");
+        var shown = JsonElement.Parse((await node.CliAsync("tasks", "show", id, "--json")).Output).GetProperty("task");
         Assert.Equal("TASK_STATE_RUNNING", shown.GetProperty("state").GetString());
         Assert.Equal(0, (await node.CliBytesAsync(Bound, "tasks", "cancel", id)).ExitCode);
-        Assert.Equal("TASK_STATE_CANCELLED", JsonDocument.Parse((await node.CliAsync("tasks", "wait", id, "--json")).Output).RootElement.GetProperty("state").GetString());
+        Assert.Equal("TASK_STATE_CANCELLED", JsonElement.Parse((await node.CliAsync("tasks", "wait", id, "--json")).Output).GetProperty("state").GetString());
     }
 
     /// <summary>

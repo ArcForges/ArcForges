@@ -167,18 +167,18 @@ public sealed class ExecutionTests
         Assert.True(attempt.IsRunning(), "The attempt survived the node.");
 
         await node.StartNodeAsync();
-        var shortTask = JsonDocument.Parse((await node.CliAsync("tasks", "wait", shortId, "--json")).Output).RootElement;
+        var shortTask = JsonElement.Parse((await node.CliAsync("tasks", "wait", shortId, "--json")).Output);
         Assert.Equal("TASK_STATE_SUCCEEDED", shortTask.GetProperty("state").GetString());
         Assert.True(shortTask.GetProperty("currentAttempt").GetProperty("nodeGap").GetBoolean());
 
-        var shown = JsonDocument.Parse((await node.CliAsync("tasks", "show", id, "--json")).Output).RootElement.GetProperty("task");
+        var shown = JsonElement.Parse((await node.CliAsync("tasks", "show", id, "--json")).Output).GetProperty("task");
         Assert.Equal("TASK_STATE_RUNNING", shown.GetProperty("state").GetString());
         Assert.True(shown.GetProperty("currentAttempt").GetProperty("nodeGap").GetBoolean());
         Assert.NotEmpty(TestNode.LogEvents(node.NodeLog, "execution.recovered"));
 
         // The recovered attempt is cancelled through the re-opened job and its accounting is read.
         Assert.Equal(0, (await node.CliBytesAsync(Bound, "tasks", "cancel", id)).ExitCode);
-        var cancelled = JsonDocument.Parse((await node.CliAsync("tasks", "wait", id, "--json")).Output).RootElement;
+        var cancelled = JsonElement.Parse((await node.CliAsync("tasks", "wait", id, "--json")).Output);
         Assert.Equal("TASK_STATE_CANCELLED", cancelled.GetProperty("state").GetString());
         var usage = cancelled.GetProperty("currentAttempt").GetProperty("usage");
         Assert.True(long.Parse(usage.GetProperty("memPeakBytes").GetString()!, CultureInfo.InvariantCulture) > 0);
@@ -277,7 +277,7 @@ public sealed class ExecutionTests
         await node.StartNodeAsync();
         await TestNode.WaitAsync(() => !holders[0].IsRunning(), TimeSpan.FromSeconds(15), "the holder to be released");
         Assert.NotEmpty(TestNode.LogEvents(node.NodeLog, "execution.recover.acknowledged"));
-        var task = JsonDocument.Parse((await node.CliAsync("tasks", "wait", id, "--json")).Output).RootElement;
+        var task = JsonElement.Parse((await node.CliAsync("tasks", "wait", id, "--json")).Output);
         Assert.Equal(3, task.GetProperty("currentAttempt").GetProperty("result").GetProperty("exitCode").GetInt32());
     }
 
@@ -339,7 +339,7 @@ public sealed class ExecutionTests
         Assert.True(output - Limit <= Rate / 2, $"The overshoot {output - Limit} exceeds the rate over one interval plus the stop latency ({Rate / 2}).");
 
         await node.StartNodeAsync();
-        var task = JsonDocument.Parse((await node.CliAsync("tasks", "wait", id, "--json")).Output).RootElement;
+        var task = JsonElement.Parse((await node.CliAsync("tasks", "wait", id, "--json")).Output);
         Assert.Equal("TASK_STATE_FAILED", task.GetProperty("state").GetString());
         Assert.Equal("TERMINATION_REASON_OUTPUT_LIMIT", task.GetProperty("currentAttempt").GetProperty("result").GetProperty("terminationReason").GetString());
         Assert.Equal("GUARD", task.GetProperty("currentAttempt").GetProperty("limitEnforcedBy").GetString());
@@ -391,7 +391,7 @@ public sealed class ExecutionTests
         Assert.True(output - Limit <= Rate * (Takeover + 600) / 1000, $"The overshoot {output - Limit} exceeds the stated bound.");
 
         await node.StartNodeAsync();
-        var task = JsonDocument.Parse((await node.CliAsync("tasks", "wait", id, "--json")).Output).RootElement;
+        var task = JsonElement.Parse((await node.CliAsync("tasks", "wait", id, "--json")).Output);
         Assert.Equal("TERMINATION_REASON_OUTPUT_LIMIT", task.GetProperty("currentAttempt").GetProperty("result").GetProperty("terminationReason").GetString());
         Assert.Equal(guardStop is null ? "NODE" : "GUARD", task.GetProperty("currentAttempt").GetProperty("limitEnforcedBy").GetString());
 
@@ -475,7 +475,7 @@ public sealed class ExecutionTests
         var watch = Stopwatch.StartNew();
         while (true)
         {
-            var shown = JsonDocument.Parse((await node.CliAsync("tasks", "show", id, "--json")).Output).RootElement.GetProperty("task");
+            var shown = JsonElement.Parse((await node.CliAsync("tasks", "show", id, "--json")).Output).GetProperty("task");
             if (shown.TryGetProperty("currentAttempt", out var attempt) && attempt.GetProperty("state").GetString() == "ATTEMPT_STATE_RUNNING")
             {
                 return Path.Combine(node.DataRoot, "logs", attempt.GetProperty("attemptId").GetString()!);
