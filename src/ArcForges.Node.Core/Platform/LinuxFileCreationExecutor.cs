@@ -96,6 +96,7 @@ internal static partial class LinuxFileEffectExecutor
             if (!identity.IsFile || identity.Links != 1 || (identity.Mode & 0x3f) != 0 ||
                 RandomAccess.GetLength(target) != 0)
                 throw new WorkspacePathException("file_identity_changed");
+            WorkspacePath.LinuxUseSynchronousFileIo(target);
             // This is our new description: install a fatal notification before granting its write lease.
             var fd = checked((int)target.DangerousGetHandle());
             if (LinuxLeaseNative.Control(fd, 10, 9) < 0 ||

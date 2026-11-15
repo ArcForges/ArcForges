@@ -735,12 +735,32 @@ internal sealed partial class WorkspacePath : IDisposable
                 throw new WorkspacePathException("file_identity_changed");
             }
 
+            if (!directory) LinuxUseSynchronousFileIo(result);
             return result;
         }
         catch
         {
             result.Dispose();
             throw;
+        }
+    }
+
+    // Only after the data handle is verified as an ordinary file: keep O_NONBLOCK during the safe open,
+    // then clear it so .NET 11 RandomAccess uses positional I/O rather than its nonblocking stream path.
+    internal static void LinuxUseSynchronousFileIo(SafeFileHandle file)
+    {
+        var retained = false;
+        try
+        {
+            file.DangerousAddRef(ref retained);
+            var fd = checked((int)file.DangerousGetHandle());
+            var flags = LinuxLeaseNative.Control(fd, 3, 0); // F_GETFL
+            if (flags < 0 || ((flags & 0x800) != 0 && LinuxLeaseNative.Control(fd, 4, flags & ~0x800) < 0)) // F_SETFL, O_NONBLOCK
+                throw NativeFailure();
+        }
+        finally
+        {
+            if (retained) file.DangerousRelease();
         }
     }
 

@@ -80,6 +80,7 @@ internal static partial class LinuxFileEffectExecutor
             if (!actualStage.IsFile || actualStage.Links != 1 || RandomAccess.GetLength(stage) != 0)
                 throw new WorkspacePathException("file_identity_changed");
             WorkspacePath.CheckPrivateLinuxNamedStageSecurity(stage);
+            WorkspacePath.LinuxUseSynchronousFileIo(stage);
             var fd = checked((int)stage.DangerousGetHandle());
             if (LinuxLeaseNative.Control(fd, 10, 9) < 0 ||
                 LinuxLeaseNative.Control(fd, 8, Environment.ProcessId) < 0 ||

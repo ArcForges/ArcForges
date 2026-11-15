@@ -449,8 +449,10 @@ internal static class Eventually
                 Assert.Fail("Not within " + limit + " of the link's clock: " + what);
             }
 
-            link.Clock.Advance(step);
+            // Advancing the node queues timer callbacks immediately. The center must already see the same
+            // instant when a refresh reads its expiry values, rather than a center clock one step behind.
             alsoAdvance?.Invoke(step);
+            link.Clock.Advance(step);
             moved += step;
             await Task.Delay(5);
 

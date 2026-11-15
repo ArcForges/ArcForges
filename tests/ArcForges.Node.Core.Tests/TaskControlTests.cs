@@ -261,7 +261,9 @@ public sealed class TaskControlTests
     /// U_mem</c>, a node whose managed share is shrunk below the machine's unmanaged use admits nothing (<c>exceeds_budget</c>), so a node-level
     /// scenario can no longer push two admitted attempts into a small root.
     /// </summary>
-    [Fact(Timeout = 180_000)]
+    // isolation=exclusive: the below-normal memory ramp must reach the real commit limit within the unchanged wait bound.
+    [Fact(Timeout = 180_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public async Task NoAttemptExceedsItsCommitLimitInTheMemRampScenario()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
