@@ -298,17 +298,19 @@ public sealed class FileRemovalQuarantineRoutedTests
         File.WriteAllText(Path.Combine(root, "selected"), "owned child workspace bytes");
         var workspace = new RegisteredWorkspaces(node.Runtime.Store).RegisterFromVerifiedHuman(root, cancellationToken: token);
         await using var human = await node.ChannelAsync(helloAsHuman: true);
+        var marker = Path.Combine(node.Root, "cleanup-admission-marker");
         Id task;
         // Exercise the exact same gate held by ExecuteRemoval, with a real accepted task and native child.
         using (await node.Runtime.Execution!.CoordinateFileCleanupAsync(token))
         {
-            task = await Tasks.SubmitAsync(human, Sched.Hold(root, Path.Combine(node.Root, "cleanup-admission-marker"), 30_000));
+            task = await Tasks.SubmitAsync(human, Sched.Hold(root, marker, 30_000));
             Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM attempt WHERE task_id = $task;",
                 ("$task", task.Value.ToByteArray()))));
         }
         await Tasks.RunningAsync(human, task);
         try
         {
+            await Tasks.WaitForAsync(() => Sched.ReadyAt(marker) > 0, Tasks.Bound, "the managed native child to enter its hold");
             var request = Execute(await Plan(calls, actor, workspace.Id));
             var pending = await calls.CallAsync(actor, RoutedMethod.ExecuteNodeRemoval, request.ToByteArray(), request.Meta.CommandId);
             Assert.Equal("approval_required", pending.Answer!.Error?.Code);

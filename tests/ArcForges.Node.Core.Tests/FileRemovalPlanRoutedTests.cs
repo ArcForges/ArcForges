@@ -197,7 +197,9 @@ public sealed class FileRemovalPlanRoutedTests
         Assert.Equal("owned rollback marker", File.ReadAllText(Path.Combine(root, "kept")));
     }
 
-    [Fact(Timeout = 120_000)]
+    // isolation=exclusive: the real oversized tree must reach the transactional fault inside the unchanged file-operation budget.
+    [Fact(Timeout = 120_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public async Task OversizedRealTreePersistsAndReplaysRefusalWithoutAPlanEvenAfterUncertainCommit()
     {
         var ct = TestContext.Current.CancellationToken;
