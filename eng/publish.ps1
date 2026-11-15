@@ -48,10 +48,20 @@ foreach ($name in $Component) {
     '-warnaserror', '-tl:off', '-clp:Summary;ForceNoAlign', '-p:TrimmerSingleWarn=false'
   )
   if ($NoRestore) { $arguments += '--no-restore' }
+  if ($IsLinux) {
+    # eng/native_toolchain.py run selects and verifies this private toolchain in
+    # the child environment; these explicit SDK properties retain BFD/objcopy.
+    $arguments += @('-p:CppCompilerAndLinker=clang', '-p:CppLibCreator=ar', '-p:LinkerFlavor=bfd', '-p:ObjCopyName=llvm-objcopy')
+  }
   # Inside a Visual Studio developer shell, link with its environment instead of re-running vcvarsall.
   if ($IsWindows -and $env:VCToolsInstallDir) { $arguments += '-p:IlcUseEnvironmentalTools=true' }
   Write-Host "==> publish $name ($RuntimeIdentifier)"
-  $lines = @(& dotnet @arguments 2>&1 | ForEach-Object { "$_" } | Tee-Object -Variable echoed)
+  if ($IsLinux) {
+    $selector = Join-Path $PSScriptRoot 'native_toolchain.py'
+    $lines = @(& python $selector run --target-rid $RuntimeIdentifier -- dotnet @arguments 2>&1 | ForEach-Object { "$_" } | Tee-Object -Variable echoed)
+  } else {
+    $lines = @(& dotnet @arguments 2>&1 | ForEach-Object { "$_" } | Tee-Object -Variable echoed)
+  }
   $echoed | Out-Host
   if ($LASTEXITCODE -ne 0) { throw "Publishing $name for $RuntimeIdentifier failed with exit code $LASTEXITCODE." }
   $warnings = @($lines | Where-Object { $_ -match ':\s+warning\s+[A-Z]+[0-9]+' } | Select-Object -Unique)

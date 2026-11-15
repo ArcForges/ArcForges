@@ -20,7 +20,7 @@ public static class WindowsProgramResolver
         ArgumentNullException.ThrowIfNull(environment);
         var extensions = Value(environment, "PATHEXT") is { Length: > 0 } pathExt ? pathExt : DefaultPathExt;
         var suffixes = extensions.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(extension => extension.StartsWith('.'))
+            .Where(extension => extension.StartsWith('.', StringComparison.Ordinal))
             .ToList();
         if (program.AsSpan().IndexOfAny('/', '\\') >= 0 || Path.IsPathRooted(program))
         {

@@ -115,7 +115,7 @@ public sealed class RepositoryLayoutTests
 
         var powershell = File.ReadAllText(RepositoryFiles.PathOf("eng/test.ps1"));
         Assert.Contains("Alone = if ($exclusive) { @('--parallel', 'none') } else { @() }", powershell, StringComparison.Ordinal);
-        var powershellRuns = powershell.Split('\n').Where(line => line.Contains("dotnet test ", StringComparison.Ordinal) && !line.TrimStart().StartsWith('#')).ToList();
+        var powershellRuns = powershell.Split('\n').Where(line => line.Contains("dotnet test ", StringComparison.Ordinal) && !line.TrimStart().StartsWith('#', StringComparison.Ordinal)).ToList();
         Assert.Equal(2, powershellRuns.Count);
         Assert.All(powershellRuns, line => Assert.Contains("@($item.Ignore) @($item.Alone) @($item.Filters)", line, StringComparison.Ordinal));
     }
@@ -127,7 +127,7 @@ public sealed class RepositoryLayoutTests
         // drifts when the header grows (a fixed range once cut off the --repeat line).
         var lines = File.ReadAllLines(RepositoryFiles.PathOf("eng/test.sh"));
         Assert.Contains(lines, line => line.Trim() == "-h|--help) awk 'NR > 2 && !/^#/ { exit } NR > 2' \"$0\"; exit 0 ;;");
-        var header = lines.Skip(2).TakeWhile(line => line.StartsWith('#')).ToList();
+        var header = lines.Skip(2).TakeWhile(line => line.StartsWith('#', StringComparison.Ordinal)).ToList();
         Assert.Contains(header, line => line.StartsWith("# --parallel N ", StringComparison.Ordinal));
         Assert.Contains(header, line => line.StartsWith("# --repeat N ", StringComparison.Ordinal));
     }
@@ -154,7 +154,7 @@ public sealed class RepositoryLayoutTests
     {
         // 13 section 3.4. The slice carries no limits (the node sets them at runtime); the node unit names no rollback unit until the
         // updater ships it.
-        var content = File.ReadAllLines(RepositoryFiles.PathOf(file)).Where(line => !line.StartsWith('#')).ToList();
+        var content = File.ReadAllLines(RepositoryFiles.PathOf(file)).Where(line => !line.StartsWith('#', StringComparison.Ordinal)).ToList();
         Assert.All(lines, line => Assert.Contains(line, content));
         Assert.DoesNotContain(content, line => line.StartsWith("OnFailure=", StringComparison.Ordinal) || line.StartsWith("Memory", StringComparison.Ordinal)
             || line.StartsWith("CPUQuota", StringComparison.Ordinal));

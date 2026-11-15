@@ -297,7 +297,7 @@ internal static class RunCommand
 
             foreach (var dependency in result.GetValue(dependsOn) ?? [])
             {
-                var colon = dependency.LastIndexOf(':');
+                var colon = dependency.LastIndexOf(':', StringComparison.Ordinal);
                 var (idText, conditionText) = colon > 0 ? (dependency[..colon], dependency[(colon + 1)..]) : (dependency, "succeeded");
                 var condition = conditionText.ToLowerInvariant() switch
                 {

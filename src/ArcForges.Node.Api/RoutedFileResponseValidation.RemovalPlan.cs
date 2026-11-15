@@ -56,7 +56,7 @@ internal static partial class RoutedFileResponseValidation
                 !item.Path.StartsWith(selected.Path + "/", StringComparison.Ordinal)) return false;
             if (names.Count != 0)
             {
-                var separator = item.Path.LastIndexOf('/');
+                var separator = item.Path.LastIndexOf('/', StringComparison.Ordinal);
                 var parent = separator < 0 ? string.Empty : item.Path[..separator];
                 if (!names.TryGetValue(parent, out var parentKind) || parentKind != FileEntryKind.Directory) return false;
             }

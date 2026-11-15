@@ -99,7 +99,7 @@ internal sealed partial record LinuxOwnedProcessIdentity(Guid BootId, string Pid
 
     private static bool ValidNamespace(string? value)
     {
-        if (value is null || !value.StartsWith("pid:[", StringComparison.Ordinal) || !value.EndsWith(']')) return false;
+        if (value is null || !value.StartsWith("pid:[", StringComparison.Ordinal) || !value.EndsWith(']', StringComparison.Ordinal)) return false;
         var number = value.AsSpan(5, value.Length - 6);
         return ulong.TryParse(number, NumberStyles.None, CultureInfo.InvariantCulture, out var parsed) && parsed > 0;
     }
@@ -108,7 +108,7 @@ internal sealed partial record LinuxOwnedProcessIdentity(Guid BootId, string Pid
     {
         var value = File.ReadAllText("/proc/" + processId.ToString(CultureInfo.InvariantCulture) + "/stat");
         var open = value.IndexOf('(');
-        var close = value.LastIndexOf(')');
+        var close = value.LastIndexOf(')', StringComparison.Ordinal);
         if (open < 1 || close <= open || close + 2 >= value.Length ||
             !int.TryParse(value.AsSpan(0, open).Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var parsedPid) ||
             parsedPid != processId)

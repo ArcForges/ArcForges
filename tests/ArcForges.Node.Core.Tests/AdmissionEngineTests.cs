@@ -230,15 +230,15 @@ public sealed class AdmissionEngineTests
             queued.RemoveAll(candidate => candidate.Task == task);
         }
 
-        Assert.Equal(10, admitted.Count(task => task.StartsWith('a')));
-        Assert.Equal(10, admitted.Count(task => task.StartsWith('b')));
+        Assert.Equal(10, admitted.Count(task => task.StartsWith('a', StringComparison.Ordinal)));
+        Assert.Equal(10, admitted.Count(task => task.StartsWith('b', StringComparison.Ordinal)));
         for (var index = 1; index < admitted.Count; index++)
         {
             Assert.NotEqual(admitted[index - 1][0], admitted[index][0]);
         }
 
         // FIFO within an owner.
-        Assert.Equal(Enumerable.Range(0, 10).Select(index => "a" + index), admitted.Where(task => task.StartsWith('a')));
+        Assert.Equal(Enumerable.Range(0, 10).Select(index => "a" + index), admitted.Where(task => task.StartsWith('a', StringComparison.Ordinal)));
     }
 
     [Fact]
@@ -264,8 +264,8 @@ public sealed class AdmissionEngineTests
             queued.RemoveAll(candidate => candidate.Task == task);
         }
 
-        Assert.Equal(20, admitted.Count(task => task.StartsWith('a')));
-        Assert.Equal(10, admitted.Count(task => task.StartsWith('b')));
+        Assert.Equal(20, admitted.Count(task => task.StartsWith('a', StringComparison.Ordinal)));
+        Assert.Equal(10, admitted.Count(task => task.StartsWith('b', StringComparison.Ordinal)));
     }
 
     [Fact]
@@ -301,8 +301,8 @@ public sealed class AdmissionEngineTests
             queued.RemoveAll(candidate => candidate.Task == task);
         }
 
-        Assert.Equal(30, admitted.Count(task => task.StartsWith('x')));
-        Assert.Equal(10, admitted.Count(task => task.StartsWith('y')));
+        Assert.Equal(30, admitted.Count(task => task.StartsWith('x', StringComparison.Ordinal)));
+        Assert.Equal(10, admitted.Count(task => task.StartsWith('y', StringComparison.Ordinal)));
     }
 
     [Fact]

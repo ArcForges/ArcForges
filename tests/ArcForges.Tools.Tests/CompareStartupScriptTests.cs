@@ -106,7 +106,7 @@ public sealed class CompareStartupScriptTests
         foreach (var argument in (string[])["-RuntimeIdentifier", Rid, "-ResultsDirectory", results, "-Bench", ToolProcess.Bench,
             "-CurrentExecutable", ToolProcess.TestLoad, "-Runs", "4", "-NoiseFloorMs", "60000", "-Name", "testload cpu", .. extra])
         {
-            invocation.Append(' ').Append(argument.StartsWith('-') ? argument : Quote(argument));
+            invocation.Append(' ').Append(argument.StartsWith('-', StringComparison.Ordinal) ? argument : Quote(argument));
         }
 
         invocation.Append(" -Arguments @('cpu', '--iterations', '1'); exit $LASTEXITCODE");

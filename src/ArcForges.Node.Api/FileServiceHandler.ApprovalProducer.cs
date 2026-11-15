@@ -168,7 +168,7 @@ internal sealed partial class FileServiceHandler
             _ = WorkspacePath.Components(path);
             lease.Use = _workspaces.OpenForUse(transaction, workspace,
                 beforeUse: tx => CheckStageApprovalAuthority(tx, caller, started, limit, token), token);
-            var slash = path.LastIndexOf('/');
+            var slash = path.LastIndexOf('/', StringComparison.Ordinal);
             var parentName = slash < 0 ? "" : path[..slash];
             lease.ParentRelativePath = parentName;
             var parent = lease.Use.Root.OpenDirectory(parentName);

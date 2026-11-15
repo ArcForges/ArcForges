@@ -383,7 +383,7 @@ public sealed class RealCenterRoutedTests
             {
                 var result = await CliAsync(sender, pty, args);
                 phase["exitCode"] = result.ExitCode;
-                if (result.Output.TrimStart().StartsWith('{'))
+                if (result.Output.TrimStart().StartsWith('{', StringComparison.Ordinal))
                 {
                     using var document = JsonDocument.Parse(result.Output);
                     if (document.RootElement.TryGetProperty("error", out var error))

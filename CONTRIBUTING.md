@@ -8,17 +8,26 @@ references or private package feeds.
 
 ## Environment
 
-- Use the SDK in `global.json`. Dependency versions are centralized in `Directory.Packages.props`;
+- Use SDK 11.0.100 from `global.json`, explicit C# 15 and Python 3.15.2 from
+  `.python-version`. Run `python eng/check_toolchain.py` before the current build.
+  Dependency versions are centralized in `Directory.Packages.props`;
   commit every project lock file and update `eng/policy/dependency-admissions.json` with them.
 - Windows Native AOT publishing requires Visual Studio C++ build tools and a Windows SDK.
   Use a Developer PowerShell (`Launch-VsDevShell.ps1`) if the linker is not discoverable;
   ARM64 targets also need the C++ ARM64 build tools.
-- Linux Native AOT publishing requires `clang` and `zlib1g-dev` (Debian/Ubuntu names).
-  Publish Linux executables on Linux, not directly on Windows.
+- Linux Native AOT publishing uses the LLVM23.1.5/binutils2.47 selector in
+  `eng/native-toolchain.json`, plus the host's zlib development library. The
+  reviewed private tools are provisioned explicitly with `python
+  eng/native_toolchain.py install`; ordinary publishing only selects and checks
+  an existing installation in child processes. x64 and ARM64 archives/caches
+  are distinct. Publish Linux executables on the matching native Linux venue.
 - Desktop Linux needs an X11/XWayland session, fontconfig, standard system fonts,
   libX11, libICE and libSM. A headless Linux build alone is not native Linux desktop validation.
 - Reuse installed SDKs, package caches and toolchains. Avalonia build telemetry is disabled in
   `Directory.Build.targets`; the `eng/` scripts and CI also set `AVALONIA_TELEMETRY_OPTOUT=1`.
+- The startup regression gate builds the immutable merge base with its own retained
+  SDK. `eng/baseline_sdk.py` selects that installed root without editing the baseline
+  or installing a replacement; current source still selects the new SDK.
 
 Run the restore, build, format and test commands in the README. `eng/test.ps1` / `eng/test.sh`
 select suites by trait (`-List` / `--list`). Desktop tests run the real view in Avalonia's headless

@@ -1294,7 +1294,7 @@ internal sealed class FakeCenter : IAsyncDisposable
     /// <summary>The center's loopback admission (the vendored redirect vectors).</summary>
     public static bool AdmittedRedirect(string? uri) =>
         uri is not null && System.Text.RegularExpressions.Regex.IsMatch(uri, @"^http://(127\.0\.0\.1|\[::1\]):([1-9][0-9]{3,4})/callback$")
-        && int.Parse(uri[(uri.LastIndexOf(':') + 1)..uri.LastIndexOf('/')], System.Globalization.CultureInfo.InvariantCulture) is >= 1024 and <= 65535;
+        && int.Parse(uri[(uri.LastIndexOf(':', StringComparison.Ordinal) + 1)..uri.LastIndexOf('/', StringComparison.Ordinal)], System.Globalization.CultureInfo.InvariantCulture) is >= 1024 and <= 65535;
 
     /// <summary>The proof message, built by FakeCenter's own code (fleet.proto "Node key proof").</summary>
     private byte[] ProofMessage(byte purpose, byte[] nodeId, byte[] binding) =>

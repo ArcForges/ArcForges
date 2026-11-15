@@ -172,7 +172,7 @@ internal sealed partial class PlatformHarness : IDisposable
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         using var reader = new StreamReader(stream);
         var text = reader.ReadToEnd();
-        return [.. text[..(text.LastIndexOf('\n') + 1)].Split('\n', StringSplitOptions.RemoveEmptyEntries)
+        return [.. text[..(text.LastIndexOf('\n', StringComparison.Ordinal) + 1)].Split('\n', StringSplitOptions.RemoveEmptyEntries)
             .Select(line => line.Split(' '))
             .Where(parts => parts.Length == 3)
             .Select(parts => (parts[0], int.Parse(parts[1], System.Globalization.CultureInfo.InvariantCulture), long.Parse(parts[2], System.Globalization.CultureInfo.InvariantCulture)))];

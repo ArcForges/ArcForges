@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "material": "Contracts independently authored private native build tooling",
+  "repository": "https://github.com/ArcForges/Contracts",
+  "sourceCommit": "0b9114435bd4677c256714b864b8cb8f970c2d57",
+  "spdxLicense": "Apache-2.0",
+  "sourceReview": "Coordinator reported independent full source/delta approval and9 native tooling refusal cases passed before source push.",
+  "sourceFiles": [
+    {
+      "sourcePath": "eng/native_toolchain.py",
+      "targetPath": "eng/native_toolchain.py",
+      "upstreamSha256Lf": "3496595ef25b20304896015199739005ac8192714e29e764a17d5184edfdca84",
+      "classification": "Adapted original Apache-2.0 verification/provisioning source; independent tool, not a sibling project import."
+    },
+    {
+      "sourcePath": "eng/native-toolchain.json",
+      "targetPath": "eng/native-toolchain.json",
+      "upstreamSha256Lf": "bf019c3aadd5e2e1fa6170ce52a463ce3b751f86b3458a17cd93a7fce8ea1eaa",
+      "classification": "Adapted original Apache-2.0 verification/provisioning source; independent tool, not a sibling project import."
+    }
+  ],
+  "licence": {
+    "path": "third-party/Contracts.NativeTooling.LICENSE.txt",
+    "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+  },
+  "ownedAdaptation": {
+    "status": "author-proposal-pending-independent-delta-review-and-native-qualification",
+    "scope": "ArcForges current Linux x64/arm64 Native AOT only; no Go code or package/project dependency copied.",
+    "changes": [
+      "Select native architecture and its exact official LLVM archive; x64 known core hashes remain, ARM never uses x64 hashes.",
+      "ARM has dedicated install/source/build/context-patch cache identities; x64 retains the existing verified paths.",
+      "Every archive-derived core/resource file is checked against its pinned-source provision receipt before bootstrap compiler use or AOT execution.",
+      "Compiler aliases, default LD, native compiler target and BFD emulations fail closed on mismatch.",
+      "run --target-rid refuses a mismatched native architecture; the GNU external byte recipe and signed release/banner stay unchanged."
+    ],
+    "localFiles": [
+      {
+        "path": "eng/native_toolchain.py",
+        "sha256Lf": "0ecd99425c9cccef05f831172a5fbd8bbd3c6aa84b2e883f1679e7af38fa3714"
+      },
+      {
+        "path": "eng/native-toolchain.json",
+        "sha256Lf": "fde8a8e1999efb6f8edafd251da4637d46a5bf41584ea46453a18b942f7d1588"
+      }
+    ],
+    "qualification": "PENDING actual ArcForges native AOT; ARM archive layout and native execution are not established by x64 or unit checks."
+  },
+  "externalGnuMaterial": "Only exact official source/artifact hashes and reviewed minimal scalar byte-edit recipe are checked in. GNU source/full context patch and all GNU licence texts stay in the external tool cache, never in an ArcForges runtime package."
+}

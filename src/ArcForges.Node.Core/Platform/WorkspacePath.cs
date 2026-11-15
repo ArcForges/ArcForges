@@ -615,7 +615,7 @@ internal sealed partial class WorkspacePath : IDisposable
             return;
         }
 
-        if (value.Contains(':', StringComparison.Ordinal) || value.EndsWith(' ') || value.EndsWith('.') ||
+        if (value.Contains(':', StringComparison.Ordinal) || value.EndsWith(' ', StringComparison.Ordinal) || value.EndsWith('.', StringComparison.Ordinal) ||
             value.Any(static character => character < 32 || character is '<' or '>' or '"' or '|' or '?' or '*'))
         {
             throw new WorkspacePathException("path_reserved");

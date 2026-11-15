@@ -100,7 +100,7 @@ public sealed partial class DependencyAdmissionTests
         foreach (var lockFile in LockFiles())
         {
             using var document = RepositoryFiles.Json(lockFile);
-            var framework = document.RootElement.GetProperty("dependencies").GetProperty("net10.0");
+            var framework = document.RootElement.GetProperty("dependencies").GetProperty("net11.0");
             Assert.True(framework.TryGetProperty("ArcForges.Build.Policy", out var entry), $"{lockFile} must restore ArcForges.Build.Policy.");
             Assert.Equal("Direct", entry.GetProperty("type").GetString());
         }

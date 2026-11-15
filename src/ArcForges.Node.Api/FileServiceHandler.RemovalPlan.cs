@@ -592,7 +592,7 @@ internal sealed partial class FileServiceHandler
         foreach (var entry in snapshot.Entries)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var separator = entry.Path.LastIndexOf('/');
+            var separator = entry.Path.LastIndexOf('/', StringComparison.Ordinal);
             var parentPath = separator < 0 ? "" : entry.Path[..separator];
             var parent = RegisteredWorkspaces.RootIdentity.Encode(WorkspacePath.Identity(root.OpenDirectory(parentPath)));
             if (parent.Platform != entry.NativeIdentity.Platform ||

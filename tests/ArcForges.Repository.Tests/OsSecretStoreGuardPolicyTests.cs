@@ -362,7 +362,7 @@ public sealed partial class OsSecretStoreGuardPolicyTests
 
         var lines = File.ReadAllLines(Path.Combine(Root, TierWorkflow));
         var settings = lines.Select((line, index) => (line, index))
-            .Where(item => item.line.Contains(OptIn, StringComparison.Ordinal) && !item.line.TrimStart().StartsWith('#')).ToList();
+            .Where(item => item.line.Contains(OptIn, StringComparison.Ordinal) && !item.line.TrimStart().StartsWith('#', StringComparison.Ordinal)).ToList();
         var (setting, at) = Assert.Single(settings);
         Assert.Equal("          " + OptIn + ": '1'", setting);
 
@@ -388,7 +388,7 @@ public sealed partial class OsSecretStoreGuardPolicyTests
         var conditions = JobCondition().Matches(workflow).Select(match => match.Groups["condition"].Value.Trim()).ToList();
         Assert.NotEmpty(conditions);
         Assert.All(conditions, condition => Assert.Equal("${{ " + TierCondition + " }}", condition));
-        Assert.Contains("runs-on: windows-latest", workflow, StringComparison.Ordinal);
+        Assert.Contains("runs-on: windows-2025", workflow, StringComparison.Ordinal);
 
         // The routine scripts remove a stray opt-in, and the host verification refuses to run with one.
         Assert.Contains("Remove-Item Env:" + OptIn, File.ReadAllText(Path.Combine(Root, "eng/test.ps1")), StringComparison.Ordinal);

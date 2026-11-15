@@ -90,7 +90,7 @@ public static class ClientProcess
             if (OperatingSystem.IsLinux())
             {
                 var stat = File.ReadAllText($"/proc/{pid.ToString(CultureInfo.InvariantCulture)}/stat");
-                var fields = stat[(stat.LastIndexOf(')') + 2)..].Split(' ');
+                var fields = stat[(stat.LastIndexOf(')', StringComparison.Ordinal) + 2)..].Split(' ');
                 var boot = File.ReadLines("/proc/stat").First(line => line.StartsWith("btime ", StringComparison.Ordinal));
                 start = DateTimeOffset.FromUnixTimeMilliseconds((long.Parse(boot.AsSpan(6), NumberStyles.None, CultureInfo.InvariantCulture) * 1000)
                     + (long.Parse(fields[19], NumberStyles.None, CultureInfo.InvariantCulture) * 1000 / 100));

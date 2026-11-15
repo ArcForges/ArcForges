@@ -243,7 +243,7 @@ internal sealed partial class FileServiceHandler
             if (!RemovalManagedUsesClear(tx, lease, token))
                 return Refuse(NodeErrors.InUse("managed_file_in_use"));
             PrepareRemovalDestination(tx, request, lease);
-            var parentPath = lease.Source.Contains('/') ? lease.Source[..lease.Source.LastIndexOf('/')] : "";
+            var parentPath = lease.Source.Contains('/') ? lease.Source[..lease.Source.LastIndexOf('/', StringComparison.Ordinal)] : "";
             lease.Parent = WorkspacePath.Identity(lease.Root.OpenDirectory(parentPath));
             FileMutationJournal.PrepareRemoval(tx, id, correlation.Value.ToByteArray(), digest, caller.CenterCaller,
                 plan.Workspace, plan.Attempt, plan.Path, RegisteredWorkspaces.RootIdentity.Encode(lease.Root.RootIdentity),

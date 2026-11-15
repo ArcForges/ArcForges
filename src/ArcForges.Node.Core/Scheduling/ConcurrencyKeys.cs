@@ -163,7 +163,7 @@ public sealed record ConcurrencyKey
         }
         else
         {
-            var lastColon = remainder.LastIndexOf(':');
+            var lastColon = remainder.LastIndexOf(':', StringComparison.Ordinal);
             if (lastColon > 0)
             {
                 purpose = remainder[(lastColon + 1)..];

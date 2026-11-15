@@ -1184,7 +1184,7 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
             return null;
         }
 
-        var last = cgroup[(cgroup.LastIndexOf('/') + 1)..];
+        var last = cgroup[(cgroup.LastIndexOf('/', StringComparison.Ordinal) + 1)..];
         return last.EndsWith(".service", StringComparison.Ordinal) && !last.StartsWith("user@", StringComparison.Ordinal) ? last : null;
     }
 

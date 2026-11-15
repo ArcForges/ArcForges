@@ -271,7 +271,7 @@ public sealed partial class LinuxFileMutationHostTests
         if (File.Exists(stat))
         {
             var text = File.ReadAllText(stat);
-            var close = text.LastIndexOf(')');
+            var close = text.LastIndexOf(')', StringComparison.Ordinal);
             Assert.True(close > 0);
             var fields = text[(close + 2)..].Split(' ', StringSplitOptions.RemoveEmptyEntries);
             Assert.NotEqual(started.ToString(System.Globalization.CultureInfo.InvariantCulture), fields[19]);

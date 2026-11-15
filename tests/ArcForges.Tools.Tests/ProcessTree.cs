@@ -60,7 +60,7 @@ internal static partial class ProcessTree
             {
                 // Fields after the parenthesised command name: state, ppid, ...
                 var stat = File.ReadAllText(Path.Combine(directory, "stat"));
-                var fields = stat[(stat.LastIndexOf(')') + 2)..].Split(' ');
+                var fields = stat[(stat.LastIndexOf(')', StringComparison.Ordinal) + 2)..].Split(' ');
                 parents[pid] = int.Parse(fields[1], CultureInfo.InvariantCulture);
             }
             catch (IOException)

@@ -32,7 +32,7 @@ public sealed class BuildTests
             <Project Sdk="Microsoft.NET.Sdk">
               <PropertyGroup>
                 <OutputType>Exe</OutputType>
-                <TargetFramework>net10.0</TargetFramework>
+                <TargetFramework>net11.0</TargetFramework>
                 <ImplicitUsings>enable</ImplicitUsings>
               </PropertyGroup>
             </Project>
@@ -42,7 +42,7 @@ public sealed class BuildTests
         var exit = Build(harness, [dotnet, "build", "-c", "Release", "-nologo"], project, out var images);
         Assert.Equal(0, exit.ExitStatus);
         Assert.Contains(images, image => image.Equals("dotnet.exe", StringComparison.OrdinalIgnoreCase));
-        Run(harness, Path.Combine(project, "bin", "Release", "net10.0", "hello.exe"), "hello from dotnet");
+        Run(harness, Path.Combine(project, "bin", "Release", "net11.0", "hello.exe"), "hello from dotnet");
     }
 
     [Fact(Timeout = 600_000)]

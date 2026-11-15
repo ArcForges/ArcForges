@@ -341,7 +341,7 @@ internal sealed class TestNode : IAsyncDisposable
             }
             else
             {
-                return value.StartsWith('-') ? -1 : i;
+                return value.StartsWith('-', StringComparison.Ordinal) ? -1 : i;
             }
         }
 

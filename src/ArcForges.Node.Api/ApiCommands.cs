@@ -348,7 +348,7 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
             {
                 caller.Routed?.BeforeReplay();
                 Approvals.Expire(context);
-                if (caller.CenterCaller is not null && RecordedIn(context.Transaction, service + "/" + gate.Method[(gate.Method.LastIndexOf('.') + 1)..],
+                if (caller.CenterCaller is not null && RecordedIn(context.Transaction, service + "/" + gate.Method[(gate.Method.LastIndexOf('.', StringComparison.Ordinal) + 1)..],
                     capture.RequestDigest, meta, caller))
                 {
                     // Decisions B-2 and verifier N-1, inside the writer: an outcome recorded since the check (an approved execution whose approval
@@ -467,7 +467,7 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
             beforeDedup: command =>
             {
                 caller.Routed?.BeforeReplay();
-                var operation = service[(service.LastIndexOf('.') + 1)..] + "." + method;
+                var operation = service[(service.LastIndexOf('.', StringComparison.Ordinal) + 1)..] + "." + method;
                 return RoutedCommandOwnership.MayExecute(command.Transaction, meta.CommandId.Value.Span, caller.CenterCaller, operation, digest)
                     ? null : StoreErrors.CommandIdReused();
             },
@@ -505,7 +505,7 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
             return false;
         }
 
-        var name = method[(method.LastIndexOf('.') + 1)..];
+        var name = method[(method.LastIndexOf('.', StringComparison.Ordinal) + 1)..];
         var digest = caller is null ? PayloadDigest.Compute(request) : Digest(caller, request);
         return node.Store.Read(reader => RoutedCommandOwnership.MayUse(reader, id.Value.Span, caller?.CenterCaller)
             && (RecordedIn(reader, service + "/" + name, digest, meta, caller)

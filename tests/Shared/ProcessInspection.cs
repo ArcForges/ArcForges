@@ -70,7 +70,7 @@ internal static partial class ProcessInspection
     /// and <see cref="System.Diagnostics.Process.HasExited"/> is false for a zombie that is not this process's child.
     /// </summary>
     public static bool IsZombie(int pid) =>
-        !OperatingSystem.IsWindows() && ProcText(pid, "stat") is { } stat && stat.LastIndexOf(')') is var end and >= 0
+        !OperatingSystem.IsWindows() && ProcText(pid, "stat") is { } stat && stat.LastIndexOf(')', StringComparison.Ordinal) is var end and >= 0
         && stat.AsSpan(end + 1).TrimStart().StartsWith("Z", StringComparison.Ordinal);
 
     private static string? ProcText(int pid, string file)

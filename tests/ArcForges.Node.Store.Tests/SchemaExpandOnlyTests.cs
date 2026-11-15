@@ -133,7 +133,7 @@ public sealed class SchemaExpandOnlyTests
         // default or a comment; and the rest of the text must be unchanged byte for byte.
         const string Sql = "CREATE TABLE t (a INTEGER CHECK (a > 0), b TEXT DEFAULT '(,)' -- (note)\n, c INTEGER)";
         Assert.True(SchemaDiff.TopLevelOfColumns(Sql, Sql.IndexOf(", b", StringComparison.Ordinal)));
-        Assert.True(SchemaDiff.TopLevelOfColumns(Sql, Sql.LastIndexOf(')')));
+        Assert.True(SchemaDiff.TopLevelOfColumns(Sql, Sql.LastIndexOf(')', StringComparison.Ordinal)));
         Assert.False(SchemaDiff.TopLevelOfColumns(Sql, Sql.IndexOf("> 0", StringComparison.Ordinal)));
         Assert.False(SchemaDiff.TopLevelOfColumns(Sql, Sql.IndexOf("(,)", StringComparison.Ordinal) + 2));
         Assert.False(SchemaDiff.TopLevelOfColumns(Sql, Sql.IndexOf("(note", StringComparison.Ordinal) + 2));

@@ -171,7 +171,7 @@ internal sealed class TestDataRootSecretStore : ISecretBackingStore
         {
             return System.IO.Directory.Exists(Directory)
                 ? [.. System.IO.Directory.EnumerateFiles(Directory).Select(Path.GetFileName).OfType<string>()
-                    .Where(name => !name.StartsWith('.')).Order(StringComparer.Ordinal)]
+                    .Where(name => !name.StartsWith('.', StringComparison.Ordinal)).Order(StringComparer.Ordinal)]
                 : [];
         }
     }

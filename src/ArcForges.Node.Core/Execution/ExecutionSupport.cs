@@ -426,7 +426,7 @@ public static class CommandText
 
         var argv = command.Argv.Argv;
         var program = Path.GetFileNameWithoutExtension(argv[0].Replace('\\', '/').Split('/')[^1]).ToLowerInvariant();
-        var verb = argv.Skip(1).FirstOrDefault(argument => !argument.StartsWith('-') && !argument.StartsWith('/'));
+        var verb = argv.Skip(1).FirstOrDefault(argument => !argument.StartsWith('-', StringComparison.Ordinal) && !argument.StartsWith('/', StringComparison.Ordinal));
         return verb is null ? program : program + " " + verb.ToLowerInvariant();
     }
 
