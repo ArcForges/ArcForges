@@ -1,0 +1,23 @@
+{
+  "task": "AFV2-DATA-01",
+  "sourceRepository": "https://github.com/ArcForges/ArcForges-Design",
+  "sourceCommit": "493022fbf643b484665b2713c9eb8670f2fb2234",
+  "sourcePaths": [
+    {
+      "path": "docs/data/node-store.sql",
+      "sha256": "e5fa24ec9af0ef00cc4835fd01d2822c3c598c106d3af2cb74256bbe24f80236"
+    }
+  ],
+  "licence": "AGPL-3.0-only (repository LICENSE; same implementation boundary)",
+  "attribution": "ArcForges contributors",
+  "targets": [
+    "src/ArcForges.Node.Store/Schema/0016-v2-expand.sql"
+  ],
+  "disposition": "Adapt target DDL into forward-only expand migration; preserve all applied0001..0015 bytes and legacy tables. Only colliding resource_sample is v2_resource_sample. Add owner history/capacity metadata for complete restore and reserved admission.",
+  "verification": "Real fresh/schema15 SQLite, immutable history, key/receipt/reopen/backup/capacity fixtures; no native Run or IPC acceptance.",
+  "notice": "Existing AGPL-3.0-only implementation licence and attribution retained.",
+  "lifetime": "Permanent schema/migration provenance; never rewrite after delivery.",
+  "logicalToPhysicalTables": {
+    "resource_sample": "v2_resource_sample"
+  }
+}

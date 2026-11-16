@@ -125,6 +125,14 @@
       "sha256": "c7784dd28ea1419bc407fb844be76e18b75f9ce5ba185fa738d1c9c259d20ae6",
       "source": "AF-CTR-06 metadata-only initial stage production reservations, actual worker lifetime fences, additive combined capacity and cached-inspection Start admission; local candidate, not old-instance upgrade qualification.",
       "addedBy": "AF-CTR-06"
+    },
+    {
+      "version": 16,
+      "minReaderVersion": 16,
+      "file": "0016-v2-expand.sql",
+      "sha256": "5456ac7876b1db1c15bd0c79d6b53856a7d446d5bb2859365c27051f93317b64",
+      "source": "ArcForges-Design493022fb docs/data/node-store.sql; forward adaptation and resource_sample collision mapping recorded in eng/v2-migration/afv2-data-01-source.json.",
+      "addedBy": "AFV2-DATA-01"
     }
   ]
 }
