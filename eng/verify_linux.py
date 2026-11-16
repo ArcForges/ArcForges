@@ -9,7 +9,7 @@ The Linux host needs no PowerShell: each command does for linux-x64 exactly what
   python eng/verify_linux.py compare-startup <baseline>   eng/compare-startup.ps1 -RuntimeIdentifier linux-x64 -BaselineExecutable <baseline>
   python eng/verify_linux.py package                      eng/package.ps1 -RuntimeIdentifier linux-x64
 
-Components: host, desktop, testload, bench (the supervisor is Windows only); a group is a comma-separated list of
+Components: host, testload, bench (the supervisor is Windows only); a group is a comma-separated list of
 components published in order, and several groups are published concurrently. Output and results go to the same
 artifacts/ paths as the scripts'.
 """
@@ -38,7 +38,6 @@ BENCH = PUBLISH / "bench" / "arcforges-bench"
 HOST = PUBLISH / "host" / "arcforges"
 PROJECTS = {
     "host": "src/ArcForges.Host",
-    "desktop": "src/ArcForges.Desktop",
     "testload": "tools/ArcForges.TestLoad",
     "bench": "tools/ArcForges.Bench",
 }
@@ -109,11 +108,9 @@ def publish(groups: list[str]) -> None:
 
 
 def bench() -> None:
-    """eng/bench.ps1: size gates (arcforges, arcforges-desktop), the store growth gate and the CLI cold-start record."""
+    """eng/bench.ps1: the CLI size gate, the store growth gate and the CLI cold-start record."""
     RESULTS.mkdir(parents=True, exist_ok=True)
     run([str(BENCH), "size", "--target", "arcforges", "--path", str(HOST), "--output", str(RESULTS / "size-arcforges.json")])
-    run([str(BENCH), "size", "--target", "arcforges-desktop", "--path", str(PUBLISH / "desktop"),
-         "--output", str(RESULTS / "size-arcforges-desktop.json")])
     growth = [str(BENCH), "store-growth", "--attempts", "10000", "--output", str(RESULTS / "store-growth.json")]
     environments = REPOSITORY / "tests" / "ArcForges.Node.Store.Tests" / "Fixtures" / "environments"
     for environment in sorted(environments.glob("*.json"), key=lambda path: path.name.lower()):
@@ -140,10 +137,10 @@ def compare_startup(baseline: str, source: str | None) -> None:
 
 
 def package() -> None:
-    """eng/package.ps1: the desktop publish directory with third-party notices, the lock file and build-info.json."""
-    publish_dir = PUBLISH / "desktop"
-    if not (publish_dir / "arcforges-desktop").exists():
-        raise Failure(f"Publish the {RID} desktop before packaging.")
+    """eng/package.ps1: Node/CLI, systemd units, notices, the lock file and build-info/digests."""
+    publish_dir = PUBLISH / "host"
+    if not (publish_dir / "arcforges").exists():
+        raise Failure(f"Publish the {RID} host before packaging.")
     stage = REPOSITORY / "artifacts" / "staging" / f"{RID}-{uuid.uuid4().hex}"
     packages = REPOSITORY / "artifacts" / "packages"
     stage.mkdir(parents=True)
@@ -156,10 +153,16 @@ def package() -> None:
         else:
             shutil.copy2(item, stage / item.name)
     shutil.copytree(REPOSITORY / "third-party", stage / "third-party")
-    shutil.copy2(REPOSITORY / "src" / "ArcForges.Desktop" / "packages.lock.json", stage)
+    for name in ("LICENSE", "THIRD_PARTY_NOTICES.md"):
+        shutil.copy2(REPOSITORY / name, stage)
+    shutil.copy2(REPOSITORY / "src" / "ArcForges.Host" / "packages.lock.json", stage)
+    units = stage / "packaging" / "linux"
+    units.mkdir(parents=True)
+    for name in ("arcforges-node.service", "arcforges-guard.service", "arcforges.slice"):
+        shutil.copy2(REPOSITORY / "packaging" / "linux" / name, units)
 
     # Native component notices from the actual restored application closure.
-    assets = json.loads((REPOSITORY / "src" / "ArcForges.Desktop" / "obj" / "project.assets.json").read_text(encoding="utf-8"))
+    assets = json.loads((REPOSITORY / "src" / "ArcForges.Host" / "obj" / "project.assets.json").read_text(encoding="utf-8"))
     for library in assets["libraries"].values():
         if library.get("type") != "package" or library["path"].startswith("arcforges.build.policy/"):
             continue
@@ -197,7 +200,7 @@ def package() -> None:
     digests = {relative: hashlib.sha256((stage / relative).read_bytes()).hexdigest() for relative in files if relative != "digests.json"}
     (stage / "digests.json").write_text(json.dumps({"version": version, "files": digests}, indent=2) + "\n", encoding="utf-8")
 
-    archive = packages / f"arcforges-desktop-{RID}.tar.gz"
+    archive = packages / f"arcforges-{RID}.tar.gz"
     run(["tar", "-czf", str(archive), "-C", str(stage), "."])
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
     Path(f"{archive}.sha256").write_text(f"{digest}  {archive.name}\n", encoding="ascii")

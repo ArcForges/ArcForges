@@ -316,7 +316,8 @@ public sealed class LoopbackReceiverTests
         Assert.Equal("HTTP/1.1 200 OK", await ScriptedBrowser.GetAsync("http://127.0.0.1:" + receiver.Port + "/callback?code=" + Code + "&state=another-state-0123456789"));
     }
 
-    [Fact]
+    [Fact(DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public async Task ConnectionsThatSendARequestLineAndStallNeverExceedTheHardCapAndTheBrowserIsServed()
     {
         // N2 review FX-4 (sec B-4): every open connection counts, also one whose request line arrived; at the cap the oldest that has not

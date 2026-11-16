@@ -5,7 +5,7 @@
 .DESCRIPTION
   Output: artifacts/publish/<rid>/<component>/. Components: host (arcforges), supervisor
   (arcforges-supervisor.exe; Windows RIDs only; the install layout puts it beside arcforges.exe),
-  desktop (arcforges-desktop), testload (arcforges-testload), bench (arcforges-bench).
+  testload (arcforges-testload), bench (arcforges-bench).
   Windows targets need the MSVC linker (Visual Studio C++ tools); Linux targets need clang and
   zlib1g-dev and are published on Linux.
 .EXAMPLE
@@ -17,8 +17,8 @@ param(
   [Parameter(Mandatory)]
   [ValidateSet('win-x64', 'win-arm64', 'linux-x64', 'linux-arm64')]
   [string] $RuntimeIdentifier,
-  [ValidateSet('host', 'supervisor', 'desktop', 'testload', 'bench')]
-  [string[]] $Component = @('host', 'supervisor', 'desktop', 'testload', 'bench'),
+  [ValidateSet('host', 'supervisor', 'testload', 'bench')]
+  [string[]] $Component = @('host', 'supervisor', 'testload', 'bench'),
   [string] $Configuration = 'Release',
   [switch] $NoRestore
 )
@@ -30,7 +30,6 @@ $env:AVALONIA_TELEMETRY_OPTOUT = '1'
 $projects = @{
   host = 'src/ArcForges.Host'
   supervisor = 'src/ArcForges.Supervisor'
-  desktop = 'src/ArcForges.Desktop'
   testload = 'tools/ArcForges.TestLoad'
   bench = 'tools/ArcForges.Bench'
 }

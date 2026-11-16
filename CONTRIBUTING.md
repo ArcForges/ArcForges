@@ -21,21 +21,15 @@ references or private package feeds.
   eng/native_toolchain.py install`; ordinary publishing only selects and checks
   an existing installation in child processes. x64 and ARM64 archives/caches
   are distinct. Publish Linux executables on the matching native Linux venue.
-- Desktop Linux needs an X11/XWayland session, fontconfig, standard system fonts,
-  libX11, libICE and libSM. A headless Linux build alone is not native Linux desktop validation.
-- Reuse installed SDKs, package caches and toolchains. Avalonia build telemetry is disabled in
-  `Directory.Build.targets`; the `eng/` scripts and CI also set `AVALONIA_TELEMETRY_OPTOUT=1`.
+- Reuse installed SDKs, package caches and toolchains.
 - The startup regression gate builds the immutable merge base with its own retained
   SDK. `eng/baseline_sdk.py` selects that installed root without editing the baseline
   or installing a replacement; current source still selects the new SDK.
 
 Run the restore, build, format and test commands in the README. `eng/test.ps1` / `eng/test.sh`
-select suites by trait (`-List` / `--list`). Desktop tests run the real view in Avalonia's headless
-platform; they do not launch a native window or contact any service.
-
-To try the desktop, publish it (`./eng/publish.ps1 -RuntimeIdentifier <rid> -Component desktop`)
-and run `arcforges-desktop` / `arcforges-desktop.exe` from the complete publish directory on a
-matching machine. No macOS support or verification is claimed.
+select suites by trait (`-List` / `--list`). Package the Node/CLI host with the Windows
+supervisor or the existing Linux systemd unit files through `eng/package.ps1`.
+No standalone desktop is built or packaged.
 
 ## Pull requests
 

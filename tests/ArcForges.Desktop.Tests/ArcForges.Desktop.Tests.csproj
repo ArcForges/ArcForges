@@ -1,7 +1,0 @@
-<Project Sdk="Microsoft.NET.Sdk">
-  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
-  <ItemGroup>
-    <PackageReference Include="Avalonia.Headless" />
-    <ProjectReference Include="../../src/ArcForges.Desktop/ArcForges.Desktop.csproj" />
-  </ItemGroup>
-</Project>

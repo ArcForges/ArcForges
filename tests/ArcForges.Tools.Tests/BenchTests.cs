@@ -26,30 +26,11 @@ public sealed class BenchTests
     }
 
     [Fact]
-    public void DesktopDirectorySizeExcludesOnlyNativeSkiaAndSymbols()
-    {
-        using var directory = new TemporaryDirectory();
-        directory.File("arcforges-desktop.exe", 3000);
-        directory.File("av_libglesv2.dll", 500);
-        directory.File("libSkiaSharp.dll", 9000);
-        directory.File("libHarfBuzzSharp.so", 7000);
-        directory.File("arcforges-desktop.pdb", 4000);
-        directory.File("nested/data.bin", 25);
-
-        var (bytes, excluded) = SizeBenchmark.Measure(directory.Path, SizeBenchmark.Targets["arcforges-desktop"]);
-
-        // 15 section 1: "without native Skia libraries"; HarfBuzz and ANGLE count.
-        Assert.Equal(10525, bytes);
-        Assert.Equal(["arcforges-desktop.pdb", "libSkiaSharp.dll"], excluded);
-    }
-
-    [Fact]
     public void SizeTargetsFollowThePerformanceTargets()
     {
         Assert.Equal(45_000_000, SizeBenchmark.Targets["arcforges"].LimitBytes);
         Assert.Equal(4_000_000, SizeBenchmark.Targets["arcforges-supervisor"].LimitBytes);
-        Assert.Equal(60_000_000, SizeBenchmark.Targets["arcforges-desktop"].LimitBytes);
-        Assert.True(SizeBenchmark.Targets["arcforges-desktop"].IsDirectory);
+        Assert.Equal(2, SizeBenchmark.Targets.Count);
     }
 
     [Theory]

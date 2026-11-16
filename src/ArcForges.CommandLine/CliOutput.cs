@@ -240,7 +240,7 @@ public sealed class CliOutput
             {
                 // cli.md section 5: the approval is pending; exit 6.
                 var text = IdText.Format(approval);
-                _error.WriteLine($"Waiting for approval {text} (approve in ArcForges Desktop or with 'arcforges approvals approve {text}')");
+                _error.WriteLine($"Waiting for approval {text} (approve with 'arcforges approvals approve {text}')");
                 return ExitCodes.For(error);
             }
 
@@ -255,7 +255,7 @@ public sealed class CliOutput
     {
         ArgumentNullException.ThrowIfNull(exception);
         var message = exception.Reason == NodeUnavailableReason.AutoStartRefused
-            ? "node not running; start it with 'arcforges node run --background' or the Desktop"
+            ? "node not running; start it with 'arcforges node run --background'"
             : exception.Message.TrimEnd('.') + (exception.Guidance.Length > 0 ? "; " + exception.Guidance : string.Empty);
         if (Json)
         {

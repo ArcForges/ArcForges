@@ -31,7 +31,7 @@ env:
 # publish with zero warnings, size gates, the startup regression gate (this run's CLI against the base commit's
 # CLI, both built and measured on the same runner) and the store growth bound (15-performance-targets) on
 # win-x64, win-arm64, linux-x64 and linux-arm64.
-# No GUI, device, browser, live-service or inference jobs; desktop UI tests are headless.
+# No GUI, device, browser, live-service or inference jobs.
 jobs:
   native:
     name: Native (${{ matrix.rid }})
@@ -45,19 +45,19 @@ jobs:
           - os: windows-2025
             rid: win-x64
             full: true
-            components: host,supervisor,desktop,testload,bench
+            components: host,supervisor,testload,bench
           - os: windows-11-arm
             rid: win-arm64
             full: false
-            components: host,supervisor,desktop,bench
+            components: host,supervisor,bench
           - os: ubuntu-26.04
             rid: linux-x64
             full: true
-            components: host,desktop,testload,bench
+            components: host,testload,bench
           - os: ubuntu-26.04-arm
             rid: linux-arm64
             full: false
-            components: host,desktop,bench
+            components: host,bench
     defaults:
       run:
         shell: pwsh
@@ -168,14 +168,14 @@ jobs:
           $suffix = if ($IsWindows) { '.exe' } else { '' }
           $baseline = "artifacts/base-commit/artifacts/publish/$env:TARGET_RID/host/arcforges$suffix"
           ./eng/compare-startup.ps1 -RuntimeIdentifier $env:TARGET_RID -BaselineExecutable $baseline -BaselineSource "base commit $env:BASE_SHA, built and measured on this runner"
-      - name: Package the complete desktop directory
+      - name: Package the complete Node and CLI directory
         env:
           TARGET_RID: ${{ matrix.rid }}
         run: ./eng/package.ps1 -RuntimeIdentifier $env:TARGET_RID
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: arcforges-desktop-${{ matrix.rid }}-${{ github.sha }}
-          path: artifacts/packages/*
+          name: arcforges-${{ matrix.rid }}-${{ github.sha }}
+          path: artifacts/packages/arcforges-${{ matrix.rid }}.*
           if-no-files-found: error
           retention-days: 14
           compression-level: 0

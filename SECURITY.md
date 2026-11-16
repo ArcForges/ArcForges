@@ -14,9 +14,9 @@ without disclosing the vulnerability. Never put credentials or exploit details i
 
 ## Current boundary
 
-- `arcforges` has no roles yet: it opens no endpoint, runs no command and stores nothing.
-- `arcforges-desktop` shows an offline bootstrap view: it requests no elevation, executes no
-  external commands and stores no credentials.
+- `arcforges` contains the existing Node/CLI runtime and its local endpoint, execution and store
+  guards. V2 isolation and migration acceptance belongs to the designated Plan tasks.
+  The disconnected desktop scaffold is retired; no desktop executable is packaged.
 - The development tools are not shipped. `arcforges-testload` deliberately consumes CPU and
   memory, writes output and starts copies of itself, within the bounds its parameters allow;
   `arcforges-bench` starts the executable it is given. Run them only with commands you trust.

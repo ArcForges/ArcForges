@@ -347,7 +347,7 @@ public sealed class CommandLineTests
         var exit = cli.Fail(new NodeUnavailableException(NodeUnavailableReason.AutoStartRefused, "refused (CI job (CI))", "ignored"));
 
         Assert.Equal(75, exit);
-        Assert.Equal("arcforges: node not running; start it with 'arcforges node run --background' or the Desktop" + Environment.NewLine, error.ToString());
+        Assert.Equal("arcforges: node not running; start it with 'arcforges node run --background'" + Environment.NewLine, error.ToString());
         Assert.Equal(string.Empty, output.ToString());
     }
 
