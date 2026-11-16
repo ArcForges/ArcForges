@@ -58,7 +58,11 @@ internal sealed partial class DurableCommandStore : IDisposable
         if (store.Metadata.SchemaVersion < 16) throw new StoreIncompatibleException("V2 commands require schema16.");
         _fencePath = DurableEpochFence.PathFor(store.DataRoot, owner);
         _ownerLock = DurableEpochFence.OpenPrivate(_fencePath + ".lock", FileMode.OpenOrCreate);
-        try { OpenEpoch(); }
+        try
+        {
+            using var catalogue = DurableEpochFence.OpenCatalogueLock(store.DataRoot);
+            OpenEpoch();
+        }
         catch { _ownerLock.Dispose(); CryptographicOperations.ZeroMemory(_key); throw; }
     }
 

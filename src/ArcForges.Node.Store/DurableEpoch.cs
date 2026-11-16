@@ -21,6 +21,11 @@ internal sealed record DurableEpochFence(string Owner, byte[] Epoch, string KeyR
     internal static string PathFor(string dataRoot, string owner) => Path.Combine(dataRoot, "store",
         "v2-owner-" + Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(owner))) + ".fence");
 
+    // Serializes namespace creation with complete catalogue backup/restore inspection.
+    // Per-owner locks continue to protect admission and effect observations.
+    internal static FileStream OpenCatalogueLock(string dataRoot) =>
+        OpenPrivate(Path.Combine(dataRoot, "store", "v2-owner-catalogue.lock"), FileMode.OpenOrCreate);
+
     internal byte[] Encode(ReadOnlySpan<byte> key)
     {
         using var stream = new MemoryStream();

@@ -5,7 +5,7 @@ using System.Text.Json.Serialization;
 
 namespace ArcForges.Node.Store;
 
-internal sealed record DurableBackupEntry(string Owner, string Epoch, string KeyReference, long Sequence, string History);
+internal sealed record DurableBackupEntry(string Owner, string Epoch, string KeyReference, long Sequence, string History, string State);
 internal sealed record DurableBackupManifest(int Schema, string DatabaseSha256, string SigningKeyReference, DurableBackupEntry[] Epochs);
 
 [JsonSerializable(typeof(DurableBackupManifest))]
@@ -22,13 +22,15 @@ internal sealed partial class DurableCommandStore
             ObjectDisposedException.ThrowIf(_disposed, this);
             if (MaintenanceRequired || !Path.IsPathFullyQualified(backupRoot) || Directory.Exists(backupRoot))
                 throw new DurableStoreMaintenanceException();
-            var entries = _store.Read(ReadBackupEntries);
             var locks = new List<FileStream>();
             var keys = new Dictionary<string, byte[]>(StringComparer.Ordinal);
             try
             {
+                using var catalogue = DurableEpochFence.OpenCatalogueLock(_store.DataRoot);
+                var entries = _store.Read(ReadBackupEntries);
                 foreach (var owner in entries.Select(e => e.Owner).Distinct(StringComparer.Ordinal).Where(owner => owner != _owner))
                     locks.Add(DurableEpochFence.OpenPrivate(DurableEpochFence.PathFor(_store.DataRoot, owner) + ".lock", FileMode.OpenOrCreate));
+                VerifyFenceCatalogue(_store.DataRoot, entries);
                 foreach (var entry in entries)
                 {
                     if (!entry.KeyReference.StartsWith(_secrets.Backend + "|", StringComparison.Ordinal))
@@ -86,6 +88,7 @@ internal sealed partial class DurableCommandStore
         var keys = new Dictionary<string, byte[]>(StringComparer.Ordinal);
         try
         {
+            using var catalogue = DurableEpochFence.OpenCatalogueLock(latestAuthorityRoot);
             byte[] signed = File.ReadAllBytes(Path.Combine(backupRoot, "v2-backup.manifest"));
             if (signed.Length is < 33 or > 1048576) throw new DurableStoreMaintenanceException();
             byte[] body = signed[..^32];
@@ -98,6 +101,17 @@ internal sealed partial class DurableCommandStore
                 throw new DurableStoreMaintenanceException();
             foreach (string owner in manifest.Epochs.Select(entry => entry.Owner).Distinct(StringComparer.Ordinal))
                 locks.Add(DurableEpochFence.OpenPrivate(DurableEpochFence.PathFor(latestAuthorityRoot, owner) + ".lock", FileMode.Open));
+            using (var latest = new Microsoft.Data.Sqlite.SqliteConnection(StorePaths.ConnectionString(
+                StorePaths.Database(latestAuthorityRoot), Microsoft.Data.Sqlite.SqliteOpenMode.ReadOnly)))
+            {
+                latest.Open();
+                // The independent latest catalogue must be complete/readable. Never substitute
+                // the backup's old owner list when it is missing, corrupt or contains new owners.
+                if (!ReadBackupEntries(new StoreReader(latest, null, TimeProvider.System)).SequenceEqual(manifest.Epochs))
+                    throw new DurableStoreMaintenanceException();
+            }
+            VerifyFenceCatalogue(latestAuthorityRoot, manifest.Epochs);
+            VerifyFenceCatalogue(backupRoot, manifest.Epochs);
             foreach (var entry in manifest.Epochs)
             {
                 if (!keys.TryGetValue(entry.KeyReference, out var key)) keys.Add(entry.KeyReference, key = ReadProtectedKey(backupSecrets, entry.KeyReference));
@@ -134,7 +148,7 @@ internal sealed partial class DurableCommandStore
                     Convert.FromHexString(entry.History)).Write(DurableEpochFence.PathFor(destinationRoot, entry.Owner), keys[entry.KeyReference]);
             }
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or ArgumentException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or ArgumentException or Microsoft.Data.Sqlite.SqliteException)
         {
             throw new DurableStoreMaintenanceException();
         }
@@ -147,11 +161,19 @@ internal sealed partial class DurableCommandStore
 
     private static DurableBackupEntry[] ReadBackupEntries(StoreReader reader)
     {
-        using var command = reader.CreateCommand("SELECT owner_id,hex(owner_epoch),digest_key_ref,admission_sequence,history_hmac_sha256 FROM owner_epoch ORDER BY owner_id,owner_epoch;");
+        using var command = reader.CreateCommand("SELECT owner_id,hex(owner_epoch),digest_key_ref,admission_sequence,history_hmac_sha256,state FROM owner_epoch ORDER BY owner_id,owner_epoch;");
         using var rows = command.ExecuteReader();
         var result = new List<DurableBackupEntry>();
-        while (rows.Read()) result.Add(new(rows.GetString(0), rows.GetString(1), rows.GetString(2), rows.GetInt64(3), rows.GetString(4)));
+        while (rows.Read()) result.Add(new(rows.GetString(0), rows.GetString(1), rows.GetString(2), rows.GetInt64(3), rows.GetString(4), rows.GetString(5)));
         return [.. result];
+    }
+
+    private static void VerifyFenceCatalogue(string root, IReadOnlyList<DurableBackupEntry> entries)
+    {
+        var expected = entries.Select(entry => Path.GetFileName(DurableEpochFence.PathFor(root, entry.Owner))).ToHashSet(StringComparer.Ordinal);
+        var actual = Directory.EnumerateFiles(Path.Combine(root, "store"), "v2-owner-*.fence")
+            .Select(path => Path.GetFileName(path) ?? throw new DurableStoreMaintenanceException()).ToHashSet(StringComparer.Ordinal);
+        if (!expected.SetEquals(actual)) throw new DurableStoreMaintenanceException();
     }
 
     private static bool Matches(DurableBackupEntry entry, DurableEpochFence fence) =>

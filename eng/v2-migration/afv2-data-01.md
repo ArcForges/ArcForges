@@ -77,7 +77,8 @@ the SQL method guard.
 
 ## Backup and restore
 
-`CreateBackup` takes the owner gates, uses SQLite online backup and the existing
+`CreateBackup` takes the fixed owner-root catalogue gate before reading its full
+owner set, then the owner gates, uses SQLite online backup and the existing
 legacy sealed-value sanitization, copies every referenced epoch key to the
 explicit protected backup backend, and signs a complete DB/key/history manifest.
 Partial packages without a valid manifest are not ready backups. It does not
@@ -85,8 +86,13 @@ overwrite an existing backup root.
 
 `RestoreBackup` requires a new destination and a separately retained latest
 authority root/backend. A backup's own old fence cannot prove its freshness.
-The exact DB digest, complete epoch-key closure and every admission/effect-history
-fence must agree. A post-backup admission **or later settlement of an already
+The independently retained latest DB must be readable and its complete owner/
+epoch/state/history catalogue and exact external fence set must match the
+manifest under the catalogue gate. A newly created owner cannot be omitted
+because its identity was absent from an old manifest. When this latest catalogue
+is missing or corrupt, reconciliation remains required; no old backup catalogue
+is substituted. The exact backup DB digest, complete epoch-key closure and every
+admission/effect-history fence must agree. A post-backup admission **or later settlement of an already
 accepted command** prevents activation under the old epoch. Missing/corrupt
 DB/key/fence or absent latest authority refuses restore and preserves maintenance
 and reconciliation; no new epoch is silently created. Source and destination
