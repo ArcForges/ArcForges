@@ -84,7 +84,7 @@ public sealed class MigrationPlan
 public static class StoreMigrations
 {
     /// <summary>The schema version this binary writes; it reads stores whose <c>min_reader_version</c> is at most this.</summary>
-    public const int SupportedSchemaVersion = 15;
+    public const int SupportedSchemaVersion = 16;
 
     /// <summary>The released steps, loaded from the embedded <c>Schema/*.sql</c> resources.</summary>
     public static MigrationPlan Released { get; } = new([
@@ -134,6 +134,10 @@ public static class StoreMigrations
 
         // AF-CTR-06: native pre-target stage producers have their own FULL reservations and actual-exit fences.
         Load(15, 15, "0015-schema-step-15.sql"),
+
+        // V2 durable authority/receipts cannot be shared with a reader which can evict legacy command identities.
+        // This expands the schema and preserves every V1 reconciliation table and applied migration byte.
+        Load(16, 16, "0016-v2-expand.sql"),
     ]);
 
     private static StoreMigration Load(int version, int minReaderVersion, string name)

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Node.Store.Migrations;
 using ArcForges.Node.Store.Policy;
@@ -24,6 +26,9 @@ public sealed class NodeStoreOptions
 
     /// <summary>The clock (the node's IClock; tests use a controllable one).</summary>
     public TimeProvider Clock { get; init; } = TimeProvider.System;
+
+    /// <summary>The caller's actual distribution cohort; local diagnostics use <c>local</c>.</summary>
+    public string Cohort { get; init; } = "local";
 }
 
 /// <summary>The singleton <c>store_meta</c> row as read when the store was opened.</summary>
@@ -181,6 +186,9 @@ public sealed class NodeStore : IDisposable
         SQLitePCL.Batteries_V2.Init();
         var dataRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(options.DataRoot));
         var path = StorePaths.Database(dataRoot);
+        if (!File.Exists(path) && Directory.Exists(Path.GetDirectoryName(path))
+            && Directory.EnumerateFiles(Path.GetDirectoryName(path)!, "v2-owner-*.fence").Any())
+            throw new StoreIncompatibleException("An existing V2 owner authority has no database; restore/reconciliation is required.");
         StorePaths.CreatePrivateDirectory(dataRoot);
         StorePaths.CreatePrivateDirectory(Path.GetDirectoryName(path)!);
 
@@ -205,6 +213,8 @@ public sealed class NodeStore : IDisposable
             else if (existing.SchemaVersion < plan.LatestVersion)
             {
                 var backup = StoreBackups.Create(writer, dataRoot, existing.SchemaVersion, plan.LatestVersion, options.Clock);
+                using var backupStream = File.OpenRead(backup);
+                string backupIdentity = Convert.ToHexStringLower(SHA256.HashData(backupStream));
                 var pending = plan.Steps.Where(step => step.Version > existing.SchemaVersion);
                 if (IsDeliveredPreCtr06Store(existing) && plan.LatestVersion >= 13 &&
                     plan.Steps[12].Name == "0013-schema-step-13.sql")
@@ -215,7 +225,7 @@ public sealed class NodeStore : IDisposable
                     {
                         foreach (var step in pending)
                         {
-                            ApplyMigration(writer, transaction, step);
+                            ApplyMigration(writer, transaction, step, existing.SchemaVersion, backupIdentity, options);
                         }
                     });
                 }
@@ -223,7 +233,7 @@ public sealed class NodeStore : IDisposable
                 {
                     foreach (var step in pending)
                     {
-                        InTransaction(writer, CommitDurability.Full, transaction => ApplyMigration(writer, transaction, step));
+                        InTransaction(writer, CommitDurability.Full, transaction => ApplyMigration(writer, transaction, step, existing.SchemaVersion, backupIdentity, options));
                     }
                 }
 
@@ -322,6 +332,19 @@ public sealed class NodeStore : IDisposable
             using var reader = command.ExecuteReader();
             return reader.Read() && reader.GetInt64(0) == 0;
         }
+    }
+
+    // The owner-command gate excludes V2 mutations while this consistent SQLite online copy is made.
+    internal void CopyOwnerSnapshot(string destination)
+    {
+        lock (_writerGate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            using var copy = new SqliteConnection(StorePaths.ConnectionString(destination, SqliteOpenMode.ReadWriteCreate));
+            copy.Open();
+            _writer.BackupDatabase(copy);
+        }
+        StoreBackups.Sanitize(destination, _clock);
     }
 
     /// <summary>Records a clean shutdown in <c>store_meta</c> and closes the writer.</summary>
@@ -579,7 +602,8 @@ public sealed class NodeStore : IDisposable
     private static bool IsDeliveredPreCtr06Store(ExistingStore? existing) =>
         existing is { SchemaVersion: >= 1 and <= LastDeliveredPreCtr06SchemaVersion };
 
-    private static void ApplyMigration(SqliteConnection writer, SqliteTransaction transaction, StoreMigration step)
+    private static void ApplyMigration(SqliteConnection writer, SqliteTransaction transaction, StoreMigration step,
+        int sourceSchema, string backupIdentity, NodeStoreOptions options)
     {
         using (var command = writer.CreateCommand())
         {
@@ -594,6 +618,8 @@ public sealed class NodeStore : IDisposable
         meta.Parameters.AddWithValue("$version", step.Version);
         meta.Parameters.AddWithValue("$minReader", step.MinReaderVersion);
         meta.ExecuteNonQuery();
+        if (step.Name == "0016-v2-expand.sql")
+            RecordV2Migration(writer, transaction, sourceSchema, backupIdentity, options, step);
     }
 
     private static void Create(SqliteConnection writer, MigrationPlan plan, NodeStoreOptions options)
@@ -627,7 +653,25 @@ public sealed class NodeStore : IDisposable
             }
 
             PolicyDocuments.InsertDefault(new StoreTransaction(writer, transaction, options.Clock, CommitDurability.Full));
+            var v2 = plan.Steps.SingleOrDefault(step => step.Name == "0016-v2-expand.sql");
+            if (v2 is not null) RecordV2Migration(writer, transaction, 0, "fresh:no-predecessor", options, v2);
         });
+    }
+
+    private static void RecordV2Migration(SqliteConnection writer, SqliteTransaction transaction, int sourceSchema,
+        string backupIdentity, NodeStoreOptions options, StoreMigration step)
+    {
+        var tx = new StoreTransaction(writer, transaction, options.Clock, CommitDurability.Full);
+        long unresolved = (long)tx.Scalar("SELECT count(*) FROM file_operation_journal WHERE phase<>2 OR held=1;")!;
+        string receipt = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(
+            string.Create(CultureInfo.InvariantCulture, $"AFV2-DATA-01|{sourceSchema}|16|{step.Sha256}|{backupIdentity}|{unresolved}|{options.Cohort}"))));
+        tx.Execute("INSERT INTO schema_version(singleton,version,min_reader,cohort,migration_receipt) VALUES(1,16,16,$cohort,$receipt);",
+            ("$cohort", options.Cohort), ("$receipt", receipt));
+        tx.Execute("""
+            INSERT INTO migration_checkpoint(migration_id,source_schema,target_schema,backup_identity,state,cohort,unresolved_count,receipt_sha256,created_utc)
+            VALUES('AFV2-DATA-01/schema16',$source,16,$backup,'EXPANDED_LEGACY_RECONCILIATION_PRESERVED',$cohort,$unknown,$receipt,$now);
+            """, ("$source", sourceSchema), ("$backup", backupIdentity), ("$cohort", options.Cohort),
+            ("$unknown", unresolved), ("$receipt", receipt), ("$now", options.Clock.GetUtcNow().UtcDateTime.ToString("O", CultureInfo.InvariantCulture)));
     }
 
     private static StoreMetadata Start(SqliteConnection writer, NodeStoreOptions options)
