@@ -19,13 +19,13 @@
       },
       "ArcForges.Contracts.Node": {
         "type": "Direct",
-        "requested": "[1.0.0-ci.450.1, )",
-        "resolved": "1.0.0-ci.450.1",
-        "contentHash": "mfh4+fC7shcBYRq82rMWzNnUi3Ztj8f82imom+5+XVz4LfmXTjiIHCyfhbt9HlKZwl/Fnt143N+tN+Fpl7eFeQ==",
+        "requested": "[1.0.0-ci.467.1, )",
+        "resolved": "1.0.0-ci.467.1",
+        "contentHash": "2+IC4UoWU3zz7oznlt2LM1jOgdeTJXCsa6UfW3xiMBB9Q5Ri+7ei/Q0KQ9eSFVgqxBQrb/isxA93Om6KoqHiiw==",
         "dependencies": {
-          "ArcForges.Contracts.Foundation": "1.0.0-ci.450.1",
-          "Google.Protobuf": "3.36.1",
-          "Grpc.Core.Api": "2.84.0"
+          "ArcForges.Contracts.Foundation": "1.0.0-ci.467.1",
+          "Google.Protobuf": "3.36.2",
+          "Grpc.Core.Api": "2.85.0"
         }
       },
       "ArcForges.Security.Secrets": {
