@@ -7,7 +7,6 @@ public sealed class RepositoryLayoutTests
     [Theory]
     [InlineData("src/ArcForges.Host/ArcForges.Host.csproj", "arcforges")]
     [InlineData("src/ArcForges.Supervisor/ArcForges.Supervisor.csproj", "arcforges-supervisor")]
-    [InlineData("src/ArcForges.Desktop/ArcForges.Desktop.csproj", "arcforges-desktop")]
     [InlineData("tools/ArcForges.TestLoad/ArcForges.TestLoad.csproj", "arcforges-testload")]
     [InlineData("tools/ArcForges.Bench/ArcForges.Bench.csproj", "arcforges-bench")]
     public void ExecutablesHaveTheirDesignedNamesAndPublishNativeAot(string project, string assemblyName)
@@ -130,17 +129,6 @@ public sealed class RepositoryLayoutTests
         var header = lines.Skip(2).TakeWhile(line => line.StartsWith('#', StringComparison.Ordinal)).ToList();
         Assert.Contains(header, line => line.StartsWith("# --parallel N ", StringComparison.Ordinal));
         Assert.Contains(header, line => line.StartsWith("# --repeat N ", StringComparison.Ordinal));
-    }
-
-    [Fact]
-    public void AvaloniaBuildTelemetryIsReplacedForEveryProject()
-    {
-        // Avalonia.BuildServices defines AvaloniaStats; the later Directory.Build.targets definition wins.
-        var target = RepositoryFiles.Xml("Directory.Build.targets").Descendants("Target")
-            .Single(element => (string?)element.Attribute("Name") == "AvaloniaStats");
-
-        Assert.Null(target.Attribute("Condition"));
-        Assert.DoesNotContain(target.Elements(), element => element.Name.LocalName != "Message");
     }
 
     [Theory]

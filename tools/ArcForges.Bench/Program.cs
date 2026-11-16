@@ -17,8 +17,7 @@ internal static class Program
 
         usage:
           arcforges-bench size --path <file|directory> (--target <name> | --max-mb N [--name label]) [--output file]
-              targets: arcforges (file, 45 MB), arcforges-supervisor (file, 4 MB),
-                       arcforges-desktop (directory without the native Skia library, 60 MB)
+              targets: arcforges (file, 45 MB), arcforges-supervisor (file, 4 MB)
           arcforges-bench startup --exe <path> [--arg value ...] [--runs N (50)] [--warmup N (1)]
               [--expect-exit code (0)] [--timeout-ms ms per run (30000)] [--max-p50-ms ms] [--max-p95-ms ms]
               [--name label] [--output file]

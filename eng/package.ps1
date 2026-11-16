@@ -9,11 +9,15 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $repository = Split-Path $PSScriptRoot -Parent
-# Packages the arcforges-desktop publish directory of eng/publish.ps1 (unsigned development preview).
-$publish = Join-Path $repository "artifacts/publish/$RuntimeIdentifier/desktop"
-$executable = if ($RuntimeIdentifier.StartsWith('win-')) { 'arcforges-desktop.exe' } else { 'arcforges-desktop' }
+# Packages only the Node/CLI publish directory, never other cached component outputs.
+$publish = Join-Path $repository "artifacts/publish/$RuntimeIdentifier/host"
+$executable = if ($RuntimeIdentifier.StartsWith('win-')) { 'arcforges.exe' } else { 'arcforges' }
 if (-not (Test-Path -LiteralPath (Join-Path $publish $executable))) {
-  throw "Publish the $RuntimeIdentifier desktop (eng/publish.ps1) before packaging."
+  throw "Publish the $RuntimeIdentifier host (eng/publish.ps1) before packaging."
+}
+$supervisor = Join-Path $repository "artifacts/publish/$RuntimeIdentifier/supervisor/arcforges-supervisor.exe"
+if ($RuntimeIdentifier.StartsWith('win-') -and -not (Test-Path -LiteralPath $supervisor)) {
+  throw "Publish the $RuntimeIdentifier supervisor (eng/publish.ps1) before packaging."
 }
 
 # A fresh staging directory keeps repeated local packaging free of stale files.
@@ -22,10 +26,21 @@ $packages = Join-Path $repository 'artifacts/packages'
 $null = New-Item -ItemType Directory -Path $stage, $packages -Force
 Get-ChildItem -LiteralPath $publish -Exclude '*.pdb', '*.dbg', '*.dSYM' | Copy-Item -Destination $stage -Recurse
 Copy-Item -LiteralPath (Join-Path $repository 'third-party') -Destination $stage -Recurse
-Copy-Item -LiteralPath (Join-Path $repository 'src/ArcForges.Desktop/packages.lock.json') -Destination $stage
+Copy-Item -LiteralPath (Join-Path $repository 'LICENSE'), (Join-Path $repository 'THIRD_PARTY_NOTICES.md') -Destination $stage
+Copy-Item -LiteralPath (Join-Path $repository 'src/ArcForges.Host/packages.lock.json') -Destination $stage
+if ($RuntimeIdentifier.StartsWith('win-')) {
+  Copy-Item -LiteralPath $supervisor -Destination $stage -Force
+  Copy-Item -LiteralPath (Join-Path $repository 'src/ArcForges.Supervisor/packages.lock.json') -Destination (Join-Path $stage 'supervisor.packages.lock.json')
+} else {
+  $units = Join-Path $stage 'packaging/linux'
+  $null = New-Item -ItemType Directory -Path $units -Force
+  Copy-Item -LiteralPath (Join-Path $repository 'packaging/linux/arcforges-node.service'),
+    (Join-Path $repository 'packaging/linux/arcforges-guard.service'),
+    (Join-Path $repository 'packaging/linux/arcforges.slice') -Destination $units
+}
 
 # Preserve native component notices from the actual restored application closure.
-$assetsPath = Join-Path $repository 'src/ArcForges.Desktop/obj/project.assets.json'
+$assetsPath = Join-Path $repository 'src/ArcForges.Host/obj/project.assets.json'
 $assets = Get-Content -LiteralPath $assetsPath -Raw | ConvertFrom-Json -AsHashtable
 foreach ($library in $assets.libraries.Values) {
   if ($library.type -ne 'package') { continue }
@@ -73,10 +88,10 @@ foreach ($relative in $relativePaths) {
   Set-Content -LiteralPath (Join-Path $stage 'digests.json') -Encoding utf8NoBOM
 
 if ($RuntimeIdentifier.StartsWith('win-')) {
-  $archive = Join-Path $packages "arcforges-desktop-$RuntimeIdentifier.zip"
+  $archive = Join-Path $packages "arcforges-$RuntimeIdentifier.zip"
   Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $archive -Force
 } else {
-  $archive = Join-Path $packages "arcforges-desktop-$RuntimeIdentifier.tar.gz"
+  $archive = Join-Path $packages "arcforges-$RuntimeIdentifier.tar.gz"
   tar -czf $archive -C $stage .
   if ($LASTEXITCODE -ne 0) { throw 'Archive creation failed.' }
 }

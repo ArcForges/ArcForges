@@ -1,6 +1,6 @@
 # Agent instructions: ArcForges
 
-This repository implements the ArcForges node, CLI, MCP adapter, hook handler and Desktop.
+This repository implements the ArcForges Node and CLI. V2 migration removes retired product registrations under the active Plan task; existing execution and data-safety boundaries remain until their qualified cutover.
 [ArcForges-Design](https://github.com/ArcForges/ArcForges-Design) is the product authority;
 [Plan](https://github.com/ArcForges/Plan) governs delivery. Read the Plan's
 [AGENTS.md](https://github.com/ArcForges/Plan/blob/main/AGENTS.md),
@@ -40,7 +40,7 @@ any change. They are binding; this file summarizes them and adds the repository 
   owner-authorized AFV2-ENV-01 prerequisite upgrades, installs are the user's. The
   current Plan ENV authorization allows verified side-by-side tools while preserving
   older installations and historical reproduction.
-- No macOS, device, GUI, browser, live-service or inference CI. Desktop UI tests are Avalonia headless.
+- No macOS, device, GUI, browser, live-service or inference CI.
 - Linux tests run on the Linux MCP host, through the Linux MCP server (the Linux leg, [§5](#5-verification-after-the-push-ad-0020);
   [AD-0019](https://github.com/ArcForges/ArcForges-Design/blob/main/docs/decisions/AD-0019-mcp-first-verification.md)). Local WSL is never used for development or verification, not even as a fallback, and need
   not be installed; no WSL distribution, `ArcForgesTest` included, is a test venue. No SSH.
@@ -55,7 +55,7 @@ any change. They are binding; this file summarizes them and adds the repository 
   fills it; no placeholder behaviour.
 - **Executables** (AD-0003): `arcforges` (`src/ArcForges.Host`, multi-role node/CLI),
   `arcforges-supervisor.exe` (`src/ArcForges.Supervisor`, Windows only, GUI subsystem),
-  `arcforges-desktop` (`src/ArcForges.Desktop`), plus the tools `arcforges-testload` and
+  plus the tools `arcforges-testload` and
   `arcforges-bench`. Names must stay distinct on case-insensitive file systems.
 - **Build policy:** `Directory.Build.props` references DesktopPlatform's build-only
   `ArcForges.Build.Policy` (`PrivateAssets="all"`): explicit C# 15 / .NET 11 from
@@ -138,9 +138,6 @@ any change. They are binding; this file summarizes them and adds the repository 
   artifact is uploaded or downloaded.
   On the workstation, check the absolute targets with `eng/bench.ps1 -StartupP50Ms 40 -StartupP95Ms 80`;
   the status round trip is the `category=perf` test `StatusRoundTrip` with `ARCFORGES_HOST_PATH` set.
-- Avalonia build telemetry is off repository-wide: `Directory.Build.targets` replaces the
-  `AvaloniaStats` target of the transitive Avalonia.BuildServices package (a repository test keeps
-  it). CI and the `eng/` scripts also set `AVALONIA_TELEMETRY_OPTOUT=1`; keep it set in your shell.
 - Keep the CI check names stable: `Native (<rid>)` for win-x64, win-arm64, linux-x64 and
   linux-arm64, `Verify`, `Workflow lint`, `Secret scan`,
   `Dependency review`, `CodeQL (csharp)`, `CodeQL (actions)`. They run for external PRs, the merge queue and manual
@@ -203,7 +200,7 @@ The cross-repository rules are the Plan [AGENTS.md](https://github.com/ArcForges
   `~/.cache/arcforges-verify/ArcForges`, both checked out at the commit; ignored build output stays, so builds are
   incremental. The steps are in `eng/verify_steps.py`.
   - `full` profile, lanes concurrently: `win` (locked restore, Release build with analyzers as errors, the `ci` suite,
-    the store schema check, Native AOT publish of host, supervisor, desktop, testload and bench for win-x64 with zero
+    the store schema check, Native AOT publish of host, supervisor, testload and bench for win-x64 with zero
     warnings in the Visual Studio developer environment, the `tools` suite against the native TestLoad and Bench, the
     `closed-loop` suite against the native host, `eng/bench.ps1`, `eng/package.ps1`); `linux` (`linux-real-os`, then the
     same for linux-x64, plus `dotnet format --verify-no-changes`, once, where hosted CI runs it); `win-base` and
@@ -213,7 +210,7 @@ The cross-repository rules are the Plan [AGENTS.md](https://github.com/ArcForges
     build and against the native host, on Windows and on Linux, and the startup gate per platform against the merge
     base's host.
   - `docs` profile, when every changed path is Markdown outside `src/`, `tests/`, `tools/`, `eng/` and `.github/`
-    (and not `THIRD_PARTY_NOTICES.md`, which the desktop ships): the secret scan.
+    (and not `THIRD_PARTY_NOTICES.md`, which the Node/CLI package ships): the secret scan.
   - The Linux host needs no PowerShell: `eng/verify_linux.py` does there what `eng/publish.ps1`, `bench.ps1`,
     `compare-startup.ps1` and `package.ps1` do; keep them in step. The `tool=pwsh` tests run on Windows only.
   - Not reproduced: CodeQL (external PRs and weekly) and dependency review (external PRs), GitHub services; win-arm64

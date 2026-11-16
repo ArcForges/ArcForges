@@ -35,7 +35,7 @@ Differences from the hosted jobs:
 - Not reproduced: CodeQL (external PRs and the weekly schedule) and dependency review (external PRs), GitHub services;
   win-arm64 and linux-arm64 (removed from the owner path by the user's instruction), the artifact uploads.
 Only Markdown outside the code, test, tool, script and workflow directories (and not THIRD_PARTY_NOTICES.md, which the
-desktop publish ships) selects the `docs` profile: the secret scan alone.
+Node/CLI package ships) selects the `docs` profile: the secret scan alone.
 No step runs the OS secret-store tier, and the verification refuses to run at all while the tier's opt-in is set (below);
 eng/test.ps1 and eng/test.sh also remove it for every suite they run.
 """
@@ -116,8 +116,8 @@ def linux_tests(*suites: str, native: bool = False) -> str:
 # ArcForges.Node.Store, so they stay in one group); measured on linux-x64 for a new commit: 85 s in sequence, 56 s in two
 # groups. On Windows each group is one eng/publish.ps1 run with its own log; the supervisor is in the host's group, whose
 # run copies it beside the host (eng/publish.ps1 copies only in a run that published one of them).
-PUBLISH_GROUPS_WIN = ("host,supervisor,bench", "desktop,testload")
-PUBLISH_GROUPS_LINUX = ("host,bench", "desktop,testload")
+PUBLISH_GROUPS_WIN = ("host,supervisor,bench", "testload")
+PUBLISH_GROUPS_LINUX = ("host,bench", "testload")
 WIN_PUBLISH = (
     "$root = $PWD.Path; "
     f"$results = @({', '.join(repr(group) for group in PUBLISH_GROUPS_WIN)}) | ForEach-Object -ThrottleLimit 2 -Parallel {{ "

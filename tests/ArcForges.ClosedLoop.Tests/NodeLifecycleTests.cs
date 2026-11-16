@@ -98,7 +98,7 @@ public sealed class NodeLifecycleTests
         var run = await node.CliAsync("status");
 
         Assert.Equal(75, run.ExitCode);
-        Assert.Equal("arcforges: node not running; start it with 'arcforges node run --background' or the Desktop", run.Error.Trim());
+        Assert.Equal("arcforges: node not running; start it with 'arcforges node run --background'", run.Error.Trim());
         Assert.Empty(node.LiveProcesses());
         var json = await node.CliAsync("status", "--json");
         Assert.Equal(75, json.ExitCode);
@@ -116,7 +116,7 @@ public sealed class NodeLifecycleTests
         var run = await node.CliAsync("status", "--verbose");
 
         Assert.Equal(75, run.ExitCode);
-        Assert.StartsWith("arcforges: node not running; start it with 'arcforges node run --background' or the Desktop", run.Error, StringComparison.Ordinal);
+        Assert.StartsWith("arcforges: node not running; start it with 'arcforges node run --background'", run.Error, StringComparison.Ordinal);
         Assert.Contains("does not allow breakaway", run.Error, StringComparison.Ordinal);
         Assert.Empty(node.LiveProcesses());
     }
@@ -210,7 +210,7 @@ public sealed class NodeLifecycleTests
         // and exits 6; with --wait-approval it waits for the decision and then receives the executed outcome under its command ID.
         var pending = await node.CliAsync("config", "set", "logLevel", "debug");
         Assert.Equal(6, pending.ExitCode);
-        Assert.Matches(@"^Waiting for approval [0-9a-z]{26} \(approve in ArcForges Desktop or with 'arcforges approvals approve [0-9a-z]{26}'\)", pending.Error.Trim());
+        Assert.Matches(@"^Waiting for approval [0-9a-z]{26} \(approve with 'arcforges approvals approve [0-9a-z]{26}'\)", pending.Error.Trim());
         await using (var human = await node.HumanChannelAsync())
         {
             Assert.Null((await human.Approvals.CancelApprovalAsync(new ApprovalServiceCancelApprovalRequest

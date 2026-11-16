@@ -6,10 +6,6 @@ and the committed `packages.lock.json` files.
 
 | Component | Upstream / license |
 | --- | --- |
-| Avalonia and its desktop backends | [Avalonia](https://github.com/AvaloniaUI/Avalonia), MIT |
-| Avalonia.Angle.Windows.Natives | [Avalonia ANGLE](https://github.com/AvaloniaUI/angle), BSD-3-Clause; preserve the package's complete LICENSE |
-| SkiaSharp / HarfBuzzSharp | [SkiaSharp](https://github.com/mono/SkiaSharp), MIT plus native third-party notices |
-| MicroCom.Runtime | [MicroCom](https://github.com/kekekeks/MicroCom), MIT |
 | Tmds.DBus.Protocol | [Tmds.DBus](https://github.com/tmds/Tmds.DBus), MIT |
 | Microsoft.Data.Sqlite | [dotnet/efcore](https://github.com/dotnet/efcore) (built in [dotnet/dotnet](https://github.com/dotnet/dotnet)), MIT |
 | SQLitePCLRaw and the bundled SQLite (`e_sqlite3`) | [SQLitePCL.raw](https://github.com/ericsink/SQLitePCL.raw), Apache-2.0; [SQLite](https://sqlite.org/copyright.html), public domain |

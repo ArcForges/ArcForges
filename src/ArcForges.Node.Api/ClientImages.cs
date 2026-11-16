@@ -7,9 +7,9 @@ using ArcForges.Contracts.Node.V1;
 namespace ArcForges.Node.Api;
 
 /// <summary>
-/// The executables that may present each client kind (11 section 1: the connection's client kind is verified against the peer). The CLI,
-/// the MCP adapter and the hook handler are roles of the node's own multi-role executable (<c>arcforges</c>, AD-0003); the Desktop is
-/// <c>arcforges-desktop</c> beside it. A peer's executable (LocalRpc resolves it with the peer, before HTTP/2: <c>LocalRpcPeer.ExecutablePath</c>)
+/// The executables that may present each client kind (11 section 1: the connection's client kind is verified against the peer). CLI and
+/// legacy MCP/hook client kinds remain bound to the node's own executable until their later cutover. No desktop image is registered
+/// by default. A peer's executable (LocalRpc resolves it with the peer, before HTTP/2: <c>LocalRpcPeer.ExecutablePath</c>)
 /// verifies a kind when it is one of these files, by path or by content (the SHA-256 of the file, so a version directory reached through the
 /// <c>current</c> junction or a symbolic link still matches). This is a guardrail: a same-user process can run these executables itself, or
 /// copy them (11 section 1, documented bypasses).
@@ -55,16 +55,14 @@ public sealed class ClientImages
     }
 
     /// <summary>
-    /// The node's own executable and the Desktop beside it, plus the test hook's executables when <paramref name="testMode"/> is set (the host
+    /// The node's own executable, plus the test hook's executables when <paramref name="testMode"/> is set (the host
     /// sets it only where <see cref="TestHookApplies"/>).
     /// </summary>
     public static ClientImages ForNode(bool testMode)
     {
         var self = Environment.ProcessPath;
         List<string> node = self is null ? [] : [self];
-        List<string> desktop = self is null || Path.GetDirectoryName(self) is not { } directory
-            ? []
-            : [Path.Combine(directory, OperatingSystem.IsWindows() ? "arcforges-desktop.exe" : "arcforges-desktop")];
+        List<string> desktop = [];
         if (testMode && Environment.GetEnvironmentVariable(TestVariable) is { Length: > 0 } extra)
         {
             var paths = extra.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);

@@ -2,10 +2,10 @@
 <#
 .SYNOPSIS
   Runs the CI benchmarks of 15-performance-targets with the published arcforges-bench:
-  size gates for arcforges, arcforges-supervisor.exe (Windows) and arcforges-desktop, the node store
+  size gates for arcforges and arcforges-supervisor.exe (Windows), the node store
   growth gate, and the CLI cold start (`arcforges --version`, 15 section 1).
 .DESCRIPTION
-  Needs eng/publish.ps1 output for host, desktop and bench (and supervisor on Windows). JSON results go to
+  Needs eng/publish.ps1 output for host and bench (and supervisor on Windows). JSON results go to
   artifacts/bench/<rid>/. Sizes gate (exit 1 when over a target). Store growth gates at 50 MB per
   10,000 attempts (-StoreAttempts, default 10000) submitted from the captured environments in
   tests/ArcForges.Node.Store.Tests/Fixtures/environments (node-store.md section 4). Startup has no absolute limit
@@ -46,8 +46,6 @@ if ($RuntimeIdentifier.StartsWith('win-')) {
   Invoke-Bench @('size', '--target', 'arcforges-supervisor', '--path', (Join-Path $publish 'supervisor/arcforges-supervisor.exe'),
     '--output', (Join-Path $results 'size-arcforges-supervisor.json'))
 }
-Invoke-Bench @('size', '--target', 'arcforges-desktop', '--path', (Join-Path $publish 'desktop'),
-  '--output', (Join-Path $results 'size-arcforges-desktop.json'))
 $growth = @('store-growth', '--attempts', "$StoreAttempts", '--output', (Join-Path $results 'store-growth.json'))
 foreach ($environment in Get-ChildItem -LiteralPath (Join-Path $repository 'tests/ArcForges.Node.Store.Tests/Fixtures/environments') -Filter '*.json' | Sort-Object Name) {
   $growth += @('--environment', $environment.FullName)

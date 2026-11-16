@@ -132,7 +132,7 @@ public sealed record NodeConnectOptions
     /// <summary>Start the node when it is absent (02 section 3).</summary>
     public bool AutoStart { get; init; } = true;
 
-    /// <summary>How long to wait for a started node to become ready: 5 s for the CLI, 15 s for the Desktop and the MCP adapter.</summary>
+    /// <summary>How long to wait for a started node to become ready; the CLI default is 5 s.</summary>
     public TimeSpan ReadinessTimeout { get; init; } = TimeSpan.FromSeconds(5);
 
     /// <summary>How long to keep retrying a busy endpoint (bounded backoff; a busy node is never auto-started).</summary>
@@ -182,7 +182,7 @@ public sealed class NodeSession : IAsyncDisposable
 /// </summary>
 public static class NodeClient
 {
-    private const string StartGuidance = "start it with 'arcforges node run --background' or the Desktop";
+    private const string StartGuidance = "start it with 'arcforges node run --background'";
 
     /// <summary>Connects; throws <see cref="NodeUnavailableException"/> when no ready node can be reached.</summary>
     public static async Task<NodeSession> ConnectAsync(NodeConnectOptions options, CancellationToken cancellationToken)
