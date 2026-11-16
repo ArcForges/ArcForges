@@ -133,7 +133,9 @@ internal static class Program
                 report.Cases.Add(await LinuxCaseAsync(work, pty).ConfigureAwait(false));
             }
 
-            report.Cases.Add(await LinuxCleanupAsync(work).ConfigureAwait(false));
+            var cleanup = await LinuxCleanupAsync(work).ConfigureAwait(false);
+            report.Cases.Add(cleanup);
+            Require(cleanup.Ok, "Synthetic request environment secret appeared in owned native process argv; selected upstream profile is not admitted.");
         }
         else if (OperatingSystem.IsWindows())
         {
@@ -181,9 +183,9 @@ internal static class Program
         process.Kill();
         using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         var result = await process.WaitAsync(bound.Token).ConfigureAwait(false);
-        Require(!Directory.Exists("/proc/" + pid.ToString(CultureInfo.InvariantCulture)), "Killed Linux process remains after wait.");
-        Require(!secretInArgv, "Synthetic request environment secret appeared in owned native process argv; selected upstream profile is not admitted.");
-        return new CaseReport("linux-kill-wait", true, pid, result.ExitCode, result.TimedOut, 0, watch.Elapsed.TotalMilliseconds, "official_sdk", "Kill + native wait; /proc PID absent", process.Warnings.ToArray());
+        var absent = !Directory.Exists("/proc/" + pid.ToString(CultureInfo.InvariantCulture));
+        Require(absent, "Killed Linux process remains after wait.");
+        return new CaseReport("linux-kill-wait", !secretInArgv, pid, result.ExitCode, result.TimedOut, 0, watch.Elapsed.TotalMilliseconds, "official_sdk", "Owned argv observed; Kill + native wait completed; /proc PID absent", process.Warnings.ToArray(), secretInArgv, absent);
     }
 
     private static bool OwnedArgvContainsSecret(uint pid)
@@ -192,8 +194,10 @@ internal static class Program
         pending.Enqueue(pid);
         var visited = new HashSet<uint>();
         var found = false;
-        while (pending.TryDequeue(out var current) && visited.Count < 32)
+        while (pending.Count > 0)
         {
+            Require(visited.Count < 32, "Owned argv observation exceeded bounded fixture process count.");
+            var current = pending.Dequeue();
             if (!visited.Add(current)) continue;
             var proc = "/proc/" + current.ToString(CultureInfo.InvariantCulture);
             try
@@ -207,7 +211,6 @@ internal static class Program
             catch (IOException) when (!Directory.Exists(proc)) { /* A bounded owned child already exited. */ }
         }
 
-        Require(pending.Count == 0, "Owned argv observation exceeded bounded fixture process count.");
         return found;
     }
 
@@ -230,7 +233,7 @@ internal sealed class StageManifest
 internal sealed record StageMember(string Path, string Sha256);
 internal sealed record BackendReport(string Name, string? Tier, string[] Capabilities, string[] Warnings);
 internal sealed record IdleReport(double ElapsedMs, double OwnerCpuMs, long OwnerWorkingSetBytes, string Scope);
-internal sealed record CaseReport(string Name, bool Ok, uint ProcessId, int ExitCode, bool TimedOut, double SpawnMs, double ElapsedMs, string ExitSource, string Evidence, string[] Warnings);
+internal sealed record CaseReport(string Name, bool Ok, uint ProcessId, int ExitCode, bool TimedOut, double SpawnMs, double ElapsedMs, string ExitSource, string Evidence, string[] Warnings, bool? ArgvSentinelObserved = null, bool? ProcessAbsentAfterWait = null);
 internal sealed class ProbeReport
 {
     public string Experiment { get; set; } = "MXC-AOT-01";

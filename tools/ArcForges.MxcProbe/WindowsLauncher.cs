@@ -45,7 +45,7 @@ internal static partial class WindowsLauncher
         Program.Require(!text.Contains("mxc-probe-secret", StringComparison.Ordinal), "Synthetic secret leaked into executor output.");
         Program.Require(result.ExitCode == 0 && File.Exists(marker) && (await File.ReadAllTextAsync(marker).ConfigureAwait(false)).Trim() == "afv2-windows-ok", "Official Windows executor did not complete the synthetic payload; inspect private executor log.");
         return new CaseReport("windows-official-executor", true, result.ProcessId, result.ExitCode, false, result.SpawnMs, watch.Elapsed.TotalMilliseconds,
-            "official_executor", "CreateProcess suspended; outer Job assigned before resume; IsProcessInJob true; executor handle signaled; Job active count zero. Payload marker is supplementary, not an isolation assertion.", []);
+            "official_executor", "CreateProcess suspended; actual executor command line read back with no sentinel; outer Job assigned before resume; IsProcessInJob true; executor handle signaled; Job active count zero. Payload marker is supplementary, not an isolation assertion.", [], false, true);
     }
 
     private static void RestrictControl(string directory)
@@ -100,9 +100,12 @@ internal static partial class WindowsLauncher
 
             if (!AssignProcessToJobObject(job, process.Process)) throw Error("Assign suspended executor to outer Job");
             if (!IsProcessInJob(process.Process, job.DangerousGetHandle(), out var member) || !member) throw Error("Read back outer Job membership");
+            var actualCommand = ReadCommandLine(process.Process);
+            Program.Require(actualCommand == new string(command.AsSpan(0, command.Length - 1)) && !actualCommand.Contains("mxc-probe-secret-not-for-logs", StringComparison.Ordinal), "Actual executor argv differs from private-config invocation or leaks the sentinel.");
             if (ResumeThread(process.Thread) == uint.MaxValue) throw Error("Resume official executor");
             var spawnMs = watch.Elapsed.TotalMilliseconds;
-            if (WaitForSingleObject(process.Process, 30_000) != 0) throw new TimeoutException("Official executor exceeded its bounded owner lifetime.");
+            var remaining = (uint)Math.Clamp(30_000 - watch.ElapsedMilliseconds, 0, 30_000);
+            if (WaitForSingleObject(process.Process, remaining) != 0) throw new TimeoutException("Official executor exceeded its bounded owner lifetime.");
             if (!GetExitCodeProcess(process.Process, out var exitCode)) throw Error("Read official executor exit status");
             var accounting = default(BasicAccounting);
             do
@@ -132,6 +135,21 @@ internal static partial class WindowsLauncher
         }
     }
 
+    private static unsafe string ReadCommandLine(nint process)
+    {
+        const int capacity = 65_536;
+        var buffer = Marshal.AllocHGlobal(capacity);
+        try
+        {
+            var status = NtQueryInformationProcess(process, 60, buffer, capacity, out _);
+            Program.Require(status == 0, "Unable to read back actual owned executor argv.");
+            var text = (UnicodeString*)buffer;
+            Program.Require(text->Length % 2 == 0 && text->Buffer >= buffer && text->Buffer + text->Length <= buffer + capacity, "Invalid owned executor command-line readback.");
+            return Marshal.PtrToStringUni(text->Buffer, text->Length / 2) ?? "";
+        }
+        finally { Marshal.FreeHGlobal(buffer); }
+    }
+
     private static Win32Exception Error(string operation) => new(Marshal.GetLastPInvokeError(), operation + " failed.");
     private readonly record struct LaunchResult(uint ProcessId, int ExitCode, double SpawnMs);
     [StructLayout(LayoutKind.Sequential)] private struct StartupInfo { public int Cb; public nint Reserved, Desktop, Title; public uint X, Y, XSize, YSize, XChars, YChars, FillAttribute, Flags; public ushort ShowWindow, Reserved2Size; public nint Reserved2, StdInput, StdOutput, StdError; }
@@ -140,6 +158,8 @@ internal static partial class WindowsLauncher
     [StructLayout(LayoutKind.Sequential)] private struct BasicLimits { public long ProcessTime, JobTime; public uint LimitFlags; public nuint MinimumWorkingSet, MaximumWorkingSet; public uint ActiveProcessLimit; public nuint Affinity; public uint PriorityClass, SchedulingClass; }
     [StructLayout(LayoutKind.Sequential)] private struct ExtendedLimits { public BasicLimits Basic; public ulong ReadOperations, WriteOperations, OtherOperations, ReadBytes, WriteBytes, OtherBytes; public nuint ProcessMemoryLimit, JobMemoryLimit, PeakProcessMemory, PeakJobMemory; }
     [StructLayout(LayoutKind.Sequential)] private struct BasicAccounting { public long UserTime, KernelTime, PeriodUser, PeriodKernel; public uint PageFaults, TotalProcesses, ActiveProcesses, TerminatedProcesses; }
+    [StructLayout(LayoutKind.Sequential)] private struct UnicodeString { public ushort Length, MaximumLength; public nint Buffer; }
+    [LibraryImport("ntdll.dll")] private static partial int NtQueryInformationProcess(nint process, int kind, nint information, int length, out int returned);
     [LibraryImport("kernel32.dll", EntryPoint = "CreateJobObjectW", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)] private static partial SafeFileHandle CreateJobObject(nint attributes, string? name);
     [LibraryImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static unsafe partial bool SetInformationJobObject(SafeFileHandle job, int kind, void* info, int length);
     [LibraryImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static unsafe partial bool QueryInformationJobObject(SafeFileHandle job, int kind, void* info, int length, out int returned);
