@@ -1036,7 +1036,7 @@
       "contentHash": "+UjsTZiLDtxKRLWJgYphaQ4C8mG9tLNASaHJvskpIzy96kDY06PuQLyJad8l9JIjylbnEmAvuw5nUrDBeAoAXQ==",
       "nuspecSha256": "d72424e513a65d1d49f8bc9502da9110f230e6d5280f2062037c5265faebea69",
       "licence": "MIT",
-      "class": "probe-only runtime",
+      "class": "runtime",
       "usedBy": "tools/ArcForges.MxcProbe only; no product runtime reference.",
       "source": "https://api.nuget.org/v3-flatcontainer/microsoft.mxc.sdk/1.0.1/microsoft.mxc.sdk.1.0.1.nupkg",
       "sourceCommit": "fda29ac63bc306b7f97f3b86b4b63d44f7f40cf2",

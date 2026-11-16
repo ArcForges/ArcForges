@@ -177,11 +177,38 @@ internal static class Program
         var watch = Stopwatch.StartNew();
         using var process = MxcContainer.Spawn(LinuxRequest(work, "exec /bin/sleep 5"), new SpawnOptions { Telemetry = new TelemetryConfig { Enabled = false } });
         var pid = process.Id;
+        var secretInArgv = OwnedArgvContainsSecret(pid);
         process.Kill();
         using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         var result = await process.WaitAsync(bound.Token).ConfigureAwait(false);
         Require(!Directory.Exists("/proc/" + pid.ToString(CultureInfo.InvariantCulture)), "Killed Linux process remains after wait.");
+        Require(!secretInArgv, "Synthetic request environment secret appeared in owned native process argv; selected upstream profile is not admitted.");
         return new CaseReport("linux-kill-wait", true, pid, result.ExitCode, result.TimedOut, 0, watch.Elapsed.TotalMilliseconds, "official_sdk", "Kill + native wait; /proc PID absent", process.Warnings.ToArray());
+    }
+
+    private static bool OwnedArgvContainsSecret(uint pid)
+    {
+        var pending = new Queue<uint>();
+        pending.Enqueue(pid);
+        var visited = new HashSet<uint>();
+        var found = false;
+        while (pending.TryDequeue(out var current) && visited.Count < 32)
+        {
+            if (!visited.Add(current)) continue;
+            var proc = "/proc/" + current.ToString(CultureInfo.InvariantCulture);
+            try
+            {
+                found |= Encoding.UTF8.GetString(File.ReadAllBytes(proc + "/cmdline")).Contains("mxc-probe-secret-not-for-logs", StringComparison.Ordinal);
+                foreach (var child in File.ReadAllText(proc + "/task/" + current.ToString(CultureInfo.InvariantCulture) + "/children").Split(' ', StringSplitOptions.RemoveEmptyEntries))
+                {
+                    pending.Enqueue(uint.Parse(child, CultureInfo.InvariantCulture));
+                }
+            }
+            catch (IOException) when (!Directory.Exists(proc)) { /* A bounded owned child already exited. */ }
+        }
+
+        Require(pending.Count == 0, "Owned argv observation exceeded bounded fixture process count.");
+        return found;
     }
 
     internal static void Require(bool condition, string message)

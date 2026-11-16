@@ -79,3 +79,10 @@ empty cases, and no fixture directory. Also add an unexpected file and try
 `MXC_FFI_DIR`; both must reject before workload. Preserve each report and the
 unchanged valid installation. Never modify a shared runtime or count a
 deliberately invalid stage as a native success.
+
+`python eng/mxc/negative.py --stage <valid-install> --output <fresh-evidence>`
+runs and retains all four cases automatically using the actual published
+executable. No fake native success is used. The Linux kill/wait case also
+checks the owned process tree's actual argv for the synthetic secret before
+cleanup; a hit rejects the selected profile and must not be hidden by removing
+that check or substituting an upstream build.
