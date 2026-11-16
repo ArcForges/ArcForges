@@ -1,8 +1,42 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using Microsoft.Data.Sqlite;
+
 namespace ArcForges.Node.Store.Tests;
 
 public sealed partial class DurableCommandStoreTests
 {
+    [Fact]
+    public void SqlOnlyRetirementIsRejectedBeforeItCouldDisappearBehindADatabaseRollback()
+    {
+        using var source = new TemporaryDataRoot();
+        using var backup = new TemporaryDataRoot();
+        using var destination = new TemporaryDataRoot();
+        var clock = new ManualClock();
+        var backupSecrets = NodeSecretStores.ForTestDataRoot(backup.Path);
+        DurableIntent original;
+        using (var store = source.Open(clock))
+        using (var commands = Commands(store, source.Path))
+        {
+            original = Intent(commands);
+            commands.Admit(original);
+            commands.SetResult(original.CommandId, "FAILED", 1, "{\"synthetic_effect\":\"did_not_happen\"}");
+            commands.CreateBackup(backup.Path, backupSecrets);
+            Assert.Throws<SqliteException>(() => store.Write(tx => tx.Execute(
+                "UPDATE owner_epoch SET state='RETIRED',retired_utc='2026-10-15T12:00:00.0000000Z';"), CommitDurability.Full));
+            Assert.Equal("ACTIVE", store.Read(reader => reader.Scalar("SELECT state FROM owner_epoch;")));
+            Assert.Equal(DurableDecision.Replay, commands.Admit(original).Decision);
+        }
+        // A rejected retirement is not an acknowledged authority change. The unchanged
+        // backup remains coherent and must retain the original known replay identity.
+        File.Copy(backup.Database, source.Database, overwrite: true);
+        DurableCommandStore.RestoreBackup(backup.Path, backupSecrets, source.Path, NodeSecretStores.ForTestDataRoot(source.Path),
+            destination.Path, NodeSecretStores.ForTestDataRoot(destination.Path));
+        using var restored = destination.Open(clock);
+        using var owner = Commands(restored, destination.Path);
+        Assert.Equal(DurableDecision.Replay, owner.Admit(original).Decision);
+        Assert.Equal(1, owner.Inspect(original.CommandId)!.Effect);
+    }
+
     [Fact]
     public void CompleteBackupPreservesEveryOwnerAndProtectedEpochKey()
     {

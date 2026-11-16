@@ -27,6 +27,12 @@ CREATE TRIGGER owner_epoch_no_replacement
 CREATE TRIGGER owner_epoch_identity_immutable
  BEFORE UPDATE OF owner_id,owner_epoch,digest_key_ref,created_utc ON owner_epoch
  BEGIN SELECT RAISE(ABORT,'owner epoch identity is immutable'); END;
+-- Retirement is not a DB-only mutation: its qualified offline guard and independent
+-- fence protocol are not part of this expand step. Refuse rather than acknowledge
+-- a state change which could later disappear when an older database is restored.
+CREATE TRIGGER owner_epoch_state_guard
+ BEFORE UPDATE OF state,retired_utc ON owner_epoch
+ BEGIN SELECT RAISE(ABORT,'owner epoch state changes require qualified offline retirement'); END;
 CREATE TRIGGER owner_epoch_retirement_final
  BEFORE UPDATE ON owner_epoch WHEN OLD.state='RETIRED'
  BEGIN SELECT RAISE(ABORT,'retired owner epoch cannot be reactivated'); END;

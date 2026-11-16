@@ -27,11 +27,37 @@ public sealed partial class DurableCommandStoreTests
             "UPDATE command_receipt SET response_json='{}';", "UPDATE command_receipt SET resolved_utc='2020-01-01';",
             "UPDATE owner_epoch SET digest_key_ref='other';", "UPDATE owner_epoch SET owner_epoch=randomblob(16);",
             "INSERT OR REPLACE INTO owner_epoch SELECT * FROM owner_epoch;", "DELETE FROM owner_epoch;",
+            "UPDATE owner_epoch SET state='RETIRED',retired_utc='2026-10-15T12:00:00.0000000Z';",
+            "UPDATE owner_epoch SET retired_utc='2026-10-15T12:00:00.0000000Z';",
         }) Assert.Throws<SqliteException>(() => store.Write(tx => tx.Execute(sql), CommitDurability.Full));
         Assert.Equal(DurableDecision.Replay, commands.Admit(intent).Decision);
-        store.Write(tx => tx.Execute("UPDATE owner_epoch SET state='RETIRED',retired_utc='2026-10-15T12:00:00.0000000Z';"), CommitDurability.Full);
-        Assert.Equal(DurableDecision.EpochRetired, commands.Admit(intent).Decision);
-        Assert.Throws<SqliteException>(() => store.Write(tx => tx.Execute("UPDATE owner_epoch SET state='ACTIVE',retired_utc=NULL;")));
+    }
+
+    [Fact]
+    public void PreexistingRetiredEpochInputRefusesAdmissionAndReactivation()
+    {
+        using var root = new TemporaryDataRoot();
+        using var store = root.Open(new ManualClock());
+        using var active = Commands(store, root.Path);
+        // Supplied retired metadata is an input fixture, not a successful retirement protocol.
+        // Its key reference and capacity come from the actual protected-backend owner.
+        store.Write(tx =>
+        {
+            tx.Execute("""
+                INSERT INTO owner_epoch(owner_id,owner_epoch,digest_key_ref,state,created_utc,retired_utc)
+                SELECT 'retired-input',randomblob(16),digest_key_ref,'RETIRED',created_utc,'2026-10-15T12:00:00.0000000Z'
+                FROM owner_epoch WHERE owner_id='fixture-owner';
+                """);
+            tx.Execute("""
+                INSERT INTO owner_epoch_capacity(owner_id,owner_epoch,maximum_receipts,safety_receipts,maximum_response_bytes,maximum_journal_bytes,reserve_storage)
+                SELECT e.owner_id,e.owner_epoch,c.maximum_receipts,c.safety_receipts,c.maximum_response_bytes,c.maximum_journal_bytes,c.reserve_storage
+                FROM owner_epoch e,owner_epoch_capacity c WHERE e.owner_id='retired-input' AND c.owner_id='fixture-owner';
+                """);
+        }, CommitDurability.Full);
+        using var retired = new DurableCommandStore(store, "retired-input", NodeSecretStores.ForTestDataRoot(root.Path), Capacity);
+        Assert.True(retired.MaintenanceRequired);
+        Assert.Equal(DurableDecision.EpochRetired, retired.Admit(Intent(retired)).Decision);
+        Assert.Throws<SqliteException>(() => store.Write(tx => tx.Execute("UPDATE owner_epoch SET state='ACTIVE',retired_utc=NULL WHERE owner_id='retired-input';")));
     }
 
     [Fact]

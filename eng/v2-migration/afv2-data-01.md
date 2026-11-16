@@ -29,6 +29,10 @@ The initial epoch is random16 bytes and its32-byte HMAC key is kept only in that
 backend/in memory. SQL stores the exact backend/key reference. Missing key, wrong
 backend, missing DB with existing authority, corrupt or inconsistent history
 cannot become a fresh epoch. There is no automatic rotation or retirement API.
+Schema16 rejects SQL updates of owner state/retirement time: a DB-only retirement
+cannot be acknowledged without the future qualified offline guard and independent
+fence protocol. Preexisting retired metadata still refuses admission and remains
+in maintenance; this expand does not authorize creating or reactivating authority.
 
 The schema16 canonical version is1. The caller supplies its original authorized,
 effect-bearing canonical request bytes, including admitted config/profile/grant
@@ -98,6 +102,13 @@ DB/key/fence or absent latest authority refuses restore and preserves maintenanc
 and reconciliation; no new epoch is silently created. Source and destination
 keys/metadata keep the same epoch and backend references. Offline retirement
 requires separately authorized guards and is not implemented as routine cleanup.
+
+An independent review of the earlier `1e02e335` candidate reproduced a DB-only
+retirement followed by latest-DB rollback which made the old active catalogue and
+fence match again. The retirement-state SQL guard closes that unsupported write
+path before any state change. Its regression uses a known `DID_NOT_HAPPEN` result,
+real backup, rejected retirement, controlled DB rollback and replay; it does not
+claim a successful retirement or a native offline-authority check.
 
 ## Reproducible author checks
 
