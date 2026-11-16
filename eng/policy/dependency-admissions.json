@@ -1029,6 +1029,22 @@
       "reason": "AFV2-ENV-01 current latest-stable managed dependency/actual transitive closure selection; compatibility source repairs, actual compiler/test compatibility and native verification remain pending.",
       "admittedBy": "OpenAI Codex author proposal; independent nonauthor review PENDING",
       "reviewedOn": null
+    },
+    {
+      "id": "Microsoft.Mxc.Sdk",
+      "version": "1.0.1",
+      "contentHash": "+UjsTZiLDtxKRLWJgYphaQ4C8mG9tLNASaHJvskpIzy96kDY06PuQLyJad8l9JIjylbnEmAvuw5nUrDBeAoAXQ==",
+      "nuspecSha256": "d72424e513a65d1d49f8bc9502da9110f230e6d5280f2062037c5265faebea69",
+      "licence": "MIT",
+      "class": "probe-only runtime",
+      "usedBy": "tools/ArcForges.MxcProbe only; no product runtime reference.",
+      "source": "https://api.nuget.org/v3-flatcontainer/microsoft.mxc.sdk/1.0.1/microsoft.mxc.sdk.1.0.1.nupkg",
+      "sourceCommit": "fda29ac63bc306b7f97f3b86b4b63d44f7f40cf2",
+      "provenance": "Official immutable 1.0.1 nupkg SHA256 d47b1f70c3fcaaed1705a0c3872807e2878fe8c1b778c0dd9eb9325bf421a672. Native x64 files match the official v1.0.1 release ZIP. MIT LICENSE.md SHA256 d9a1b1e30d633d5732ea18e3cba9538d293ebc53e1a9e4e96ab739e0c5c4f1cb; eng/mxc records the exact distribution unit and bundled SPDX limitations.",
+      "aot": "PENDING actual warning-free Native AOT probe/native execution on designated Windows and Linux; no product runtime admission.",
+      "reason": "AFV2-MXC-01 / MXC-AOT-01 exact reviewed design pin, independent of newer release metadata.",
+      "admittedBy": "AFV2-MXC-01 author; independent source/evidence review remains required.",
+      "reviewedOn": "2026-11-16"
     }
   ],
   "nugetWarningExceptions": [

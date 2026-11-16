@@ -6,6 +6,7 @@ and the committed `packages.lock.json` files.
 
 | Component | Upstream / license |
 | --- | --- |
+| Microsoft.Mxc.Sdk and official MXC executor (isolated admission probe only) | [microsoft/mxc](https://github.com/microsoft/mxc) 1.0.1, MIT; exact native unit, bundled SPDX and license limitations in `eng/mxc/README.md` |
 | Tmds.DBus.Protocol | [Tmds.DBus](https://github.com/tmds/Tmds.DBus), MIT |
 | Microsoft.Data.Sqlite | [dotnet/efcore](https://github.com/dotnet/efcore) (built in [dotnet/dotnet](https://github.com/dotnet/dotnet)), MIT |
 | SQLitePCLRaw and the bundled SQLite (`e_sqlite3`) | [SQLitePCL.raw](https://github.com/ericsink/SQLitePCL.raw), Apache-2.0; [SQLite](https://sqlite.org/copyright.html), public domain |

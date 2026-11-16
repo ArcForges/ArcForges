@@ -14,6 +14,7 @@
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/ArcForges.Bench/ArcForges.Bench.csproj" />
+    <Project Path="tools/ArcForges.MxcProbe/ArcForges.MxcProbe.csproj" />
     <Project Path="tools/ArcForges.TestLoad/ArcForges.TestLoad.csproj" />
   </Folder>
   <Folder Name="/tests/">
