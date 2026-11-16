@@ -25,8 +25,13 @@ internal static class Program
 
     public static async Task<int> Main(string[] args)
     {
-        var report = new ProbeReport { Host = Environment.MachineName, Os = System.Runtime.InteropServices.RuntimeInformation.OSDescription,
-            ProcessId = Environment.ProcessId, StartedUtc = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture) };
+        var report = new ProbeReport
+        {
+            Host = Environment.MachineName,
+            Os = System.Runtime.InteropServices.RuntimeInformation.OSDescription,
+            ProcessId = Environment.ProcessId,
+            StartedUtc = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture)
+        };
         string? reportPath = null;
         try
         {
@@ -146,7 +151,9 @@ internal static class Program
 
     private static ContainerRequest LinuxRequest(string work, string command) => new(command)
     {
-        Containment = new Containment.Bubblewrap(), WorkingDirectory = work, TimeoutMs = 10_000,
+        Containment = new Containment.Bubblewrap(),
+        WorkingDirectory = work,
+        TimeoutMs = 10_000,
         Environment = new Dictionary<string, string>(StringComparer.Ordinal) { ["PATH"] = "/usr/bin:/bin", ["LANG"] = "C.UTF-8", ["AFV2_SYNTHETIC_SECRET"] = "mxc-probe-secret-not-for-logs" },
         Filesystem = new FilesystemPolicy { ReadwritePaths = { work }, ReadonlyPaths = { "/usr", "/bin", "/lib", "/lib64", "/etc/ld.so.cache" } },
         Network = new NetworkPolicy { Egress = new NetworkEgressPolicy { Default = NetworkAction.Deny }, Ingress = new NetworkIngressPolicy { Default = NetworkAction.Deny } },
