@@ -163,7 +163,8 @@ public sealed class LoopbackReceiverTests
         Assert.Equal(LoopbackOutcome.Code, (await receiver.Result.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken)).Outcome);
     }
 
-    [Fact]
+    [Fact(DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public async Task IdleConnectionsDoNotDelayAValidRequest()
     {
         await using var receiver = Start();
