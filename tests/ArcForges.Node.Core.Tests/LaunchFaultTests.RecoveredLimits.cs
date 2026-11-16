@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
+using ArcForges.Node.Platform;
 using ArcForges.Node.Platform.Windows;
 using ArcForges.Node.Store;
 using ArcForges.Tests;
@@ -10,7 +11,8 @@ namespace ArcForges.Node.Core.Tests;
 public sealed partial class LaunchFaultTests
 {
     /// <summary>MR-95: a root starting in the node gap, or after recovery, gets its real start clock and both polling limits back.</summary>
-    [Theory(Timeout = 180_000)]
+    [Theory(Timeout = 180_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     [InlineData(false, false)]
     [InlineData(false, true)]
     [InlineData(true, false)]
@@ -55,7 +57,11 @@ public sealed partial class LaunchFaultTests
             if (startInGap)
             {
                 hold.Release();
-                await Tasks.WaitForAsync(() => CommandInContainer(nodeName, attempt), Tasks.Bound, "the command to start while the node is down");
+                // Job membership can precede ResumeThread; the holder's record proves the actual command start.
+                await Tasks.WaitForAsync(() => CommandInContainer(nodeName, attempt)
+                    && (!OperatingSystem.IsWindows()
+                        || StartedRecord.TryRead(new AttemptFiles(node.DataRoot, attempt).StartedPath, attempt) is not null),
+                    Tasks.Bound, "the command to start while the node is down");
                 if (!cpu)
                 {
                     await Task.Delay(2_500, Ct); // The timeout is already spent before recovery, not a fresh budget afterwards.
