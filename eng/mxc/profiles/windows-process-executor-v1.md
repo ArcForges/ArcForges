@@ -34,27 +34,30 @@ HostLoopback allow also allowed the five intended fine-egress deny cases;
 matching replies and independent peer counters confirmed actual communication.
 This local candidate therefore cannot qualify selected egress or the combined
 profile. Preserve the failed receipt; do not repeat this setup expecting a
-different policy result. The remaining acceptance requires a controlled peer
-with an independent network stack. The owner's earlier stop on cross-host data
-probes remains in force pending their answer; SSH control/build execution is
-unaffected. The following describes the failed candidate, not an admitted path.
+different policy result. The original WIN04/06 controlled-endpoint requirement
+therefore uses the separate H22 network stack for fine-egress effects. SSH is
+only the host execution/control transport; it does not add an acceptance or
+owner-approval requirement.
 
-The trusted driver owns real TCP/UDP sockets on127.0.0.1, outside the workload
-ProcessContainer, with bounded calibration, independent receive counters and
-cleanup. TCP and UDP share a numeric port to distinguish protocol permissions;
-another live TCP port and a nonmatching allow CIDR test separate rule dimensions.
-No SSH data tunnel, cross-host data probe, address installation or host
-network/proxy/security setting change is used.
+Before running the exact published candidate, independently fetch that commit
+from GitHub on H22 into `/home/sammiller/arcforges/ArcForges/.worktree/mxc02-peer-<40-character-source-sha>`.
+The trusted driver executes its committed `tools/ArcForges.MxcProbe/Windows/network_peer.py`
+using the installed Python through `ssh netcup`. The source commit and script
+hash must match the published driver's identity. No script body is transferred
+through command arguments. The peer has bounded lifetime, independent receive
+counters, explicit close acknowledgement and EOF cleanup. TCP and UDP share a
+numeric port; another live TCP port and a nonmatching allow CIDR distinguish
+the separate rule dimensions. SSH is not a payload data tunnel. No address,
+host network, proxy or security setting is changed.
 
-For local egress experiments the policy explicitly allows host loopback while
-keeping default egress denied. That capability alone is not evidence of selected
-egress enforcement: no-allow, wrong-IP, wrong-port and wrong-protocol cases must
-still fail against a calibrated live peer; exact selectedTCP/UDP must succeed.
-Separate host-loopback-deny cases retain the independent capability boundary,
-and inbound cases remain separately reported. If these policies cannot compose,
-qualification fails; there is no broader-policy retry or inferred pass.
+Fine-egress experiments keep host loopback denied. No-allow, wrong-IP,
+wrong-port and wrong-protocol cases must fail against the calibrated live peer;
+exact selectedTCP/UDP must succeed. The separate host-loopback and inbound
+cases retain local controlled sockets to exercise those specific capabilities.
+If policies cannot compose, qualification fails; there is no broader-policy
+retry or inferred pass.
 
-The same local peer is used by both bounded combined scenarios. Actual memory
+The same controlled external peer implementation is used by both bounded combined scenarios. Actual memory
 pressure and children must be ready before network/filesystem operations, with
 external ordering/Job identity evidence. A successful set of old diagnostic
 slices is not one same-head full qualification. Preserve historical remote-peer

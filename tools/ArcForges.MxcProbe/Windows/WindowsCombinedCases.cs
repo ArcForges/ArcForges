@@ -13,6 +13,8 @@ namespace ArcForges.MxcProbe;
 internal static class WindowsCombinedCases
 {
     private static readonly List<WindowsOwnerHost> UnresolvedGuardians = [];
+    private static readonly List<WindowsNetworkEndpoint> UnresolvedEndpoints = [];
+    private static readonly List<WindowsRemoteNetworkPeer> UnresolvedPeerStarts = [];
 
     internal static async Task<List<WindowsQualificationCase>> RunAsync(string stage, string work)
     {
@@ -47,16 +49,11 @@ internal static class WindowsCombinedCases
         var outsideFile = Path.Combine(outside, "outside.txt");
         const string initial = "AFV2_COMBINED_INITIAL\n";
         foreach (var file in new[] { writable, readonlyFile, neighborFile, outsideFile }) File.WriteAllText(file, initial);
-        await using var endpoint = await WindowsNetworkEndpoint.StartControlledTcpAsync().ConfigureAwait(false);
-        await endpoint.CalibrateAsync().ConfigureAwait(false);
-        var beforeNetwork = endpoint.Observe();
-        var request = WindowsPolicy.BuildRequest(Path.Combine(stage, "arcforges-mxc-probe.exe"),
-            ["--windows-workload", "combined", "30000", "32", "2", endpoint.Address.ToString(), endpoint.Port.ToString(CultureInfo.InvariantCulture),
-                writable, readonlyFile, Path.Combine(control, "request.json"), neighborFile, outsideFile],
-            owned, [stage, Environment.SystemDirectory, readonlyDirectory], [control, neighbor],
-            selected ? WindowsNetworkCases.SelectedEgress(endpoint) : WindowsNetworkCases.LocalDenyEgress);
-        request.Process.Timeout = 45_000; // Overall combined lifetime, separate from its 4s socket attempt.
-        var eventsDirectory = WindowsQualification.EnableFixtureEvents(request, owned.Work);
+        WindowsNetworkEndpoint? endpoint = null;
+        WindowsNetworkObservation? beforeNetwork = null;
+        WindowsNetworkObservation? afterNetwork = null;
+        bool peerCleanupConfirmed = false;
+        WindowsQualificationFailure? peerCleanupFailure = null;
         WindowsOwnerHost? guardian = null;
         ProbeOwnerConfig? config = null;
         ProbeOwnerResponse? first = null;
@@ -78,6 +75,17 @@ internal static class WindowsCombinedCases
         WindowsCombinedPressureOverlap? pressureOverlap = null;
         try
         {
+            endpoint = await WindowsNetworkEndpoint.StartControlledTcpAsync().ConfigureAwait(false);
+            Require(endpoint.IsRemote, "combined_independent_network_peer_required");
+            await endpoint.CalibrateAsync().ConfigureAwait(false);
+            beforeNetwork = endpoint.Observe();
+            var request = WindowsPolicy.BuildRequest(Path.Combine(stage, "arcforges-mxc-probe.exe"),
+                ["--windows-workload", "combined", "30000", "32", "2", endpoint.Address.ToString(), endpoint.Port.ToString(CultureInfo.InvariantCulture),
+                    writable, readonlyFile, Path.Combine(control, "request.json"), neighborFile, outsideFile],
+                owned, [stage, Environment.SystemDirectory, readonlyDirectory], [control, neighbor],
+                selected ? WindowsNetworkCases.SelectedEgress(endpoint) : WindowsNetworkCases.DenyEgress);
+            request.Process.Timeout = 45_000; // Overall combined lifetime, separate from its 4s socket attempt.
+            var eventsDirectory = WindowsQualification.EnableFixtureEvents(request, owned.Work);
             var admissionWatch = Stopwatch.StartNew();
             var started = await WindowsLifecycleCases.StartOwnerAsync(stage, control, request, beforeLaunch: policy =>
             {
@@ -171,8 +179,11 @@ internal static class WindowsCombinedCases
                 "combined_network_refusal_not_observed");
             pressureOverlap = VerifyPressureOverlap(eventsDirectory, network, aggregate);
             endpoint.RequireHealthy();
-            var afterNetwork = endpoint.Observe();
-            Require(selected ? afterNetwork.MatchedRequests == beforeNetwork.MatchedRequests + 1 : afterNetwork.AcceptedOrReceived == beforeNetwork.AcceptedOrReceived,
+            afterNetwork = endpoint.Observe();
+            Require(selected ? afterNetwork.MatchedRequests == beforeNetwork.MatchedRequests + 1
+                    && afterNetwork.AcceptedOrReceived == beforeNetwork.AcceptedOrReceived + 1
+                : afterNetwork.AcceptedOrReceived == beforeNetwork.AcceptedOrReceived
+                    && afterNetwork.MatchedRequests == beforeNetwork.MatchedRequests,
                 "combined_external_network_observation_mismatch");
             var stoppedAt = Stopwatch.StartNew();
             var stopped = await SendAsync(config, result, "stop").ConfigureAwait(false);
@@ -198,10 +209,22 @@ internal static class WindowsCombinedCases
         }
         catch (Exception exception)
         {
-            result.PrimaryFailure = WindowsQualification.ObserveFailure(exception);
-            result.FailureCode = exception is WindowsQualificationCheckException check ? check.Code : "combined_native_operation_failed";
-            result.FailureType = exception.GetType().Name;
-            result.FailureHResult = exception.HResult;
+            Exception primary = exception;
+            if (exception is WindowsRemoteNetworkPeerLaunchException startup)
+            {
+                UnresolvedPeerStarts.Add(startup.CleanupOwner);
+                if (startup.InnerException is AggregateException failures && failures.InnerExceptions.Count >= 2)
+                {
+                    primary = failures.InnerExceptions[0];
+                    peerCleanupFailure = WindowsQualification.ObserveFailure(failures.InnerExceptions[1]) with { Code = "combined_peer_start_cleanup_unresolved" };
+                }
+                else peerCleanupFailure = WindowsQualification.ObserveFailure(startup) with { Code = "combined_peer_start_cleanup_unresolved" };
+                result.CleanupFailure ??= peerCleanupFailure;
+            }
+            result.PrimaryFailure = WindowsQualification.ObserveFailure(primary);
+            result.FailureCode = primary is WindowsQualificationCheckException check ? check.Code : "combined_native_operation_failed";
+            result.FailureType = primary.GetType().Name;
+            result.FailureHResult = primary.HResult;
         }
         finally
         {
@@ -221,17 +244,63 @@ internal static class WindowsCombinedCases
                 if (result.CleanupCompleted && config is not null)
                     _ = WindowsLifecycleCases.CaptureFinalOwnerEvidence(config, result);
             }
+            if (endpoint is not null)
+            {
+                if (afterNetwork is null)
+                {
+                    try { afterNetwork = endpoint.Observe(); }
+                    catch (Exception exception)
+                    {
+                        result.EvidenceFailure ??= WindowsQualification.ObserveFailure(exception) with { Code = "combined_peer_observation_failed" };
+                    }
+                }
+                try
+                {
+                    await endpoint.DisposeAsync().ConfigureAwait(false);
+                    peerCleanupConfirmed = endpoint.PeerCleanupConfirmed;
+                    Require(peerCleanupConfirmed, "combined_remote_peer_cleanup_not_confirmed");
+                }
+                catch (Exception exception)
+                {
+                    UnresolvedEndpoints.Add(endpoint);
+                    result.Passed = false;
+                    peerCleanupFailure = WindowsQualification.ObserveFailure(exception) with { Code = "combined_remote_peer_cleanup_unresolved" };
+                    result.CleanupFailure ??= peerCleanupFailure;
+                }
+            }
         }
         result.ElapsedMs = timer.Elapsed.TotalMilliseconds;
-        if (Directory.Exists(control))
+        try
         {
+            // Calibration can fail before policy creation. Preserve peer
+            // observations and cleanup even when no workload was admitted.
+            if (!Directory.Exists(control)) WindowsPolicy.CreatePrivateControl(control);
             var path = Path.Combine(control, "combined-observation.json");
             using (var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read))
             using (var writer = new Utf8JsonWriter(stream, new() { Indented = true }))
             {
                 writer.WriteStartObject();
                 writer.WriteString("scenario", name);
-                endpoint.WritePeerIdentity(writer);
+                if (endpoint is not null) endpoint.WritePeerIdentity(writer);
+                writer.WriteBoolean("independentNetworkPeer", endpoint?.IsRemote == true);
+                writer.WriteBoolean("networkCalibrationPassed", endpoint?.CalibrationPassed == true);
+                writer.WriteBoolean("peerCleanupConfirmed", peerCleanupConfirmed);
+                writer.WritePropertyName("peerCleanupFailure");
+                JsonSerializer.Serialize(writer, peerCleanupFailure, WindowsQualificationJson.Default.WindowsQualificationFailure);
+                writer.WriteStartObject("externalNetworkCounters");
+                writer.WriteBoolean("beforeAvailable", beforeNetwork is not null);
+                if (beforeNetwork is not null)
+                {
+                    writer.WriteNumber("beforeAcceptedOrReceived", beforeNetwork.AcceptedOrReceived);
+                    writer.WriteNumber("beforeMatchedRequests", beforeNetwork.MatchedRequests);
+                }
+                writer.WriteBoolean("afterAvailable", afterNetwork is not null);
+                if (afterNetwork is not null)
+                {
+                    writer.WriteNumber("afterAcceptedOrReceived", afterNetwork.AcceptedOrReceived);
+                    writer.WriteNumber("afterMatchedRequests", afterNetwork.MatchedRequests);
+                }
+                writer.WriteEndObject();
                 if (admissionToConsoleReadyMs.HasValue) writer.WriteNumber("admissionToConsoleReadyMs", admissionToConsoleReadyMs.Value); else writer.WriteNull("admissionToConsoleReadyMs");
                 writer.WriteBoolean("sameOwnerRebound", rebound);
                 writer.WriteBoolean("actualResize", resized);
@@ -285,11 +354,17 @@ internal static class WindowsCombinedCases
                 if (applied is null) writer.WriteNull("updatedMemoryBytes"); else writer.WriteNumber("updatedMemoryBytes", applied.Limits.MemoryBytes);
                 if (applied is null) writer.WriteNull("updatedProcessLimit"); else writer.WriteNumber("updatedProcessLimit", applied.Limits.ProcessLimit);
                 writer.WriteEndObject();
+                writer.Flush();
+                stream.Flush(flushToDisk: true);
             }
             var bytes = File.ReadAllBytes(path);
             result.PrivateDiagnostics.Add(new(Path.GetFileName(path), Convert.ToHexStringLower(SHA256.HashData(bytes)), bytes.Length));
         }
-        result.Passed &= result.EvidenceFailure is null;
+        catch (Exception exception)
+        {
+            result.EvidenceFailure ??= WindowsQualification.ObserveFailure(exception) with { Code = "combined_observation_write_failed" };
+        }
+        result.Passed &= result.EvidenceFailure is null && peerCleanupConfirmed;
         return result;
     }
 

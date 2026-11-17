@@ -3,8 +3,8 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.Net;
-using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using System.Runtime.ExceptionServices;
 using System.Runtime.Versioning;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -16,15 +16,16 @@ internal static class WindowsNetworkCases
 {
     private const string Protocol = "MXC-WIN-04";
     private const int WorkloadDeadlineMs = 4000;
+    // Retain the real control owner if its bounded remote teardown is unresolved.
+    internal static WindowsRemoteNetworkPeer? UnresolvedPeer { get; private set; }
 
-    // Keep the host-loopback capability identical between deny and selected
-    // egress experiments. The native egress filter must still deny every tuple
-    // not explicitly permitted; loopback permission alone is not a pass.
-    internal static WindowsNetworkChoice LocalDenyEgress { get; } = new(HostLoopback: "allow");
+    // HostLoopback.allow is an independent native capability and bypasses
+    // fine-grained loopback egress rules. External egress uses it denied.
+    internal static WindowsNetworkChoice DenyEgress { get; } = WindowsNetworkChoice.DenyAll;
 
     internal static WindowsNetworkChoice SelectedEgress(WindowsNetworkEndpoint endpoint) => EgressRule(endpoint, endpoint.Address);
 
-    private static WindowsNetworkChoice EgressRule(WindowsNetworkEndpoint endpoint, IPAddress permittedAddress) => new(HostLoopback: "allow", Allow:
+    private static WindowsNetworkChoice EgressRule(WindowsNetworkEndpoint endpoint, IPAddress permittedAddress) => new(Allow:
     [
         new WindowsPolicyNetworkRule
         {
@@ -33,34 +34,55 @@ internal static class WindowsNetworkCases
         },
     ]);
 
-    internal static IPAddress ControlledAddress()
-    {
-        // The coordinator explicitly selects an already assigned local address.
-        // Never infer a proxy/VPN/NIC, install an address, or silently substitute
-        // loopback; local unicast may still be classified as host loopback by PSEC.
-        var text = Environment.GetEnvironmentVariable("AFV2_MXC_NETWORK_BIND_ADDRESS");
-        Require(IPAddress.TryParse(text, out var address) && address.AddressFamily == AddressFamily.InterNetwork
-            && !IPAddress.IsLoopback(address) && !address.Equals(IPAddress.Any), "controlled_nonloopback_ipv4_address_required");
-        Require(NetworkInterface.GetAllNetworkInterfaces().SelectMany(adapter => adapter.GetIPProperties().UnicastAddresses)
-            .Any(item => item.Address.Equals(address)), "controlled_nonloopback_address_not_assigned");
-        return address!;
-    }
-
     internal static async Task<List<WindowsQualificationCase>> RunAsync(string stage, string work)
     {
+        Require(UnresolvedPeer is null, "network_peer_cleanup_already_unresolved");
+        WindowsRemoteNetworkPeer? peer = null;
+        List<WindowsQualificationCase>? results = null;
+        Exception? primary = null;
+        // Git-delivered code runs on the designated H22 peer. SSH carries only
+        // its trusted control protocol; the contained workload uses TCP/UDP.
+        try
+        {
+            peer = await WindowsRemoteNetworkPeer.StartAsync().ConfigureAwait(false);
+            results = await RunCasesAsync(stage, work, peer).ConfigureAwait(false);
+        }
+        catch (WindowsRemoteNetworkPeerLaunchException error) { UnresolvedPeer = error.CleanupOwner; primary = error; }
+        catch (Exception error) { primary = error; }
+        if (peer is not null)
+        {
+            try
+            {
+                await peer.DisposeAsync().ConfigureAwait(false);
+                Require(peer.CleanupConfirmed, "network_peer_cleanup_not_confirmed");
+                if (primary is not null) primary.Data["remotePeerFinalCleanupConfirmed"] = true;
+            }
+            catch (Exception cleanup)
+            {
+                UnresolvedPeer = peer;
+                primary ??= cleanup;
+                primary.Data["remotePeerFinalCleanupConfirmed"] = false;
+                primary.Data["remotePeerCleanupErrorType"] = cleanup.GetType().Name;
+                primary.Data["remotePeerCleanupHResult"] = cleanup.HResult;
+            }
+        }
+        if (primary is not null) ExceptionDispatchInfo.Capture(primary).Throw();
+        return results!;
+    }
+
+    private static async Task<List<WindowsQualificationCase>> RunCasesAsync(string stage, string work, WindowsRemoteNetworkPeer peer)
+    {
         var results = new List<WindowsQualificationCase>();
-        // The real peer stays outside ProcessContainer, on the trusted driver's
-        // own loopback sockets. No address, route, proxy or firewall is changed.
-        await using var tcp = WindowsNetworkEndpoint.StartTcp(IPAddress.Loopback);
         // UDP on the exact same IP/port distinguishes protocol permission from
-        // a port-only allow. The alternate TCP port is another live owned peer.
-        await using var udp = WindowsNetworkEndpoint.StartUdp(IPAddress.Loopback, tcp.Port);
-        await using var otherPort = WindowsNetworkEndpoint.StartTcp(IPAddress.Loopback);
+        // a port-only allow. The alternate TCP port is another live H22 endpoint.
+        await using var tcp = WindowsNetworkEndpoint.ForRemotePeer(peer, "tcp");
+        await using var udp = WindowsNetworkEndpoint.ForRemotePeer(peer, "udp");
+        await using var otherPort = WindowsNetworkEndpoint.ForRemotePeer(peer, "tcp", otherTcpPort: true);
         foreach (var endpoint in new[] { tcp, udp, otherPort })
             await endpoint.CalibrateAsync().ConfigureAwait(false);
 
-        results.Add(await EgressAsync("network-deny-all-tcp", stage, work, tcp, LocalDenyEgress, allowed: false).ConfigureAwait(false));
-        results.Add(await EgressAsync("network-deny-all-udp", stage, work, udp, LocalDenyEgress, allowed: false).ConfigureAwait(false));
+        results.Add(await EgressAsync("network-deny-all-tcp", stage, work, tcp, DenyEgress, allowed: false).ConfigureAwait(false));
+        results.Add(await EgressAsync("network-deny-all-udp", stage, work, udp, DenyEgress, allowed: false).ConfigureAwait(false));
         var selectedTcp = SelectedEgress(tcp);
         results.Add(await EgressAsync("network-selected-tcp", stage, work, tcp, selectedTcp, allowed: true).ConfigureAwait(false));
         results.Add(await EgressAsync("network-selected-udp", stage, work, udp, SelectedEgress(udp), allowed: true).ConfigureAwait(false));
@@ -69,12 +91,16 @@ internal static class WindowsNetworkCases
         // Keep the actual controlled destination unchanged, but allow a different
         // CIDR. No connection or binding to an unrelated host is needed.
         results.Add(await EgressAsync("network-denied-address", stage, work, tcp, EgressRule(tcp, IPAddress.Parse("192.0.2.1")), allowed: false).ConfigureAwait(false));
-        // The same exact egress allow without host-loopback permission must not
-        // silently acquire that independent native capability.
-        results.Add(await EgressAsync("network-host-loopback-denied-tcp", stage, work, tcp,
-            selectedTcp with { HostLoopback = "deny" }, allowed: false).ConfigureAwait(false));
-        results.Add(await EgressAsync("network-host-loopback-denied-udp", stage, work, udp,
-            SelectedEgress(udp) with { HostLoopback = "deny" }, allowed: false).ConfigureAwait(false));
+        // These two cases specifically test the independent host-loopback
+        // capability against healthy local sockets, with an exact egress allow.
+        await using var localTcp = WindowsNetworkEndpoint.StartTcp(IPAddress.Loopback);
+        await using var localUdp = WindowsNetworkEndpoint.StartUdp(IPAddress.Loopback, localTcp.Port);
+        await localTcp.CalibrateAsync().ConfigureAwait(false);
+        await localUdp.CalibrateAsync().ConfigureAwait(false);
+        results.Add(await EgressAsync("network-host-loopback-denied-tcp", stage, work, localTcp,
+            SelectedEgress(localTcp), allowed: false).ConfigureAwait(false));
+        results.Add(await EgressAsync("network-host-loopback-denied-udp", stage, work, localUdp,
+            SelectedEgress(localUdp), allowed: false).ConfigureAwait(false));
         // Host-loopback ingress is separate from selected outbound permission.
         foreach (var transport in new[] { "tcp", "udp" })
         {
@@ -329,8 +355,8 @@ internal static class WindowsNetworkCases
 
 internal sealed record WindowsNetworkObservation(long AcceptedOrReceived, long MatchedRequests);
 
-// Real local sockets owned by the trusted driver, outside ProcessContainer.
-// The preserved remote-wrapper implementation is not selected by this profile.
+// Real local ingress sockets or an actual H22 peer. Remote data does not pass
+// through SSH; snapshots are peer counters over its fixed control protocol.
 // No host network configuration is changed.
 [SupportedOSPlatform("windows")]
 internal sealed class WindowsNetworkEndpoint : IAsyncDisposable
@@ -377,6 +403,7 @@ internal sealed class WindowsNetworkEndpoint : IAsyncDisposable
     internal int Port { get; }
     internal string Protocol { get; }
     internal bool IsRemote => _remote is not null;
+    internal bool PeerCleanupConfirmed => _remote?.CleanupConfirmed ?? _disposed;
     internal bool CalibrationPassed { get; private set; }
     internal Exception? Failure => Volatile.Read(ref _failure);
     internal WindowsNetworkObservation Observe()
@@ -404,8 +431,11 @@ internal sealed class WindowsNetworkEndpoint : IAsyncDisposable
         return new(peer, protocol, otherTcpPort, ownsRemote: false);
     }
 
-    internal static Task<WindowsNetworkEndpoint> StartControlledTcpAsync()
-        => Task.FromResult(StartTcp(IPAddress.Loopback));
+    internal static async Task<WindowsNetworkEndpoint> StartControlledTcpAsync()
+    {
+        var peer = await WindowsRemoteNetworkPeer.StartAsync().ConfigureAwait(false);
+        return new(peer, "tcp", otherTcpPort: false, ownsRemote: true);
+    }
 
     internal void WritePeerIdentity(Utf8JsonWriter writer)
     {
@@ -458,31 +488,76 @@ internal sealed class WindowsNetworkEndpoint : IAsyncDisposable
     {
         var phase = "network_calibration_peer_unhealthy";
         WindowsNetworkObservation? before = null;
+        var watch = Stopwatch.StartNew();
+        var phaseWatch = Stopwatch.StartNew();
+        var connectMs = -1L;
+        var sendMs = -1L;
+        var receiveMs = -1L;
+        var sentBytes = 0;
+        var receivedBytes = 0;
+        IPEndPoint? localEndpoint = null;
+        string? localObservationFailure = null;
+        CancellationToken ioBudget = default;
+        void ObserveLocalEndpoint(Socket socket)
+        {
+            try { localEndpoint = socket.LocalEndPoint as IPEndPoint; }
+            catch (Exception observationError) { localObservationFailure = observationError.GetType().Name; }
+        }
         try
         {
             RequireHealthy();
             before = _remote is null ? Observe() : _lastObservation;
             // Preserve the original single three-second I/O budget.
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            ioBudget = deadline.Token;
             if (Protocol == "tcp")
             {
                 using var client = new TcpClient(AddressFamily.InterNetwork);
                 phase = "network_calibration_tcp_connect";
-                await client.ConnectAsync(Address, Port, deadline.Token).ConfigureAwait(false);
-                phase = "network_calibration_tcp_exchange";
-                var length = await ExchangeAsync(client.GetStream(), deadline.Token).ConfigureAwait(false);
+                phaseWatch.Restart();
+                try { await client.ConnectAsync(Address, Port, deadline.Token).ConfigureAwait(false); }
+                finally { ObserveLocalEndpoint(client.Client); }
+                connectMs = phaseWatch.ElapsedMilliseconds;
+                var stream = client.GetStream();
+                phase = "network_calibration_tcp_send";
+                phaseWatch.Restart();
+                await stream.WriteAsync(Sentinel, deadline.Token).ConfigureAwait(false);
+                sentBytes = SentinelLength;
+                sendMs = phaseWatch.ElapsedMilliseconds;
+                phase = "network_calibration_tcp_receive";
+                phaseWatch.Restart();
+                var received = new byte[SentinelLength];
+                while (receivedBytes < received.Length)
+                {
+                    var count = await stream.ReadAsync(received.AsMemory(receivedBytes), deadline.Token).ConfigureAwait(false);
+                    if (count == 0) break;
+                    receivedBytes += count;
+                }
+                receiveMs = phaseWatch.ElapsedMilliseconds;
                 phase = "network_calibration_tcp_mismatch";
-                if (length != SentinelLength) throw new InvalidDataException("Controlled TCP reply differed from the fixed sentinel.");
+                phaseWatch.Restart();
+                if (receivedBytes != SentinelLength || !received.AsSpan().SequenceEqual(Sentinel.Span))
+                    throw new InvalidDataException("Controlled TCP reply differed from the fixed sentinel.");
             }
             else
             {
                 using var client = new UdpClient(AddressFamily.InterNetwork);
-                phase = "network_calibration_udp_send";
+                phase = "network_calibration_udp_connect";
+                phaseWatch.Restart();
                 client.Connect(Address, Port);
-                _ = await client.SendAsync(Sentinel, deadline.Token).ConfigureAwait(false);
+                ObserveLocalEndpoint(client.Client);
+                connectMs = phaseWatch.ElapsedMilliseconds;
+                phase = "network_calibration_udp_send";
+                phaseWatch.Restart();
+                sentBytes = await client.SendAsync(Sentinel, deadline.Token).ConfigureAwait(false);
+                sendMs = phaseWatch.ElapsedMilliseconds;
                 phase = "network_calibration_udp_receive";
+                phaseWatch.Restart();
                 var reply = await client.ReceiveAsync(deadline.Token).ConfigureAwait(false);
+                receivedBytes = reply.Buffer.Length;
+                receiveMs = phaseWatch.ElapsedMilliseconds;
                 phase = "network_calibration_udp_mismatch";
+                phaseWatch.Restart();
                 if (!reply.Buffer.AsSpan().SequenceEqual(Sentinel.Span)) throw new InvalidDataException("Controlled UDP reply differed from the fixed sentinel.");
             }
 
@@ -495,6 +570,24 @@ internal sealed class WindowsNetworkEndpoint : IAsyncDisposable
             var failure = new WindowsQualificationCheckException(phase, error);
             failure.Data["networkCalibrationPhase"] = phase;
             failure.Data["networkCalibrationProtocol"] = Protocol;
+            failure.Data["networkCalibrationElapsedMs"] = watch.ElapsedMilliseconds;
+            failure.Data["networkCalibrationFailurePhaseElapsedMs"] = phaseWatch.ElapsedMilliseconds;
+            failure.Data["networkCalibrationConnectMs"] = connectMs;
+            failure.Data["networkCalibrationSendMs"] = sendMs;
+            failure.Data["networkCalibrationReceiveMs"] = receiveMs;
+            failure.Data["networkCalibrationSentBytes"] = sentBytes;
+            failure.Data["networkCalibrationReceivedBytes"] = receivedBytes;
+            failure.Data["networkCalibrationIoBudgetMs"] = 3000;
+            failure.Data["networkCalibrationIoBudgetExpired"] = ioBudget.IsCancellationRequested;
+            failure.Data["networkCalibrationOriginalErrorType"] = error.GetType().Name;
+            failure.Data["networkCalibrationOriginalHResult"] = error.HResult;
+            failure.Data["networkCalibrationLocalEndpointObserved"] = localEndpoint is not null;
+            if (localEndpoint is not null)
+            {
+                failure.Data["networkCalibrationLocalAddress"] = localEndpoint.Address.ToString();
+                failure.Data["networkCalibrationLocalPort"] = localEndpoint.Port;
+            }
+            if (localObservationFailure is not null) failure.Data["networkCalibrationLocalEndpointErrorType"] = localObservationFailure;
             failure.Data["networkCalibrationBeforeCountersAvailable"] = before is not null;
             if (before is not null)
             {
@@ -625,7 +718,7 @@ internal sealed class WindowsNetworkEndpoint : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(address);
         if (address.AddressFamily != AddressFamily.InterNetwork || port is < 0 or > 65535
-            || (!IPAddress.IsLoopback(address) && !address.Equals(WindowsNetworkCases.ControlledAddress())))
-            throw new ArgumentOutOfRangeException(nameof(address), "The fixture binds only loopback or the explicitly selected assigned IPv4 address.");
+            || !IPAddress.IsLoopback(address))
+            throw new ArgumentOutOfRangeException(nameof(address), "The local fixture binds only IPv4 loopback.");
     }
 }
