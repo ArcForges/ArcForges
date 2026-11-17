@@ -34,6 +34,8 @@ internal static unsafe partial class WindowsHostContext
     // Unlike the owner snapshot above, this contains no token/SID information.
     // QueryInformationJobObject(NULL) describes only the immediate Job; a true
     // membership result must never be promoted to a fully observed ancestor chain.
+    // Membership itself does not forbid a native nested Job assignment. Owned
+    // chain admission is established by each held Job's assignment and readback.
     internal static JsonElement CaptureDriverJob(string runId)
     {
         using var buffer = new MemoryStream();

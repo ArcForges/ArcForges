@@ -2,6 +2,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.Versioning;
+using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
 using System.Text.Json;
 
@@ -46,6 +47,9 @@ internal sealed class WindowsLifecycleEvidence
     public ConPtyJobObservation? FinalAggregate { get; set; }
     public ConPtyJobObservation? BeforeCenterLossAggregate { get; set; }
     public ConPtyJobObservation? AfterCenterLossAggregate { get; set; }
+    public ProbeOwnerRecord? LogSinkFailureFinalOwner { get; set; }
+    public ConPtyJobObservation? LogSinkFailureFinalAggregate { get; set; }
+    public bool? LogSinkFailureQualificationPassed { get; set; }
     public Dictionary<string, bool> Checks { get; set; } = new(StringComparer.Ordinal);
 }
 
@@ -194,7 +198,7 @@ internal static class WindowsLifecycleCases
             result.PolicySha256 = fixture.Policy.Sha256;
             result.SamePolicyProbePassed = true;
             await exercise(fixture).ConfigureAwait(false);
-            result.Passed = result.EvidenceFailure is null;
+            result.Passed = result.EvidenceFailure is null && result.CleanupFailure is null;
         }
         catch (Exception error)
         {
@@ -493,6 +497,77 @@ internal static class WindowsLifecycleCases
         }
         await fixture.FinishAsync().ConfigureAwait(false);
         fixture.Evidence.Checks["same_owner_cleanup_retry_after_actual_fault_removed"] = true;
+        await ExerciseLogSinkFailureAsync(fixture).ConfigureAwait(false);
+    }
+
+    private static async Task ExerciseLogSinkFailureAsync(Fixture fixture)
+    {
+        // Reuse this case's real-fault boundary with a fresh, separately owned
+        // Run. Its negative qualification result must remain distinct from the
+        // parent case's evidence and from native cleanup success.
+        string root = Path.Combine(fixture.Root, "log-sink-negative");
+        var owned = CreateOwned(Path.Combine(root, "sandbox"));
+        string control = Path.Combine(root, "private-control");
+        string eventsPath = Path.Combine(control, "owner-events.jsonl");
+        var request = WindowsPolicy.BuildRequest(Path.Combine(fixture.Stage, "arcforges-mxc-probe.exe"),
+            ["--windows-workload", "console", "raw", "60000"], owned,
+            [fixture.Stage, Environment.SystemDirectory], [control], WindowsNetworkChoice.DenyAll);
+        request.Process.Timeout = 120_000;
+        var negative = new WindowsQualificationCase { Name = "owner-log-sink-open-negative", Protocol = "MXC-WIN-05", Passed = true };
+        WindowsOwnerHost? guardian = null;
+        Exception? primary = null;
+        try
+        {
+            var started = await StartOwnerAsync(fixture.Stage, control, request, beforeOwnerResume: () =>
+            {
+                // This fresh private collision causes the real CreateNew call
+                // to fail without ACL, system setting or shared-file changes.
+                using var collision = new FileStream(eventsPath, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
+                collision.Flush(flushToDisk: true);
+            }).ConfigureAwait(false);
+            guardian = started.Guardian;
+            var config = started.Config;
+            var running = await AwaitStatusAsync(config, status => status.State == "RUNNING", TimeSpan.FromSeconds(25), negative).ConfigureAwait(false);
+            Check(running.OwnerPid == guardian.ProcessId && running.OwnerCreatedUtc == guardian.ProcessStartTimeUtc
+                && running.ExecutorPid is > 0 && running.Job is { ActiveProcesses: > 0 }
+                && running.Job.ProcessIds.Contains(running.ExecutorPid.Value) && running.Job.Limits == config.Launch.Limits,
+                "log_sink_failure_changed_native_run_or_limits");
+            Check(running.EvidenceFailure is { Code: "owner_evidence_evidence_open" }
+                && negative.EvidenceFailure == running.EvidenceFailure && !negative.Passed,
+                "log_sink_failure_was_not_sticky_and_disqualifying");
+            fixture.Evidence.Checks["real_log_sink_create_new_failure_disqualifies_only_its_negative_result"] = true;
+            var stopped = await SendOwnerAsync(config, negative, new() { Operation = "stop", Generation = config.Generation }).ConfigureAwait(false);
+            Check(stopped.Ok && stopped.CleanupConfirmed && stopped.DataDeletionAllowed, "log_sink_failure_prevented_native_stop_cleanup");
+            var empty = await SendOwnerAsync(config, negative, new() { Operation = "status", Generation = config.Generation }).ConfigureAwait(false);
+            Check(empty.Ok && empty.Job is { ActiveProcesses: 0, ProcessIds.Length: 0 }
+                && empty.EvidenceFailure == running.EvidenceFailure, "log_sink_failure_final_native_scope_or_sticky_mismatch");
+            var shutdown = await SendOwnerAsync(config, negative, new() { Operation = "shutdown", Generation = config.Generation }).ConfigureAwait(false);
+            Check(shutdown.Ok, "log_sink_failure_prevented_owner_shutdown");
+            fixture.Evidence.LogSinkFailureFinalAggregate = await guardian.WaitEmptyAsync(TimeSpan.FromSeconds(15)).ConfigureAwait(false);
+            var record = CaptureFinalOwnerEvidence(config, negative);
+            fixture.Evidence.LogSinkFailureFinalOwner = record;
+            fixture.Evidence.LogSinkFailureQualificationPassed = negative.Passed;
+            Check(record is { CleanupConfirmed: true, EvidenceFailure: not null }
+                && record.EvidenceFailure == running.EvidenceFailure && !negative.Passed
+                && negative.PrimaryFailure is null && negative.CleanupFailure is null && new FileInfo(eventsPath).Length == 0,
+                "log_sink_failure_lost_after_native_drain_or_changed_failure_classification");
+            fixture.Evidence.Checks["log_sink_failure_preserves_native_stop_and_final_empty_scope"] = true;
+        }
+        catch (Exception error) { primary = error; }
+        finally
+        {
+            if (guardian is not null)
+            {
+                try { await guardian.DisposeAsync().ConfigureAwait(false); }
+                catch (Exception cleanup)
+                {
+                    fixture.Result.Passed = false;
+                    fixture.Result.CleanupFailure ??= WindowsQualification.ObserveFailure(cleanup);
+                    UnresolvedGuardians.Add(guardian);
+                }
+            }
+        }
+        if (primary is not null) ExceptionDispatchInfo.Capture(primary).Throw();
     }
 
     private static async Task ExerciseRootExitAsync(Fixture fixture)

@@ -18,7 +18,26 @@ Never publish the private owner configuration or capability keys. Public evidenc
 
 Loader failures return their real status without a desktop error dialog through a process-local error mode. This changes no system setting. The explicit UI policy allows Win32k for the Native AOT console fixture while retaining the configured clipboard/injection restrictions. The background owner is detached from a parent console and creates a separate workload ConPTY. Do not replace exact native-empty checks with a root-exit assumption.
 
+The driver records its identity and immediate inherited Job context before
+creating experimental Jobs. Inherited membership alone is not a rejection:
+the cases must prove real suspended assignment, owned Job limits, descendants
+and cleanup. Failed context queries cannot establish full qualification.
+The immediate Job snapshot does not enumerate all external ancestors, and
+an unknown ancestor CPU cap does not prove an exact whole-machine CPU share.
+Final receipts are published only after successful write, flush and close;
+failed publication retains a uniquely named pending file for diagnosis.
+
 ## Controlled network peer
+
+Current native result (2026-11-18): `network-resume-01` passed only8/13.
+HostLoopback allow also allowed the five intended fine-egress deny cases;
+matching replies and independent peer counters confirmed actual communication.
+This local candidate therefore cannot qualify selected egress or the combined
+profile. Preserve the failed receipt; do not repeat this setup expecting a
+different policy result. The remaining acceptance requires a controlled peer
+with an independent network stack. The owner's earlier stop on cross-host data
+probes remains in force pending their answer; SSH control/build execution is
+unaffected. The following describes the failed candidate, not an admitted path.
 
 The trusted driver owns real TCP/UDP sockets on127.0.0.1, outside the workload
 ProcessContainer, with bounded calibration, independent receive counters and

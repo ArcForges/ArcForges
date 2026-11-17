@@ -108,9 +108,12 @@ internal static class WindowsQualification
             bool identityObserved = driver.GetProperty("processCreationFileTime").ValueKind == JsonValueKind.Number;
             bool membershipObserved = job.GetProperty("status").GetString() == "membership_observed";
             report.DriverInheritedJob = membershipObserved ? job.GetProperty("inJob").GetBoolean() : null;
-            report.DriverJobChainEstablished = identityObserved && report.DriverInheritedJob == false;
-            report.DriverJobChainStatus = report.DriverJobChainEstablished ? "no_inherited_job_observed_owned_chain_only"
-                : report.DriverInheritedJob == true ? "inherited_ancestor_chain_unproven" : "driver_job_observation_unproven";
+            report.DriverJobContextObserved = identityObserved && membershipObserved
+                && (report.DriverInheritedJob == false || job.GetProperty("extendedLimits").GetProperty("status").GetString() == "observed"
+                    && job.GetProperty("uiRestrictions").GetProperty("status").GetString() == "observed"
+                    && job.GetProperty("cpuRateControl").GetProperty("status").GetString() == "observed");
+            report.DriverJobContextStatus = !report.DriverJobContextObserved ? "driver_job_observation_unproven"
+                : report.DriverInheritedJob == true ? "immediate_job_observed_ancestors_not_enumerated" : "no_inherited_job_observed";
             var driverBytes = Encoding.UTF8.GetBytes(driver.GetRawText());
             Check(driverBytes.Length <= 16 * 1024, "driver_job_context_bound");
             string driverPath = reportPath + ".driver-context.json";
@@ -121,13 +124,10 @@ internal static class WindowsQualification
             }
             report.DriverJobContextFile = Path.GetFileName(driverPath);
             report.DriverJobContextSha256 = FileHash(driverPath);
-            WritePhase(events, report.RunId, phase, report.DriverJobChainStatus);
-            if (!report.DriverJobChainEstablished)
+            WritePhase(events, report.RunId, phase, report.DriverJobContextStatus);
+            if (report.DriverInheritedJob != false || !report.DriverJobContextObserved)
             {
-                report.Limitations = [.. report.Limitations, "Original driver Job ancestry is unproven; the immediate-Job snapshot cannot enumerate unknown ancestors. Full qualification is unavailable in this invocation."];
-                if (!report.DiagnosticSelection)
-                    throw new WindowsQualificationCheckException(report.DriverInheritedJob == true
-                        ? "driver_inherited_job_chain_unproven" : "driver_job_observation_unproven");
+                report.Limitations = [.. report.Limitations, "The calling-process Job snapshot does not enumerate unknown ancestors. Each experiment verifies native assignment, limits, enforcement and cleanup through its held owned Job handles."];
             }
             Directory.CreateDirectory(work);
             if (report.DiagnosticSelection)
@@ -205,9 +205,16 @@ internal static class WindowsQualification
             if (reportPath is not null)
             {
                 byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(report, WindowsQualificationJson.Default.WindowsQualificationReport);
-                using var output = new FileStream(reportPath, FileMode.CreateNew, FileAccess.Write, FileShare.Read, 4096, FileOptions.WriteThrough);
-                await output.WriteAsync(bytes).ConfigureAwait(false);
-                output.Flush(flushToDisk: true);
+                string pending = reportPath + "." + Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture) + ".pending";
+                // The final receipt exists only after its complete bytes have
+                // been flushed and the stream closed successfully. Failed
+                // evidence publication retains the pending file for diagnosis.
+                using (var output = new FileStream(pending, FileMode.CreateNew, FileAccess.Write, FileShare.Read, 4096, FileOptions.WriteThrough))
+                {
+                    await output.WriteAsync(bytes).ConfigureAwait(false);
+                    output.Flush(flushToDisk: true);
+                }
+                File.Move(pending, reportPath, overwrite: false);
             }
         }
         catch (Exception exception) { RecordEvidenceFailure(report, exception); }
@@ -247,7 +254,7 @@ internal static class WindowsQualification
         report.ExpectedCases = expectedNames.Count;
         report.ExecutedCasesPassed = report.Cases.Count > 0 && report.Cases.All(CaseSucceeded);
         report.CleanupConfirmed = report.Cases.Count > 0 && report.Cases.All(item => item.CleanupCompleted && item.UnresolvedCleanupOwner is null && item.CleanupFailure is null);
-        report.QualificationPassed = !report.DiagnosticSelection && report.StageVerified && report.FinalIdentityVerified && report.DriverJobChainEstablished
+        report.QualificationPassed = !report.DiagnosticSelection && report.StageVerified && report.FinalIdentityVerified && report.DriverJobContextObserved
             && report.Failure is null && report.EvidenceFailure is null && report.ExecutedCasesPassed && report.CleanupConfirmed
             && report.Cases.Count == report.ExpectedCases && report.IncompleteProtocols.Length == 0
             && report.DuplicateCases.Length == 0 && report.UnexpectedCases.Length == 0;
@@ -1093,8 +1100,8 @@ internal sealed class WindowsQualificationReport
     public string? DriverJobContextFile { get; set; }
     public string? DriverJobContextSha256 { get; set; }
     public bool? DriverInheritedJob { get; set; }
-    public bool DriverJobChainEstablished { get; set; }
-    public string DriverJobChainStatus { get; set; } = "not_observed";
+    public bool DriverJobContextObserved { get; set; }
+    public string DriverJobContextStatus { get; set; } = "not_observed";
     public string SourceCommit { get; set; } = "";
     public string DesignCommit { get; set; } = "";
     public string PlanCommit { get; set; } = "";
