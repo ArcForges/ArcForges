@@ -25,6 +25,23 @@ internal static class Program
 
     public static async Task<int> Main(string[] args)
     {
+        if (OperatingSystem.IsWindows()) WindowsProbeErrorMode.EnableNoninteractiveFailures();
+        // Native experiment roles are explicit; a contained workload never loads MXC.
+        if (args.Length > 0 && args[0] == "--windows-workload")
+        {
+            if (!OperatingSystem.IsWindows()) return 125;
+            return await WindowsWorkload.RunAsync(args[1..]).ConfigureAwait(false);
+        }
+        if (args.Length == 2 && args[0] == "--windows-owner")
+        {
+            if (!OperatingSystem.IsWindows()) return 125;
+            return await WindowsProbeOwner.RunAsync(args[1]).ConfigureAwait(false);
+        }
+        if (args.Length > 0 && args[0] == "--windows-profile")
+        {
+            if (!OperatingSystem.IsWindows()) return 125;
+            return await WindowsQualification.RunAsync(args[1..]).ConfigureAwait(false);
+        }
         var report = new ProbeReport
         {
             Host = Environment.MachineName,
@@ -73,7 +90,7 @@ internal static class Program
 
     private static bool IsWithin(string path, string root) => path.StartsWith(root + Path.DirectorySeparatorChar, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
 
-    private static void ValidateStage(string path)
+    internal static void ValidateStage(string path)
     {
         foreach (var key in new[] { "MXC_FFI_DIR", "MXC_FORCE_TIER", "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH" })
         {
