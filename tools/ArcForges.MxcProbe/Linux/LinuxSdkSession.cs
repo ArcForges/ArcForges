@@ -31,6 +31,8 @@ internal sealed class LinuxSdkSession : IAsyncDisposable
     private readonly Replay _stderr;
     private readonly SemaphoreSlim _inputGate = new(1, 1);
     private readonly CancellationTokenSource _closing = new();
+    private readonly TaskCompletionSource _stdoutStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _stderrStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private MxcProcess? _process;
     private Stream? _input;
     private Stream? _output;
@@ -137,6 +139,7 @@ internal sealed class LinuxSdkSession : IAsyncDisposable
     private async Task DrainAsync(Stream? stream, Replay replay, string name)
     {
         Record(name + "_drain", "begin");
+        (name == "stdout" ? _stdoutStarted : _stderrStarted).TrySetResult();
         try
         {
             if (stream is not null)
@@ -171,6 +174,23 @@ internal sealed class LinuxSdkSession : IAsyncDisposable
                 !Directory.Exists("/proc/" + ProcessId.ToString(CultureInfo.InvariantCulture)), _stdout.Count, _stderr.Count);
         }
         catch (Exception error) { _log.Failure(_phase + "_lifetime_wait", error); throw; }
+    }
+
+    // The fixed pids-pressure fixture waits for actual drain entry, rather
+    // than merely queuing Task.Run work before exhausting its service's pids.
+    internal async Task WaitForIoReadyAsync(TimeSpan timeout)
+    {
+        if (timeout <= TimeSpan.Zero || timeout > TimeSpan.FromSeconds(10)) throw new ArgumentOutOfRangeException(nameof(timeout));
+        Record("io_ready", "waiting_for_actual_drain_entry");
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_nativeWait is null || _completion is null) throw new LinuxProbeException("sdk_lifetime_wait_not_established");
+            await Task.WhenAll(_stdoutStarted.Task, _stderrStarted.Task).WaitAsync(timeout).ConfigureAwait(false);
+            if (_stdout.Failure is not null || _stderr.Failure is not null) throw new LinuxProbeException("sdk_io_ready_drain_failed");
+            Record("io_ready", "actual_drains_and_lifetime_established");
+        }
+        catch (Exception error) { _log.Failure(_phase + "_io_ready", error); throw; }
     }
 
     internal async Task<LinuxSdkExit> WaitAsync(TimeSpan timeout, CancellationToken cancellationToken = default)

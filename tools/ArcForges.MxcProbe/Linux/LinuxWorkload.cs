@@ -36,7 +36,7 @@ internal static partial class LinuxWorkload
         try
         {
             if (args.Length == 0) throw new ArgumentException("A fixed fixture mode is required.");
-            if (args[0] is not ("terminal-info" or "terminal" or "argv" or "environment" or "known-folders" or "exit" or "fake-errors" or "flood" or "load" or "load-child" or "commit" or "short-burst" or "root-exit-child" or "filesystem" or "persistence" or "network" or "dns" or "combined"))
+            if (args[0] is not ("terminal-info" or "terminal" or "argv" or "environment" or "known-folders" or "exit" or "fake-errors" or "flood" or "load" or "pids-gated" or "load-child" or "commit" or "short-burst" or "root-exit-child" or "filesystem" or "persistence" or "network" or "dns" or "combined"))
                 throw new ArgumentException("Unknown fixture mode.");
             Emit("entry", "entry", writer => writer.WriteString("mode", args[0]));
             return args[0] switch
@@ -50,6 +50,7 @@ internal static partial class LinuxWorkload
                 "fake-errors" when args.Length == 2 => FakeErrors(Number(args[1], 0, 255)),
                 "flood" when args.Length == 2 => await FloodAsync(Number(args[1], 1, 8 * 1024 * 1024)).ConfigureAwait(false),
                 "load" when args.Length == 4 => Load(Number(args[1], 100, 60_000), Number(args[2], 0, 256), Number(args[3], 0, 8)),
+                "pids-gated" when args.Length == 3 => await PidsGatedAsync(Number(args[1], 100, 60_000), Number(args[2], 1, 8)).ConfigureAwait(false),
                 "load-child" when args.Length == 3 => Load(Number(args[1], 100, 60_000), Number(args[2], 0, 16), 0),
                 "commit" when args.Length == 3 => await CommitAsync(Number(args[1], 1, 256), Number(args[2], 100, 60_000)).ConfigureAwait(false),
                 "short-burst" when args.Length == 2 => await ShortBurstAsync(Number(args[1], 1, 8)).ConfigureAwait(false),
@@ -421,6 +422,44 @@ internal static partial class LinuxWorkload
         await Task.Delay(1000, deadline.Token).ConfigureAwait(false);
         Emit("short-burst-finished", "child.wait", writer => { writer.WriteNumber("count", count); writer.WriteNumber("exitedCount", exitedCount); });
         return 0;
+    }
+
+    private static async Task<int> PidsGatedAsync(int durationMs, int children)
+    {
+        Emit("pids-ready-for-observation", "pids.gate", writer => writer.WriteNumber("gateDeadlineMs", 10_000));
+        var expected = "continue\n"u8.ToArray();
+        var input = new byte[expected.Length];
+        var count = 0;
+        var deadline = Stopwatch.StartNew();
+        while (count < input.Length)
+        {
+            if (deadline.Elapsed >= TimeSpan.FromSeconds(10)) throw new OperationCanceledException("pids fixture gate deadline");
+            var poll = new PollDescriptor { Descriptor = 0, Events = 1 };
+            var result = Poll(ref poll, 1, 0);
+            if (result < 0)
+            {
+                var errno = Marshal.GetLastPInvokeError();
+                if (errno != 4) throw new NativeOperationException("pids.gate.poll", errno, result);
+            }
+            if (result > 0 && (poll.ReturnedEvents & (1 | 8 | 16)) != 0)
+            {
+                var read = ReadFd(0, input.AsSpan(count));
+                if (read < 0) throw NativeFailure("pids.gate.read", read);
+                if (read == 0) throw new EndOfStreamException("pids fixture gate input closed");
+                count += checked((int)read);
+            }
+            else await Task.Delay(10).ConfigureAwait(false);
+        }
+        if (!input.AsSpan().SequenceEqual(expected)) throw new ArgumentException("Unknown pids fixture gate input.");
+        Emit("pids-pressure-starting", "pids.gate", writer => writer.WriteNumber("childrenRequested", children));
+        try { return Load(durationMs, 0, children); }
+        catch (Win32Exception error) when (error.NativeErrorCode == 11)
+        {
+            // A fixed fixture reports only the actual Linux EAGAIN refusal.
+            // External pids.events remains the enforcement authority.
+            Emit("pids-create-refused", "pids.create", writer => { writer.WriteNumber("errno", error.NativeErrorCode); writer.WriteNumber("childrenRequested", children); });
+            return 75;
+        }
     }
 
     private static int Load(int durationMs, int memoryMiB, int children, Action? ready = null, CancellationToken cancellationToken = default)

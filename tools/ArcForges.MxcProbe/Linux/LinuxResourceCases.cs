@@ -71,7 +71,7 @@ internal static class LinuxResourceCases
                 "resource_cpu_low" or "resource_cpu_control" => ["load", "6000", "0", "0"],
                 "resource_burst" => ["load", "6000", "8", "4"],
                 "resource_dynamic" => ["load", "8000", "8", "2"],
-                "resource_pids_limit" => ["load", "6000", "0", "8"],
+                "resource_pids_limit" => ["pids-gated", "6000", "8"],
                 "resource_memory" => ["commit", "256", "1000"],
                 _ => throw new LinuxProbeException("resource_owner_group_invalid")
             };
@@ -97,13 +97,34 @@ internal static class LinuxResourceCases
                     new ResourceLive(config.RunId, session.ProcessId, namespacePid, [.. childPids]), LinuxResourceJson.Default.ResourceLive);
                 log.Phase("resource_payload_observation", "ready", new(StringComparer.Ordinal) { ["children"] = children.ToString(CultureInfo.InvariantCulture) });
             }
-            var exit = await session.WaitAsync(TimeSpan.FromSeconds(20)).ConfigureAwait(false);
+            LinuxSdkExit exit;
+            if (config.Group == "resource_pids_limit")
+            {
+                await session.WaitForIoReadyAsync(TimeSpan.FromSeconds(8)).ConfigureAwait(false);
+                _ = await LinuxTerminalCases.WaitForEventAsync(config.Work, "pids-ready-for-observation", TimeSpan.FromSeconds(8)).ConfigureAwait(false);
+                Require(!session.LifetimeCompleted, "resource_pids_payload_exited_before_gate");
+                // Establish the complete owner-side wait/timer before allowing
+                // the fixed fixture to create children under the real pids cap.
+                var completion = session.WaitAsync(TimeSpan.FromSeconds(20));
+                log.Phase("resource_pids_gate", "owner_io_and_wait_ready_before_pressure");
+                await session.WriteInputAsync("continue\n"u8.ToArray(), TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+                exit = await completion.ConfigureAwait(false);
+            }
+            else exit = await session.WaitAsync(TimeSpan.FromSeconds(20)).ConfigureAwait(false);
             facts["sdkExitCode"] = exit.ExitCode.ToString(CultureInfo.InvariantCulture);
             facts["sdkExitSource"] = exit.ExitSource;
             facts["sdkTimedOut"] = exit.TimedOut.ToString(CultureInfo.InvariantCulture);
             facts["sdkNativeProcessAbsent"] = exit.NativeProcessAbsent.ToString(CultureInfo.InvariantCulture);
             Require(exit.ExitSource == "official_sdk" && exit.Drained && exit.NativeProcessAbsent && !exit.TimedOut, "resource_sdk_native_wait_incomplete");
-            if (config.Group is not ("resource_memory" or "resource_pids_limit")) Require(exit.ExitCode == 0, "resource_control_payload_failed");
+            if (config.Group == "resource_pids_limit")
+            {
+                Require(exit.ExitCode is 0 or 75, "resource_pids_unexpected_payload_exit");
+                if (exit.ExitCode == 75)
+                    _ = await LinuxTerminalCases.WaitForEventAsync(config.Work, "pids-create-refused", TimeSpan.FromSeconds(3),
+                        item => item.GetProperty("errno").GetInt32() == 11).ConfigureAwait(false);
+                facts["pidsFixtureOutcome"] = exit.ExitCode == 0 ? "fixed_load_completed" : "fixed_create_refused_eagain";
+            }
+            else if (config.Group != "resource_memory") Require(exit.ExitCode == 0, "resource_control_payload_failed");
             // Keep the native scope alive until its independent observer has
             // sampled final enforcement counters. An exited SDK payload is not
             // itself proof of OOM/pids enforcement, and removed kernfs files
@@ -211,11 +232,14 @@ internal static class LinuxResourceCases
                     Require(initial.Cgroup.PidsCurrent > 1, "resource_lower_refusal_usage_not_observed");
                     bool refused = false;
                     try { _ = await scope.UpdateLimitsAsync(spec.Limits with { ProcessLimit = 1 }).ConfigureAwait(false); }
-                    catch (LinuxProbeException exception) when (exception.Code == "resource_update_below_current_usage")
-                    { refused = true; log.Phase(spec.Group, "expected_unsafe_decrease_refused"); }
-                    Require(refused, "resource_unsafe_decrease_not_refused");
+                    catch (LinuxProbeException exception) when (exception.Code == "resource_probe_limit_out_of_bounds")
+                    { refused = true; log.Phase(spec.Group, "expected_out_of_bounds_decrease_refused"); }
+                    Require(refused, "resource_out_of_bounds_decrease_not_refused");
                     RequireLimits(await ObserveAsync(scope, log, spec.Group + "_after_refusal").ConfigureAwait(false), spec.Limits);
                     Require(!File.Exists(config.ContinuePath) && !File.Exists(Path.Combine(privateControl, "resource-sdk.json")), "resource_refusal_permitted_payload");
+                    facts["requestedPidsMax"] = "1";
+                    facts["minimumProbePidsMax"] = "4";
+                    facts["rejectionAuthority"] = "probe_policy_bounds_before_manager_write";
                     facts["payloadAdmission"] = "not_permitted";
                     passed = true;
                 }
@@ -269,11 +293,30 @@ internal static class LinuxResourceCases
                     {
                         Require(completion.MemoryOomKill > Required(initial.Cgroup.MemoryEvents, "oom_kill") || completion.Last.Result == "oom-kill", "resource_memory_oom_enforcement_not_observed");
                         facts["enforcementAuthority"] = completion.Last.Result == "oom-kill" ? "systemd_native_oom_result" : "cgroup_memory_events_oom_kill";
+                        RequireCleanEnforcementOwnerDiagnostics(config, ready);
+                        if (File.Exists(config.ReportPath))
+                        {
+                            RequireSuccessfulEnforcementOwner(config, ready);
+                            facts["ownerOutcomeAuthority"] = "identity_bound_successful_owner_report";
+                        }
+                        else
+                        {
+                            // The expected OOM may kill the owner itself. A
+                            // missing report is accepted only with the same
+                            // native scope's explicit OOM/main-SIGKILL result;
+                            // an unrelated owner loss or SDK error is not OOM.
+                            Require(completion.Last.Result == "oom-kill" && completion.Last.ExecMainCode == 2
+                                && completion.Last.ExecMainStatus == 9, "resource_memory_owner_report_missing_without_native_owner_oom");
+                            facts["ownerOutcomeAuthority"] = "systemd_native_owner_oom_sigkill";
+                        }
                     }
                     else if (spec.Group == "resource_pids_limit")
                     {
                         Require(completion.PidsMaxEvents > Required(initial.Cgroup.PidsEvents, "max"), "resource_pids_enforcement_not_observed");
+                        RequireCleanEnforcementOwnerDiagnostics(config, ready);
+                        RequireSuccessfulEnforcementOwner(config, ready);
                         facts["enforcementAuthority"] = "cgroup_pids_events_max";
+                        facts["ownerOutcomeAuthority"] = "identity_bound_successful_owner_report";
                     }
                     else
                     {
@@ -324,6 +367,32 @@ internal static class LinuxResourceCases
         }
         facts["cleanupConfirmed"] = cleanup.ToString(CultureInfo.InvariantCulture);
         return (new(spec.Group, passed, facts), cleanup);
+    }
+
+    private static void RequireCleanEnforcementOwnerDiagnostics(LinuxOwnerConfiguration config, LinuxOwnerReady ready)
+    {
+        LinuxCgroup.VerifyPrivatePath(config.LogPath, false);
+        Require(new FileInfo(config.LogPath).Length is > 0 and <= 4 * 1024 * 1024, "resource_enforcement_owner_evidence_bound");
+        foreach (var line in File.ReadLines(config.LogPath))
+        {
+            using var document = JsonDocument.Parse(line);
+            var entry = document.RootElement;
+            Require(entry.GetProperty("runId").GetString() == config.RunId
+                && entry.GetProperty("processId").GetInt32() == ready.ProcessId, "resource_enforcement_owner_evidence_identity_mismatch");
+            Require(entry.GetProperty("outcome").GetString() is not ("failed" or "cleanup_failed"),
+                "resource_enforcement_owner_failure_recorded");
+        }
+    }
+
+    private static void RequireSuccessfulEnforcementOwner(LinuxOwnerConfiguration config, LinuxOwnerReady ready)
+    {
+        Require(File.Exists(config.ReportPath), "resource_enforcement_owner_report_missing");
+        LinuxCgroup.VerifyPrivatePath(config.ReportPath, false);
+        var owner = LinuxQualification.ReadJson(config.ReportPath, LinuxQualificationJson.Default.LinuxQualificationReport);
+        Require(owner.RunId == config.RunId && owner.Owner == ready, "resource_enforcement_owner_report_identity_mismatch");
+        Require(owner.DiagnosticSlicePassed && string.IsNullOrEmpty(owner.FailurePhase) && string.IsNullOrEmpty(owner.FailureType)
+            && owner.Cases.Count == 1 && owner.Cases[0].Id == config.Group && owner.Cases[0].Passed,
+            "resource_enforcement_owner_report_failed");
     }
 
     private static async Task CpuWindowAsync(LinuxServiceScope scope, LinuxEvidence log, string phase, Dictionary<string, string> facts)
