@@ -85,7 +85,8 @@ internal static class LinuxAdmissionCases
             {
                 log.Phase(id + "/backend", "reported_by_public_sdk", new(StringComparer.Ordinal)
                 {
-                    ["backend"] = backend.Backend.ToString(), ["tier"] = backend.Tier?.ToString() ?? "none",
+                    ["backend"] = backend.Backend.ToString(),
+                    ["tier"] = backend.Tier?.ToString() ?? "none",
                     ["capabilities"] = string.Join(',', backend.Capabilities),
                     ["warningCount"] = backend.Warnings.Count.ToString(CultureInfo.InvariantCulture),
                     ["warningsSha256"] = HashText(string.Join('\n', backend.Warnings)),
@@ -125,9 +126,12 @@ internal static class LinuxAdmissionCases
                 var tool = await ToolAsync(path, argv, control, name, log).ConfigureAwait(false);
                 var values = new Dictionary<string, string>(StringComparer.Ordinal)
                 {
-                    ["path"] = path, ["resolvedPath"] = resolved, ["executableSha256"] = FileHash(path),
+                    ["path"] = path,
+                    ["resolvedPath"] = resolved,
+                    ["executableSha256"] = FileHash(path),
                     ["exitCode"] = tool.ExitCode.ToString(CultureInfo.InvariantCulture),
-                    ["stdoutSha256"] = HashBytes(tool.Stdout), ["stderrSha256"] = HashBytes(tool.Stderr),
+                    ["stdoutSha256"] = HashBytes(tool.Stdout),
+                    ["stderrSha256"] = HashBytes(tool.Stderr),
                 };
                 if (name == "sh")
                 {
@@ -180,7 +184,8 @@ internal static class LinuxAdmissionCases
         var request = LinuxRequestFactory.Create(Environment.ProcessPath!, ["--linux-workload", "load", "5000", "0", "0"], data, control, 10_000);
         var facts = new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["status"] = "partial", ["namespaceDeniedNegative"] = "NOT_RUN",
+            ["status"] = "partial",
+            ["namespaceDeniedNegative"] = "NOT_RUN",
             ["namespaceDeniedFeasibility"] = "No_safe_independent_denial_injection_without_host_policy_credentials_or_new_seccomp_framework",
             ["scope"] = "Actual_public_SDK_spawn_and_OS_namespace_observation_not_a_namespace_denial_pass",
         };
@@ -478,8 +483,10 @@ internal static class LinuxAdmissionCases
     {
         var start = new ProcessStartInfo(executable)
         {
-            WorkingDirectory = control, UseShellExecute = false,
-            RedirectStandardOutput = true, RedirectStandardError = true,
+            WorkingDirectory = control,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
         };
         start.Environment.Clear();
         start.Environment["PATH"] = ToolPath;
@@ -593,7 +600,9 @@ internal static class LinuxAdmissionCases
     {
         using var stream = new FileStream(path, new FileStreamOptions
         {
-            Mode = FileMode.CreateNew, Access = FileAccess.Write, Share = FileShare.Read,
+            Mode = FileMode.CreateNew,
+            Access = FileAccess.Write,
+            Share = FileShare.Read,
             UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite,
         });
         stream.Write(bytes);
