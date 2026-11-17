@@ -92,7 +92,7 @@ public static partial class StoreBackups
         return path;
     }
 
-    private static void Sanitize(string path, TimeProvider clock)
+    internal static void Sanitize(string path, TimeProvider clock)
     {
         try
         {

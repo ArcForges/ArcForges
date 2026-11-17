@@ -17,8 +17,8 @@ public sealed class StageProducerAdmissionTests
         try
         {
             using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = directory.FullName, BootIdentity = "stage-test-boot" });
-            Assert.Equal(15, store.Metadata.SchemaVersion);
-            Assert.Equal(15, store.Metadata.MinReaderVersion);
+            Assert.Equal(StoreMigrations.SupportedSchemaVersion, store.Metadata.SchemaVersion);
+            Assert.Equal(StoreMigrations.Released.Steps[^1].MinReaderVersion, store.Metadata.MinReaderVersion);
             Assert.Equal(0L, store.Read(reader => reader.Scalar("SELECT count(*) FROM file_stage_production;")));
             using var missing = Raw(store.DatabasePath);
             using var command = missing.CreateCommand();
@@ -39,7 +39,8 @@ public sealed class StageProducerAdmissionTests
             using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = directory.FullName, BootIdentity = "stage-floor-boot" });
             using var future = Raw(store.DatabasePath);
             // A hypothetical later reader is an explicit test input, not a claimed future binary or migration.
-            future.CreateFunction<long>("arcforges_store_reader_version", () => 16);
+            int currentVersion = StoreMigrations.SupportedSchemaVersion;
+            future.CreateFunction<long>("arcforges_store_reader_version", () => currentVersion + 1);
             void SetVersion(int version)
             {
                 using var set = future.CreateCommand();
@@ -47,14 +48,14 @@ public sealed class StageProducerAdmissionTests
                 set.Parameters.AddWithValue("$version", version);
                 _ = set.ExecuteNonQuery();
             }
-            SetVersion(16);
+            SetVersion(currentVersion + 1);
             try
             {
                 var entered = false;
                 Assert.Throws<StoreIncompatibleException>(() => store.Write(_ => { entered = true; return 0; }));
                 Assert.False(entered);
             }
-            finally { SetVersion(15); }
+            finally { SetVersion(currentVersion); }
             Assert.Equal(1, store.Write(_ => 1));
         }
         finally { directory.Delete(recursive: true); }
