@@ -23,7 +23,7 @@ fixture parent must exist and have no symlink ancestors.
 <stage>/arcforges-mxc-probe --linux-profile --manifest <stage>/mxc-manifest.json --work <new-private-fixture> --report <new-report.json> --only terminal
 ```
 
-The diagnostic groups are `terminal`, `policy`, `network`, and `resource`.
+The diagnostic groups are `terminal`, `policy`, `network`, `resource`, and `lifecycle`.
 Exit 2 means a diagnostic slice passed with independently confirmed cleanup;
 it is deliberately not a full qualification success. Exit 1 means a failure or
 unresolved cleanup. Read the report and its `.events.jsonl` companion together.

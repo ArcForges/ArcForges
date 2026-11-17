@@ -35,8 +35,10 @@ internal static partial class LinuxTerminalCases
                 && info.GetProperty("stderrTty").GetBoolean() && info.GetProperty("termiosOk").GetBoolean()
                 && info.GetProperty("windowOk").GetBoolean(), "pty_native_terminal_required");
             Require(info.GetProperty("rows").GetInt32() == 24 && info.GetProperty("columns").GetInt32() == 80, "pty_initial_size_mismatch");
-            Require(info.GetProperty("pgrp").GetInt32() == info.GetProperty("foregroundPgrp").GetInt32(), "pty_foreground_group_mismatch");
-            facts["terminalObservation"] = "native_isatty_termios_window_foreground";
+            facts["namespacePgrp"] = info.GetProperty("pgrp").GetInt32().ToString(CultureInfo.InvariantCulture);
+            facts["namespaceForegroundPgrp"] = info.GetProperty("foregroundPgrp").GetInt32().ToString(CultureInfo.InvariantCulture);
+            facts["foregroundAuthority"] = "dedicated_host_namespace_snapshot_required";
+            facts["terminalObservation"] = "native_isatty_termios_window";
         }).ConfigureAwait(false)) return cases;
         // Avoid repeating a prerequisite failure through every terminal case.
         if (!cases[^1].Passed) return cases;
@@ -113,13 +115,38 @@ internal static partial class LinuxTerminalCases
             }
         }, expectedExit: null).ConfigureAwait(false)) return cases;
 
-        if (!await Add("lnx02_foreground_sigint", ["terminal", "cooperative", "10000"], true, async (session, data, ignoredFacts) =>
+        var foregroundCommand = LinuxRequestFactory.Command(executable, ["--linux-workload", "terminal", "cooperative", "10000"]);
+        if (!await Add("lnx02_foreground_sigint", ["--noprofile", "--norc", "-i", "-c", foregroundCommand], true, async (session, data, facts) =>
         {
-            _ = await WaitForEventAsync(data, "terminal-ready", TimeSpan.FromSeconds(5)).ConfigureAwait(false);
-            _ = await WaitForEventAsync(data, "child-created", TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+            var ready = await WaitForEventAsync(data, "terminal-ready", TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+            var child = await WaitForEventAsync(data, "child-created", TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+            var group = LinuxCgroup.ProcessControlGroup(Environment.ProcessId);
+            log.Phase("foreground_scope_open", "begin");
+            using var scope = LinuxCgroup.Open(group);
+            var before = ObserveTerminalMembers(scope, log, "foreground_before_etx");
+            var payload = NamespaceMember(before, ready.GetProperty("pid").GetInt32());
+            var foregroundChild = NamespaceMember(before, child.GetProperty("childPid").GetInt32());
+            var backend = before.SingleOrDefault(member => member.HostPid == session.ProcessId)
+                ?? throw new LinuxProbeException("foreground_sdk_root_not_live");
+            Require(payload.TtyNumber != 0 && payload.ForegroundGroup > 0 && payload.ProcessGroup == payload.ForegroundGroup
+                && foregroundChild.TtyNumber == payload.TtyNumber && foregroundChild.ProcessGroup == payload.ForegroundGroup
+                && foregroundChild.ForegroundGroup == payload.ForegroundGroup, "foreground_job_not_established_in_host_namespace");
+            Require(backend.ProcessGroup != payload.ForegroundGroup, "foreground_job_still_targets_bwrap_group");
+            facts["foregroundSetup"] = "contained_interactive_bash_job_control";
+            facts["payloadHostPid"] = payload.HostPid.ToString(CultureInfo.InvariantCulture);
+            facts["childHostPid"] = foregroundChild.HostPid.ToString(CultureInfo.InvariantCulture);
+            facts["hostForegroundGroup"] = payload.ForegroundGroup.ToString(CultureInfo.InvariantCulture);
             await session.WriteInputAsync(new byte[] { 3 }, TimeSpan.FromSeconds(2)).ConfigureAwait(false);
-            _ = await WaitForEventAsync(data, "signal", TimeSpan.FromSeconds(5), item => item.GetProperty("signal").GetString() == "SIGINT").ConfigureAwait(false);
-        }).ConfigureAwait(false)) return cases;
+            var signal = WaitForEventAsync(data, "signal", TimeSpan.FromSeconds(5), item => item.GetProperty("signal").GetString() == "SIGINT");
+            while (!signal.IsCompleted && !session.LifetimeCompleted) await Task.Delay(5).ConfigureAwait(false);
+            _ = ObserveTerminalMembers(scope, log, "foreground_after_etx");
+            _ = await signal.ConfigureAwait(false);
+            var completed = await session.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+            Require(completed.ExitCode == 0 && !completed.TimedOut, "foreground_sigint_did_not_complete_cooperatively");
+            var drained = ObserveTerminalMembers(scope, log, "foreground_after_native_drain");
+            Require(!drained.Any(member => member.HostPid == payload.HostPid || member.HostPid == foregroundChild.HostPid
+                || member.HostPid == session.ProcessId), "foreground_native_members_remain_after_drain");
+        }, selectedExecutable: "/bin/bash").ConfigureAwait(false)) return cases;
 
         if (!await Add("lnx02_ignore_etx_stop", ["terminal", "ignore-etx", "10000"], true, async (session, data, facts) =>
         {
@@ -247,6 +274,73 @@ internal static partial class LinuxTerminalCases
         log.Phase(id, passed ? "passed" : "failed", facts);
         return new(id, passed, facts);
     }
+
+    private static LinuxTerminalMember NamespaceMember(IReadOnlyList<LinuxTerminalMember> members, int namespacePid)
+    {
+        var matches = members.Where(member => member.NamespacePids.Length > 1 && member.NamespacePids[^1] == namespacePid).ToArray();
+        Require(matches.Length == 1, "foreground_namespace_pid_not_uniquely_mapped");
+        return matches[0];
+    }
+
+    private static List<LinuxTerminalMember> ObserveTerminalMembers(LinuxCgroup scope, LinuxEvidence log, string phase)
+    {
+        log.Phase(phase, "begin");
+        try
+        {
+            var observed = scope.Read();
+            Require(!observed.Removed && observed.ProcessIds.Length <= 64, "foreground_scope_identity_or_member_bound");
+            var members = new List<LinuxTerminalMember>();
+            foreach (var pid in observed.ProcessIds)
+            {
+                try
+                {
+                    var processGroup = LinuxCgroup.ProcessControlGroup(pid);
+                    if (processGroup != scope.ControlGroup && !processGroup.StartsWith(scope.ControlGroup + "/", StringComparison.Ordinal)) continue;
+                    var stat = File.ReadAllText("/proc/" + pid.ToString(CultureInfo.InvariantCulture) + "/stat");
+                    Require(stat.Length <= 8192, "foreground_proc_stat_bound");
+                    var closing = stat.LastIndexOf(')');
+                    Require(closing > 0 && closing + 2 < stat.Length, "foreground_proc_stat_invalid");
+                    var fields = stat[(closing + 2)..].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    Require(fields.Length >= 20, "foreground_proc_stat_fields_missing");
+                    var start = ulong.Parse(fields[19], CultureInfo.InvariantCulture);
+                    var line = File.ReadLines("/proc/" + pid.ToString(CultureInfo.InvariantCulture) + "/status")
+                        .Take(128).FirstOrDefault(value => value.StartsWith("NSpid:", StringComparison.Ordinal));
+                    Require(line is { Length: <= 1024 }, "foreground_namespace_pid_mapping_missing");
+                    var mapped = line![6..].Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+                        .Select(value => int.Parse(value, CultureInfo.InvariantCulture)).ToArray();
+                    Require(mapped.Length is > 0 and <= 16 && mapped[0] == pid, "foreground_namespace_pid_mapping_invalid");
+                    // These are observation identities, never PID-only signal
+                    // authority. Recheck after both proc reads to reject reuse.
+                    if (LinuxCgroup.ProcessStartTicks(pid) != start || LinuxCgroup.ProcessControlGroup(pid) != processGroup) continue;
+                    var member = new LinuxTerminalMember(pid, start,
+                        int.Parse(fields[2], CultureInfo.InvariantCulture), int.Parse(fields[3], CultureInfo.InvariantCulture),
+                        long.Parse(fields[4], CultureInfo.InvariantCulture), int.Parse(fields[5], CultureInfo.InvariantCulture), mapped);
+                    members.Add(member);
+                    log.Phase(phase + "_member", "observed", new()
+                    {
+                        ["hostPid"] = pid.ToString(CultureInfo.InvariantCulture),
+                        ["startTicks"] = start.ToString(CultureInfo.InvariantCulture),
+                        ["processGroup"] = member.ProcessGroup.ToString(CultureInfo.InvariantCulture),
+                        ["session"] = member.Session.ToString(CultureInfo.InvariantCulture),
+                        ["ttyNumber"] = member.TtyNumber.ToString(CultureInfo.InvariantCulture),
+                        ["foregroundGroup"] = member.ForegroundGroup.ToString(CultureInfo.InvariantCulture),
+                        ["namespacePids"] = string.Join(',', mapped.Select(value => value.ToString(CultureInfo.InvariantCulture))),
+                        ["scopeInode"] = observed.Inode.ToString(CultureInfo.InvariantCulture),
+                        ["scopeMountId"] = observed.MountId.ToString(CultureInfo.InvariantCulture)
+                    });
+                }
+                catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException)
+                {
+                    log.Phase(phase + "_member", "departed_during_observation", new() { ["hostPid"] = pid.ToString(CultureInfo.InvariantCulture) });
+                }
+            }
+            return members;
+        }
+        catch (Exception error) { log.Failure(phase, error); throw; }
+    }
+
+    private sealed record LinuxTerminalMember(int HostPid, ulong StartTicks, int ProcessGroup, int Session,
+        long TtyNumber, int ForegroundGroup, int[] NamespacePids);
 
     internal static async Task<JsonElement> WaitForEventAsync(string sandboxData, string eventName, TimeSpan timeout, Func<JsonElement, bool>? predicate = null)
     {

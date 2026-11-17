@@ -238,7 +238,7 @@ internal static class LinuxResourceCases
                     if (spec.Group == "resource_readback_refusal")
                     {
                         Require(!owner.DiagnosticSlicePassed && owner.Cases.Count == 0 && owner.FailurePhase == "owner_wait_for_admission"
-                            && !File.Exists(Path.Combine(privateControl, "resource-sdk.json")), "resource_changed_scope_did_not_refuse_before_sdk");
+                            && !File.Exists(Path.Combine(privateControl, "resource-sdk.json")) && OwnerReadbackRefusal(config.LogPath), "resource_changed_scope_did_not_refuse_before_sdk");
                         facts["payloadAdmission"] = "readback_refused_before_sdk";
                     }
                     else Require(owner.DiagnosticSlicePassed, "resource_owner_cases_failed");
@@ -372,6 +372,22 @@ internal static class LinuxResourceCases
         => Require(!observed.Cgroup.Removed && observed.Cgroup.CpuQuotaMicros == limits.CpuMillicores * 100L
             && observed.Cgroup.CpuPeriodMicros == 100_000 && observed.Cgroup.MemoryMaxBytes == limits.MemoryBytes
             && observed.Cgroup.PidsMax == limits.ProcessLimit, "resource_limits_readback_mismatch");
+
+    private static bool OwnerReadbackRefusal(string path)
+    {
+        LinuxCgroup.VerifyPrivatePath(path, false);
+        Require(new FileInfo(path).Length <= 4 * 1024 * 1024, "resource_owner_evidence_size_bound");
+        foreach (var line in File.ReadLines(path))
+        {
+            using var document = JsonDocument.Parse(line);
+            var entry = document.RootElement;
+            if (entry.GetProperty("phase").GetString() == "owner_wait_for_admission"
+                && entry.GetProperty("outcome").GetString() == "failed"
+                && entry.TryGetProperty("facts", out var facts) && facts.ValueKind == JsonValueKind.Object
+                && facts.TryGetProperty("cause0Code", out var code) && code.GetString() == "owner_limits_readback_mismatch") return true;
+        }
+        return false;
+    }
 
     private static void Permit(LinuxOwnerConfiguration config)
     {

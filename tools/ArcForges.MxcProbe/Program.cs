@@ -31,6 +31,15 @@ internal static class Program
             return await Linux.LinuxQualification.RunOwnerAsync(args[1]).ConfigureAwait(false);
         if (args.Length > 0 && args[0] == "--linux-workload")
             return await Linux.LinuxWorkload.RunAsync(args[1..]).ConfigureAwait(false);
+        if (args.Length == 2 && args[0] == "--linux-node-client")
+        {
+            if (!OperatingSystem.IsLinux())
+            {
+                Console.Error.WriteLine("linux_node_client:linux_host_required");
+                return 77;
+            }
+            return await Linux.LinuxOwnerChannel.RunNodeClientAsync(args[1]).ConfigureAwait(false);
+        }
         var report = new ProbeReport
         {
             Host = Environment.MachineName,

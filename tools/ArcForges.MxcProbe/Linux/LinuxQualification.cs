@@ -83,6 +83,8 @@ internal static partial class LinuxQualification
                 report.Cases = await LinuxNetworkCases.RunAsync(config, log).ConfigureAwait(false);
             else if (config.Group.StartsWith("resource_", StringComparison.Ordinal))
                 report.Cases = await LinuxResourceCases.RunOwnerAsync(config, log).ConfigureAwait(false);
+            else if (config.Group.StartsWith("lifecycle_", StringComparison.Ordinal))
+                report.Cases = await LinuxOwnerChannel.RunOwnerAsync(config, log).ConfigureAwait(false);
             else
                 throw new LinuxProbeException("owner_group_unsupported");
             report.DiagnosticSlicePassed = report.Cases.Count > 0 && report.Cases.All(x => x.Passed);

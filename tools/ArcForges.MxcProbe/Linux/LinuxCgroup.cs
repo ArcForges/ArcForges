@@ -19,6 +19,8 @@ internal sealed record LinuxCgroupObservation(string ControlGroup, ulong Inode, 
     // A removed, held directory proves emptiness. Its counters/limits are the
     // last actual readback, explicitly not a new zero-valued measurement.
     public bool CountersAvailable => !Removed;
+    public string? RemovalProof { get; init; }
+    public uint? HeldLinkCount { get; init; }
 }
 internal sealed record LinuxScopeObservation(LinuxScopeIdentity Identity, string ActiveState, string SubState,
     string Result, int ExecMainCode, int ExecMainStatus, LinuxCgroupObservation Cgroup);
@@ -72,9 +74,7 @@ internal sealed partial class LinuxCgroup : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         var metadata = ValidateIdentity();
-        if (metadata.LinkCount == 0)
-            return _last is { } previous ? previous with { Removed = true, Populated = false, ProcessIds = [] }
-                : throw new LinuxProbeException("cgroup_removed_before_initial_readback");
+        if (Removed(metadata, out var removalProof)) return RemovedObservation(metadata, removalProof);
         try
         {
             var events = Values(ReadText(_directory, "cgroup.events"));
@@ -87,18 +87,23 @@ internal sealed partial class LinuxCgroup : IDisposable
                 Required(events, "populated") != 0, [.. processes.Order()], Number(cpu[0]), Number(cpu[1]),
                 Limit(ReadText(_directory, "memory.max")), Limit(ReadText(_directory, "pids.max")),
                 Unsigned(ReadText(_directory, "memory.current")), Unsigned(ReadText(_directory, "pids.current")),
-                Values(ReadText(_directory, "cpu.stat")), Values(ReadText(_directory, "memory.events")), Values(ReadText(_directory, "pids.events")));
+                Values(ReadText(_directory, "cpu.stat")), Values(ReadText(_directory, "memory.events")), Values(ReadText(_directory, "pids.events")))
+            { HeldLinkCount = metadata.LinkCount };
             ValidateIdentity();
             _last = observed;
             return observed;
         }
-        catch (LinuxProbeException error) when (error.InnerException is Win32Exception && ValidateIdentity().LinkCount == 0 && _last is not null)
-        { return _last with { Removed = true, Populated = false, ProcessIds = [] }; }
+        catch (LinuxProbeException error) when (error.InnerException is Win32Exception)
+        {
+            metadata = ValidateIdentity();
+            if (Removed(metadata, out removalProof)) return RemovedObservation(metadata, removalProof);
+            throw;
+        }
     }
 
     internal bool EmptyProof()
     {
-        if (ValidateIdentity().LinkCount == 0) return true;
+        if (Removed(ValidateIdentity(), out _)) return true;
         try
         {
             if (Required(Values(ReadText(_directory, "cgroup.events")), "populated") != 0) return false;
@@ -106,7 +111,11 @@ internal sealed partial class LinuxCgroup : IDisposable
             CollectProcesses(_directory, processes, ref directories, 0);
             return processes.Count == 0;
         }
-        catch (LinuxProbeException error) when (error.InnerException is Win32Exception && ValidateIdentity().LinkCount == 0) { return true; }
+        catch (LinuxProbeException error) when (error.InnerException is Win32Exception)
+        {
+            if (Removed(ValidateIdentity(), out _)) return true;
+            throw;
+        }
     }
 
     internal static ulong ProcessStartTicks(int pid)
@@ -162,6 +171,41 @@ internal sealed partial class LinuxCgroup : IDisposable
         var metadata = Metadata(_directory);
         if (metadata.Inode != Inode || metadata.MountId != MountId) throw new LinuxProbeException("held_cgroup_identity_changed");
         return metadata;
+    }
+
+    private LinuxCgroupObservation RemovedObservation(Statx metadata, string proof) => _last is { } previous
+        ? previous with { Removed = true, Populated = false, ProcessIds = [], RemovalProof = proof, HeldLinkCount = metadata.LinkCount }
+        : throw new LinuxProbeException("cgroup_removed_before_initial_readback");
+
+    private bool Removed(Statx metadata, out string proof)
+    {
+        if (metadata.LinkCount == 0) { proof = "held_inode_nlink_zero"; return true; }
+        // kernfs getattr refreshes directory nlink to subdirs + 2, even after
+        // removal. ENOENT on a control file alone therefore proves nothing.
+        // The kernel's deleted-dentry suffix on this exact held descriptor,
+        // bracketed by mount/inode checks, proves the original scope was
+        // unlinked; a same-named replacement cannot satisfy this observation.
+        if (DescriptorTarget() == "/sys/fs/cgroup" + ControlGroup + " (deleted)")
+        { ValidateIdentity(); proof = "held_dentry_unlinked"; return true; }
+        proof = "";
+        return false;
+    }
+
+    private unsafe string DescriptorTarget()
+    {
+        var referenced = false;
+        try
+        {
+            _directory.DangerousAddRef(ref referenced);
+            var descriptor = "/proc/self/fd/" + _directory.DangerousGetHandle().ToInt32().ToString(CultureInfo.InvariantCulture);
+            Span<byte> buffer = stackalloc byte[4096];
+            nint count;
+            fixed (byte* bytes = buffer) count = ReadLink(descriptor, bytes, (nuint)buffer.Length);
+            if (count < 0) throw Error("cgroup_held_dentry_readlink");
+            if (count >= buffer.Length) throw new LinuxProbeException("cgroup_held_dentry_path_bound");
+            return new UTF8Encoding(false, true).GetString(buffer[..(int)count]);
+        }
+        finally { if (referenced) _directory.DangerousRelease(); }
     }
 
     private static void CollectProcesses(SafeFileHandle directory, HashSet<int> processes, ref int directories, int depth)
@@ -255,5 +299,6 @@ internal sealed partial class LinuxCgroup : IDisposable
     [LibraryImport("libc", EntryPoint = "openat", SetLastError = true, StringMarshalling = StringMarshalling.Utf8)] private static partial int OpenAt(SafeFileHandle directory, string path, int flags);
     [LibraryImport("libc", EntryPoint = "statx", SetLastError = true, StringMarshalling = StringMarshalling.Utf8)] private static partial int ReadStatx(SafeFileHandle fd, string path, int flags, uint mask, out Statx metadata);
     [LibraryImport("libc", EntryPoint = "fstatfs", SetLastError = true)] private static partial int ReadFileSystem(SafeFileHandle fd, out Statfs metadata);
+    [LibraryImport("libc", EntryPoint = "readlink", SetLastError = true, StringMarshalling = StringMarshalling.Utf8)] private static unsafe partial nint ReadLink(string path, byte* buffer, nuint size);
     [LibraryImport("libc", EntryPoint = "geteuid")] private static partial uint GetEffectiveUserId();
 }

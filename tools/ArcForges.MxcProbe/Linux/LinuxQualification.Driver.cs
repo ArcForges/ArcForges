@@ -19,7 +19,7 @@ internal static partial class LinuxQualification
             Require(args.Length == 8 && args[0] == "--manifest" && args[2] == "--work"
                 && args[4] == "--report" && args[6] == "--only", "linux_profile_arguments");
             string group = args[7];
-            Require(group is "terminal" or "policy" or "network" or "resource", "linux_diagnostic_group_invalid");
+            Require(group is "terminal" or "policy" or "network" or "resource" or "lifecycle", "linux_diagnostic_group_invalid");
             reportPath = Path.GetFullPath(args[5]);
             string manifest = Path.GetFullPath(args[1]);
             string stage = Path.GetDirectoryName(manifest)!;
@@ -41,11 +41,13 @@ internal static partial class LinuxQualification
             string data = Path.Combine(work, "sandbox");
             Directory.CreateDirectory(control, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             Directory.CreateDirectory(data, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-            if (group == "resource")
+            if (group is "resource" or "lifecycle")
             {
-                phase = "resource_cases";
+                phase = group + "_cases";
                 log.Phase(phase, "begin");
-                var resource = await LinuxResourceCases.RunAsync(manifest, data, control, log).ConfigureAwait(false);
+                var resource = group == "resource"
+                    ? await LinuxResourceCases.RunAsync(manifest, data, control, log).ConfigureAwait(false)
+                    : await LinuxLifecycleCases.RunAsync(manifest, data, control, log).ConfigureAwait(false);
                 report.Cases = resource.Cases;
                 report.CleanupConfirmed = resource.CleanupConfirmed;
                 report.DiagnosticSlicePassed = report.Cases.Count > 0 && report.Cases.All(x => x.Passed);

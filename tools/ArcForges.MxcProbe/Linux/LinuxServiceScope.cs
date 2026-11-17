@@ -192,7 +192,11 @@ internal sealed class LinuxServiceScope : IAsyncDisposable
             var stopped = new LinuxScopeObservation(Identity, Get(state, "ActiveState"), Get(state, "SubState"), Get(state, "Result"),
                 Integer(state, "ExecMainCode"), Integer(state, "ExecMainStatus"), group);
             _last = stopped;
-            _evidence.Phase("service_stop", "native_scope_empty", IdentityFacts());
+            var facts = IdentityFacts();
+            facts["emptyProof"] = group.RemovalProof ?? "cgroup_events_and_subtree_processes_empty";
+            facts["scopeRemoved"] = group.Removed ? "true" : "false";
+            if (group.HeldLinkCount is { } links) facts["heldLinkCount"] = Text(links);
+            _evidence.Phase("service_stop", "native_scope_empty", facts);
             return stopped;
         }
         catch (Exception error) { _evidence.Failure("service_stop", error, true); throw; }
