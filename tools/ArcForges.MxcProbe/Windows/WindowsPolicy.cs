@@ -54,7 +54,8 @@ internal static partial class WindowsPolicy
                     "HOME=" + paths.Home, "USERPROFILE=" + paths.Home, "APPDATA=" + paths.Config,
                     "LOCALAPPDATA=" + paths.Cache, "XDG_CONFIG_HOME=" + paths.Config,
                     "XDG_CACHE_HOME=" + paths.Cache, "XDG_DATA_HOME=" + paths.Data,
-                    "TEMP=" + paths.Temp, "TMP=" + paths.Temp],
+                    "TEMP=" + paths.Temp, "TMP=" + paths.Temp,
+                    "AFV2_MXC_OBSERVATIONS_DIR=" + System.IO.Path.Combine(paths.Work, "probe-observations")],
             },
             Filesystem = new WindowsPolicyFilesystem
             {

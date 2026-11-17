@@ -3,10 +3,12 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.Versioning;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Win32.SafeHandles;
 
 namespace ArcForges.MxcProbe;
 
@@ -33,6 +35,15 @@ internal static class WindowsQualification
             report.StageVerified = true;
             Directory.CreateDirectory(work);
             report.Cases = await RunTerminalCasesAsync(stage, work).ConfigureAwait(false);
+            if (report.Cases.Count > 0 && report.Cases[0].Passed && report.Cases.All(item => item.UnresolvedCleanupOwner is null && item.CleanupFailure is null))
+            {
+                report.Cases.AddRange(await WindowsResourceCases.RunAsync(stage, work).ConfigureAwait(false));
+                if (report.Cases.All(item => item.UnresolvedCleanupOwner is null && item.CleanupFailure is null)) report.Cases.AddRange(await WindowsPolicyCases.RunAsync(stage, work).ConfigureAwait(false));
+                if (report.Cases.All(item => item.UnresolvedCleanupOwner is null && item.CleanupFailure is null)) report.Cases.AddRange(await WindowsNetworkCases.RunAsync(stage, work).ConfigureAwait(false));
+                if (report.Cases.All(item => item.UnresolvedCleanupOwner is null && item.CleanupFailure is null)) report.Cases.AddRange(await WindowsCliCases.RunAsync(stage, work).ConfigureAwait(false));
+                if (report.Cases.All(item => item.UnresolvedCleanupOwner is null && item.CleanupFailure is null)) report.Cases.AddRange(await WindowsLifecycleCases.RunAsync(stage, work).ConfigureAwait(false));
+                if (report.Cases.All(item => item.UnresolvedCleanupOwner is null && item.CleanupFailure is null)) report.Cases.AddRange(await WindowsCombinedCases.RunAsync(stage, work).ConfigureAwait(false));
+            }
             report.ExecutedCasesPassed = report.Cases.Count > 0 && report.Cases.All(x => x.Passed);
         }
         catch (Exception exception)
@@ -62,7 +73,7 @@ internal static class WindowsQualification
         var results = new List<WindowsQualificationCase>();
         var smoke = await RunCaseAsync("console-info", stage, work, ["console-info"], async (_, capture) =>
         {
-            var console = capture.WaitForEventAsync("console", TimeSpan.FromSeconds(10));
+            var console = capture.WaitForTerminalEventAsync("console", TimeSpan.FromSeconds(10));
             try { await console.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false); }
             catch (TimeoutException) { await capture.RecordOwnedDiagnosticAsync("console-info-2s").ConfigureAwait(false); }
             var info = await console.ConfigureAwait(false);
@@ -76,7 +87,9 @@ internal static class WindowsQualification
         results.Add(await RunCaseAsync("line-editing", stage, work, ["console", "line", "15000"], async (session, capture) =>
         {
             _ = await capture.WaitForEventAsync("console-ready", TimeSpan.FromSeconds(10)).ConfigureAwait(false);
-            await session.WriteInputAsync("ab\b星\r"u8.ToArray(), TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+            // VT Backspace is DEL. Sending BS/Ctrl+H is a different input and
+            // must not silently substitute a word-deletion operation here.
+            await session.WriteInputAsync("ab\u007f星\r"u8.ToArray(), TimeSpan.FromSeconds(2)).ConfigureAwait(false);
             var line = await capture.WaitForEventAsync("line", TimeSpan.FromSeconds(5)).ConfigureAwait(false);
             Check(!line.GetProperty("eof").GetBoolean() && line.GetProperty("length").GetInt32() == 2
                 && line.GetProperty("sha256").GetString() == Convert.ToHexStringLower(SHA256.HashData("a星"u8)), "line_editing_mismatch");
@@ -104,15 +117,26 @@ internal static class WindowsQualification
             await session.WriteInputAsync("q"u8.ToArray(), TimeSpan.FromSeconds(2)).ConfigureAwait(false);
         }).ConfigureAwait(false));
 
-        results.Add(await RunCaseAsync("detached-flood", stage, work, ["flood", "2097152"], async (session, capture) =>
+        var flood = await RunCaseAsync("detached-flood", stage, work, ["flood", "2097152"], async (session, capture) =>
         {
             // The session's native drain keeps running without a replay reader.
             var identity = session.ProcessId;
             await Task.Delay(250).ConfigureAwait(false);
             var end = await capture.WaitForEventAsync("flood-finished", TimeSpan.FromSeconds(15)).ConfigureAwait(false);
-            Check(end.GetProperty("bytesWritten").GetInt32() == 2 * 1024 * 1024 && capture.ObservedBytes >= 2 * 1024 * 1024, "flood_incomplete");
+            Check(end.GetProperty("bytesWritten").GetInt32() == 2 * 1024 * 1024, "flood_incomplete");
             Check(identity == session.ProcessId, "terminal_identity_changed");
-        }).ConfigureAwait(false));
+        }).ConfigureAwait(false);
+        // The untrusted file event is not terminal-drain completion. Check the
+        // real drained byte count after the native wait/EOF, with the same bound.
+        if (flood.Passed && flood.ObservedTerminalBytes < 2 * 1024 * 1024)
+        {
+            flood.Passed = false;
+            flood.FailureCode = "flood_incomplete";
+            flood.PrimaryFailure = ObserveFailure(new WindowsQualificationCheckException("flood_incomplete"));
+            flood.FailureType = flood.PrimaryFailure.Type;
+            flood.FailureHResult = flood.PrimaryFailure.HResult;
+        }
+        results.Add(flood);
 
         foreach (var code in new[] { 0, 1, 23 })
             results.Add(await RunCaseAsync("exit-" + code.ToString(CultureInfo.InvariantCulture), stage, work, ["exit", code.ToString(CultureInfo.InvariantCulture)], expectedExecutorExit: (uint)code).ConfigureAwait(false));
@@ -122,29 +146,94 @@ internal static class WindowsQualification
             await capture.WaitForTextAsync("\"exit_source\":\"payload\"", TimeSpan.FromSeconds(3)).ConfigureAwait(false);
         }, expectedExecutorExit: 23).ConfigureAwait(false));
 
+        results.Add(await InteractiveShellAsync(stage, work).ConfigureAwait(false));
+        results.Add(await PayloadLaunchRefusalAsync(stage, work, malformedImage: false).ConfigureAwait(false));
+        results.Add(await PayloadLaunchRefusalAsync(stage, work, malformedImage: true).ConfigureAwait(false));
+        results.Add(await PolicyTimeoutAsync(stage, work).ConfigureAwait(false));
+
         foreach (var mode in new[] { "cooperative", "raw", "ignore-etx" })
-            results.Add(await RunCaseAsync("etx-" + mode, stage, work, ["console", mode, "15000"], async (session, capture) =>
+        {
+            var control = new WindowsTerminalControlObservation { Mode = mode, GraceMs = 3000 };
+            string? eventsDirectory = null;
+            var result = await RunCaseAsync("etx-" + mode, stage, work, ["console", mode, "15000"], async (session, capture) =>
             {
+                eventsDirectory = capture.FixtureEventsDirectory;
                 _ = await capture.WaitForEventAsync("console-ready", TimeSpan.FromSeconds(10)).ConfigureAwait(false);
-                await session.SendEtxAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
                 if (mode == "cooperative")
                 {
-                    _ = await capture.WaitForEventAsync("ctrl", TimeSpan.FromSeconds(3)).ConfigureAwait(false);
+                    var child = await capture.WaitForEventAsync("child-created", TimeSpan.FromSeconds(3)).ConfigureAwait(false);
+                    control.FixtureRootPid = child.GetProperty("pid").GetUInt32();
+                    control.FixtureChildPid = child.GetProperty("childPid").GetUInt32();
+                }
+                control.BeforeEtxJob = session.ObserveJob();
+                if (mode == "cooperative")
+                    Check(control.FixtureRootPid != control.FixtureChildPid && control.FixtureRootPid != session.ProcessId && control.FixtureChildPid != session.ProcessId
+                        && control.BeforeEtxJob.ProcessIds.Contains(control.FixtureRootPid!.Value) && control.BeforeEtxJob.ProcessIds.Contains(control.FixtureChildPid!.Value)
+                        && control.BeforeEtxJob.ProcessIds.Contains(session.ProcessId), "cooperative_child_native_membership_missing");
+                await session.SendEtxAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+                control.EtxSent = true;
+                if (mode == "cooperative")
+                {
+                    var grace = Stopwatch.StartNew();
+                    while (grace.Elapsed < TimeSpan.FromMilliseconds(control.GraceMs))
+                    {
+                        control.HandlerObserved = capture.ReadFixtureEvents().Any(x => x.GetProperty("event").GetString() == "ctrl");
+                        var code = session.GetExecutorExitCode();
+                        if (code is not null)
+                        {
+                            // Read once more after the trusted exit observation
+                            // so a just-flushed handler record is not missed.
+                            control.HandlerObserved = capture.ReadFixtureEvents().Any(x => x.GetProperty("event").GetString() == "ctrl");
+                            if (code == 0 && control.HandlerObserved) control.Outcome = "handler_graceful_exit";
+                            else if (code == 0xc000013a && !control.HandlerObserved) control.Outcome = "native_ctrl_exit";
+                            else throw new WindowsQualificationCheckException("unexpected_cooperative_etx_outcome");
+                            control.ExitObservedWithinGrace = true;
+                            return;
+                        }
+                        capture.Refresh();
+                        await Task.Delay(10).ConfigureAwait(false);
+                    }
+                    control.EscalationRequested = true;
+                    control.Outcome = "deadline_tree_kill_requested";
+                    _ = await session.ForceStopAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
                 }
                 else
                 {
                     var key = await capture.WaitForEventAsync("key", TimeSpan.FromSeconds(3), x => x.GetProperty("etx").GetBoolean()).ConfigureAwait(false);
                     Check(key.GetProperty("ignored").GetBoolean() == (mode == "ignore-etx"), "etx_mode_mismatch");
                     Check(session.GetExecutorExitCode() is null, "etx_was_not_only_terminal_input");
+                    control.RawEtxObserved = true;
+                    control.EscalationRequested = true;
+                    control.Outcome = "raw_terminal_input_then_tree_kill";
                     _ = await session.ForceStopAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
                 }
-            }, expectedExecutorExit: mode == "cooperative" ? 0U : null).ConfigureAwait(false));
+            }, expectedExecutorExit: null).ConfigureAwait(false);
+            result.TerminalControl = control;
+            if (result.Passed && control.Outcome == "native_ctrl_exit")
+            {
+                try
+                {
+                    control.HandlerObserved = WindowsTerminalCapture.ReadFixtureEvents(eventsDirectory!).Any(x => x.GetProperty("event").GetString() == "ctrl");
+                    Check(result.RawExecutorExit == 0xc000013a && result.JobEmpty && !control.HandlerObserved, "native_ctrl_exit_final_evidence_missing");
+                }
+                catch (Exception exception) { FailCase(result, exception); }
+            }
+            results.Add(result);
+        }
         return results;
     }
 
     [SupportedOSPlatform("windows")]
     internal static Task<WindowsQualificationCase> RunCaseAsync(string name, string stage, string work, IReadOnlyList<string> workloadArgs,
         Func<ConPtySession, WindowsTerminalCapture, Task>? exercise = null, uint? expectedExecutorExit = 0, ConPtyLimits? limits = null)
+    {
+        var fixture = BuildCaseRequest(stage, work, name, Path.Combine(stage, "arcforges-mxc-probe.exe"), ["--windows-workload", .. workloadArgs]);
+        var policy = WindowsPolicy.WritePrivate(fixture.Control, fixture.Request);
+        return RunCaseAsync(name, stage, policy, exercise, expectedExecutorExit, limits, fixture.Events);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static WindowsTerminalFixture BuildCaseRequest(string stage, string work, string name, string executable, IReadOnlyList<string> args)
     {
         var root = Path.Combine(work, name);
         Directory.CreateDirectory(root);
@@ -153,17 +242,135 @@ internal static class WindowsQualification
             Path.Combine(fixture, "temp"), Path.Combine(fixture, "work"), Path.Combine(fixture, "data"));
         foreach (var directory in new[] { owned.Home, owned.Config, owned.Cache, owned.Temp, owned.Work, owned.Data }) Directory.CreateDirectory(directory);
         var control = Path.Combine(root, "private control");
-        var request = WindowsPolicy.BuildRequest(Path.Combine(stage, "arcforges-mxc-probe.exe"), ["--windows-workload", .. workloadArgs], owned,
+        var request = WindowsPolicy.BuildRequest(executable, args, owned,
             [stage, Environment.GetFolderPath(Environment.SpecialFolder.System)], [control], WindowsNetworkChoice.DenyAll);
-        var policy = WindowsPolicy.WritePrivate(control, request);
-        return RunCaseAsync(name, stage, policy, exercise, expectedExecutorExit, limits);
+        var events = EnableFixtureEvents(request, owned.Work);
+        return new(owned, control, request, events);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static async Task<WindowsQualificationCase> InteractiveShellAsync(string stage, string work)
+    {
+        var fixture = BuildCaseRequest(stage, work, "interactive-cmd", Path.Combine(Environment.SystemDirectory, "cmd.exe"), ["/d", "/q"]);
+        fixture.Request.Process.Env = [.. fixture.Request.Process.Env, "PROMPT=AFV2_MXC_PROMPT$G", "AFV2_MXC_SHELL_ECHO=AFV2_MXC_SHELL_OK"];
+        var policy = WindowsPolicy.WritePrivate(fixture.Control, fixture.Request);
+        var result = await RunCaseAsync("interactive-cmd", stage, policy, async (session, capture) =>
+        {
+            await capture.WaitForTextAsync("AFV2_MXC_PROMPT>", TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+            // The complete marker is absent from the input bytes. Its actual
+            // appearance requires shell expansion/output, independently of how
+            // ConPTY represents cursor movement or line boundaries.
+            await session.WriteInputAsync("echo %AFV2_MXC_SHELL_ECHO%\r"u8.ToArray(), TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+            await capture.WaitForTextAsync("AFV2_MXC_SHELL_OK", TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+            await session.WriteInputAsync("echo AFV2_MXC_SHELL_FILE>shell-result.txt\rexit 23\r"u8.ToArray(), TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+        }, expectedExecutorExit: 23, fixtureEventsDirectory: fixture.Events).ConfigureAwait(false);
+        if (result.Passed)
+        {
+            try { Check(File.ReadAllText(Path.Combine(fixture.Owned.Work, "shell-result.txt")).Trim() == "AFV2_MXC_SHELL_FILE", "interactive_shell_command_not_executed"); }
+            catch (Exception exception) { FailCase(result, exception); }
+        }
+        result.ExpectedOutcome = "interactive_cmd_prompt_echo_and_exit_23";
+        return result;
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static async Task<WindowsQualificationCase> PayloadLaunchRefusalAsync(string stage, string work, bool malformedImage)
+    {
+        var name = malformedImage ? "native-invalid-image" : "invalid-payload-executable";
+        var fixture = BuildCaseRequest(stage, work, name, Path.Combine(stage, "arcforges-mxc-probe.exe"), []);
+        var executable = Path.Combine(fixture.Owned.Work, malformedImage ? "malformed-owned.exe" : "missing-owned.exe");
+        string? imageHash = null;
+        if (malformedImage)
+        {
+            // A fixed owned non-PE image reaches the unchanged executor's real
+            // native payload creation path; the official binary is untouched.
+            byte[] invalidImage = [0x4d, 0x5a, 0, 0, 0, 0, 0, 0];
+            await File.WriteAllBytesAsync(executable, invalidImage).ConfigureAwait(false);
+            imageHash = Convert.ToHexStringLower(SHA256.HashData(invalidImage));
+        }
+        else Check(!File.Exists(executable), "missing_payload_fixture_already_exists");
+        fixture.Request.Process.CommandLine = WindowsPolicy.QuoteCommandLine(executable, []);
+        var policy = WindowsPolicy.WritePrivate(fixture.Control, fixture.Request);
+        var result = await RunCaseAsync(name, stage, policy, expectedExecutorExit: null, fixtureEventsDirectory: fixture.Events).ConfigureAwait(false);
+        if (result.Passed)
+        {
+            try
+            {
+                Check(result.RawExecutorExit is > 0 && result.JobEmpty && result.FinalJob is { ActiveProcesses: 0 }, "payload_native_creation_refusal_not_proven");
+                Check(result.CapturedBytes > 0 && result.PrivateTranscriptFile is not null, "payload_launch_refusal_diagnostic_missing");
+                Check(WindowsTerminalCapture.ReadFixtureEvents(fixture.Events).Length == 0, "unexpected_payload_fixture_observation");
+            }
+            catch (Exception exception) { FailCase(result, exception); }
+        }
+        result.ExpectedOutcome = malformedImage ? "official_executor_refuses_owned_invalid_image" : "official_executor_refuses_missing_payload";
+        result.PayloadFixtureSha256 = imageHash;
+        return result;
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static async Task<WindowsQualificationCase> PolicyTimeoutAsync(string stage, string work)
+    {
+        const uint policyMs = 1500;
+        const int fixtureMs = 15000;
+        var fixture = BuildCaseRequest(stage, work, "official-policy-timeout", Path.Combine(stage, "arcforges-mxc-probe.exe"), ["--windows-workload", "console", "ignore-etx", fixtureMs.ToString(CultureInfo.InvariantCulture)]);
+        fixture.Request.Process.Timeout = policyMs;
+        var policy = WindowsPolicy.WritePrivate(fixture.Control, fixture.Request);
+        Stopwatch? naturalLifetime = null;
+        var result = await RunCaseAsync("official-policy-timeout", stage, policy, async (session, capture) =>
+        {
+            naturalLifetime = Stopwatch.StartNew();
+            _ = await capture.WaitForEventAsync("console-ready", TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+            Check(session.GetExecutorExitCode() is null, "timeout_fixture_not_observed_live");
+            // No input, Stop or forced termination: only the compiled official
+            // policy timer may end this live console before its own deadline.
+        }, expectedExecutorExit: null, fixtureEventsDirectory: fixture.Events).ConfigureAwait(false);
+        result.NaturalLifetimeMs = naturalLifetime?.Elapsed.TotalMilliseconds;
+        result.RequestedPolicyTimeoutMs = policyMs;
+        result.FixtureOwnDeadlineMs = fixtureMs;
+        result.ExpectedOutcome = "official_policy_timeout_without_manual_stop";
+        if (result.Passed)
+        {
+            try
+            {
+                Check(result.RawExecutorExit is > 0 && result.JobEmpty && result.NaturalLifetimeMs is >= 1000 and < 8000, "official_policy_timeout_not_observed");
+                Check(!WindowsTerminalCapture.ReadFixtureEvents(fixture.Events).Any(x => x.GetProperty("event").GetString() == "deadline"), "fixture_own_deadline_was_not_policy_timeout");
+            }
+            catch (Exception exception) { FailCase(result, exception); }
+        }
+        return result;
+    }
+
+    private static void FailCase(WindowsQualificationCase result, Exception exception)
+    {
+        result.Passed = false;
+        result.PrimaryFailure ??= ObserveFailure(exception);
+        result.FailureCode = result.PrimaryFailure.Code;
+        result.FailureType = result.PrimaryFailure.Type;
+        result.FailureHResult = result.PrimaryFailure.HResult;
+    }
+
+    private sealed record WindowsTerminalFixture(WindowsOwnedPaths Owned, string Control, WindowsPolicyRequest Request, string Events);
+
+    [SupportedOSPlatform("windows")]
+    internal static string EnableFixtureEvents(WindowsPolicyRequest request, string ownedWork)
+    {
+        var work = Path.GetFullPath(ownedWork);
+        Check(Path.GetFullPath(request.Process.Cwd).Equals(work, StringComparison.OrdinalIgnoreCase), "fixture_observation_workspace_mismatch");
+        // A fresh directory per Run prevents an earlier Run's PID/event file
+        // from becoming an observation of a later Run in the same Sandbox.
+        var directory = Path.Combine(work, "probe-observations-" + Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture));
+        Directory.CreateDirectory(directory);
+        const string prefix = "AFV2_MXC_OBSERVATIONS_DIR=";
+        request.Process.Env = [.. request.Process.Env.Where(x => !x.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)), prefix + directory];
+        return directory;
     }
 
     [SupportedOSPlatform("windows")]
     internal static async Task<WindowsQualificationCase> RunCaseAsync(string name, string stage, WindowsPolicyArtifact policy,
-        Func<ConPtySession, WindowsTerminalCapture, Task>? exercise = null, uint? expectedExecutorExit = 0, ConPtyLimits? limits = null)
+        Func<ConPtySession, WindowsTerminalCapture, Task>? exercise = null, uint? expectedExecutorExit = 0, ConPtyLimits? limits = null,
+        string? fixtureEventsDirectory = null)
     {
-        var result = new WindowsQualificationCase { Name = name, PolicySha256 = policy.Sha256 };
+        var result = new WindowsQualificationCase { Name = name, PolicySha256 = policy.Sha256, FixtureObservationSource = fixtureEventsDirectory is null ? "not_enabled" : "untrusted_payload_files" };
         var watch = Stopwatch.StartNew();
         ConPtySession? session = null;
         WindowsTerminalCapture? capture = null;
@@ -174,12 +381,12 @@ internal static class WindowsQualification
                 && probe.DenyPaths && probe.UiRestrictionsComplete, "same_policy_native_probe_refused");
             result.SamePolicyProbePassed = true;
             session = ConPtySession.Start(new(Path.Combine(stage, "wxc-exec.exe"), policy.Path, policy.ControlDirectory, 80, 24,
-                limits ?? new(5000, 1024UL * 1024 * 1024, 16), PrivateDiagnostics: name == "console-info"));
+                limits ?? new(5000, 1024UL * 1024 * 1024, 16), PrivateDiagnostics: name is "console-info" or "native-invalid-image" or "invalid-payload-executable" or "official-policy-timeout"));
             result.ExecutorProcessId = session.ProcessId;
             result.ExecutorStartUtc = session.ProcessStartTimeUtc.ToString("O", CultureInfo.InvariantCulture);
             result.InheritedJob = session.InheritedJob;
             result.SpawnMs = session.SpawnMs;
-            capture = new WindowsTerminalCapture(session, policy.ControlDirectory);
+            capture = new WindowsTerminalCapture(session, policy.ControlDirectory, fixtureEventsDirectory);
             if (exercise is not null) await exercise(session, capture).ConfigureAwait(false);
             var wait = session.WaitAsync(TimeSpan.FromSeconds(25));
             while (!wait.IsCompleted) { capture.Refresh(); await Task.Delay(10).ConfigureAwait(false); }
@@ -268,8 +475,8 @@ internal static class WindowsQualification
 
     private static bool Within(string path, string root) => path.Equals(root, StringComparison.OrdinalIgnoreCase)
         || path.StartsWith(root.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
-    private static void Check(bool condition, string code) { if (!condition) throw new WindowsQualificationCheckException(code); }
-    private static string FailureCode(Exception exception) => exception is WindowsQualificationCheckException check ? check.Code : "native_operation_failed";
+    internal static void Check(bool condition, string code) { if (!condition) throw new WindowsQualificationCheckException(code); }
+    internal static string FailureCode(Exception exception) => exception is WindowsQualificationCheckException check ? check.Code : "native_operation_failed";
     internal static WindowsQualificationFailure ObserveFailure(Exception exception)
     {
         var native = exception as Win32Exception;
@@ -288,7 +495,7 @@ internal sealed class WindowsQualificationCheckException(string code) : Exceptio
 }
 
 [SupportedOSPlatform("windows")]
-internal sealed class WindowsTerminalCapture(ConPtySession session, string? privateControlDirectory = null) : IDisposable
+internal sealed partial class WindowsTerminalCapture(ConPtySession session, string? privateControlDirectory = null, string? fixtureEventsDirectory = null) : IDisposable
 {
     private const int MaximumCaptureBytes = 4 * 1024 * 1024;
     private readonly MemoryStream _captured = new();
@@ -300,6 +507,7 @@ internal sealed class WindowsTerminalCapture(ConPtySession session, string? priv
     internal List<WindowsTerminalGap> Gaps { get; } = [];
     internal List<WindowsPrivateDiagnostic> PrivateDiagnostics { get; } = [];
     internal WindowsQualificationFailure? DiagnosticFailure { get; private set; }
+    internal string? FixtureEventsDirectory { get; set; } = fixtureEventsDirectory;
 
     public void Dispose() => _captured.Dispose();
 
@@ -381,6 +589,57 @@ internal sealed class WindowsTerminalCapture(ConPtySession session, string? priv
     internal bool Contains(string text) { Refresh(); return Text().Contains(text, StringComparison.Ordinal); }
     private string Text() => Encoding.UTF8.GetString(_captured.GetBuffer(), 0, checked((int)_captured.Length));
 
+    // A bounded parsing view, not a terminal emulator or a trusted state channel.
+    // Conhost may insert title/cursor sequences inside an ordinary fixture JSON
+    // token. Raw capture and ANSI assertions continue to use the original bytes.
+    internal static string FixtureParsingView(string text)
+    {
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(text.Length, MaximumCaptureBytes);
+        var output = new StringBuilder(text.Length);
+        for (var index = 0; index < text.Length;)
+        {
+            var value = text[index];
+            if (value == '\u001b')
+            {
+                if (index + 1 == text.Length) break;
+                var introducer = text[index + 1];
+                if (introducer == '[') { index = SkipCsi(text, index + 2); continue; }
+                if (introducer == ']') { index = SkipControlString(text, index + 2, allowBell: true); continue; }
+                if (introducer is 'P' or 'X' or '^' or '_') { index = SkipControlString(text, index + 2, allowBell: false); continue; }
+                var end = index + 1;
+                while (end < text.Length && text[end] is >= '\u0020' and <= '\u002f') end++;
+                if (end == text.Length) break;
+                index = text[end] is >= '\u0030' and <= '\u007e' ? end + 1 : end;
+                continue;
+            }
+            if (value == '\u009b') { index = SkipCsi(text, index + 1); continue; }
+            if (value == '\u009d') { index = SkipControlString(text, index + 1, allowBell: true); continue; }
+            if (value is '\u0090' or '\u0098' or '\u009e' or '\u009f') { index = SkipControlString(text, index + 1, allowBell: false); continue; }
+            if (value is not ('\u0007' or '\u009c')) output.Append(value);
+            index++;
+        }
+        return output.ToString();
+    }
+
+    private static int SkipCsi(string text, int cursor)
+    {
+        while (cursor < text.Length && text[cursor] is >= '\u0030' and <= '\u003f') cursor++;
+        while (cursor < text.Length && text[cursor] is >= '\u0020' and <= '\u002f') cursor++;
+        // A split/incomplete tail contributes nothing until the next full view.
+        if (cursor == text.Length) return cursor;
+        return text[cursor] is >= '\u0040' and <= '\u007e' ? cursor + 1 : cursor;
+    }
+
+    private static int SkipControlString(string text, int cursor, bool allowBell)
+    {
+        for (; cursor < text.Length; cursor++)
+        {
+            if ((allowBell && text[cursor] == '\u0007') || text[cursor] == '\u009c') return cursor + 1;
+            if (text[cursor] == '\u001b' && cursor + 1 < text.Length && text[cursor + 1] == '\\') return cursor + 2;
+        }
+        return text.Length;
+    }
+
     internal async Task WaitForTextAsync(string text, TimeSpan timeout)
     {
         var watch = Stopwatch.StartNew();
@@ -394,11 +653,97 @@ internal sealed class WindowsTerminalCapture(ConPtySession session, string? priv
 
     internal async Task<JsonElement> WaitForEventAsync(string eventName, TimeSpan timeout, Func<JsonElement, bool>? predicate = null)
     {
+        var observation = WaitForFixtureEventAsync(FixtureEventsDirectory ?? throw new WindowsQualificationCheckException("fixture_observations_not_enabled"), eventName, timeout, predicate);
+        while (!observation.IsCompleted) { Refresh(); await Task.Delay(10).ConfigureAwait(false); }
+        var result = await observation.ConfigureAwait(false);
+        Refresh();
+        return result;
+    }
+
+    internal JsonElement[] ReadFixtureEvents() =>
+        ReadFixtureEvents(FixtureEventsDirectory ?? throw new WindowsQualificationCheckException("fixture_observations_not_enabled"));
+
+    internal static async Task<JsonElement> WaitForFixtureEventAsync(string directory, string eventName, TimeSpan timeout, Func<JsonElement, bool>? predicate = null)
+    {
+        var watch = Stopwatch.StartNew();
+        while (watch.Elapsed < timeout)
+        {
+            foreach (var item in ReadFixtureEvents(directory))
+                if (item.GetProperty("event").GetString() == eventName && (predicate is null || predicate(item))) return item;
+            await Task.Delay(10).ConfigureAwait(false);
+        }
+        throw new WindowsQualificationCheckException("expected_fixture_file_event_missing");
+    }
+
+    // These files are ordinary, writable payload observations. They never set
+    // backend classification, payload-start certainty, owner state or cleanup.
+    internal static JsonElement[] ReadFixtureEvents(string directory)
+    {
+        const int maximumFileBytes = 64 * 1024;
+        const int maximumTotalBytes = 1024 * 1024;
+        var root = Path.GetFullPath(directory);
+        if (!Path.IsPathFullyQualified(directory) || root.StartsWith("\\\\", StringComparison.Ordinal)
+            || (File.GetAttributes(root) & FileAttributes.ReparsePoint) != 0)
+            throw new WindowsQualificationCheckException("fixture_observation_directory_invalid");
+        var files = Directory.EnumerateFileSystemEntries(root).Take(17).ToArray();
+        if (files.Length > 16) throw new WindowsQualificationCheckException("fixture_observation_file_count_exceeded");
+        var result = new List<JsonElement>();
+        long total = 0;
+        foreach (var file in files.Order(StringComparer.Ordinal))
+        {
+            var name = Path.GetFileName(file);
+            var attributes = File.GetAttributes(file);
+            if ((attributes & (FileAttributes.ReparsePoint | FileAttributes.Directory)) != 0 || !name.EndsWith(".jsonl", StringComparison.Ordinal)
+                || !uint.TryParse(name.AsSpan(0, name.Length - 6), NumberStyles.None, CultureInfo.InvariantCulture, out var pid) || pid == 0)
+                throw new WindowsQualificationCheckException("fixture_observation_file_invalid");
+            using var input = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            if ((File.GetAttributes(input.SafeFileHandle) & FileAttributes.ReparsePoint) != 0
+                || !FinalObservationPath(input.SafeFileHandle).Equals(Path.GetFullPath(file), StringComparison.OrdinalIgnoreCase))
+                throw new WindowsQualificationCheckException("fixture_observation_reparse_rejected");
+            var length = input.Length;
+            total = checked(total + length);
+            if (length > maximumFileBytes || total > maximumTotalBytes) throw new WindowsQualificationCheckException("fixture_observation_byte_limit_exceeded");
+            var bytes = new byte[checked((int)length)];
+            input.ReadExactly(bytes);
+            // A concurrent append may end between bytes of a record; only full
+            // LF-terminated records participate in this snapshot.
+            var complete = Array.LastIndexOf(bytes, (byte)'\n') + 1;
+            var text = new UTF8Encoding(false, true).GetString(bytes, 0, complete);
+            foreach (var line in text.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (!line.StartsWith("{\"fixture\":\"windows-workload-v1\",", StringComparison.Ordinal))
+                    throw new WindowsQualificationCheckException("fixture_observation_prefix_invalid");
+                using var document = JsonDocument.Parse(line);
+                var value = document.RootElement;
+                if (value.GetProperty("pid").GetUInt32() != pid || value.GetProperty("event").ValueKind != JsonValueKind.String)
+                    throw new WindowsQualificationCheckException("fixture_observation_identity_invalid");
+                result.Add(value.Clone());
+            }
+        }
+        return [.. result];
+    }
+
+    private static unsafe string FinalObservationPath(SafeFileHandle handle)
+    {
+        const int capacity = 32768;
+        var buffer = stackalloc char[capacity];
+        var length = GetFinalPathNameByHandle(handle, buffer, capacity, 0);
+        if (length == 0) throw new Win32Exception(Marshal.GetLastPInvokeError(), "Verify fixture observation file handle failed.");
+        if (length >= capacity) throw new WindowsQualificationCheckException("fixture_observation_path_limit_exceeded");
+        var path = new string(buffer, 0, checked((int)length));
+        return path.StartsWith("\\\\?\\", StringComparison.Ordinal) ? path[4..] : path;
+    }
+
+    [LibraryImport("kernel32.dll", EntryPoint = "GetFinalPathNameByHandleW", SetLastError = true)]
+    private static unsafe partial uint GetFinalPathNameByHandle(SafeFileHandle handle, char* path, uint length, uint flags);
+
+    internal async Task<JsonElement> WaitForTerminalEventAsync(string eventName, TimeSpan timeout, Func<JsonElement, bool>? predicate = null)
+    {
         var watch = Stopwatch.StartNew();
         while (watch.Elapsed < timeout)
         {
             Refresh();
-            var text = Text();
+            var text = FixtureParsingView(Text());
             var offset = 0;
             while ((offset = text.IndexOf("{\"fixture\":\"windows-workload-v1\"", offset, StringComparison.Ordinal)) >= 0)
             {
@@ -420,6 +765,21 @@ internal sealed class WindowsTerminalCapture(ConPtySession session, string? priv
 }
 
 internal sealed record WindowsTerminalGap(long From, long Until);
+internal sealed class WindowsTerminalControlObservation
+{
+    public string InputOperation { get; set; } = "terminal_input_etx";
+    public string Mode { get; set; } = "";
+    public bool EtxSent { get; set; }
+    public string Outcome { get; set; } = "not_observed";
+    public int GraceMs { get; set; }
+    public bool HandlerObserved { get; set; }
+    public bool RawEtxObserved { get; set; }
+    public bool ExitObservedWithinGrace { get; set; }
+    public bool EscalationRequested { get; set; }
+    public uint? FixtureRootPid { get; set; }
+    public uint? FixtureChildPid { get; set; }
+    public ConPtyJobObservation? BeforeEtxJob { get; set; }
+}
 internal sealed record WindowsQualificationFailure(string Code, string Type, int HResult, int? NativeErrorCode, string? Operation);
 internal sealed record WindowsPrivateDiagnostic(string File, string Sha256, int Bytes);
 internal sealed record WindowsThreadDiagnostic(int Id, string State, string? WaitReason);
@@ -449,6 +809,7 @@ internal sealed class WindowsQualificationCase
     public string Protocol { get; set; } = "MXC-WIN-02";
     public bool Passed { get; set; }
     public string PolicySha256 { get; set; } = "";
+    public string FixtureObservationSource { get; set; } = "not_enabled";
     public bool SamePolicyProbePassed { get; set; }
     public uint ExecutorProcessId { get; set; }
     public string? ExecutorStartUtc { get; set; }
@@ -456,6 +817,12 @@ internal sealed class WindowsQualificationCase
     public uint? RawExecutorExit { get; set; }
     public string ExitSource { get; set; } = "official_executor";
     public string PayloadStartCertainty { get; set; } = "UNKNOWN";
+    public string? ExpectedOutcome { get; set; }
+    public string? PayloadFixtureSha256 { get; set; }
+    public uint? RequestedPolicyTimeoutMs { get; set; }
+    public int? FixtureOwnDeadlineMs { get; set; }
+    public double? NaturalLifetimeMs { get; set; }
+    public WindowsTerminalControlObservation? TerminalControl { get; set; }
     public bool JobEmpty { get; set; }
     public ConPtyJobObservation? FinalJob { get; set; }
     public double SpawnMs { get; set; }

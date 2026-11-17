@@ -79,6 +79,8 @@ internal sealed partial class WindowsProbeOwner : IDisposable
             || Convert.FromBase64String(config.ControllerKey).Length != 32 || Convert.FromBase64String(config.ObserverKey).Length != 32
             || config.ControllerKey == config.ObserverKey)
             throw new InvalidDataException("Invalid owner identity or private capabilities.");
+        if (config.PauseAtPhase is not null and not ("prepared" or "owner-ack" or "executor-created" or "active" or "cleaning" or "final"))
+            throw new InvalidDataException("Unknown bounded owner experiment phase.");
         var control = Path.TrimEndingDirectorySeparator(Path.GetFullPath(config.Launch.ControlDirectory));
         if (!Path.GetDirectoryName(path)!.Equals(control, StringComparison.OrdinalIgnoreCase)
             || !Path.GetFullPath(config.Launch.ExecutorPath).Equals(Path.Combine(AppContext.BaseDirectory, "wxc-exec.exe"), StringComparison.OrdinalIgnoreCase)
@@ -91,14 +93,24 @@ internal sealed partial class WindowsProbeOwner : IDisposable
     private async Task<int> RunCoreAsync()
     {
         SaveRecord(); // No payload can exist yet; exact owner identity is durable.
+        await WindowsPhaseClient.OwnerPhaseAsync(_config, "prepared").ConfigureAwait(false);
         using (var stream = NewDurableFile(Path.Combine(_config.Launch.ControlDirectory, "owner-host-context.json")))
         {
             using (var writer = new Utf8JsonWriter(stream)) WindowsHostContext.Write(writer);
             stream.Flush(true);
         }
+        await WindowsPhaseClient.OwnerPhaseAsync(_config, "owner-ack").ConfigureAwait(false);
         try
         {
-            _session = ConPtySession.Start(_config.Launch);
+            _session = _config.PauseAtPhase == "executor-created"
+                ? ConPtySession.StartForOwnerPhase(_config.Launch, suspended =>
+                {
+                    // The primitive has held the exact suspended process and
+                    // verified Job/limits/argv, but has not resumed its thread.
+                    SaveRecord(suspended);
+                    WindowsPhaseClient.OwnerPhaseAsync(_config, "executor-created", suspended.ProcessId).GetAwaiter().GetResult();
+                })
+                : ConPtySession.Start(_config.Launch);
             _state = "RUNNING";
         }
         catch (ConPtyLaunchException error)
@@ -116,6 +128,7 @@ internal sealed partial class WindowsProbeOwner : IDisposable
             _empty = true;
         }
         SaveRecord();
+        if (_state == "RUNNING") await WindowsPhaseClient.OwnerPhaseAsync(_config, "active").ConfigureAwait(false);
         var monitor = MonitorAsync();
         try
         {
@@ -236,6 +249,7 @@ internal sealed partial class WindowsProbeOwner : IDisposable
                 {
                     _state = "RECOVERY_REQUIRED";
                     _failure = "cleanup_unresolved";
+                    _empty = false;
                     SaveRecord();
                     return Response(false, "cleanup_unresolved", "UNKNOWN");
                 }
@@ -296,14 +310,17 @@ internal sealed partial class WindowsProbeOwner : IDisposable
                     _state = "DRAINING";
                     InvalidateLease();
                     SaveRecord();
+                    await WindowsPhaseClient.OwnerPhaseAsync(_config, "cleaning").ConfigureAwait(false);
                     try { SetFinal(await _session.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false)); }
                     catch { _state = "RECOVERY_REQUIRED"; _failure = "cleanup_unresolved"; }
                     SaveRecord();
+                    if (_empty) await WindowsPhaseClient.OwnerPhaseAsync(_config, "final").ConfigureAwait(false);
                 }
                 catch
                 {
                     _state = "RECOVERY_REQUIRED";
                     _failure = "observation_unresolved";
+                    _empty = false;
                     // The exact handles stay held. A record-I/O failure cannot
                     // turn uncertain cleanup into a terminal success.
                     try { SaveRecord(); }
@@ -347,12 +364,13 @@ internal sealed partial class WindowsProbeOwner : IDisposable
         RawExitCode = _exitCode, ExitSource = _exitCode.HasValue ? "official_executor" : "unknown"
     };
 
-    private void SaveRecord()
+    private void SaveRecord(ConPtySession? observationSession = null)
     {
+        var observed = observationSession ?? _session;
         var record = new ProbeOwnerRecord(_config.RunId, _config.OwnerEpoch, _generation, _config.SnapshotDigest,
-            _config.PipeName, Environment.ProcessId, _createdUtc, _session?.ProcessId, _session?.ProcessStartTimeUtc,
+            _config.PipeName, Environment.ProcessId, _createdUtc, observed?.ProcessId, observed?.ProcessStartTimeUtc,
             _state, _stopRequested, _empty, _exitCode, _exitCode.HasValue ? "official_executor" : "unknown",
-            _session?.ReadReplay(0, 1).AvailableUntil ?? 0, _session?.ObserveJob(), _failure, DateTimeOffset.UtcNow);
+            observed?.ReadReplay(0, 1).AvailableUntil ?? 0, observed?.ObserveJob(), _failure, DateTimeOffset.UtcNow);
         var temporary = _recordPath + ".new-" + Guid.NewGuid().ToString("N");
         // The containing private directory was verified; every write is flushed
         // before atomic publication. Never treat a stale policy as a new launch.

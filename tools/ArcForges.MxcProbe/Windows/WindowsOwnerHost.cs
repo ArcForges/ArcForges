@@ -25,6 +25,7 @@ internal sealed class WindowsOwnerHost : IAsyncDisposable
     private const uint CpuFlags = 0x1 | 0x4;
     private readonly SafeFileHandle _job;
     private SafeFileHandle? _process;
+    private bool _assignedToJob;
     private bool _disposed;
 
     private WindowsOwnerHost(SafeFileHandle job) => _job = job;
@@ -33,7 +34,7 @@ internal sealed class WindowsOwnerHost : IAsyncDisposable
     public long ProcessCreationFileTime { get; private set; }
     public DateTimeOffset ProcessStartTimeUtc => DateTimeOffset.FromFileTime(ProcessCreationFileTime).ToUniversalTime();
 
-    public static WindowsOwnerHost Start(string stage, string privateOwnerConfigPath, ConPtyLimits aggregateLimits)
+    public static WindowsOwnerHost Start(string stage, string privateOwnerConfigPath, ConPtyLimits aggregateLimits, Action? beforeOwnerResume = null)
     {
         ArgumentNullException.ThrowIfNull(aggregateLimits);
         if (aggregateLimits.CpuRate is < 1 or > 10_000 || aggregateLimits.MemoryBytes is < 16_777_216 or > 2_147_483_648
@@ -63,7 +64,7 @@ internal sealed class WindowsOwnerHost : IAsyncDisposable
         try
         {
             host.SetLimits(aggregateLimits);
-            host.Launch(executable, privateOwnerConfigPath, control, aggregateLimits);
+            host.Launch(executable, privateOwnerConfigPath, control, aggregateLimits, beforeOwnerResume);
             return host;
         }
         catch (Exception launchFailure)
@@ -74,7 +75,7 @@ internal sealed class WindowsOwnerHost : IAsyncDisposable
         }
     }
 
-    private unsafe void Launch(string executable, string config, string control, ConPtyLimits expected)
+    private unsafe void Launch(string executable, string config, string control, ConPtyLimits expected, Action? beforeOwnerResume)
     {
         var startup = new ConPtyNative.StartupInfoEx { Info = new() { Cb = sizeof(ConPtyNative.StartupInfoEx) } };
         var command = (Quote(executable) + " --windows-owner " + Quote(config) + "\0").ToCharArray();
@@ -101,12 +102,14 @@ internal sealed class WindowsOwnerHost : IAsyncDisposable
         if (!ConPtyNative.GetProcessTimes(_process, out var creation, out _, out _, out _)) throw Error("Read held owner creation identity");
         ProcessCreationFileTime = creation;
         if (!ConPtyNative.AssignProcessToJobObject(_job, _process)) throw Error("Assign suspended owner to aggregate Job");
+        _assignedToJob = true;
         if (!ConPtyNative.IsProcessInJob(_process.DangerousGetHandle(), _job.DangerousGetHandle(), out var member))
             throw Error("Read back owner aggregate membership");
         if (!member) throw new InvalidOperationException("Suspended owner is absent from its aggregate Job.");
         var observed = ObserveAggregate();
         RequireLimits(observed, expected);
         if (!observed.ProcessIds.Contains(ProcessId)) throw new InvalidOperationException("Independent aggregate enumeration did not contain the suspended owner.");
+        beforeOwnerResume?.Invoke();
         if (ConPtyNative.ResumeThread(thread.DangerousGetHandle()) == uint.MaxValue) throw Error("Resume admitted background owner");
     }
 
@@ -171,6 +174,25 @@ internal sealed class WindowsOwnerHost : IAsyncDisposable
         return await WaitEmptyCoreAsync(Stopwatch.StartNew(), timeout).ConfigureAwait(false);
     }
 
+    public async Task<ConPtyJobObservation> WaitOwnerOnlyAsync(TimeSpan timeout)
+    {
+        ValidateTimeout(timeout);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        var process = _process ?? throw new InvalidOperationException("The background owner was not created.");
+        var watch = Stopwatch.StartNew();
+        while (true)
+        {
+            // Exclude only this exact, still-live held owner. A same-numbered
+            // PID after owner exit cannot satisfy the independent drain proof.
+            var wait = ConPtyNative.WaitForSingleObject(process, 0);
+            if (wait == 0) throw new InvalidOperationException("The held owner exited before owner-only drain observation.");
+            if (wait != 258) throw Error("Observe held owner during helper drain");
+            var actual = ObserveAggregate();
+            if (actual.ActiveProcesses == 1 && actual.ProcessIds.Length == 1 && actual.ProcessIds[0] == ProcessId) return actual;
+            await PauseAsync(watch, timeout).ConfigureAwait(false);
+        }
+    }
+
     private async Task<ConPtyJobObservation> WaitEmptyCoreAsync(Stopwatch watch, TimeSpan timeout)
     {
         while (true)
@@ -192,7 +214,11 @@ internal sealed class WindowsOwnerHost : IAsyncDisposable
         if (!ConPtyNative.TerminateJobObject(_job, 125)) throw Error("Terminate held guardian aggregate Job");
         if (_process is { } process)
         {
-            TerminateHeldOwner(process);
+            // Whole-Job termination is asynchronous. An already assigned owner
+            // must be observed through its held handle, not redundantly killed
+            // while the Job is terminating it. Only a pre-assignment launch
+            // failure needs direct held-process termination.
+            if (!_assignedToJob) TerminateHeldOwner(process);
             await WaitOwnerAsync(process, watch, timeout).ConfigureAwait(false);
         }
 

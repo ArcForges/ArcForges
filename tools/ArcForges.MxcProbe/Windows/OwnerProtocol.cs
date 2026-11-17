@@ -14,7 +14,7 @@ namespace ArcForges.MxcProbe;
 // an evidence report: the two capabilities deliberately have different roles.
 internal sealed record ProbeOwnerConfig(string RunId, string OwnerEpoch, long Generation,
     string SnapshotDigest, string PipeName, string ControllerKey, string ObserverKey,
-    ConPtyLaunchOptions Launch)
+    ConPtyLaunchOptions Launch, string? PauseAtPhase = null)
 {
     public override string ToString() => "ProbeOwnerConfig (private capabilities omitted)";
 }

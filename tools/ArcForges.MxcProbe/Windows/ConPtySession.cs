@@ -19,6 +19,23 @@ internal sealed record ConPtyJobObservation(ConPtyLimits Limits, uint LimitFlags
     uint TotalProcesses, uint ActiveProcesses, uint[] ProcessIds, long UserTimeTicks, long KernelTimeTicks, ulong PeakMemoryBytes);
 internal sealed record ConPtyExit(uint RawExitCode, string ExitSource, bool JobEmpty, ConPtyJobObservation Job);
 
+internal sealed class ConPtyAssignmentEvidence
+{
+    public uint WorkerProcessId { get; set; }
+    public DateTimeOffset WorkerCreatedUtc { get; set; }
+    public uint CandidateProcessId { get; set; }
+    public DateTimeOffset CandidateCreatedUtc { get; set; }
+    public bool WorkerResumed { get; set; }
+    public bool CandidateResumed { get; set; }
+    public bool AssignmentRejected { get; set; }
+    public int NativeErrorCode { get; set; }
+    public uint? CandidateExitCode { get; set; }
+    public bool CleanupCompleted { get; set; }
+    public ConPtyJobObservation? ParentBeforeAssignment { get; set; }
+    public ConPtyJobObservation? ParentAfterCleanup { get; set; }
+    public ConPtyJobObservation? CandidateAfterCleanup { get; set; }
+}
+
 [SupportedOSPlatform("windows")]
 internal sealed class ConPtyLaunchException(Exception launchFailure, Exception cleanupFailure, ConPtySession cleanupOwner)
     : Exception("Executor launch failed and native cleanup remains unresolved; retain the cleanup owner.", new AggregateException(launchFailure, cleanupFailure))
@@ -45,6 +62,7 @@ internal sealed class ConPtySession : IAsyncDisposable
     private readonly Task _drain;
     private SafeFileHandle? _process;
     private bool _assignedToJob;
+    private AssignmentProbeState? _assignmentProbe;
     private nint _console;
     private long _sequence;
     private bool _eof;
@@ -133,7 +151,32 @@ internal sealed class ConPtySession : IAsyncDisposable
         }
     }
 
-    public static ConPtySession Start(ConPtyLaunchOptions options)
+    public static ConPtySession Start(ConPtyLaunchOptions options) => StartCore(options, null, null);
+
+    // Exact experimental owner-loss boundary, after native admission readback
+    // and before ResumeThread. This is not a product extensibility callback.
+    internal static ConPtySession StartForOwnerPhase(ConPtyLaunchOptions options, Action<ConPtySession> beforeResume)
+    {
+        ArgumentNullException.ThrowIfNull(beforeResume);
+        return StartCore(options, beforeResume, null);
+    }
+
+    internal static ConPtyAssignmentEvidence ProbeParentAssignmentFailure(ConPtyLaunchOptions options)
+    {
+        var evidence = new ConPtyAssignmentEvidence();
+        try
+        {
+            var unexpected = StartCore(options, null, evidence);
+            unexpected.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            throw new InvalidOperationException("The full owned parent unexpectedly admitted an executor.");
+        }
+        catch (Win32Exception error) when (evidence.AssignmentRejected && evidence.CleanupCompleted && error.NativeErrorCode == evidence.NativeErrorCode)
+        {
+            return evidence;
+        }
+    }
+
+    private static ConPtySession StartCore(ConPtyLaunchOptions options, Action<ConPtySession>? beforeResume, ConPtyAssignmentEvidence? assignmentEvidence)
     {
         ArgumentNullException.ThrowIfNull(options);
         ValidateSize(options.Columns, options.Rows);
@@ -172,9 +215,14 @@ internal sealed class ConPtySession : IAsyncDisposable
             // Allocate the owner, bounded capture and live drain before native
             // creation; no successful HPCON waits for an allocating hand-off.
             session = new ConPtySession(job, input, output, options.ReplayBytes);
+            if (assignmentEvidence is not null)
+            {
+                session._assignmentProbe = new AssignmentProbeState(assignmentEvidence);
+                session._assignmentProbe.Prepare(options);
+            }
             var hr = ConPtyNative.CreatePseudoConsole(new((short)options.Columns, (short)options.Rows), inputPeer.SafePipeHandle, outputPeer.SafePipeHandle, 0, out session._console);
             Marshal.ThrowExceptionForHR(hr);
-            session.Launch(options);
+            session.Launch(options, beforeResume);
             return session;
         }
         catch (Exception launchFailure)
@@ -209,7 +257,7 @@ internal sealed class ConPtySession : IAsyncDisposable
         catch { client?.Dispose(); server.Dispose(); throw; }
     }
 
-    private unsafe void Launch(ConPtyLaunchOptions options)
+    private unsafe void Launch(ConPtyLaunchOptions options, Action<ConPtySession>? beforeResume)
     {
         var watch = Stopwatch.StartNew();
         if (!ConPtyNative.IsProcessInJob(ConPtyNative.GetCurrentProcess(), 0, out var inherited)) throw Error("Observe inherited Job");
@@ -248,6 +296,11 @@ internal sealed class ConPtySession : IAsyncDisposable
             ProcessId = information.ProcessId;
             if (!ConPtyNative.GetProcessTimes(_process, out var created, out _, out _, out _)) throw Error("Read executor creation identity");
             ProcessStartTimeUtc = DateTimeOffset.FromFileTime(created);
+            if (_assignmentProbe is not null)
+            {
+                if (ReadCommandLine(_process) != expectedCommand) throw new InvalidOperationException("Assignment probe executor argv differs from the exact private invocation.");
+                _assignmentProbe.RejectCandidate(_process, ProcessId, ProcessStartTimeUtc);
+            }
             if (!ConPtyNative.AssignProcessToJobObject(_job, _process)) throw Error("Assign suspended executor to owned outer Job");
             _assignedToJob = true;
             if (!ConPtyNative.IsProcessInJob(_process.DangerousGetHandle(), _job.DangerousGetHandle(), out var member) || !member)
@@ -256,7 +309,9 @@ internal sealed class ConPtySession : IAsyncDisposable
             if (observation.ActiveProcesses != 1 || !observation.ProcessIds.Contains(ProcessId) || observation.Limits != options.Limits)
                 throw new InvalidOperationException("Pre-resume Job membership or resource readback differs from admission.");
             if (ReadCommandLine(_process) != expectedCommand) throw new InvalidOperationException("Actual official executor command differs from the private-config invocation.");
+            beforeResume?.Invoke(this);
             if (ConPtyNative.ResumeThread(thread) != 1) throw Error("Resume admitted terminal executor");
+            if (_assignmentProbe is not null) _assignmentProbe.Evidence.CandidateResumed = true;
             SpawnMs = watch.Elapsed.TotalMilliseconds;
         }
         finally
@@ -302,23 +357,25 @@ internal sealed class ConPtySession : IAsyncDisposable
         }
     }
 
-    public unsafe ConPtyJobObservation ObserveJob()
+    public ConPtyJobObservation ObserveJob() => ObserveJob(_job);
+
+    private static unsafe ConPtyJobObservation ObserveJob(SafeFileHandle job)
     {
         var extended = default(ConPtyNative.ExtendedLimits);
         var cpu = default(ConPtyNative.CpuLimits);
         var accounting = default(ConPtyNative.Accounting);
         uint ui = 0;
-        if (!ConPtyNative.QueryInformationJobObject(_job, 9, &extended, sizeof(ConPtyNative.ExtendedLimits), out _)
-            || !ConPtyNative.QueryInformationJobObject(_job, 15, &cpu, sizeof(ConPtyNative.CpuLimits), out _)
-            || !ConPtyNative.QueryInformationJobObject(_job, 1, &accounting, sizeof(ConPtyNative.Accounting), out _)
-            || !ConPtyNative.QueryInformationJobObject(_job, 4, &ui, sizeof(uint), out _)) throw Error("Read owned outer Job");
+        if (!ConPtyNative.QueryInformationJobObject(job, 9, &extended, sizeof(ConPtyNative.ExtendedLimits), out _)
+            || !ConPtyNative.QueryInformationJobObject(job, 15, &cpu, sizeof(ConPtyNative.CpuLimits), out _)
+            || !ConPtyNative.QueryInformationJobObject(job, 1, &accounting, sizeof(ConPtyNative.Accounting), out _)
+            || !ConPtyNative.QueryInformationJobObject(job, 4, &ui, sizeof(uint), out _)) throw Error("Read owned outer Job");
         if (extended.Basic.LimitFlags != JobFlags || cpu.Flags != CpuFlags || ui != 0)
             throw new InvalidOperationException("Owned Job has unexpected breakaway/UI/resource flags.");
         // The native process limit bounds the list. Allow extra slots for an
         // update racing a terminating former member; never allocate unboundedly.
         const int capacity = 256;
         var list = stackalloc byte[8 + (capacity * sizeof(nuint))];
-        if (!ConPtyNative.QueryInformationJobObject(_job, 3, list, 8 + (capacity * sizeof(nuint)), out _)) throw Error("Enumerate owned Job descendants");
+        if (!ConPtyNative.QueryInformationJobObject(job, 3, list, 8 + (capacity * sizeof(nuint)), out _)) throw Error("Enumerate owned Job descendants");
         var listed = *(uint*)(list + 4);
         if (listed > capacity) throw new InvalidDataException("Owned Job process enumeration exceeded the bounded capacity.");
         var ids = new uint[listed];
@@ -373,7 +430,14 @@ internal sealed class ConPtySession : IAsyncDisposable
         // TerminateProcess on an already terminating assigned process. Direct
         // termination is only for create-success/assign-failure while suspended.
         if (!_assignedToJob && _process is { } process && ConPtyNative.WaitForSingleObject(process, 0) == 258
-            && !ConPtyNative.TerminateProcess(process, 125)) throw Error("Terminate owned executor handle");
+            && !ConPtyNative.TerminateProcess(process, 125))
+        {
+            var error = Marshal.GetLastPInvokeError();
+            // A failed active-process-limit assignment may already be killing
+            // this held process. Only actual handle signaling resolves it.
+            if (_assignmentProbe?.Evidence.AssignmentRejected != true || ConPtyNative.WaitForSingleObject(process, 1000) != 0)
+                throw new Win32Exception(error, "Terminate owned executor handle failed.");
+        }
     }
 
     public async ValueTask DisposeAsync()
@@ -384,7 +448,8 @@ internal sealed class ConPtySession : IAsyncDisposable
             TerminateOwned();
             // Terminal trace failure remains observable, but does not prevent
             // releasing handles once native empty/close/EOF were proven.
-            _ = await WaitCoreAsync(TimeSpan.FromSeconds(10), requireDrainSuccess: false, CancellationToken.None).ConfigureAwait(false);
+            var cleanup = await WaitCoreAsync(TimeSpan.FromSeconds(10), requireDrainSuccess: false, CancellationToken.None).ConfigureAwait(false);
+            if (_assignmentProbe is not null) _assignmentProbe.Evidence.CandidateAfterCleanup = cleanup.Job;
         }
         else
         {
@@ -393,6 +458,11 @@ internal sealed class ConPtySession : IAsyncDisposable
             _inputCancellation.Cancel();
             await close.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
             await _drain.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+        }
+        if (_assignmentProbe is not null)
+        {
+            if (_process is not null && ConPtyNative.GetExitCodeProcess(_process, out var candidateExit)) _assignmentProbe.Evidence.CandidateExitCode = candidateExit;
+            await _assignmentProbe.DisposeAsync().ConfigureAwait(false);
         }
         // On an unresolved cleanup exception retain ownership/handles so the
         // caller can record failure and retry; never fabricate a released scope.
@@ -475,4 +545,89 @@ internal sealed class ConPtySession : IAsyncDisposable
     }
 
     private static Win32Exception Error(string operation) => new(Marshal.GetLastPInvokeError(), operation + " failed.");
+
+    private sealed class AssignmentProbeState(ConPtyAssignmentEvidence evidence) : IAsyncDisposable
+    {
+        private SafeFileHandle? _parent;
+        private SafeFileHandle? _worker;
+        private bool _workerAssigned;
+        public ConPtyAssignmentEvidence Evidence { get; } = evidence;
+
+        internal unsafe void Prepare(ConPtyLaunchOptions options)
+        {
+            _parent = ConPtyNative.CreateJobObject(0, null);
+            if (_parent.IsInvalid) throw Error("Create owned assignment test Job");
+            SetLimits(_parent, options.Limits with { ProcessLimit = 1 });
+            var executable = Path.Combine(Path.GetDirectoryName(options.ExecutorPath)!, "arcforges-mxc-probe.exe");
+            ValidatePath(executable, false);
+            var command = (Quote(executable) + " --windows-workload exit 0\0").ToCharArray();
+            var system = Environment.GetFolderPath(Environment.SpecialFolder.System);
+            var environment = ("PATH=\0SystemRoot=" + Directory.GetParent(system)!.FullName + "\0\0").ToCharArray();
+            var startup = new ConPtyNative.StartupInfoEx { Info = new() { Cb = sizeof(ConPtyNative.StartupInfoEx), Flags = 0x100 } };
+            nint thread = 0;
+            try
+            {
+                ConPtyNative.ProcessInformation information;
+                fixed (char* commandPointer = command)
+                fixed (char* environmentPointer = environment)
+                {
+                    if (!ConPtyNative.CreateProcess(executable, commandPointer, 0, 0, false, 0x4 | 0x400 | 0x80000 | 0x8000000,
+                        environmentPointer, options.ControlDirectory, ref startup, out information)) throw Error("Create suspended assignment test worker");
+                }
+                thread = information.Thread;
+                _worker = new SafeFileHandle(information.Process, true);
+                Evidence.WorkerProcessId = information.ProcessId;
+                if (!ConPtyNative.GetProcessTimes(_worker, out var created, out _, out _, out _)) throw Error("Read assignment worker creation identity");
+                Evidence.WorkerCreatedUtc = DateTimeOffset.FromFileTime(created);
+                if (!ConPtyNative.AssignProcessToJobObject(_parent, _worker)) throw Error("Assign suspended test worker");
+                _workerAssigned = true;
+                if (!ConPtyNative.IsProcessInJob(_worker.DangerousGetHandle(), _parent.DangerousGetHandle(), out var member) || !member)
+                    throw new InvalidOperationException("Suspended test worker membership did not read back.");
+                var actual = ObserveJob(_parent);
+                if (actual.ActiveProcesses != 1 || actual.ProcessIds.Length != 1 || actual.ProcessIds[0] != Evidence.WorkerProcessId)
+                    throw new InvalidOperationException("Owned assignment test Job was not filled by the exact suspended worker.");
+                Evidence.ParentBeforeAssignment = actual;
+            }
+            finally { if (thread != 0) _ = ConPtyNative.CloseHandle(thread); }
+        }
+
+        internal void RejectCandidate(SafeFileHandle candidate, uint processId, DateTimeOffset created)
+        {
+            Evidence.CandidateProcessId = processId;
+            Evidence.CandidateCreatedUtc = created;
+            if (ConPtyNative.AssignProcessToJobObject(_parent!, candidate))
+                throw new InvalidOperationException("The full owned parent unexpectedly accepted the suspended candidate.");
+            Evidence.NativeErrorCode = Marshal.GetLastPInvokeError();
+            Evidence.AssignmentRejected = true;
+            throw new Win32Exception(Evidence.NativeErrorCode, "Assign suspended executor to full owned test Job failed.");
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            if (_parent is null) return;
+            if (!ConPtyNative.TerminateJobObject(_parent, 125)) throw Error("Terminate owned assignment test Job");
+            if (_worker is not null)
+            {
+                if (!_workerAssigned && ConPtyNative.WaitForSingleObject(_worker, 0) == 258 && !ConPtyNative.TerminateProcess(_worker, 125))
+                {
+                    var error = Marshal.GetLastPInvokeError();
+                    if (ConPtyNative.WaitForSingleObject(_worker, 1000) != 0) throw new Win32Exception(error, "Terminate suspended assignment test worker failed.");
+                }
+                var watch = Stopwatch.StartNew();
+                while (ConPtyNative.WaitForSingleObject(_worker, 0) == 258)
+                    await PauseAsync(watch, TimeSpan.FromSeconds(5), CancellationToken.None).ConfigureAwait(false);
+                if (ConPtyNative.WaitForSingleObject(_worker, 0) != 0) throw Error("Wait for assignment test worker");
+            }
+            var deadline = Stopwatch.StartNew();
+            ConPtyJobObservation actual;
+            while ((actual = ObserveJob(_parent)).ActiveProcesses != 0 || actual.ProcessIds.Length != 0)
+                await PauseAsync(deadline, TimeSpan.FromSeconds(5), CancellationToken.None).ConfigureAwait(false);
+            Evidence.ParentAfterCleanup = actual;
+            Evidence.CleanupCompleted = true;
+            _worker?.Dispose();
+            _parent.Dispose();
+            _worker = null;
+            _parent = null;
+        }
+    }
 }

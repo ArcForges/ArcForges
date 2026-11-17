@@ -32,6 +32,11 @@ internal static class Program
             if (!OperatingSystem.IsWindows()) return 125;
             return await WindowsWorkload.RunAsync(args[1..]).ConfigureAwait(false);
         }
+        if (args.Length == 2 && args[0] == "--windows-phase-client")
+        {
+            if (!OperatingSystem.IsWindows()) return 125;
+            return await WindowsPhaseClient.RunAsync(args[1]).ConfigureAwait(false);
+        }
         if (args.Length == 2 && args[0] == "--windows-owner")
         {
             if (!OperatingSystem.IsWindows()) return 125;
