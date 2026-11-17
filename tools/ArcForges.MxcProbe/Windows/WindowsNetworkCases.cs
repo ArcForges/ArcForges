@@ -17,9 +17,14 @@ internal static class WindowsNetworkCases
     private const string Protocol = "MXC-WIN-04";
     private const int WorkloadDeadlineMs = 4000;
 
+    // Keep the host-loopback capability identical between deny and selected
+    // egress experiments. The native egress filter must still deny every tuple
+    // not explicitly permitted; loopback permission alone is not a pass.
+    internal static WindowsNetworkChoice LocalDenyEgress { get; } = new(HostLoopback: "allow");
+
     internal static WindowsNetworkChoice SelectedEgress(WindowsNetworkEndpoint endpoint) => EgressRule(endpoint, endpoint.Address);
 
-    private static WindowsNetworkChoice EgressRule(WindowsNetworkEndpoint endpoint, IPAddress permittedAddress) => new(Allow:
+    private static WindowsNetworkChoice EgressRule(WindowsNetworkEndpoint endpoint, IPAddress permittedAddress) => new(HostLoopback: "allow", Allow:
     [
         new WindowsPolicyNetworkRule
         {
@@ -44,18 +49,18 @@ internal static class WindowsNetworkCases
     internal static async Task<List<WindowsQualificationCase>> RunAsync(string stage, string work)
     {
         var results = new List<WindowsQualificationCase>();
-        // SSH is a trusted control channel, never a payload-data tunnel.
-        await using var peer = await WindowsRemoteNetworkPeer.StartAsync().ConfigureAwait(false);
+        // The real peer stays outside ProcessContainer, on the trusted driver's
+        // own loopback sockets. No address, route, proxy or firewall is changed.
+        await using var tcp = WindowsNetworkEndpoint.StartTcp(IPAddress.Loopback);
         // UDP on the exact same IP/port distinguishes protocol permission from
-        // a port-only allow. The alternate TCP port is another live H-22 endpoint.
-        await using var tcp = WindowsNetworkEndpoint.ForRemotePeer(peer, "tcp");
-        await using var udp = WindowsNetworkEndpoint.ForRemotePeer(peer, "udp");
-        await using var otherPort = WindowsNetworkEndpoint.ForRemotePeer(peer, "tcp", otherTcpPort: true);
+        // a port-only allow. The alternate TCP port is another live owned peer.
+        await using var udp = WindowsNetworkEndpoint.StartUdp(IPAddress.Loopback, tcp.Port);
+        await using var otherPort = WindowsNetworkEndpoint.StartTcp(IPAddress.Loopback);
         foreach (var endpoint in new[] { tcp, udp, otherPort })
             await endpoint.CalibrateAsync().ConfigureAwait(false);
 
-        results.Add(await EgressAsync("network-deny-all-tcp", stage, work, tcp, WindowsNetworkChoice.DenyAll, allowed: false).ConfigureAwait(false));
-        results.Add(await EgressAsync("network-deny-all-udp", stage, work, udp, WindowsNetworkChoice.DenyAll, allowed: false).ConfigureAwait(false));
+        results.Add(await EgressAsync("network-deny-all-tcp", stage, work, tcp, LocalDenyEgress, allowed: false).ConfigureAwait(false));
+        results.Add(await EgressAsync("network-deny-all-udp", stage, work, udp, LocalDenyEgress, allowed: false).ConfigureAwait(false));
         var selectedTcp = SelectedEgress(tcp);
         results.Add(await EgressAsync("network-selected-tcp", stage, work, tcp, selectedTcp, allowed: true).ConfigureAwait(false));
         results.Add(await EgressAsync("network-selected-udp", stage, work, udp, SelectedEgress(udp), allowed: true).ConfigureAwait(false));
@@ -63,7 +68,13 @@ internal static class WindowsNetworkCases
         results.Add(await EgressAsync("network-denied-protocol", stage, work, udp, selectedTcp, allowed: false).ConfigureAwait(false));
         // Keep the actual controlled destination unchanged, but allow a different
         // CIDR. No connection or binding to an unrelated host is needed.
-        results.Add(await EgressAsync("network-denied-address", stage, work, tcp, EgressRule(tcp, IPAddress.Loopback), allowed: false).ConfigureAwait(false));
+        results.Add(await EgressAsync("network-denied-address", stage, work, tcp, EgressRule(tcp, IPAddress.Parse("192.0.2.1")), allowed: false).ConfigureAwait(false));
+        // The same exact egress allow without host-loopback permission must not
+        // silently acquire that independent native capability.
+        results.Add(await EgressAsync("network-host-loopback-denied-tcp", stage, work, tcp,
+            selectedTcp with { HostLoopback = "deny" }, allowed: false).ConfigureAwait(false));
+        results.Add(await EgressAsync("network-host-loopback-denied-udp", stage, work, udp,
+            SelectedEgress(udp) with { HostLoopback = "deny" }, allowed: false).ConfigureAwait(false));
         // Host-loopback ingress is separate from selected outbound permission.
         foreach (var transport in new[] { "tcp", "udp" })
         {
@@ -268,8 +279,8 @@ internal static class WindowsNetworkCases
         WindowsNetworkEndpoint endpoint, WindowsNetworkObservation before, bool allowed) => AppendMetadataAsync(result, policy, writer =>
     {
         var after = endpoint.Observe();
-        writer.WriteString("direction", endpoint.IsRemote ? "egress_to_owned_h22_peer" : "egress_to_owned_local_nonloopback");
-        writer.WriteBoolean("localNonloopbackMayStillBeHostLoopbackClassified", !endpoint.IsRemote);
+        writer.WriteString("direction", endpoint.IsRemote ? "egress_to_owned_h22_peer" : "egress_to_owned_local_loopback");
+        writer.WriteBoolean("peerIsHostLoopback", IPAddress.IsLoopback(endpoint.Address));
         endpoint.WritePeerIdentity(writer);
         writer.WriteString("protocol", endpoint.Protocol);
         writer.WriteString("controlledAddress", endpoint.Address.ToString());
@@ -318,8 +329,8 @@ internal static class WindowsNetworkCases
 
 internal sealed record WindowsNetworkObservation(long AcceptedOrReceived, long MatchedRequests);
 
-// Real local ingress sockets or an actual H-22 peer. Remote data does not pass
-// through SSH; snapshots are peer counters over its fixed control protocol.
+// Real local sockets owned by the trusted driver, outside ProcessContainer.
+// The preserved remote-wrapper implementation is not selected by this profile.
 // No host network configuration is changed.
 [SupportedOSPlatform("windows")]
 internal sealed class WindowsNetworkEndpoint : IAsyncDisposable
@@ -393,15 +404,21 @@ internal sealed class WindowsNetworkEndpoint : IAsyncDisposable
         return new(peer, protocol, otherTcpPort, ownsRemote: false);
     }
 
-    internal static async Task<WindowsNetworkEndpoint> StartControlledTcpAsync()
-    {
-        var peer = await WindowsRemoteNetworkPeer.StartAsync().ConfigureAwait(false);
-        return new(peer, "tcp", otherTcpPort: false, ownsRemote: true);
-    }
+    internal static Task<WindowsNetworkEndpoint> StartControlledTcpAsync()
+        => Task.FromResult(StartTcp(IPAddress.Loopback));
 
     internal void WritePeerIdentity(Utf8JsonWriter writer)
     {
-        if (_remote is null) return;
+        if (_remote is null)
+        {
+            using var process = Process.GetCurrentProcess();
+            writer.WriteNumber("peerProcessId", Environment.ProcessId);
+            writer.WriteString("peerProcessStartUtc", process.StartTime.ToUniversalTime());
+            writer.WriteString("peerControl", "trusted_driver_owned_sockets");
+            writer.WriteString("peerData", "same_windows_loopback_tcp_udp");
+            writer.WriteBoolean("peerOutsideProcessContainer", true);
+            return;
+        }
         writer.WriteNumber("peerProtocolVersion", _remote.ProtocolVersion);
         writer.WriteString("peerSourceSha256", _remote.SourceSha256);
         writer.WriteNumber("peerProcessId", _remote.PeerProcessId);

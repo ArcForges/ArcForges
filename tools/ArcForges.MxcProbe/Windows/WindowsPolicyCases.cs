@@ -123,7 +123,8 @@ internal static partial class WindowsPolicyCases
         var observations = new List<JsonElement>();
         var expected = new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["HOME"] = fixture.Owned.Home, ["USERPROFILE"] = fixture.Owned.Home,
+            ["HOME"] = fixture.Owned.Home,
+            ["USERPROFILE"] = fixture.Owned.Home,
             ["APPDATA"] = fixture.Owned.Config,
         };
         var result = await WindowsQualification.RunCaseAsync("known-folder-observations", stage, fixture.Policy, async (_, capture) =>
@@ -225,14 +226,14 @@ internal static partial class WindowsPolicyCases
         var result = await WindowsQualification.RunCaseAsync(name, stage, policy, async (_, capture) =>
         {
             foreach (var role in FilesystemRoles)
-            foreach (var operation in FilesystemOperations)
-            {
-                var expected = role == "writable" || role == "readonly" && operation == "read";
-                var row = await capture.WaitForEventAsync("filesystem", TimeSpan.FromSeconds(5), x => x.GetProperty("role").GetString() == role
-                    && x.GetProperty("operation").GetString() == operation).ConfigureAwait(false);
-                Check(row.GetProperty("succeeded").GetBoolean() == expected, "filesystem_effect_mismatch");
-                if (expected && operation == "read") Check(row.GetProperty("syntheticSentinel").GetBoolean(), "filesystem_readback_mismatch");
-            }
+                foreach (var operation in FilesystemOperations)
+                {
+                    var expected = role == "writable" || role == "readonly" && operation == "read";
+                    var row = await capture.WaitForEventAsync("filesystem", TimeSpan.FromSeconds(5), x => x.GetProperty("role").GetString() == role
+                        && x.GetProperty("operation").GetString() == operation).ConfigureAwait(false);
+                    Check(row.GetProperty("succeeded").GetBoolean() == expected, "filesystem_effect_mismatch");
+                    if (expected && operation == "read") Check(row.GetProperty("syntheticSentinel").GetBoolean(), "filesystem_readback_mismatch");
+                }
         }, fixtureEventsDirectory: events).ConfigureAwait(false);
         result.Protocol = "MXC-WIN-04";
         try
@@ -281,11 +282,12 @@ internal static partial class WindowsPolicyCases
         ConPtySession? session = null;
         WindowsTerminalCapture? capture = null;
         var officialCreateProcessRefused = false;
+        string? officialPolicyRefusal = null;
         try
         {
             // A probe failure alone cannot pass this case: launch the pinned official executor.
             session = ConPtySession.Start(new(Path.Combine(stage, "wxc-exec.exe"), policy.Path, control, 80, 24, new(5000, 1024UL * 1024 * 1024, 16),
-                PrivateDiagnostics: variant == "invalid-environment"));
+                PrivateDiagnostics: true));
             result.ExecutorProcessId = session.ProcessId;
             result.ExecutorStartUtc = session.ProcessStartTimeUtc.ToString("O", CultureInfo.InvariantCulture);
             result.InheritedJob = session.InheritedJob;
@@ -307,7 +309,7 @@ internal static partial class WindowsPolicyCases
                 VerifyInvalidEnvironmentRefusal(result, session, control, owned.Work, exited);
                 officialCreateProcessRefused = true;
             }
-            else Check(exited.RawExitCode != 0 && (exited.RawExitCode & 0x80000000) == 0, "refusal_was_success_or_native_startup_crash");
+            else officialPolicyRefusal = VerifyPolicyRefusal(result, session, control, variant, exited);
             result.Passed = true;
         }
         catch (ConPtyLaunchException exception)
@@ -358,10 +360,72 @@ internal static partial class WindowsPolicyCases
             writer.WriteString("variant", variant);
             writer.WriteBoolean("entryFileAbsent", !File.Exists(entry));
             writer.WriteBoolean("officialCreateProcessRefused", officialCreateProcessRefused);
-            writer.WriteString("scope", "Actual official executor refusal before the controlled entry marker. Invalid environment requires its owner-private official diagnostic, exact CreateProcessW error 87, structured error-envelope agreement and an outer Job containing only the executor; payload stdout and marker absence alone are not authority.");
+            writer.WriteString("officialPolicyRefusal", officialPolicyRefusal);
+            writer.WriteString("scope", "Actual official executor refusal before the controlled entry marker. Policy negatives require the exact pinned refusal reason, matching owner-private ConfigRejected audit and an outer Job that contained only the executor. Invalid environment retains its private CreateProcessW error 87 and envelope checks; payload stdout and marker absence alone are not authority.");
         });
         CheckAcls(result, fixture);
         return result;
+    }
+
+    private static string VerifyPolicyRefusal(WindowsQualificationCase result, ConPtySession session, string control, string variant, ConPtyExit exited)
+    {
+        // Fixed official 1.0.1 one-shot paths: wxc main.rs routes parse errors
+        // through ConfigRejected before runner selection; a leastPrivilege
+        // request cannot use native BaseContainer, and disabled DACL fallback
+        // stops runner resolution. None of these paths creates a payload.
+        var expected = variant switch
+        {
+            "malformed" => (Message: "Configuration parse error: Invalid version declaration: EOF while parsing a value at line 1 column 11",
+                AuditReason: "malformed_json", Backend: "unknown", Refusal: "malformed_json"),
+            "schema-version" => (Message: "Configuration parse error: Unsupported contract version. Registered versions are: 0.9.0-alpha, 1.0.0, 1.1.0-alpha",
+                AuditReason: "schema_violation", Backend: "unknown", Refusal: "unsupported_contract_version"),
+            "least-privilege" => (Message: "BaseContainer is unavailable on this system and DACL fallback is disabled (fallback.allowDaclMutation=false). Run on a system with the BaseContainer API or bfscfg.exe, or set fallback.allowDaclMutation=true in your config.",
+                AuditReason: "runner_unavailable", Backend: "processcontainer", Refusal: "least_privilege_native_incompatible_fallback_disabled"),
+            "proxy-peer-without-proxy" => (Message: "Configuration parse error: processContainer.network.allowedProxyPeer requires runtimeConfig.networkProxy",
+                AuditReason: "schema_violation", Backend: "unknown", Refusal: "proxy_peer_requires_proxy"),
+            _ => throw new InvalidDataException("Unknown fixed policy refusal case."),
+        };
+        Check(exited.RawExitCode == 1 && exited.Job is { TotalProcesses: 1, ActiveProcesses: 0 }
+            && exited.Job.ProcessIds.Length == 0, "policy_refusal_executor_only_job_not_proven");
+
+        var path = Path.Combine(control, "executor-diagnostic.log");
+        WindowsPolicy.VerifyPrivateFile(path);
+        byte[] bytes;
+        using (var input = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            Check(input.Length is > 0 and <= WindowsPolicy.MaximumUtf8Bytes, "official_refusal_diagnostic_bound");
+            bytes = new byte[checked((int)input.Length)];
+            input.ReadExactly(bytes);
+        }
+        result.PrivateDiagnostics.Add(new("executor-diagnostic.log", Convert.ToHexStringLower(SHA256.HashData(bytes)), bytes.Length));
+        var diagnostic = RemoveOfficialLogTimestamps(new UTF8Encoding(false, true).GetString(bytes));
+        Check(!diagnostic.Contains("process created (PID:", StringComparison.Ordinal)
+            && !diagnostic.Contains("selected isolation tier:", StringComparison.Ordinal), "rejected_policy_reached_native_launch");
+        var auditCount = 0;
+        foreach (var line in diagnostic.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (!line.StartsWith("{\"event\":\"mxc.ConfigRejected\",", StringComparison.Ordinal)) continue;
+            using var audit = JsonDocument.Parse(line, new JsonDocumentOptions { MaxDepth = 8 });
+            var record = audit.RootElement;
+            Check(record.GetProperty("reason").GetString() == expected.AuditReason
+                && record.GetProperty("backend").GetString() == expected.Backend, "official_refusal_audit_reason_mismatch");
+            auditCount++;
+        }
+        Check(auditCount == 1, "official_private_policy_refusal_audit_missing_or_ambiguous");
+        // Runner-resolution prose goes to stderr rather than the file sink.
+        // Its private audit above and native one-process Job history establish
+        // the source; terminal bytes only agree with the exact expected reason.
+        if (variant != "least-privilege")
+            Check(diagnostic.Split('\n', StringSplitOptions.RemoveEmptyEntries).Count(line => line.TrimEnd('\r') == expected.Message) == 1,
+                "official_private_policy_refusal_reason_missing_or_ambiguous");
+        var replay = session.ReadReplay(0, 32_768);
+        Check(replay.GapFrom is null && replay.NextSequence == replay.AvailableUntil && replay.DrainFailure is null,
+            "official_policy_refusal_capture_incomplete");
+        var text = WindowsTerminalCapture.FixtureParsingView(new UTF8Encoding(false, true).GetString(replay.Data));
+        var offset = text.IndexOf(expected.Message, StringComparison.Ordinal);
+        Check(offset >= 0 && text.IndexOf(expected.Message, offset + expected.Message.Length, StringComparison.Ordinal) < 0,
+            "official_policy_refusal_reason_missing_or_ambiguous");
+        return expected.Refusal;
     }
 
     private static void VerifyInvalidEnvironmentRefusal(WindowsQualificationCase result, ConPtySession session, string control, string work, ConPtyExit exited)
@@ -477,8 +541,11 @@ internal static partial class WindowsPolicyCases
             // and its fields do not claim an observed empty Job.
             var start = new ProcessStartInfo(executor)
             {
-                UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = control,
-                RedirectStandardOutput = true, RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WorkingDirectory = control,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
             };
             start.ArgumentList.Add("--config");
             start.ArgumentList.Add(missing);

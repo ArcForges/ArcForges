@@ -2,6 +2,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
+using System.Reflection;
 using System.Runtime.Versioning;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -14,31 +15,125 @@ namespace ArcForges.MxcProbe;
 
 internal static class WindowsQualification
 {
+    private static readonly Dictionary<string, string[]> RequiredCases = new(StringComparer.Ordinal)
+    {
+        ["MXC-WIN-01"] = ["argv-roundtrip", "reject-malformed", "reject-schema-version", "reject-missing-policy",
+            "reject-invalid-environment", "reject-least-privilege", "reject-proxy-peer-without-proxy"],
+        ["MXC-WIN-02"] = ["console-info", "line-editing", "raw-resize", "detached-flood", "exit-0", "exit-1", "exit-23",
+            "fake-error-output", "interactive-cmd", "invalid-payload-executable", "native-invalid-image", "official-policy-timeout",
+            "etx-cooperative", "etx-raw", "etx-ignore-etx"],
+        ["MXC-WIN-03"] = ["resource-cpu-capped", "resource-cpu-control", "resource-memory-cap", "resource-process-control",
+            "resource-process-cap", "resource-short-lived-burst", "resource-native-assignment-refusal", "resource-live-update",
+            "resource-invalid-before-launch"],
+        ["MXC-WIN-04"] = ["clean-environment", "known-folder-observations", "filesystem-policy", "filesystem-reparse",
+            "filesystem-external-grant", "network-deny-all-tcp", "network-deny-all-udp", "network-selected-tcp", "network-selected-udp",
+            "network-denied-port", "network-denied-protocol", "network-denied-address", "network-host-loopback-denied-tcp",
+            "network-host-loopback-denied-udp", "network-ingress-denied-tcp",
+            "network-ingress-loopback-tcp", "network-ingress-denied-udp", "network-ingress-loopback-udp",
+            "cli-named-pipe-roundtrip", "cli-native-compile-link-test"],
+        ["MXC-WIN-05"] = ["owner-detach-auth-lease", "owner-detached-bounded-replay", "owner-loss-native-drain", "center-observer-loss",
+            "root-exit-background-child", "cleanup-record-publication-failure", "client-loss-at-prepared", "client-loss-at-scope-created",
+            "client-loss-at-owner-ack", "client-loss-at-executor-created", "client-loss-at-active", "client-loss-at-cleaning",
+            "client-loss-at-final", "persistent-data-first-run", "persistent-data-new-run"],
+        ["MXC-WIN-06"] = ["combined-default-deny", "combined-selected-egress"],
+    };
+
+    [SupportedOSPlatform("windows")]
     internal static async Task<int> RunAsync(string[] args)
     {
         var report = new WindowsQualificationReport { StartedUtc = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture), Os = Environment.OSVersion.VersionString };
         string? reportPath = null;
+        FileStream? events = null;
+        string phase = "arguments";
         try
         {
             if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Native Windows is required.");
-            if ((args.Length != 6 && args.Length != 8) || args[0] != "--manifest" || args[2] != "--work" || args[4] != "--report"
-                || (args.Length == 8 && (args[6] != "--only" || args[7] is not ("terminal" or "resource" or "policy" or "network" or "lifecycle" or "combined" or "cli"))))
-                throw new ArgumentException("Expected --manifest, --work and --report, optionally followed by --only <terminal|resource|policy|network|lifecycle|combined|cli>.");
+            if (args.Length is not (8 or 12) || args[0] != "--manifest" || args[2] != "--work" || args[4] != "--report"
+                || (args.Length == 8 && (args[6] != "--only" || args[7] is not ("terminal" or "resource" or "policy" or "network" or "lifecycle" or "combined" or "cli")))
+                || (args.Length == 12 && (args[6] != "--source" || args[8] != "--design" || args[10] != "--plan")))
+                throw new WindowsQualificationCheckException("full_exact_commits_or_diagnostic_selection_required");
             report.SelectionGroup = args.Length == 8 ? args[7] : "full";
             report.DiagnosticSelection = report.SelectionGroup != "full";
+            if (!report.DiagnosticSelection)
+            {
+                Check(IsCommit(args[7]) && IsCommit(args[9]) && IsCommit(args[11]), "full_exact_commits_required");
+                report.SourceCommit = args[7].ToLowerInvariant();
+                report.DesignCommit = args[9].ToLowerInvariant();
+                report.PlanCommit = args[11].ToLowerInvariant();
+            }
             var manifest = Path.GetFullPath(args[1]);
             var stage = Path.GetDirectoryName(manifest)!;
             var work = Path.GetFullPath(args[3]);
             var requestedReport = Path.GetFullPath(args[5]);
-            Check(!Within(work, stage) && !Within(requestedReport, stage), "evidence_outside_stage_required");
+            Check(!Within(work, stage) && !Within(requestedReport, stage) && !Within(requestedReport, work), "evidence_outside_stage_and_work_required");
             Check(!Directory.Exists(work) && !File.Exists(work), "fresh_workspace_required");
             Check(!File.Exists(requestedReport) && !Directory.Exists(requestedReport), "fresh_report_required");
             reportPath = requestedReport;
+            Directory.CreateDirectory(Path.GetDirectoryName(reportPath)!);
+            events = new FileStream(reportPath + ".events.jsonl", FileMode.CreateNew, FileAccess.Write, FileShare.Read, 4096, FileOptions.WriteThrough);
+            phase = "stage_identity";
+            WritePhase(events, report.RunId, phase, "begin");
             Program.ValidateStage(manifest);
+            var identity = JsonSerializer.Deserialize(File.ReadAllBytes(manifest), ProbeJson.Default.StageManifest)
+                ?? throw new WindowsQualificationCheckException("stage_manifest_missing");
+            report.ArtifactVersion = identity.Version;
+            report.ArtifactSchema = identity.Schema;
+            report.ArtifactRid = identity.Rid;
+            report.NativeSourceCommit = identity.Source;
+            report.PackageSha256 = identity.PackageSha256;
+            report.ReleaseSha256 = identity.ReleaseSha256;
+            report.StageFiles = identity.Files;
+            report.ManifestSha256 = FileHash(manifest);
+            report.ExecutableSha256 = FileHash(Environment.ProcessPath!);
+            report.ExecutableInformationalVersion = typeof(WindowsQualification).Assembly
+                .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "";
+            if (!report.DiagnosticSelection)
+                Check(report.ExecutableInformationalVersion.EndsWith("+" + report.SourceCommit, StringComparison.Ordinal), "full_executable_source_commit_mismatch");
+            report.HostFacts = new(StringComparer.Ordinal)
+            {
+                ["host"] = Environment.MachineName,
+                ["osDescription"] = RuntimeInformation.OSDescription,
+                ["osArchitecture"] = RuntimeInformation.OSArchitecture.ToString(),
+                ["processArchitecture"] = RuntimeInformation.ProcessArchitecture.ToString(),
+                ["rid"] = RuntimeInformation.RuntimeIdentifier,
+                ["logicalProcessors"] = Environment.ProcessorCount.ToString(CultureInfo.InvariantCulture),
+            };
             report.StageVerified = true;
+            WritePhase(events, report.RunId, phase, "verified");
+            phase = "driver_job_context";
+            WritePhase(events, report.RunId, phase, "begin");
+            var driver = WindowsHostContext.CaptureDriverJob(report.RunId);
+            report.DriverJobContext = driver;
+            var job = driver.GetProperty("job");
+            bool identityObserved = driver.GetProperty("processCreationFileTime").ValueKind == JsonValueKind.Number;
+            bool membershipObserved = job.GetProperty("status").GetString() == "membership_observed";
+            report.DriverInheritedJob = membershipObserved ? job.GetProperty("inJob").GetBoolean() : null;
+            report.DriverJobChainEstablished = identityObserved && report.DriverInheritedJob == false;
+            report.DriverJobChainStatus = report.DriverJobChainEstablished ? "no_inherited_job_observed_owned_chain_only"
+                : report.DriverInheritedJob == true ? "inherited_ancestor_chain_unproven" : "driver_job_observation_unproven";
+            var driverBytes = Encoding.UTF8.GetBytes(driver.GetRawText());
+            Check(driverBytes.Length <= 16 * 1024, "driver_job_context_bound");
+            string driverPath = reportPath + ".driver-context.json";
+            using (var output = new FileStream(driverPath, FileMode.CreateNew, FileAccess.Write, FileShare.Read, 4096, FileOptions.WriteThrough))
+            {
+                output.Write(driverBytes);
+                output.Flush(flushToDisk: true);
+            }
+            report.DriverJobContextFile = Path.GetFileName(driverPath);
+            report.DriverJobContextSha256 = FileHash(driverPath);
+            WritePhase(events, report.RunId, phase, report.DriverJobChainStatus);
+            if (!report.DriverJobChainEstablished)
+            {
+                report.Limitations = [.. report.Limitations, "Original driver Job ancestry is unproven; the immediate-Job snapshot cannot enumerate unknown ancestors. Full qualification is unavailable in this invocation."];
+                if (!report.DiagnosticSelection)
+                    throw new WindowsQualificationCheckException(report.DriverInheritedJob == true
+                        ? "driver_inherited_job_chain_unproven" : "driver_job_observation_unproven");
+            }
             Directory.CreateDirectory(work);
             if (report.DiagnosticSelection)
             {
+                phase = "diagnostic_" + report.SelectionGroup;
+                WritePhase(events, report.RunId, phase, "begin");
                 report.Cases = report.SelectionGroup switch
                 {
                     "terminal" => await RunTerminalCasesAsync(stage, work).ConfigureAwait(false),
@@ -50,42 +145,139 @@ internal static class WindowsQualification
                     "cli" => await WindowsCliCases.RunAsync(stage, work).ConfigureAwait(false),
                     _ => throw new ArgumentException("Unknown diagnostic group.")
                 };
+                WritePhase(events, report.RunId, phase, report.Cases.All(CaseSucceeded) ? "passed" : "failed");
             }
             else
             {
-                report.Cases = await RunTerminalCasesAsync(stage, work).ConfigureAwait(false);
-                if (report.Cases.Count > 0 && report.Cases[0].Passed && report.Cases.All(item => item.UnresolvedCleanupOwner is null && item.CleanupFailure is null))
+                (string Name, Func<Task<List<WindowsQualificationCase>>> Run)[] groups =
+                [
+                    ("terminal", () => RunTerminalCasesAsync(stage, work)),
+                    ("resource", () => WindowsResourceCases.RunAsync(stage, work)),
+                    ("policy", () => WindowsPolicyCases.RunAsync(stage, work)),
+                    ("network", () => WindowsNetworkCases.RunAsync(stage, work)),
+                    ("cli", () => WindowsCliCases.RunAsync(stage, work)),
+                    ("lifecycle", () => WindowsLifecycleCases.RunAsync(stage, work)),
+                    ("combined", () => WindowsCombinedCases.RunAsync(stage, work)),
+                ];
+                foreach (var group in groups)
                 {
-                    report.Cases.AddRange(await WindowsResourceCases.RunAsync(stage, work).ConfigureAwait(false));
-                    if (report.Cases.All(item => item.UnresolvedCleanupOwner is null && item.CleanupFailure is null)) report.Cases.AddRange(await WindowsPolicyCases.RunAsync(stage, work).ConfigureAwait(false));
-                    if (report.Cases.All(item => item.UnresolvedCleanupOwner is null && item.CleanupFailure is null)) report.Cases.AddRange(await WindowsNetworkCases.RunAsync(stage, work).ConfigureAwait(false));
-                    if (report.Cases.All(item => item.UnresolvedCleanupOwner is null && item.CleanupFailure is null)) report.Cases.AddRange(await WindowsCliCases.RunAsync(stage, work).ConfigureAwait(false));
-                    if (report.Cases.All(item => item.UnresolvedCleanupOwner is null && item.CleanupFailure is null)) report.Cases.AddRange(await WindowsLifecycleCases.RunAsync(stage, work).ConfigureAwait(false));
-                    if (report.Cases.All(item => item.UnresolvedCleanupOwner is null && item.CleanupFailure is null)) report.Cases.AddRange(await WindowsCombinedCases.RunAsync(stage, work).ConfigureAwait(false));
+                    phase = "full_" + group.Name;
+                    WritePhase(events, report.RunId, phase, "begin");
+                    var cases = await group.Run().ConfigureAwait(false);
+                    report.Cases.AddRange(cases);
+                    bool passed = cases.Count > 0 && cases.All(CaseSucceeded);
+                    WritePhase(events, report.RunId, phase, passed ? "passed" : "failed");
+                    // Diagnose a failed slice before starting more native workloads.
+                    if (!passed) break;
                 }
             }
-            report.ExecutedCasesPassed = report.Cases.Count > 0 && report.Cases.All(x => x.Passed);
+            phase = "final_stage_identity";
+            WritePhase(events, report.RunId, phase, "begin");
+            Program.ValidateStage(manifest);
+            Check(FileHash(manifest) == report.ManifestSha256 && FileHash(Environment.ProcessPath!) == report.ExecutableSha256,
+                "profile_stage_identity_changed");
+            report.FinalIdentityVerified = true;
+            WritePhase(events, report.RunId, phase, "verified");
         }
         catch (Exception exception)
         {
+            report.FailurePhase = phase;
             report.FailureCode = FailureCode(exception);
             report.FailureType = exception.GetType().Name;
             report.FailureHResult = exception.HResult;
             report.Failure = ObserveFailure(exception);
+            TryWriteFailure(events, report, phase, exception);
         }
-
-        // A selected diagnostic group can never qualify the combined profile.
-        if (report.DiagnosticSelection) { report.Status = "partial"; report.QualificationPassed = false; }
+        FinalizeReport(report);
         report.FinishedUtc = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
-        var json = JsonSerializer.Serialize(report, WindowsQualificationJson.Default.WindowsQualificationReport);
-        if (reportPath is not null)
+        try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(reportPath)!);
-            await using var output = new FileStream(reportPath, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
-            await output.WriteAsync(Encoding.UTF8.GetBytes(json)).ConfigureAwait(false);
+            if (events is not null) WritePhase(events, report.RunId, "qualification", report.QualificationPassed ? "passed" : "partial_or_failed");
         }
-        Console.WriteLine(json);
-        return report.ExecutedCasesPassed ? 2 : 1;
+        catch (Exception exception) { RecordEvidenceFailure(report, exception); }
+        finally
+        {
+            try { events?.Dispose(); }
+            catch (Exception exception) { RecordEvidenceFailure(report, exception); }
+        }
+        try
+        {
+            if (reportPath is not null)
+            {
+                byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(report, WindowsQualificationJson.Default.WindowsQualificationReport);
+                using var output = new FileStream(reportPath, FileMode.CreateNew, FileAccess.Write, FileShare.Read, 4096, FileOptions.WriteThrough);
+                await output.WriteAsync(bytes).ConfigureAwait(false);
+                output.Flush(flushToDisk: true);
+            }
+        }
+        catch (Exception exception) { RecordEvidenceFailure(report, exception); }
+        Console.WriteLine(JsonSerializer.Serialize(report, WindowsQualificationJson.Default.WindowsQualificationReport));
+        return report.QualificationPassed ? 0 : report.DiagnosticSelection && report.ExecutedCasesPassed && report.Failure is null && report.EvidenceFailure is null ? 2 : 1;
+    }
+
+    private static bool IsCommit(string value) => value.Length == 40 && value.All(char.IsAsciiHexDigit);
+
+    private static string FileHash(string path)
+    {
+        using var stream = File.OpenRead(path);
+        return Convert.ToHexStringLower(SHA256.HashData(stream));
+    }
+
+    private static bool CaseSucceeded(WindowsQualificationCase item)
+    {
+        bool scopeClosed = item.Name == "reject-missing-policy"
+            ? item.ExitSource == "official_executor_config_rejection" && item.ExecutorProcessId != 0
+                && item.ExecutorStartUtc is not null && item.RawExecutorExit is > 0 and < 0x80000000
+            : item.JobEmpty;
+        return item.Passed && item.CleanupCompleted && scopeClosed && item.UnresolvedCleanupOwner is null
+            && item.PrimaryFailure is null && item.CleanupFailure is null && item.EvidenceFailure is null
+            && item.DiagnosticFailure is null && item.DrainFailure is null && item.FailureCode is null;
+    }
+
+    private static void FinalizeReport(WindowsQualificationReport report)
+    {
+        var observed = report.Cases.GroupBy(item => item.Name, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
+        var expectedNames = RequiredCases.Values.SelectMany(names => names).ToHashSet(StringComparer.Ordinal);
+        report.DuplicateCases = observed.Where(item => item.Value.Length != 1).Select(item => item.Key).Order(StringComparer.Ordinal).ToArray();
+        report.UnexpectedCases = observed.Keys.Where(name => !expectedNames.Contains(name)).Order(StringComparer.Ordinal).ToArray();
+        report.IncompleteProtocols = RequiredCases.Where(protocol => protocol.Value.Any(name =>
+            !observed.TryGetValue(name, out var cases) || cases.Length != 1 || cases[0].Protocol != protocol.Key || !CaseSucceeded(cases[0])))
+            .Select(protocol => protocol.Key).ToArray();
+        report.ExpectedCases = expectedNames.Count;
+        report.ExecutedCasesPassed = report.Cases.Count > 0 && report.Cases.All(CaseSucceeded);
+        report.CleanupConfirmed = report.Cases.Count > 0 && report.Cases.All(item => item.CleanupCompleted && item.UnresolvedCleanupOwner is null && item.CleanupFailure is null);
+        report.QualificationPassed = !report.DiagnosticSelection && report.StageVerified && report.FinalIdentityVerified && report.DriverJobChainEstablished
+            && report.Failure is null && report.EvidenceFailure is null && report.ExecutedCasesPassed && report.CleanupConfirmed
+            && report.Cases.Count == report.ExpectedCases && report.IncompleteProtocols.Length == 0
+            && report.DuplicateCases.Length == 0 && report.UnexpectedCases.Length == 0;
+        report.Status = report.DiagnosticSelection ? "partial" : report.QualificationPassed ? "passed" : "failed";
+    }
+
+    private static void WritePhase(FileStream stream, string runId, string phase, string outcome, WindowsQualificationFailure? failure = null)
+    {
+        byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(new WindowsQualificationPhase(runId, phase, outcome, DateTimeOffset.UtcNow, failure),
+            WindowsQualificationJson.Default.WindowsQualificationPhase);
+        Check(stream.Position + bytes.Length + 1 <= 256 * 1024, "qualification_event_bound");
+        stream.Write(bytes);
+        stream.WriteByte((byte)'\n');
+        stream.Flush(flushToDisk: true);
+    }
+
+    private static void TryWriteFailure(FileStream? events, WindowsQualificationReport report, string phase, Exception exception)
+    {
+        if (events is null) return;
+        try { WritePhase(events, report.RunId, phase, "failed", ObserveFailure(exception)); }
+        catch (Exception evidence) { RecordEvidenceFailure(report, evidence); }
+    }
+
+    private static void RecordEvidenceFailure(WindowsQualificationReport report, Exception exception)
+    {
+        report.EvidenceFailure ??= ObserveFailure(exception);
+        report.QualificationPassed = false;
+        report.Status = report.DiagnosticSelection ? "partial" : "failed";
+        Console.Error.WriteLine("windows_qualification_evidence_failed:type=" + exception.GetType().Name
+            + ":hresult=" + exception.HResult.ToString("X8", CultureInfo.InvariantCulture));
     }
 
     [SupportedOSPlatform("windows")]
@@ -887,24 +1079,57 @@ internal sealed class WindowsQualificationCase
 internal sealed class WindowsQualificationReport
 {
     public string Profile { get; set; } = "windows-process-executor-v1";
+    public string ProfileRevision { get; set; } = "win01-06-cases-v1";
+    public string RunId { get; set; } = Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture);
     public string SelectionGroup { get; set; } = "full";
     public bool DiagnosticSelection { get; set; }
     public string Status { get; set; } = "partial";
     public bool QualificationPassed { get; set; }
     public bool ExecutedCasesPassed { get; set; }
+    public bool CleanupConfirmed { get; set; }
     public bool StageVerified { get; set; }
+    public bool FinalIdentityVerified { get; set; }
+    public JsonElement? DriverJobContext { get; set; }
+    public string? DriverJobContextFile { get; set; }
+    public string? DriverJobContextSha256 { get; set; }
+    public bool? DriverInheritedJob { get; set; }
+    public bool DriverJobChainEstablished { get; set; }
+    public string DriverJobChainStatus { get; set; } = "not_observed";
+    public string SourceCommit { get; set; } = "";
+    public string DesignCommit { get; set; } = "";
+    public string PlanCommit { get; set; } = "";
+    public string ExecutableInformationalVersion { get; set; } = "";
+    public string ExecutableSha256 { get; set; } = "";
+    public string ManifestSha256 { get; set; } = "";
+    public string ArtifactVersion { get; set; } = "";
+    public string ArtifactSchema { get; set; } = "";
+    public string ArtifactRid { get; set; } = "";
+    public string NativeSourceCommit { get; set; } = "";
+    public string PackageSha256 { get; set; } = "";
+    public string ReleaseSha256 { get; set; } = "";
+    public StageMember[] StageFiles { get; set; } = [];
+    public Dictionary<string, string> HostFacts { get; set; } = new(StringComparer.Ordinal);
     public string Os { get; set; } = "";
     public string StartedUtc { get; set; } = "";
     public string FinishedUtc { get; set; } = "";
     public string[] IncompleteProtocols { get; set; } = ["MXC-WIN-01", "MXC-WIN-02", "MXC-WIN-03", "MXC-WIN-04", "MXC-WIN-05", "MXC-WIN-06"];
+    public int ExpectedCases { get; set; }
+    public string[] DuplicateCases { get; set; } = [];
+    public string[] UnexpectedCases { get; set; } = [];
+    public string[] Limitations { get; set; } = ["Lower-capability-host rejection: NOT_RUN; no designated lower-capability host is available. The deterministic official policy refusals remain required."];
     public List<WindowsQualificationCase> Cases { get; set; } = [];
+    public string? FailurePhase { get; set; }
     public string? FailureCode { get; set; }
     public string? FailureType { get; set; }
     public int FailureHResult { get; set; }
     public WindowsQualificationFailure? Failure { get; set; }
+    public WindowsQualificationFailure? EvidenceFailure { get; set; }
 }
+
+internal sealed record WindowsQualificationPhase(string RunId, string Phase, string Outcome, DateTimeOffset AtUtc, WindowsQualificationFailure? Failure);
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, WriteIndented = true)]
 [JsonSerializable(typeof(WindowsQualificationReport))]
 [JsonSerializable(typeof(WindowsOwnedDiagnostic))]
+[JsonSerializable(typeof(WindowsQualificationPhase))]
 internal sealed partial class WindowsQualificationJson : JsonSerializerContext;

@@ -54,7 +54,7 @@ internal static class WindowsCombinedCases
             ["--windows-workload", "combined", "30000", "32", "2", endpoint.Address.ToString(), endpoint.Port.ToString(CultureInfo.InvariantCulture),
                 writable, readonlyFile, Path.Combine(control, "request.json"), neighborFile, outsideFile],
             owned, [stage, Environment.SystemDirectory, readonlyDirectory], [control, neighbor],
-            selected ? WindowsNetworkCases.SelectedEgress(endpoint) : WindowsNetworkChoice.DenyAll);
+            selected ? WindowsNetworkCases.SelectedEgress(endpoint) : WindowsNetworkCases.LocalDenyEgress);
         request.Process.Timeout = 45_000; // Overall combined lifetime, separate from its 4s socket attempt.
         var eventsDirectory = WindowsQualification.EnableFixtureEvents(request, owned.Work);
         WindowsOwnerHost? guardian = null;
@@ -75,6 +75,7 @@ internal static class WindowsCombinedCases
         var rebound = false;
         var resized = false;
         var unicodeOutput = false;
+        WindowsCombinedPressureOverlap? pressureOverlap = null;
         try
         {
             var admissionWatch = Stopwatch.StartNew();
@@ -168,6 +169,7 @@ internal static class WindowsCombinedCases
             else Require(network.TryGetProperty("nativeErrorCode", out var nativeError) && nativeError.GetInt32() == 10013
                 || network.GetProperty("errorType").GetString() == "OperationCanceledException" && !network.GetProperty("canceled").GetBoolean(),
                 "combined_network_refusal_not_observed");
+            pressureOverlap = VerifyPressureOverlap(eventsDirectory, network, aggregate);
             endpoint.RequireHealthy();
             var afterNetwork = endpoint.Observe();
             Require(selected ? afterNetwork.MatchedRequests == beforeNetwork.MatchedRequests + 1 : afterNetwork.AcceptedOrReceived == beforeNetwork.AcceptedOrReceived,
@@ -227,6 +229,19 @@ internal static class WindowsCombinedCases
                 writer.WriteBoolean("sameOwnerRebound", rebound);
                 writer.WriteBoolean("actualResize", resized);
                 writer.WriteBoolean("unicodeTerminalOutput", unicodeOutput);
+                writer.WriteStartObject("pressureOverlap");
+                writer.WriteBoolean("observed", pressureOverlap is not null);
+                if (pressureOverlap is not null)
+                {
+                    writer.WriteNumber("payloadPid", pressureOverlap.PayloadPid);
+                    writer.WriteNumber("loadReadyIndex", pressureOverlap.LoadReadyIndex);
+                    writer.WriteNumber("pressureReleasedIndex", pressureOverlap.PressureReleasedIndex);
+                    writer.WriteNumber("networkAttemptIndex", pressureOverlap.NetworkAttemptIndex);
+                    writer.WriteNumber("networkResultIndex", pressureOverlap.NetworkResultIndex);
+                    writer.WriteNumber("filesystemEffects", pressureOverlap.FilesystemEffects);
+                    writer.WriteString("basis", "same_fixture_process_order_with_payload_in_native_job_and_no_load_completion_at_observation");
+                }
+                writer.WriteEndObject();
                 if (consoleReadyMs.HasValue) writer.WriteNumber("setupToConsoleReadyMs", consoleReadyMs.Value); else writer.WriteNull("setupToConsoleReadyMs");
                 if (idleWindowMs.HasValue) writer.WriteNumber("idleWindowMs", idleWindowMs.Value); else writer.WriteNull("idleWindowMs");
                 if (idleAggregateCpuMs.HasValue) writer.WriteNumber("idleAggregateCpuMs", idleAggregateCpuMs.Value); else writer.WriteNull("idleAggregateCpuMs");
@@ -271,6 +286,36 @@ internal static class WindowsCombinedCases
     }
 
     private sealed record WindowsCombinedMemory(uint Pid, string ImageName, string CreatedUtc, long ResidentBytes, long PrivateBytes);
+
+    private sealed record WindowsCombinedPressureOverlap(uint PayloadPid, int LoadReadyIndex, int PressureReleasedIndex,
+        int NetworkAttemptIndex, int NetworkResultIndex, int FilesystemEffects);
+
+    private static WindowsCombinedPressureOverlap VerifyPressureOverlap(string eventsDirectory, JsonElement network, ConPtyJobObservation aggregate)
+    {
+        // Bounded fixture records establish workload ordering only. Native Job
+        // membership and external endpoint counters establish the boundary.
+        uint rootPid = network.GetProperty("pid").GetUInt32();
+        Require(aggregate.ProcessIds.Contains(rootPid), "combined_pressure_payload_not_in_native_job");
+        var events = WindowsTerminalCapture.ReadFixtureEvents(eventsDirectory)
+            .Where(item => item.GetProperty("pid").GetUInt32() == rootPid).ToArray();
+        int ready = Array.FindIndex(events, item => Event(item, "load-ready"));
+        int release = Array.FindIndex(events, item => Event(item, "combined-pressure-ready"));
+        int attempt = Array.FindIndex(events, item => Event(item, "network-attempt"));
+        int completed = Array.FindIndex(events, item => Event(item, "network") || Event(item, "network-observation-failed"));
+        var filesystem = events.Select((item, index) => (Item: item, Index: index))
+            .Where(value => Event(value.Item, "filesystem")).ToArray();
+        Require(ready >= 0 && release > ready && attempt > release && completed > attempt,
+            "combined_network_did_not_run_after_pressure_ready");
+        Require(events[ready].GetProperty("memoryBytesTouched").GetInt32() == 32 * 1024 * 1024
+            && events[ready].GetProperty("childrenCreated").GetInt32() == 2, "combined_pressure_setup_incomplete");
+        Require(filesystem.Length == 10 && filesystem.All(value => value.Index > release),
+            "combined_filesystem_did_not_run_after_pressure_ready");
+        Require(!events.Any(item => Event(item, "load-finished") || Event(item, "load-observation-failed")),
+            "combined_pressure_ended_before_effect_observation");
+        return new(rootPid, ready, release, attempt, completed, filesystem.Length);
+    }
+
+    private static bool Event(JsonElement item, string name) => item.GetProperty("event").GetString() == name;
 
     private static Task<ProbeOwnerResponse> SendAsync(ProbeOwnerConfig config, string operation) =>
         OwnerProtocol.SendAsync(config, new() { Operation = operation, Generation = config.Generation });

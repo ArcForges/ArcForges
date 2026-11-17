@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Diagnostics;
+using System.Globalization;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
@@ -27,6 +28,8 @@ internal sealed partial class WindowsProbeOwner : IDisposable
     private readonly CancellationTokenSource _shutdown = new();
     private readonly DateTimeOffset _createdUtc;
     private readonly Dictionary<long, (byte[] Digest, ProbeOwnerResponse Response)> _acks = [];
+    private readonly object _evidenceGate = new();
+    private FileStream? _events;
     private ConPtySession? _session;
     private long _generation;
     private string _state = "STARTING";
@@ -47,6 +50,20 @@ internal sealed partial class WindowsProbeOwner : IDisposable
         _generation = config.Generation;
         using var process = Process.GetCurrentProcess();
         _createdUtc = process.StartTime.ToUniversalTime();
+        try
+        {
+            var eventsPath = Path.Combine(config.Launch.ControlDirectory, "owner-events.jsonl");
+            _events = new FileStream(eventsPath, FileMode.CreateNew, FileAccess.Write, FileShare.Read, 4_096, FileOptions.WriteThrough);
+            WindowsPolicy.VerifyPrivateFile(eventsPath);
+        }
+        catch (Exception error)
+        {
+            try { _events?.Dispose(); }
+            catch (Exception cleanupError) { EvidenceFailure("evidence_open_cleanup", cleanupError, error); }
+            _events = null;
+            EvidenceFailure("evidence_open", error);
+        }
+        ObservePhase("owner", "created");
     }
 
     public static async Task<int> RunAsync(string privateOwnerConfigPath)
@@ -62,6 +79,11 @@ internal sealed partial class WindowsProbeOwner : IDisposable
         WindowsPolicy.VerifyPrivateControl(config.Launch.ControlDirectory);
         using var owner = new WindowsProbeOwner(config);
         try { return await owner.RunCoreAsync().ConfigureAwait(false); }
+        catch (Exception error)
+        {
+            owner.ObservePhase("owner", "failed", error);
+            throw;
+        }
         finally
         {
             CryptographicOperations.ZeroMemory(owner._controllerKey);
@@ -102,6 +124,7 @@ internal sealed partial class WindowsProbeOwner : IDisposable
         await WindowsPhaseClient.OwnerPhaseAsync(_config, "owner-ack").ConfigureAwait(false);
         try
         {
+            ObservePhase("launch", "begin");
             _session = _config.PauseAtPhase == "executor-created"
                 ? ConPtySession.StartForOwnerPhase(_config.Launch, suspended =>
                 {
@@ -112,20 +135,28 @@ internal sealed partial class WindowsProbeOwner : IDisposable
                 })
                 : ConPtySession.Start(_config.Launch);
             _state = "RUNNING";
+            ObservePhase("launch", "running");
         }
         catch (ConPtyLaunchException error)
         {
             _session = error.CleanupOwner;
             _state = "RECOVERY_REQUIRED";
             _failure = "launch_cleanup_unresolved";
+            if (error.InnerException is AggregateException combined && combined.InnerExceptions.Count >= 2)
+            {
+                ObservePhase("launch", "failed", combined.InnerExceptions[0]);
+                ObservePhase("launch_cleanup", "unresolved", combined.InnerExceptions[1]);
+            }
+            else ObservePhase("launch", "cleanup_unresolved", error);
         }
-        catch
+        catch (Exception error)
         {
             // Start only returns a generic exception after proving its own
             // cleanup; unresolved handles are returned in ConPtyLaunchException.
             _state = "FAILED";
             _failure = "launch_rejected";
             _empty = true;
+            ObservePhase("launch", "rejected_cleanup_confirmed", error);
         }
         SaveRecord();
         if (_state == "RUNNING") await WindowsPhaseClient.OwnerPhaseAsync(_config, "active").ConfigureAwait(false);
@@ -146,6 +177,7 @@ internal sealed partial class WindowsProbeOwner : IDisposable
                 {
                     // A vanished/malformed/unauthenticated client cannot stop
                     // the independently owned terminal. Never log its bytes.
+                    if (!_shutdown.IsCancellationRequested) ObservePhase("client_connection", "refused_or_lost", error);
                 }
             }
         }
@@ -177,6 +209,7 @@ internal sealed partial class WindowsProbeOwner : IDisposable
         try { response = await ExecuteAsync(request, hello.Observer).ConfigureAwait(false); }
         catch (Exception error) when (error is ArgumentException or InvalidOperationException or IOException or System.ComponentModel.Win32Exception)
         {
+            ObservePhase("client_operation", "refused", error);
             response = Response(false, "operation_refused");
         }
         finally { _gate.Release(); }
@@ -229,6 +262,7 @@ internal sealed partial class WindowsProbeOwner : IDisposable
                 SaveRecord(); // Durable safety intent precedes the native effect.
                 try
                 {
+                    ObservePhase("stop_cleanup", "begin");
                     if (_session is null) return Response(false, "cleanup_owner_unavailable", "UNKNOWN");
                     if (_session.ProcessId == 0)
                     {
@@ -243,13 +277,15 @@ internal sealed partial class WindowsProbeOwner : IDisposable
                     }
                     else SetFinal(await _session.ForceStopAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false));
                     SaveRecord();
+                    ObservePhase("stop_cleanup", "confirmed");
                     return Response(true, effect: "CONFIRMED");
                 }
-                catch
+                catch (Exception error)
                 {
                     _state = "RECOVERY_REQUIRED";
                     _failure = "cleanup_unresolved";
                     _empty = false;
+                    ObservePhase("stop_cleanup", "unresolved", error);
                     SaveRecord();
                     return Response(false, "cleanup_unresolved", "UNKNOWN");
                 }
@@ -285,7 +321,11 @@ internal sealed partial class WindowsProbeOwner : IDisposable
             else _session.Resize(request.Columns, request.Rows);
             response = Response(true, effect: "CONFIRMED");
         }
-        catch { response = Response(false, "terminal_ack_unavailable", "UNKNOWN"); }
+        catch (Exception error)
+        {
+            ObservePhase("terminal_operation", "ack_unavailable", error);
+            response = Response(false, "terminal_ack_unavailable", "UNKNOWN");
+        }
         _acks.Add(request.Sequence, (digest, response));
         if (_acks.Count > 32)
         {
@@ -311,20 +351,34 @@ internal sealed partial class WindowsProbeOwner : IDisposable
                     InvalidateLease();
                     SaveRecord();
                     await WindowsPhaseClient.OwnerPhaseAsync(_config, "cleaning").ConfigureAwait(false);
-                    try { SetFinal(await _session.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false)); }
-                    catch { _state = "RECOVERY_REQUIRED"; _failure = "cleanup_unresolved"; }
+                    try
+                    {
+                        ObservePhase("monitor_cleanup", "begin");
+                        SetFinal(await _session.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false));
+                        ObservePhase("monitor_cleanup", "confirmed");
+                    }
+                    catch (Exception error)
+                    {
+                        _state = "RECOVERY_REQUIRED";
+                        _failure = "cleanup_unresolved";
+                        ObservePhase("monitor_cleanup", "unresolved", error);
+                    }
                     SaveRecord();
                     if (_empty) await WindowsPhaseClient.OwnerPhaseAsync(_config, "final").ConfigureAwait(false);
                 }
-                catch
+                catch (Exception error)
                 {
                     _state = "RECOVERY_REQUIRED";
                     _failure = "observation_unresolved";
                     _empty = false;
+                    ObservePhase("monitor_observation", "unresolved", error);
                     // The exact handles stay held. A record-I/O failure cannot
                     // turn uncertain cleanup into a terminal success.
                     try { SaveRecord(); }
-                    catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception) { }
+                    catch (Exception recordError) when (recordError is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+                    {
+                        ObservePhase("monitor_recovery_record", "failed", recordError);
+                    }
                 }
                 finally { _gate.Release(); }
             }
@@ -357,11 +411,19 @@ internal sealed partial class WindowsProbeOwner : IDisposable
 
     private ProbeOwnerResponse Response(bool ok, string? error = null, string effect = "NONE") => new()
     {
-        Ok = ok, Error = error, Effect = effect, Generation = _generation, State = _state,
-        CleanupConfirmed = _empty, DataDeletionAllowed = _empty,
-        OwnerPid = Environment.ProcessId, OwnerCreatedUtc = _createdUtc,
-        ExecutorPid = _session?.ProcessId, ExecutorCreatedUtc = _session?.ProcessStartTimeUtc,
-        RawExitCode = _exitCode, ExitSource = _exitCode.HasValue ? "official_executor" : "unknown"
+        Ok = ok,
+        Error = error,
+        Effect = effect,
+        Generation = _generation,
+        State = _state,
+        CleanupConfirmed = _empty,
+        DataDeletionAllowed = _empty,
+        OwnerPid = Environment.ProcessId,
+        OwnerCreatedUtc = _createdUtc,
+        ExecutorPid = _session?.ProcessId,
+        ExecutorCreatedUtc = _session?.ProcessStartTimeUtc,
+        RawExitCode = _exitCode,
+        ExitSource = _exitCode.HasValue ? "official_executor" : "unknown"
     };
 
     private void SaveRecord(ConPtySession? observationSession = null)
@@ -387,10 +449,74 @@ internal sealed partial class WindowsProbeOwner : IDisposable
     private static FileStream NewDurableFile(string path) => new(path, FileMode.CreateNew, FileAccess.Write,
         FileShare.None, 4_096, FileOptions.WriteThrough);
 
+    // This owner is detached from a console. Retain fixed operation/error facts
+    // in its verified private control directory; never copy client bytes, keys,
+    // the owner configuration, arbitrary exception messages or payload output.
+    private void ObservePhase(string phase, string outcome, Exception? error = null)
+    {
+        try
+        {
+            lock (_evidenceGate)
+            {
+                if (_events is null) return;
+                using var buffer = new MemoryStream();
+                using (var writer = new Utf8JsonWriter(buffer))
+                {
+                    writer.WriteStartObject();
+                    writer.WriteString("runId", _config.RunId);
+                    writer.WriteString("ownerEpoch", _config.OwnerEpoch);
+                    writer.WriteNumber("ownerPid", Environment.ProcessId);
+                    writer.WriteString("ownerCreatedUtc", _createdUtc);
+                    writer.WriteNumber("generation", _generation);
+                    writer.WriteString("atUtc", DateTimeOffset.UtcNow);
+                    writer.WriteString("phase", phase);
+                    writer.WriteString("outcome", outcome);
+                    writer.WriteString("state", _state);
+                    writer.WriteBoolean("cleanupConfirmed", _empty);
+                    if (error is not null)
+                    {
+                        writer.WritePropertyName("failure");
+                        JsonSerializer.Serialize(writer, WindowsQualification.ObserveFailure(error), WindowsQualificationJson.Default.WindowsQualificationFailure);
+                    }
+                    writer.WriteEndObject();
+                }
+                if (buffer.Length > 16 * 1024 || _events.Position + buffer.Length + 1 > 256 * 1024)
+                    throw new InvalidDataException("Owner diagnostic byte bound exceeded.");
+                _events.Write(buffer.GetBuffer().AsSpan(0, checked((int)buffer.Length)));
+                _events.WriteByte((byte)'\n');
+                _events.Flush(flushToDisk: true);
+            }
+        }
+        catch (Exception evidenceError)
+        {
+            // Evidence failure must not change the native protocol/state or hide
+            // the primary error. Only fixed exception identity fields escape.
+            EvidenceFailure(phase, evidenceError, error);
+        }
+    }
+
+    private static void EvidenceFailure(string phase, Exception evidenceError, Exception? primary = null)
+    {
+        try
+        {
+            Console.Error.WriteLine("windows_owner_evidence_failed:phase=" + phase
+                + ":type=" + evidenceError.GetType().Name
+                + ":hresult=" + evidenceError.HResult.ToString("X8", CultureInfo.InvariantCulture)
+                + ":primaryType=" + (primary?.GetType().Name ?? "none")
+                + ":primaryHresult=" + (primary?.HResult.ToString("X8", CultureInfo.InvariantCulture) ?? "none"));
+        }
+        catch (Exception fallbackError) when (fallbackError is IOException or ObjectDisposedException)
+        {
+            // A detached/unavailable stderr cannot replace the primary failure.
+        }
+    }
+
     // Session disposal occurs only after native emptiness in RunCoreAsync.
     // Disposing these coordination objects never releases an unresolved Job.
     public void Dispose()
     {
+        try { _events?.Dispose(); }
+        catch (Exception error) { EvidenceFailure("evidence_dispose", error); }
         _shutdown.Dispose();
         _gate.Dispose();
         GC.SuppressFinalize(this);

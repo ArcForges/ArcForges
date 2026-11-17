@@ -30,6 +30,35 @@ internal static unsafe partial class WindowsHostContext
         writer.WriteEndObject();
     }
 
+    // The profile driver calls this before it constructs any experiment Job.
+    // Unlike the owner snapshot above, this contains no token/SID information.
+    // QueryInformationJobObject(NULL) describes only the immediate Job; a true
+    // membership result must never be promoted to a fully observed ancestor chain.
+    internal static JsonElement CaptureDriverJob(string runId)
+    {
+        using var buffer = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(buffer))
+        {
+            writer.WriteStartObject();
+            writer.WriteString("runId", runId);
+            writer.WriteString("role", "profile_driver_before_experiment_jobs");
+            writer.WriteString("observedUtc", DateTimeOffset.UtcNow);
+            writer.WriteNumber("processId", Environment.ProcessId);
+            if (GetProcessTimes(GetCurrentProcess(), out var created, out _, out _, out _))
+                writer.WriteNumber("processCreationFileTime", created);
+            else
+            {
+                var error = Marshal.GetLastPInvokeError();
+                writer.WriteNull("processCreationFileTime");
+                writer.WriteNumber("identityWin32Error", error);
+            }
+            WriteJob(writer);
+            writer.WriteEndObject();
+        }
+        using var document = JsonDocument.Parse(buffer.ToArray());
+        return document.RootElement.Clone();
+    }
+
     private static void WriteToken(Utf8JsonWriter writer)
     {
         writer.WriteStartObject("token");
@@ -305,6 +334,9 @@ internal static unsafe partial class WindowsHostContext
     [LibraryImport("kernel32.dll", SetLastError = true)] private static partial uint GetConsoleProcessList(uint* processes, uint count);
     [LibraryImport("kernel32.dll")] private static partial nint GetConsoleWindow();
     [LibraryImport("kernel32.dll")] private static partial nint GetCurrentProcess();
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool GetProcessTimes(nint process, out long created, out long exited, out long kernel, out long user);
     [LibraryImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool IsProcessInJob(nint process, nint job, [MarshalAs(UnmanagedType.Bool)] out bool result);

@@ -9,14 +9,19 @@ Publish the probe with the selected .NET/VS toolchain, then create a **new**
 private stage using `eng/mxc/stage.py`. The additional native entry point is:
 
 ```text
-<stage>/arcforges-mxc-probe.exe --windows-profile --manifest <stage>/mxc-manifest.json --work <fresh-owned-workspace> --report <fresh-outside-stage-report.json>
+<stage>/arcforges-mxc-probe.exe --windows-profile --manifest <stage>/mxc-manifest.json --work <fresh-owned-workspace> --report <fresh-outside-stage-report.json> --source <exact-source-sha> --design <design-baseline-sha> --plan <plan-baseline-sha>
 ```
 
-The current terminal slice returns exit 2 when its executed cases pass but the
-six-protocol composed qualification is still incomplete; exit 1 records failure.
-Neither is a completed Windows qualification. Consult the report's individual
-cases and incomplete protocols. No compiler success or pipe output substitutes
-for actual console APIs, composed resource enforcement or owner-loss evidence.
+The full profile verifies its embedded source identity, stage members and exact
+required case set before it can return exit0 with `QualificationPassed=true`.
+Every required case must pass with its applicable native cleanup confirmed.
+The Design/Plan SHA fields identify the coordinator's explicit baselines; the
+probe does not claim to fetch or verify remote Git state itself. Exit1 preserves
+failure or incomplete qualification. A targeted invocation uses the original
+manifest/work/report arguments plus `--only <group>`; it always remains partial
+and returns2 for successful diagnostic cases, never full qualification.
+No compiler success or pipe output substitutes for actual console APIs, composed
+resource enforcement or owner-loss evidence. See [the detailed profile](windows-process-executor-v1.md).
 
 The explicit CLI profile permits Win32k initialization (`ui.disable:false`) and
 retains `clipboard:none` and `injection:false`. Disabling Win32k made the Native

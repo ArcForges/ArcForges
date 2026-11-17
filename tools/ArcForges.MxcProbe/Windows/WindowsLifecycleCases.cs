@@ -44,6 +44,8 @@ internal sealed class WindowsLifecycleEvidence
     public bool HelperMemberCaptureTruncated { get; set; }
     public WindowsQualificationFailure? HelperDrainObservationFailure { get; set; }
     public ConPtyJobObservation? FinalAggregate { get; set; }
+    public ConPtyJobObservation? BeforeCenterLossAggregate { get; set; }
+    public ConPtyJobObservation? AfterCenterLossAggregate { get; set; }
     public Dictionary<string, bool> Checks { get; set; } = new(StringComparer.Ordinal);
 }
 
@@ -62,6 +64,7 @@ internal static class WindowsLifecycleCases
         if (!attached.Passed) return cases;
 
         cases.Add(await RunCaseAsync("owner-detached-bounded-replay", stage, work, ["flood", "1048576"], ExerciseReplayAsync).ConfigureAwait(false));
+        cases.Add(await RunCaseAsync("center-observer-loss", stage, work, ["console", "raw", "60000"], ExerciseCenterLossAsync).ConfigureAwait(false));
         cases.Add(await RunCaseAsync("owner-loss-native-drain", stage, work, ["console", "raw", "60000"], ExerciseOwnerLossAsync).ConfigureAwait(false));
         cases.Add(await RunCaseAsync("root-exit-background-child", stage, work, ["root-exit-child", "60000", "2000"], ExerciseRootExitAsync).ConfigureAwait(false));
         cases.Add(await RunCaseAsync("cleanup-record-publication-failure", stage, work, ["console-info"], ExerciseCleanupFailureAsync, "cleaning").ConfigureAwait(false));
@@ -175,7 +178,8 @@ internal static class WindowsLifecycleCases
                 earlyClient = await StartClientAsync(stage, config, root, "boundary-client", false).ConfigureAwait(false);
                 var callbackRan = false;
                 var guardian = WindowsOwnerHost.Start(stage, Path.Combine(control, "owner-config.json"), new(5000, 1536UL * 1024 * 1024, 24),
-                    killClientBeforeResume ? () => { KillClient(earlyClient!, evidence); callbackRan = true; } : null);
+                    killClientBeforeResume ? () => { KillClient(earlyClient!, evidence); callbackRan = true; }
+                : null);
                 fixture = new(config, guardian, policy, result, evidence, root, events) { Client = earlyClient };
                 if (killClientBeforeResume) Check(callbackRan, "scope_before_resume_callback_missing");
             }
@@ -245,11 +249,25 @@ internal static class WindowsLifecycleCases
             var first = await OwnerProtocol.SendAsync(fixture.Config, input).ConfigureAwait(false);
             var duplicate = await OwnerProtocol.SendAsync(fixture.Config, input).ConfigureAwait(false);
             Check(first.Ok && duplicate == first, "transient_input_ack_replay_mismatch");
-            var resized = await OwnerProtocol.SendAsync(fixture.Config, new() { Operation = "resize", Generation = 1,
-                LeaseId = acquired.LeaseId, Sequence = 2, Columns = 100, Rows = 30 }).ConfigureAwait(false);
+            var resized = await OwnerProtocol.SendAsync(fixture.Config, new()
+            {
+                Operation = "resize",
+                Generation = 1,
+                LeaseId = acquired.LeaseId,
+                Sequence = 2,
+                Columns = 100,
+                Rows = 30
+            }).ConfigureAwait(false);
             Check(resized.Ok, "writer_resize_refused");
-            var conflict = await OwnerProtocol.SendAsync(fixture.Config, new() { Operation = "resize", Generation = 1,
-                LeaseId = acquired.LeaseId, Sequence = 2, Columns = 110, Rows = 31 }).ConfigureAwait(false);
+            var conflict = await OwnerProtocol.SendAsync(fixture.Config, new()
+            {
+                Operation = "resize",
+                Generation = 1,
+                LeaseId = acquired.LeaseId,
+                Sequence = 2,
+                Columns = 110,
+                Rows = 31
+            }).ConfigureAwait(false);
             Check(!conflict.Ok && conflict.Error == "terminal_sequence_conflict", "terminal_sequence_reuse_not_refused");
             Check((await OwnerProtocol.SendAsync(fixture.Config, new() { Operation = "detach", Generation = 1, LeaseId = acquired.LeaseId }).ConfigureAwait(false)).Ok,
                 "writer_detach_refused");
@@ -265,8 +283,14 @@ internal static class WindowsLifecycleCases
             fixture.Config = fixture.Config with { Generation = rebound.Generation };
             var fresh = await fixture.SendAsync("acquire").ConfigureAwait(false);
             Check(fresh.Ok && fresh.LeaseId is not null, "writer_not_reacquired_after_rebind");
-            var staleLease = await OwnerProtocol.SendAsync(fixture.Config, new() { Operation = "write", Generation = 2,
-                LeaseId = acquired.LeaseId, Sequence = 3, Input = "x"u8.ToArray() }).ConfigureAwait(false);
+            var staleLease = await OwnerProtocol.SendAsync(fixture.Config, new()
+            {
+                Operation = "write",
+                Generation = 2,
+                LeaseId = acquired.LeaseId,
+                Sequence = 3,
+                Input = "x"u8.ToArray()
+            }).ConfigureAwait(false);
             Check(!staleLease.Ok && staleLease.Error == "writer_lease_unavailable", "old_writer_authority_survived_rebind");
             SameOwner(initial, await fixture.SendAsync("status").ConfigureAwait(false));
             fixture.Evidence.Checks["same_owner_executor_and_limits_after_client_kill_rebind"] = true;
@@ -295,6 +319,41 @@ internal static class WindowsLifecycleCases
             Check(fixture.Evidence.ForeignUnaffected == true, "unrelated_sentinel_was_affected");
         }
         finally { await EndClientAsync(sentinel).ConfigureAwait(false); }
+    }
+
+    private static async Task ExerciseCenterLossAsync(Fixture fixture)
+    {
+        var initial = await fixture.StartedAsync().ConfigureAwait(false);
+        fixture.Evidence.ClientRole = "independent read-only Center-availability observer; not a Center business service";
+        using var observer = await StartClientAsync(fixture.Stage, fixture.Config, fixture.Root, "center-observer", attach: false, observer: true).ConfigureAwait(false);
+        try
+        {
+            var observed = await ReadWhenReadyAsync(Path.Combine(fixture.Root, "center-observer", "client-ready.json"),
+                PhaseJson.Default.WindowsPhaseObservation, TimeSpan.FromSeconds(15)).ConfigureAwait(false);
+            Check(observed.Phase == "center-observer-attached" && observed.OwnerPid == initial.OwnerPid
+                && observed.ExecutorPid == initial.ExecutorPid, "center_observer_did_not_authenticate_same_owner");
+            using var executor = Process.GetProcessById(checked((int)initial.ExecutorPid!.Value));
+            Check(!executor.HasExited && executor.StartTime.ToUniversalTime() == initial.ExecutorCreatedUtc!.Value.UtcDateTime,
+                "center_observer_executor_identity_not_live");
+            var before = fixture.Guardian.ObserveAggregate();
+            fixture.Evidence.BeforeCenterLossAggregate = before;
+            Check(before.ProcessIds.Contains(fixture.Guardian.ProcessId) && before.ProcessIds.Contains(initial.ExecutorPid.Value),
+                "center_observer_native_membership_missing_before_loss");
+            KillClient(observer, fixture.Evidence);
+            var afterStatus = await fixture.SendAsync("status").ConfigureAwait(false);
+            SameOwner(initial, afterStatus);
+            Check(afterStatus.State == "RUNNING" && !executor.HasExited && afterStatus.Job is { ActiveProcesses: > 0 }
+                && afterStatus.Job.ProcessIds.Contains(initial.ExecutorPid.Value), "center_loss_stopped_locally_owned_run");
+            var after = fixture.Guardian.ObserveAggregate();
+            fixture.Evidence.AfterCenterLossAggregate = after;
+            Check(after.Limits == before.Limits && after.ProcessIds.Contains(fixture.Guardian.ProcessId)
+                && after.ProcessIds.Contains(initial.ExecutorPid.Value), "center_loss_changed_native_scope_or_limits");
+            fixture.Evidence.Checks["center_observer_process_authenticated_read_only_then_actually_killed"] = true;
+            fixture.Evidence.Checks["same_native_owner_executor_job_and_limits_after_center_loss"] = true;
+            await fixture.FinishAsync().ConfigureAwait(false);
+            fixture.Evidence.Checks["local_stop_and_empty_cleanup_after_center_loss"] = true;
+        }
+        finally { await EndClientAsync(observer).ConfigureAwait(false); }
     }
 
     private static async Task ExerciseReplayAsync(Fixture fixture)
@@ -441,14 +500,14 @@ internal static class WindowsLifecycleCases
     private static void ReleasePhase(Fixture fixture) => WritePrivate(Path.Combine(fixture.Config.Launch.ControlDirectory, "owner-phase-release.json"),
         new WindowsPhaseRelease(fixture.Config.RunId, fixture.Config.PauseAtPhase!), PhaseJson.Default.WindowsPhaseRelease);
 
-    private static async Task<Process> StartClientAsync(string stage, ProbeOwnerConfig config, string root, string name, bool attach)
+    private static async Task<Process> StartClientAsync(string stage, ProbeOwnerConfig config, string root, string name, bool attach, bool observer = false)
     {
         var control = Path.Combine(root, name);
         WindowsPolicy.CreatePrivateControl(control);
         var path = Path.Combine(control, "client-plan.json");
         var ready = Path.Combine(control, "client-ready.json");
         WritePrivate(path, new WindowsPhaseClientPlan(Path.Combine(config.Launch.ControlDirectory, "owner-config.json"), ready, attach,
-            ExpectedGeneration: config.Generation), PhaseJson.Default.WindowsPhaseClientPlan);
+            ExpectedGeneration: config.Generation, Observer: observer), PhaseJson.Default.WindowsPhaseClientPlan);
         var start = new ProcessStartInfo(Path.Combine(stage, "arcforges-mxc-probe.exe")) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = stage };
         start.ArgumentList.Add("--windows-phase-client"); start.ArgumentList.Add(path);
         start.Environment.Clear();

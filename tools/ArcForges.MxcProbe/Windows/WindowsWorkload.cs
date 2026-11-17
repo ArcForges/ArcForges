@@ -760,7 +760,7 @@ internal static partial class WindowsWorkload
         }
     }
 
-    private static int Load(int durationMs, int memoryMiB, int childCount, CancellationToken cancellationToken = default)
+    private static int Load(int durationMs, int memoryMiB, int childCount, Action? ready = null, CancellationToken cancellationToken = default)
     {
         var watch = Stopwatch.StartNew();
         var children = new List<Process>();
@@ -785,6 +785,7 @@ internal static partial class WindowsWorkload
             }
 
             Emit("load-ready", writer => { writer.WriteNumber("memoryBytesTouched", memory.Length); writer.WriteNumber("childrenCreated", children.Count); writer.WriteNumber("durationMs", durationMs); });
+            ready?.Invoke();
             var checksum = 1UL;
             while (watch.ElapsedMilliseconds < durationMs && !cancellationToken.IsCancellationRequested)
             {
@@ -849,17 +850,27 @@ internal static partial class WindowsWorkload
 
             await idle.ConfigureAwait(false);
             Emit("combined-work-starting", _ => { });
+            var pressureReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             load = Task.Run(() =>
             {
                 try
                 {
-                    _ = Load(durationMs, memoryMiB, children, stop.Token);
+                    _ = Load(durationMs, memoryMiB, children, () => pressureReady.TrySetResult(), stop.Token);
                 }
                 catch (Exception exception)
                 {
                     EmitObservationFailure("load-observation-failed", exception, stop.IsCancellationRequested);
+                    pressureReady.TrySetException(exception);
                 }
             }, CancellationToken.None);
+            var readiness = pressureReady.Task.WaitAsync(stop.Token);
+            if (await Task.WhenAny(console, readiness).ConfigureAwait(false) == console)
+            {
+                return await console.ConfigureAwait(false);
+            }
+
+            await readiness.ConfigureAwait(false);
+            Emit("combined-pressure-ready", _ => { });
             network = ObserveCombinedNetworkAsync(args[4], port, durationMs, stop.Token);
             _ = Filesystem(["filesystem", .. args.Skip(6)]);
             Emit("combined-ready", writer => { writer.WriteNumber("durationMs", durationMs); writer.WriteNumber("memoryMiB", memoryMiB); writer.WriteNumber("children", children); });

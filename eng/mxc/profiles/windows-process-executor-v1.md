@@ -5,10 +5,10 @@ This is the AFV2-MXC-02 native experiment, not an admitted product runtime. Keep
 Run the published probe on the designated native Windows host:
 
 ```powershell
-& './artifacts/mxc-02/install/arcforges-mxc-probe.exe' --windows-profile --manifest './artifacts/mxc-02/install/mxc-manifest.json' --work './artifacts/mxc-02/fresh-run' --report './artifacts/mxc-02/fresh-report.json'
+& './artifacts/mxc-02/install/arcforges-mxc-probe.exe' --windows-profile --manifest './artifacts/mxc-02/install/mxc-manifest.json' --work './artifacts/mxc-02/fresh-run' --report './artifacts/mxc-02/fresh-report.json' --source '<exact-source-sha>' --design '<design-baseline-sha>' --plan '<plan-baseline-sha>'
 ```
 
-The stage, workspace and report above are examples: use the actual verified stage and new workspace/report paths. Existing evidence must not be overwritten. For a targeted diagnosis, append `--only terminal`, `resource`, `policy`, `network`, `lifecycle`, `combined`, or `cli`. These selections always remain partial. Exit 2 means the executed slice passed while qualification remains partial; exit 1 means an experiment or its setup failed. Neither grants product admission.
+The stage, workspace and report above are examples: use the actual verified stage and new workspace/report paths. Existing evidence must not be overwritten. For a targeted diagnosis, omit the source/design/plan arguments and append `--only terminal`, `resource`, `policy`, `network`, `lifecycle`, `combined`, or `cli`. These selections always remain partial. Exit 2 means the executed slice passed while qualification remains partial; exit 1 means an experiment or its setup failed. Neither grants product admission. Full exit0 requires the exact required case set, all native outcomes and applicable cleanup, and unchanged verified stage/source identities; the later product-admission task remains separate.
 
 ## Diagnostics and cleanup
 
@@ -20,8 +20,25 @@ Loader failures return their real status without a desktop error dialog through 
 
 ## Controlled network peer
 
-The trusted driver uses the existing native OpenSSH client and `ssh netcup` to control a bounded test peer on designated H-22. The installed Python and read-only iproute2 queries locate its unique default-route interface and assigned global IPv4; SSH's control address may be loopback and is not the data address. TCP/UDP test data travels directly to the owned listeners, not through an SSH tunnel. The payload receives no SSH credentials. Peer protocol/source identity, external receive counts and acknowledged cleanup remain distinct from payload observations.
+The trusted driver owns real TCP/UDP sockets on127.0.0.1, outside the workload
+ProcessContainer, with bounded calibration, independent receive counters and
+cleanup. TCP and UDP share a numeric port to distinguish protocol permissions;
+another live TCP port and a nonmatching allow CIDR test separate rule dimensions.
+No SSH data tunnel, cross-host data probe, address installation or host
+network/proxy/security setting change is used.
 
-Do not install helpers or modify firewall, routing or proxy settings. The peer has a hard lifetime and EOF cleanup. A failed ordinary-host calibration means the data-path prerequisite is unproven; it is not evidence that MXC denied a payload which never ran. Preserve the precise phase, original error and before/after external counts.
+For local egress experiments the policy explicitly allows host loopback while
+keeping default egress denied. That capability alone is not evidence of selected
+egress enforcement: no-allow, wrong-IP, wrong-port and wrong-protocol cases must
+still fail against a calibrated live peer; exact selectedTCP/UDP must succeed.
+Separate host-loopback-deny cases retain the independent capability boundary,
+and inbound cases remain separately reported. If these policies cannot compose,
+qualification fails; there is no broader-policy retry or inferred pass.
 
-Current author evidence includes passing terminal/resource scenarios, policy slice 10 (12 cases), lifecycle slice 11 (14 cases), real named IPC/build fixtures and the default-deny combination. Full qualification is still incomplete: Windows-to-H-22 data-path calibration has not reached the peer, although the same peer's native H-22 TCP/UDP self-check passes. Consult the current Plan ledger/handoff for exact revisions, original failures and the next step. No formal merge status or full-profile pass is implied by these partial results.
+The same local peer is used by both bounded combined scenarios. Actual memory
+pressure and children must be ready before network/filesystem operations, with
+external ordering/Job identity evidence. A successful set of old diagnostic
+slices is not one same-head full qualification. Preserve historical remote-peer
+calibration failures as earlier results; the retired H06 data-path prerequisite
+is not a current requirement. Consult the Plan handoff for exact source/reports
+and the current qualification result.
