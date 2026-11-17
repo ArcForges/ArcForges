@@ -168,16 +168,15 @@ internal static class LinuxNetworkCases
                 facts["resolverAddressSha256"] = resolver.AddressSha256;
                 facts["resolverIpv4Nameservers"] = Number(resolver.IPv4Nameservers);
                 facts["resolverIsSlirpForwarder"] = resolver.Address.Equals(IPAddress.Parse("10.0.2.3")).ToString();
-                facts["resolverObservation"] = "held_scope_process_identity_and_in_root_file_read";
-                facts["dnsPosture"] = "udp53_not_allowed_by_selected_tcp_only_policy";
-                facts["dnsExternalObservation"] = "upstream_not_controlled_no_external_delivery_count_claim";
                 log.Phase(id + "_resolver", "observed", new(StringComparer.Ordinal)
                 {
                     ["resolverSha256"] = resolver.Sha256,
                     ["addressSha256"] = resolver.AddressSha256,
                     ["ipv4Nameservers"] = Number(resolver.IPv4Nameservers),
                     ["slirpForwarder"] = facts["resolverIsSlirpForwarder"],
-                    ["posture"] = facts["dnsPosture"],
+                    ["observation"] = "held_scope_process_identity_and_in_root_file_read",
+                    ["posture"] = "udp53_not_allowed_by_selected_tcp_only_policy",
+                    ["externalObservation"] = "upstream_not_controlled_no_external_delivery_count_claim",
                 });
             }
             if (ipv6)
@@ -239,7 +238,11 @@ internal static class LinuxNetworkCases
                 if (mode == "dns")
                 {
                     facts["dnsNativeOutcome"] = exit.ExitCode == 124 ? "single_query_deadline_no_response" : "socket_refusal";
-                    facts["dnsResultLimit"] = "native_policy_and_socket_result_not_independent_upstream_packet_capture";
+                    log.Phase(id + "_dns_outcome", "observed", new(StringComparer.Ordinal)
+                    {
+                        ["nativeOutcome"] = facts["dnsNativeOutcome"],
+                        ["resultLimit"] = "native_policy_and_socket_result_not_independent_upstream_packet_capture",
+                    });
                 }
             }
             passed = true;

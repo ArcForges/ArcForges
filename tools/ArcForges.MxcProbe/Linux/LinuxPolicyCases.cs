@@ -221,13 +221,35 @@ internal static partial class LinuxPolicyCases
             session = LinuxSdkSession.Start(request, false, log, id.Replace('-', '_'));
             throw new LinuxProbeException("invalid_request_returned_live_session");
         }
-        catch (MxcException exception) when (exception.Code is ErrorCode.MalformedRequest or ErrorCode.PolicyValidation)
+        catch (MxcException exception)
         {
-            log.Failure(id + "/expected_rejection", exception);
+            // In the pinned 1.0.1 source, bwrap_runner::validate_prepared
+            // returns ScriptResponse::error for unsupported ingress before
+            // spawn_bwrap. That is BackendError, not PolicyValidation. Match
+            // its exact fixed reason as well; unrelated backend failures must
+            // never satisfy this negative case.
+            var detail = Encoding.UTF8.GetBytes(exception.Message);
+            Require(detail.Length <= 65_536, "policy_sdk_refusal_detail_bound");
+            var reasonHash = Convert.ToHexStringLower(SHA256.HashData(detail));
+            var expectedIngressReasonHash = variant switch
+            {
+                // fda29ac bwrap_command.rs BWRAP_INGRESS_DEFAULT_ALLOW /
+                // BWRAP_HOST_LOOPBACK_ALLOW, UTF-8 without trailing newline.
+                "ingress-default-allow" => "1cf31c8f5459506d3a169c60a58f502fd596824fc981d0d2604b35dea0ff07e5",
+                "ingress-host-loopback-allow" => "44952bddea234bee7e0e6c73b0ff1a255bfee4303e1de5bf731dabe280e645f8",
+                _ => null,
+            };
+            var pinnedIngressRefusal = exception.Code == ErrorCode.BackendError
+                && expectedIngressReasonHash is not null && reasonHash == expectedIngressReasonHash;
+            rejected = session is null && (exception.Code is ErrorCode.MalformedRequest or ErrorCode.PolicyValidation || pinnedIngressRefusal);
+            log.Failure(id + (rejected ? "/expected_rejection" : "/unexpected_sdk_error"), exception);
+            log.Detail(id + "/sdk_error", "policy_sdk_refusal", detail);
             facts["sdkCode"] = exception.Code.ToString();
             facts["sdkCodeValue"] = ((int)exception.Code).ToString(CultureInfo.InvariantCulture);
-            facts["refusalSource"] = "official_sdk_structured_admission_error";
-            rejected = true;
+            facts["sdkMessageSha256"] = reasonHash;
+            facts["pinnedIngressReasonMatched"] = pinnedIngressRefusal.ToString(CultureInfo.InvariantCulture);
+            facts["refusalSource"] = pinnedIngressRefusal ? "official_sdk_exact_pinned_prelaunch_ingress_error"
+                : rejected ? "official_sdk_structured_admission_error" : "official_sdk_unclassified_error";
         }
         catch (ArgumentException exception) when (variant == "invalid-environment" && session is null)
         {
