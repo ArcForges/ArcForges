@@ -24,8 +24,10 @@ internal static class WindowsPolicyProbe
             throw new InvalidDataException("Probe executor differs from the pinned official artifact.");
         var start = new ProcessStartInfo(executor)
         {
-            UseShellExecute = false, CreateNoWindow = true,
-            RedirectStandardOutput = true, RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
             WorkingDirectory = Path.GetDirectoryName(privatePolicy)!,
         };
         start.ArgumentList.Add("--probe");
