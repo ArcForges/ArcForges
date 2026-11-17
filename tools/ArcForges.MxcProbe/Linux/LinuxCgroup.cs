@@ -101,6 +101,26 @@ internal sealed partial class LinuxCgroup : IDisposable
         }
     }
 
+    // The controller-absence experiment reads through the held native scope,
+    // never through a same-named replacement or an assumed host configuration.
+    internal (string Available, string Enabled, bool CpuMaxPresent) ReadControllerState()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (Removed(ValidateIdentity(), out _)) throw new LinuxProbeException("controller_scope_removed");
+        var available = ReadText(_directory, "cgroup.controllers");
+        var enabled = ReadText(_directory, "cgroup.subtree_control");
+        var descriptor = OpenAt(_directory, "cpu.max", 0x20000 | 0x80000);
+        bool present;
+        if (descriptor < 0)
+        {
+            if (Marshal.GetLastPInvokeError() != 2) throw Error("controller_cpu_max_open");
+            present = false;
+        }
+        else { using var handle = new SafeFileHandle(descriptor, true); present = true; }
+        if (Removed(ValidateIdentity(), out _)) throw new LinuxProbeException("controller_scope_removed_during_read");
+        return (available, enabled, present);
+    }
+
     internal bool EmptyProof()
     {
         if (Removed(ValidateIdentity(), out _)) return true;

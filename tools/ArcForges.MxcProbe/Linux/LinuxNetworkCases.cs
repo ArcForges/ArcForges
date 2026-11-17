@@ -73,6 +73,11 @@ internal static class LinuxNetworkCases
         if (Unresolved(results)) return results;
         results.Add(await RunCaseAsync("network_denied_protocol", config, log, scope, peer, "udp-send", peer.Port, selected, allowed: false, helperMode: true).ConfigureAwait(false));
         if (Unresolved(results)) return results;
+        // The admitted selected-egress profile opens the explicit TCP endpoint
+        // only. DNS is not implicitly opened through slirp or host resolvers.
+        results.Add(await RunCaseAsync("network_selected_dns_denied", config, log, scope, peer, "dns", 53, selected,
+            allowed: false, helperMode: true).ConfigureAwait(false));
+        if (Unresolved(results)) return results;
         // Same actual destination; the sole allow names another CIDR. This does
         // not confuse an independently denied host-loopback path with IP matching.
         results.Add(await RunCaseAsync("network_denied_address", config, log, scope, peer, "tcp-connect", peer.Port,
@@ -137,8 +142,9 @@ internal static class LinuxNetworkCases
             facts["memoryMaxBytes"] = initial.MemoryMaxBytes?.ToString(CultureInfo.InvariantCulture) ?? "unavailable";
             facts["pidsMax"] = initial.PidsMax?.ToString(CultureInfo.InvariantCulture) ?? "unavailable";
             var address = listener ? IPAddress.Loopback : peer.Address;
-            var request = LinuxRequestFactory.Create(Environment.ProcessPath!, ["--linux-workload", "network", mode,
-                address.ToString(), Number(port), Number(DurationMs), "gated"], data, control, 30_000);
+            string[] fixtureArgs = mode == "dns" ? ["--linux-workload", "dns"]
+                : ["--linux-workload", "network", mode, address.ToString(), Number(port), Number(DurationMs), "gated"];
+            var request = LinuxRequestFactory.Create(Environment.ProcessPath!, fixtureArgs, data, control, 30_000);
             request.Network = network;
             phase = "spawn";
             session = LinuxSdkSession.Start(request, terminal: true, log, id);
@@ -147,6 +153,33 @@ internal static class LinuxNetworkCases
             _ = await LinuxTerminalCases.WaitForEventAsync(data, "network-ready-for-observation", TimeSpan.FromSeconds(15)).ConfigureAwait(false);
             var announced = await LinuxTerminalCases.WaitForEventAsync(data, "network-namespace", TimeSpan.FromSeconds(1)).ConfigureAwait(false);
             var payload = ObserveNamespaces(scope, announced, helperMode, log, id, facts);
+            if (mode == "dns")
+            {
+                phase = "dns_resolver_observation";
+                var resolver = LinuxDnsResolver.ReadPayload(payload.Pid);
+                Require(LinuxCgroup.ProcessStartTicks(payload.Pid) == payload.StartTicks
+                    && LinuxCgroup.ProcessControlGroup(payload.Pid) == scope.ControlGroup, "dns_payload_identity_changed");
+                var reported = await LinuxTerminalCases.WaitForEventAsync(data, "dns-resolver", TimeSpan.FromSeconds(1)).ConfigureAwait(false);
+                Require(reported.GetProperty("resolverSha256").GetString() == resolver.Sha256
+                    && reported.GetProperty("addressSha256").GetString() == resolver.AddressSha256
+                    && reported.GetProperty("ipv4Nameservers").GetInt32() == resolver.IPv4Nameservers, "dns_resolver_observation_mismatch");
+                address = resolver.Address;
+                facts["resolverSha256"] = resolver.Sha256;
+                facts["resolverAddressSha256"] = resolver.AddressSha256;
+                facts["resolverIpv4Nameservers"] = Number(resolver.IPv4Nameservers);
+                facts["resolverIsSlirpForwarder"] = resolver.Address.Equals(IPAddress.Parse("10.0.2.3")).ToString();
+                facts["resolverObservation"] = "held_scope_process_identity_and_in_root_file_read";
+                facts["dnsPosture"] = "udp53_not_allowed_by_selected_tcp_only_policy";
+                facts["dnsExternalObservation"] = "upstream_not_controlled_no_external_delivery_count_claim";
+                log.Phase(id + "_resolver", "observed", new(StringComparer.Ordinal)
+                {
+                    ["resolverSha256"] = resolver.Sha256,
+                    ["addressSha256"] = resolver.AddressSha256,
+                    ["ipv4Nameservers"] = Number(resolver.IPv4Nameservers),
+                    ["slirpForwarder"] = facts["resolverIsSlirpForwarder"],
+                    ["posture"] = facts["dnsPosture"],
+                });
+            }
             if (ipv6)
             {
                 phase = "ipv6_namespace_routes";
@@ -203,6 +236,11 @@ internal static class LinuxNetworkCases
                 Require(Delta(before, after, mode, port == peer.OtherTcpPort) == (0L, 0L), "denied_network_reached_host_peer");
                 Require(!events.Any(item => Event(item, "network-received")), "denied_inbound_reached_payload");
                 RequireRefusal(events, exit.ExitCode);
+                if (mode == "dns")
+                {
+                    facts["dnsNativeOutcome"] = exit.ExitCode == 124 ? "single_query_deadline_no_response" : "socket_refusal";
+                    facts["dnsResultLimit"] = "native_policy_and_socket_result_not_independent_upstream_packet_capture";
+                }
             }
             passed = true;
         }
@@ -222,6 +260,15 @@ internal static class LinuxNetworkCases
             catch (Exception error) { passed = false; log.Failure(id + "_peer_counters", error); }
             if (session is not null)
             {
+                if (!passed)
+                {
+                    try
+                    {
+                        RecordFailureOutput(session, log, id, stderr: false);
+                        RecordFailureOutput(session, log, id, stderr: true);
+                    }
+                    catch (Exception error) { log.Failure(id + "_failure_output", error); }
+                }
                 try
                 {
                     await session.DisposeAsync().ConfigureAwait(false);
@@ -238,6 +285,24 @@ internal static class LinuxNetworkCases
         }
         log.Phase(id, passed ? "passed" : "failed", facts);
         return new(id, passed, facts);
+    }
+
+    private static void RecordFailureOutput(LinuxSdkSession session, LinuxEvidence log, string id, bool stderr)
+    {
+        var page = session.ReadOutput(0, 32_768, stderr);
+        log.Detail(id + "_failure_output", stderr ? "network_stderr" : "network_stdout", page.Data);
+        log.Phase(id + "_failure_output", "bounded_snapshot_before_dispose", new(StringComparer.Ordinal)
+        {
+            ["stream"] = stderr ? "stderr" : "stdout",
+            ["startSequence"] = Number(page.StartSequence),
+            ["nextSequence"] = Number(page.NextSequence),
+            ["availableFrom"] = Number(page.AvailableFrom),
+            ["availableUntil"] = Number(page.AvailableUntil),
+            ["gapFrom"] = page.GapFrom?.ToString(CultureInfo.InvariantCulture) ?? "none",
+            ["gapUntil"] = page.GapUntil?.ToString(CultureInfo.InvariantCulture) ?? "none",
+            ["endOfStream"] = page.EndOfStream.ToString(CultureInfo.InvariantCulture),
+            ["drainFailureCode"] = page.FailureCode ?? "none",
+        });
     }
 
     private sealed record ObservedPayload(int Pid, ulong StartTicks);

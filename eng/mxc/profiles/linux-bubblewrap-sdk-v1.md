@@ -23,13 +23,36 @@ fixture parent must exist and have no symlink ancestors.
 <stage>/arcforges-mxc-probe --linux-profile --manifest <stage>/mxc-manifest.json --work <new-private-fixture> --report <new-report.json> --only terminal
 ```
 
-The diagnostic groups are `terminal`, `policy`, `network`, `resource`, and `lifecycle`.
+The diagnostic groups are `admission`, `terminal`, `policy`, `network`, `resource`,
+and `lifecycle`.
 Exit 2 means a diagnostic slice passed with independently confirmed cleanup;
 it is deliberately not a full qualification success. Exit 1 means a failure or
 unresolved cleanup. Read the report and its `.events.jsonl` companion together.
-`qualificationPassed` stays false until the required full combination is
-implemented and proven. The initial implementation is still under development;
-no native result is implied by these invocation examples.
+`qualificationPassed` stays false for every diagnostic invocation. These command
+examples do not imply a native result.
+
+Run the complete profile with fresh paths and exact baseline commits:
+
+```text
+<stage>/arcforges-mxc-probe --linux-profile --manifest <stage>/mxc-manifest.json --work <new-private-fixture> --report <new-full-report.json> --source <40-character-Node-commit> --design <40-character-Design-commit> --plan <40-character-Plan-commit>
+```
+
+The full driver executes all six groups sequentially against the same verified
+stage, including the lifecycle group's combined terminal/filesystem/network/
+resource scenario. It stops at the first failed group or unresolved cleanup.
+Exit 0 requires every group to pass and every owned scope to be confirmed empty;
+exit 1 leaves the profile partial. A full receipt binds the executable's embedded
+source commit, executable and official stage hashes, actual kernel release and
+version, boot identity, supplied Design/Plan baselines and every child receipt /
+event-log hash. The source label must match the AOT executable's SDK-embedded
+`SourceRevisionId`; the clean stage needs no Git executable or checkout. Design
+and Plan commits are the coordinator's explicit invocation baselines, not a
+claim that the probe independently fetched those repositories. Each slice keeps
+its original report, owner evidence and cleanup results beneath the private
+fixture root. Failed groups and groups not run remain visible in the full receipt.
+
+The full receipt is native experiment evidence. It does not replace independent
+review, required host statuses or the AFV2-MXC-04 product admission decision.
 
 The driver creates a unique `arcforges-mxc03-<RunId>.service`. systemd installs
 CPU, memory, swap and process limits before executing the fixed trusted owner.

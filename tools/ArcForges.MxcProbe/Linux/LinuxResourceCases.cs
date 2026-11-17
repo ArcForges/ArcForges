@@ -33,6 +33,9 @@ internal static class LinuxResourceCases
             new("resource_lower_refusal", Ordinary),
             new("resource_creation_refusal", Ordinary),
             new("resource_readback_refusal", Ordinary),
+            new("resource_setting_refusal", Ordinary),
+            new("resource_controller_absence", Ordinary),
+            new("resource_native_creation_refusal", Ordinary),
         ];
         foreach (var specification in specifications)
         {
@@ -101,6 +104,24 @@ internal static class LinuxResourceCases
             facts["sdkNativeProcessAbsent"] = exit.NativeProcessAbsent.ToString(CultureInfo.InvariantCulture);
             Require(exit.ExitSource == "official_sdk" && exit.Drained && exit.NativeProcessAbsent && !exit.TimedOut, "resource_sdk_native_wait_incomplete");
             if (config.Group is not ("resource_memory" or "resource_pids_limit")) Require(exit.ExitCode == 0, "resource_control_payload_failed");
+            // Keep the native scope alive until its independent observer has
+            // sampled final enforcement counters. An exited SDK payload is not
+            // itself proof of OOM/pids enforcement, and removed kernfs files
+            // cannot supply the final counter after the owner exits.
+            if (config.Group is "resource_memory" or "resource_pids_limit")
+            {
+                var finished = new ResourceFinalObservation(config.RunId, config.Group, Environment.ProcessId,
+                    LinuxCgroup.ProcessStartTicks(Environment.ProcessId), LinuxCgroup.BootId(), LinuxCgroup.ProcessControlGroup(Environment.ProcessId));
+                LinuxQualification.WriteJson(Path.Combine(config.Control, "resource-final-observation.json"), finished,
+                    LinuxResourceJson.Default.ResourceFinalObservation);
+                log.Phase("resource_final_observation", "waiting_for_independent_native_sample");
+                var acknowledgement = Path.Combine(config.Control, "resource-final-observation-ack.json");
+                await LinuxQualification.WaitForFileAsync(acknowledgement, TimeSpan.FromSeconds(10)).ConfigureAwait(false);
+                LinuxCgroup.VerifyPrivatePath(acknowledgement, false);
+                Require(LinuxQualification.ReadJson(acknowledgement, LinuxResourceJson.Default.ResourceFinalObservation) == finished,
+                    "resource_final_observation_ack_identity_mismatch");
+                log.Phase("resource_final_observation", "independent_sample_acknowledged");
+            }
             // Enforcement is decided by the external cgroup observer, never by
             // this payload's writable event file or its exit code alone.
             passed = true;
@@ -132,7 +153,8 @@ internal static class LinuxResourceCases
         var config = new LinuxOwnerConfiguration(runId, manifest, data, privateControl,
             Path.Combine(privateControl, "ready.json"), Path.Combine(privateControl, "continue"),
             Path.Combine(privateControl, "owner-report.json"), Path.Combine(privateControl, "owner-events.jsonl"),
-            unit, spec.Group is "resource_lower_refusal" or "resource_creation_refusal" or "resource_readback_refusal" ? "resource_cpu_low" : spec.Group,
+            unit, spec.Group is "resource_lower_refusal" or "resource_creation_refusal" or "resource_readback_refusal"
+                or "resource_setting_refusal" or "resource_controller_absence" or "resource_native_creation_refusal" ? "resource_cpu_low" : spec.Group,
             checked((long)spec.Limits.MemoryBytes), checked((int)spec.Limits.ProcessLimit), checked((int)(spec.Limits.CpuMillicores * 100)));
         var configPath = Path.Combine(privateControl, "owner-config.json");
         LinuxQualification.WriteJson(configPath, config, LinuxQualificationJson.Default.LinuxOwnerConfiguration);
@@ -150,103 +172,127 @@ internal static class LinuxResourceCases
         try
         {
             log.Phase(spec.Group, "service_create", new(StringComparer.Ordinal) { ["unit"] = unit });
-            scope = await LinuxServiceScope.StartAsync(Path.GetDirectoryName(manifest)!, configPath, unit, spec.Limits, log).ConfigureAwait(false);
-            await LinuxQualification.WaitForFileAsync(config.ReadyPath, TimeSpan.FromSeconds(30)).ConfigureAwait(false);
-            var ready = LinuxQualification.ReadJson(config.ReadyPath, LinuxQualificationJson.Default.LinuxOwnerReady);
-            Require(ready.ProcessId == scope.Identity.MainPid && ready.BootId == scope.Identity.BootId
-                && ready.StartTicks == scope.Identity.MainStartTicks.ToString(CultureInfo.InvariantCulture)
-                && ready.ControlGroup == scope.Identity.ControlGroup, "resource_service_owner_identity_mismatch");
-            var initial = await ObserveAsync(scope, log, spec.Group + "_initial").ConfigureAwait(false);
-            RequireLimits(initial, spec.Limits);
-            facts["invocationId"] = scope.Identity.InvocationId;
-            facts["cgroupInode"] = scope.Identity.CgroupInode.ToString(CultureInfo.InvariantCulture);
-            facts["cgroupMountId"] = scope.Identity.CgroupMountId.ToString(CultureInfo.InvariantCulture);
-            if (spec.Group == "resource_lower_refusal")
+            if (spec.Group is "resource_controller_absence" or "resource_native_creation_refusal")
             {
-                Require(initial.Cgroup.PidsCurrent > 1, "resource_lower_refusal_usage_not_observed");
-                bool refused = false;
-                try { _ = await scope.UpdateLimitsAsync(spec.Limits with { ProcessLimit = 1 }).ConfigureAwait(false); }
-                catch (LinuxProbeException exception) when (exception.Code == "resource_update_below_current_usage")
-                { refused = true; log.Phase(spec.Group, "expected_unsafe_decrease_refused"); }
-                Require(refused, "resource_unsafe_decrease_not_refused");
-                RequireLimits(await ObserveAsync(scope, log, spec.Group + "_after_refusal").ConfigureAwait(false), spec.Limits);
-                Require(!File.Exists(config.ContinuePath) && !File.Exists(Path.Combine(privateControl, "resource-sdk.json")), "resource_refusal_permitted_payload");
+                if (spec.Group == "resource_controller_absence")
+                    await LinuxServiceScope.RequireCpuControllerAbsenceRefusalAsync(Path.GetDirectoryName(manifest)!, configPath, unit, spec.Limits, log).ConfigureAwait(false);
+                else
+                    await LinuxServiceScope.RequireNativeCreationRefusalAsync(Path.GetDirectoryName(manifest)!, configPath, unit, spec.Limits, log).ConfigureAwait(false);
+                Require(!File.Exists(config.ReadyPath) && !File.Exists(config.ContinuePath)
+                    && !File.Exists(Path.Combine(privateControl, "resource-sdk.json")), "resource_native_refusal_permitted_owner_or_payload");
                 facts["payloadAdmission"] = "not_permitted";
-                passed = true;
-            }
-            else if (spec.Group == "resource_creation_refusal")
-            {
-                bool refused = false;
-                try
-                {
-                    var unexpected = await LinuxServiceScope.StartAsync(Path.GetDirectoryName(manifest)!, configPath, unit, spec.Limits, log).ConfigureAwait(false);
-                    UnresolvedCleanupScopes.Add(unexpected);
-                    throw new LinuxProbeException("resource_duplicate_service_was_created");
-                }
-                catch (LinuxProbeException exception) when (exception.Code == "service_unit_already_exists")
-                { refused = true; log.Phase(spec.Group, "expected_existing_unit_refused"); }
-                var after = await ObserveAsync(scope, log, spec.Group + "_preserved_owner").ConfigureAwait(false);
-                Require(refused && after.Identity == initial.Identity && after.Cgroup.ProcessIds.Contains(ready.ProcessId)
-                    && !File.Exists(config.ContinuePath), "resource_existing_owner_not_preserved");
-                facts["payloadAdmission"] = "not_permitted";
+                facts["refusalAuthority"] = spec.Group == "resource_controller_absence" ? "actual_held_scope_cpu_controller_absent" : "systemd_preexec_200_chdir";
                 passed = true;
             }
             else
             {
-                if (spec.Group == "resource_readback_refusal")
-                    _ = await scope.UpdateLimitsAsync(spec.Limits with { CpuMillicores = 250 }).ConfigureAwait(false);
-                Permit(config);
-                if (spec.Group is "resource_cpu_low" or "resource_cpu_control" or "resource_burst" or "resource_dynamic")
+                scope = await LinuxServiceScope.StartAsync(Path.GetDirectoryName(manifest)!, configPath, unit, spec.Limits, log).ConfigureAwait(false);
+                await LinuxQualification.WaitForFileAsync(config.ReadyPath, TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+                var ready = LinuxQualification.ReadJson(config.ReadyPath, LinuxQualificationJson.Default.LinuxOwnerReady);
+                Require(ready.ProcessId == scope.Identity.MainPid && ready.BootId == scope.Identity.BootId
+                    && ready.StartTicks == scope.Identity.MainStartTicks.ToString(CultureInfo.InvariantCulture)
+                    && ready.ControlGroup == scope.Identity.ControlGroup, "resource_service_owner_identity_mismatch");
+                var initial = await ObserveAsync(scope, log, spec.Group + "_initial").ConfigureAwait(false);
+                RequireLimits(initial, spec.Limits);
+                facts["invocationId"] = scope.Identity.InvocationId;
+                facts["cgroupInode"] = scope.Identity.CgroupInode.ToString(CultureInfo.InvariantCulture);
+                facts["cgroupMountId"] = scope.Identity.CgroupMountId.ToString(CultureInfo.InvariantCulture);
+                if (spec.Group == "resource_setting_refusal")
                 {
-                    var livePath = Path.Combine(privateControl, "resource-live.json");
-                    await LinuxQualification.WaitForFileAsync(livePath, TimeSpan.FromSeconds(12)).ConfigureAwait(false);
-                    var live = LinuxQualification.ReadJson(livePath, LinuxResourceJson.Default.ResourceLive);
-                    Require(live.RunId == runId, "resource_live_identity_mismatch");
-                    var active = await ObserveAsync(scope, log, spec.Group + "_active").ConfigureAwait(false);
-                    Require(active.Cgroup.ProcessIds.Contains(checked((int)live.NativePid)), "resource_native_pid_not_in_service");
-                    if (spec.Group is "resource_cpu_low" or "resource_cpu_control")
-                        await CpuWindowAsync(scope, log, spec.Group, facts).ConfigureAwait(false);
-                    if (spec.Group is "resource_burst" or "resource_dynamic")
-                        VerifyMembers(live, active, privateControl, log, spec.Group);
-                    if (spec.Group == "resource_dynamic")
+                    await scope.RequireNativeSettingRefusalAsync().ConfigureAwait(false);
+                    RequireLimits(await ObserveAsync(scope, log, spec.Group + "_after_refusal").ConfigureAwait(false), spec.Limits);
+                    Require(!File.Exists(config.ContinuePath) && !File.Exists(Path.Combine(privateControl, "resource-sdk.json")), "resource_failed_setting_permitted_payload");
+                    facts["payloadAdmission"] = "not_permitted";
+                    facts["refusalAuthority"] = "real_manager_typed_setter_out_of_range";
+                    passed = true;
+                }
+                else if (spec.Group == "resource_lower_refusal")
+                {
+                    Require(initial.Cgroup.PidsCurrent > 1, "resource_lower_refusal_usage_not_observed");
+                    bool refused = false;
+                    try { _ = await scope.UpdateLimitsAsync(spec.Limits with { ProcessLimit = 1 }).ConfigureAwait(false); }
+                    catch (LinuxProbeException exception) when (exception.Code == "resource_update_below_current_usage")
+                    { refused = true; log.Phase(spec.Group, "expected_unsafe_decrease_refused"); }
+                    Require(refused, "resource_unsafe_decrease_not_refused");
+                    RequireLimits(await ObserveAsync(scope, log, spec.Group + "_after_refusal").ConfigureAwait(false), spec.Limits);
+                    Require(!File.Exists(config.ContinuePath) && !File.Exists(Path.Combine(privateControl, "resource-sdk.json")), "resource_refusal_permitted_payload");
+                    facts["payloadAdmission"] = "not_permitted";
+                    passed = true;
+                }
+                else if (spec.Group == "resource_creation_refusal")
+                {
+                    bool refused = false;
+                    try
                     {
-                        var target = new LinuxScopeLimits(250, 256 * MiB, 64);
-                        log.Phase(spec.Group, "update_requested");
-                        var updated = await scope.UpdateLimitsAsync(target).ConfigureAwait(false);
-                        RequireLimits(updated, target);
-                        Require(updated.Cgroup.Populated && updated.Cgroup.ProcessIds.Contains(checked((int)live.NativePid)), "resource_update_lost_live_group");
-                        await CpuWindowAsync(scope, log, spec.Group, facts).ConfigureAwait(false);
-                        facts["liveUpdateReadback"] = "verified";
+                        var unexpected = await LinuxServiceScope.StartAsync(Path.GetDirectoryName(manifest)!, configPath, unit, spec.Limits, log).ConfigureAwait(false);
+                        UnresolvedCleanupScopes.Add(unexpected);
+                        throw new LinuxProbeException("resource_duplicate_service_was_created");
                     }
-                }
-                var completion = await MonitorCompletionAsync(scope, config, log, spec.Group).ConfigureAwait(false);
-                if (spec.Group == "resource_memory")
-                {
-                    Require(completion.MemoryOomKill > Required(initial.Cgroup.MemoryEvents, "oom_kill") || completion.Last.Result == "oom-kill", "resource_memory_oom_enforcement_not_observed");
-                    facts["enforcementAuthority"] = completion.Last.Result == "oom-kill" ? "systemd_native_oom_result" : "cgroup_memory_events_oom_kill";
-                }
-                else if (spec.Group == "resource_pids_limit")
-                {
-                    Require(completion.PidsMaxEvents > Required(initial.Cgroup.PidsEvents, "max"), "resource_pids_enforcement_not_observed");
-                    facts["enforcementAuthority"] = "cgroup_pids_events_max";
+                    catch (LinuxProbeException exception) when (exception.Code == "service_unit_already_exists")
+                    { refused = true; log.Phase(spec.Group, "expected_existing_unit_refused"); }
+                    var after = await ObserveAsync(scope, log, spec.Group + "_preserved_owner").ConfigureAwait(false);
+                    Require(refused && after.Identity == initial.Identity && after.Cgroup.ProcessIds.Contains(ready.ProcessId)
+                        && !File.Exists(config.ContinuePath), "resource_existing_owner_not_preserved");
+                    facts["payloadAdmission"] = "not_permitted";
+                    passed = true;
                 }
                 else
                 {
-                    Require(File.Exists(config.ReportPath), "resource_owner_report_missing");
-                    var owner = LinuxQualification.ReadJson(config.ReportPath, LinuxQualificationJson.Default.LinuxQualificationReport);
-                    Require(owner.RunId == runId && owner.Owner == ready, "resource_owner_report_identity_mismatch");
                     if (spec.Group == "resource_readback_refusal")
+                        _ = await scope.UpdateLimitsAsync(spec.Limits with { CpuMillicores = 250 }).ConfigureAwait(false);
+                    Permit(config);
+                    if (spec.Group is "resource_cpu_low" or "resource_cpu_control" or "resource_burst" or "resource_dynamic")
                     {
-                        Require(!owner.DiagnosticSlicePassed && owner.Cases.Count == 0 && owner.FailurePhase == "owner_wait_for_admission"
-                            && !File.Exists(Path.Combine(privateControl, "resource-sdk.json")) && OwnerReadbackRefusal(config.LogPath), "resource_changed_scope_did_not_refuse_before_sdk");
-                        facts["payloadAdmission"] = "readback_refused_before_sdk";
+                        var livePath = Path.Combine(privateControl, "resource-live.json");
+                        await LinuxQualification.WaitForFileAsync(livePath, TimeSpan.FromSeconds(12)).ConfigureAwait(false);
+                        var live = LinuxQualification.ReadJson(livePath, LinuxResourceJson.Default.ResourceLive);
+                        Require(live.RunId == runId, "resource_live_identity_mismatch");
+                        var active = await ObserveAsync(scope, log, spec.Group + "_active").ConfigureAwait(false);
+                        Require(active.Cgroup.ProcessIds.Contains(checked((int)live.NativePid)), "resource_native_pid_not_in_service");
+                        if (spec.Group is "resource_cpu_low" or "resource_cpu_control")
+                            await CpuWindowAsync(scope, log, spec.Group, facts).ConfigureAwait(false);
+                        if (spec.Group is "resource_burst" or "resource_dynamic")
+                            VerifyMembers(live, active, privateControl, log, spec.Group);
+                        if (spec.Group == "resource_dynamic")
+                        {
+                            var target = new LinuxScopeLimits(250, 256 * MiB, 64);
+                            log.Phase(spec.Group, "update_requested");
+                            var updated = await scope.UpdateLimitsAsync(target).ConfigureAwait(false);
+                            RequireLimits(updated, target);
+                            Require(updated.Cgroup.Populated && updated.Cgroup.ProcessIds.Contains(checked((int)live.NativePid)), "resource_update_lost_live_group");
+                            await CpuWindowAsync(scope, log, spec.Group, facts).ConfigureAwait(false);
+                            facts["liveUpdateReadback"] = "verified";
+                        }
                     }
-                    else Require(owner.DiagnosticSlicePassed, "resource_owner_cases_failed");
+                    var completion = await MonitorCompletionAsync(scope, config, log, spec.Group).ConfigureAwait(false);
+                    if (spec.Group == "resource_memory")
+                    {
+                        Require(completion.MemoryOomKill > Required(initial.Cgroup.MemoryEvents, "oom_kill") || completion.Last.Result == "oom-kill", "resource_memory_oom_enforcement_not_observed");
+                        facts["enforcementAuthority"] = completion.Last.Result == "oom-kill" ? "systemd_native_oom_result" : "cgroup_memory_events_oom_kill";
+                    }
+                    else if (spec.Group == "resource_pids_limit")
+                    {
+                        Require(completion.PidsMaxEvents > Required(initial.Cgroup.PidsEvents, "max"), "resource_pids_enforcement_not_observed");
+                        facts["enforcementAuthority"] = "cgroup_pids_events_max";
+                    }
+                    else
+                    {
+                        Require(File.Exists(config.ReportPath), "resource_owner_report_missing");
+                        var owner = LinuxQualification.ReadJson(config.ReportPath, LinuxQualificationJson.Default.LinuxQualificationReport);
+                        Require(owner.RunId == runId && owner.Owner == ready, "resource_owner_report_identity_mismatch");
+                        if (spec.Group == "resource_readback_refusal")
+                        {
+                            Require(!owner.DiagnosticSlicePassed && owner.Cases.Count == 0 && owner.FailurePhase == "owner_wait_for_admission"
+                                && !File.Exists(Path.Combine(privateControl, "resource-sdk.json")) && OwnerReadbackRefusal(config.LogPath), "resource_changed_scope_did_not_refuse_before_sdk");
+                            facts["payloadAdmission"] = "readback_refused_before_sdk";
+                        }
+                        else Require(owner.DiagnosticSlicePassed, "resource_owner_cases_failed");
+                    }
+                    facts["observedOomKill"] = completion.MemoryOomKill.ToString(CultureInfo.InvariantCulture);
+                    facts["observedPidsMaxEvents"] = completion.PidsMaxEvents.ToString(CultureInfo.InvariantCulture);
+                    facts["lastCounterAvailable"] = completion.Last.Cgroup.CountersAvailable.ToString(CultureInfo.InvariantCulture);
+                    passed = true;
                 }
-                facts["observedOomKill"] = completion.MemoryOomKill.ToString(CultureInfo.InvariantCulture);
-                facts["observedPidsMaxEvents"] = completion.PidsMaxEvents.ToString(CultureInfo.InvariantCulture);
-                facts["lastCounterAvailable"] = completion.Last.Cgroup.CountersAvailable.ToString(CultureInfo.InvariantCulture);
-                passed = true;
             }
         }
         catch (Exception exception)
@@ -303,6 +349,7 @@ internal static class LinuxResourceCases
         var watch = Stopwatch.StartNew();
         ulong oom = 0, pids = 0;
         LinuxScopeObservation? last = null;
+        var acknowledged = false;
         while (watch.Elapsed < TimeSpan.FromSeconds(30))
         {
             last = await ObserveAsync(scope, log, phase + "_sample").ConfigureAwait(false);
@@ -310,6 +357,33 @@ internal static class LinuxResourceCases
             {
                 oom = Math.Max(oom, Required(last.Cgroup.MemoryEvents, "oom_kill"));
                 pids = Math.Max(pids, Required(last.Cgroup.PidsEvents, "max"));
+            }
+            var finishedPath = Path.Combine(config.Control, "resource-final-observation.json");
+            if (!acknowledged && config.Group is ("resource_memory" or "resource_pids_limit") && File.Exists(finishedPath))
+            {
+                LinuxCgroup.VerifyPrivatePath(finishedPath, false);
+                var finished = LinuxQualification.ReadJson(finishedPath, LinuxResourceJson.Default.ResourceFinalObservation);
+                Require(finished.RunId == config.RunId && finished.Group == config.Group
+                    && finished.OwnerPid == scope.Identity.MainPid && finished.OwnerStartTicks == scope.Identity.MainStartTicks
+                    && finished.BootId == scope.Identity.BootId && finished.ControlGroup == scope.Identity.ControlGroup,
+                    "resource_final_observation_owner_identity_mismatch");
+                // This read occurs after the SDK-completed gate, while the
+                // authenticated owner still pins the very same native scope.
+                last = await ObserveAsync(scope, log, phase + "_final_enforcement_sample").ConfigureAwait(false);
+                Require(last.Cgroup.CountersAvailable && last.Cgroup.Populated
+                    && last.Cgroup.ProcessIds.Contains(finished.OwnerPid), "resource_final_counter_scope_not_live");
+                oom = Math.Max(oom, Required(last.Cgroup.MemoryEvents, "oom_kill"));
+                pids = Math.Max(pids, Required(last.Cgroup.PidsEvents, "max"));
+                LinuxQualification.WriteJson(Path.Combine(config.Control, "resource-final-observation-ack.json"), finished,
+                    LinuxResourceJson.Default.ResourceFinalObservation);
+                acknowledged = true;
+                log.Phase(phase + "_final_enforcement_sample", "independent_native_counters_acknowledged", new(StringComparer.Ordinal)
+                {
+                    ["oomKill"] = oom.ToString(CultureInfo.InvariantCulture),
+                    ["pidsMaxEvents"] = pids.ToString(CultureInfo.InvariantCulture),
+                    ["invocationId"] = scope.Identity.InvocationId,
+                    ["inode"] = last.Cgroup.Inode.ToString(CultureInfo.InvariantCulture)
+                });
             }
             if (File.Exists(config.ReportPath) || !last.Cgroup.Populated || last.ActiveState is "inactive" or "failed") return new(last, oom, pids);
             await Task.Delay(50).ConfigureAwait(false);
@@ -414,7 +488,9 @@ internal static class LinuxResourceCases
 
 internal sealed record ResourceLive(string RunId, uint NativePid, int FixtureNamespacePid, int[] ChildNamespacePids);
 internal sealed record ResourceMember(int HostPid, ulong StartTicks, string PidNamespace, int NamespacePid);
+internal sealed record ResourceFinalObservation(string RunId, string Group, int OwnerPid, ulong OwnerStartTicks, string BootId, string ControlGroup);
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(ResourceLive))]
+[JsonSerializable(typeof(ResourceFinalObservation))]
 [JsonSerializable(typeof(List<ResourceMember>))]
 internal sealed partial class LinuxResourceJson : JsonSerializerContext;

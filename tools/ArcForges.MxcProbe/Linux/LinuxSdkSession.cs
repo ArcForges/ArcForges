@@ -2,6 +2,9 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.Versioning;
+using System.Security.Cryptography;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Mxc.Sdk.V1;
 
 namespace ArcForges.MxcProbe.Linux;
@@ -70,6 +73,21 @@ internal sealed class LinuxSdkSession : IAsyncDisposable
         var session = new LinuxSdkSession(log, phase, terminal, replayBytes);
         try
         {
+            // This fingerprints the actual typed policy at the launch boundary,
+            // not SDK wire JSON or the complete request. Command, environment
+            // entries, working directory and container name are excluded. Policy
+            // paths and network selectors are hashed in memory and never logged.
+            var policy = new LinuxSdkPolicyProjection("linux-sdk-typed-policy-v1", "bubblewrap",
+                request.Filesystem, request.Network, request.Ui, request.TimeoutMs,
+                request.InheritDefaultEnvironment, request.Environment is not null);
+            byte[] policyBytes = JsonSerializer.SerializeToUtf8Bytes(policy, LinuxSdkPolicyJson.Default.LinuxSdkPolicyProjection);
+            session.Record("policy", "fingerprinted_before_spawn", new()
+            {
+                ["policySha256"] = Convert.ToHexStringLower(SHA256.HashData(policyBytes)),
+                ["policyHashSchema"] = policy.Schema,
+                ["policyHashScope"] = "typed_filesystem_network_ui_containment_timeout_environment_mode",
+                ["policyHashExcludes"] = "command_environment_entries_working_directory_container_name",
+            });
             session.Record("spawn", "begin", new() { ["mode"] = terminal ? "pty" : "pipes" });
             var clock = Stopwatch.StartNew();
             session._process = terminal
@@ -320,3 +338,11 @@ internal sealed class LinuxSdkSession : IAsyncDisposable
         }
     }
 }
+
+internal sealed record LinuxSdkPolicyProjection(string Schema, string Containment,
+    FilesystemPolicy? Filesystem, NetworkPolicy? Network, UiPolicy? Ui, uint? TimeoutMs,
+    bool InheritDefaultEnvironment, bool ExplicitEnvironment);
+
+[JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+[JsonSerializable(typeof(LinuxSdkPolicyProjection))]
+internal sealed partial class LinuxSdkPolicyJson : JsonSerializerContext;

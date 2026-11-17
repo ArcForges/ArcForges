@@ -126,12 +126,19 @@ internal static partial class LinuxOwnerChannel
         {
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
             var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
-            var client = new Client(socket);
+            Client? client = null;
             byte[] key = [];
+            string phase = "arguments";
             try
             {
                 Require(Guid.TryParseExact(clientId, "N", out _) && generation is >= 1 and <= 64, "channel_client_identity_invalid");
+                phase = "connect";
                 await socket.ConnectAsync(new UnixDomainSocketEndPoint("\0" + owner.SocketName), deadline.Token).ConfigureAwait(false);
+                // NetworkStream requires an already-connected socket. Construct
+                // it only after ConnectAsync, retaining socket cleanup on failure.
+                phase = "connected_stream";
+                client = new Client(socket);
+                phase = "peer_identity";
                 var peer = Peer(socket);
                 Require(peer.UserId == LinuxCgroup.UserId && peer.ProcessId == owner.OwnerPid
                     && LinuxCgroup.BootId() == owner.BootId && LinuxCgroup.ProcessStartTicks(peer.ProcessId) == owner.OwnerStartTicks,
@@ -140,14 +147,28 @@ internal static partial class LinuxOwnerChannel
                 Require(key.Length == 32, "channel_client_key_invalid");
                 var hello = new LinuxLifecycleHello(owner.RunId, owner.OwnerEpoch, generation, clientId,
                     Environment.ProcessId, LinuxCgroup.ProcessStartTicks(Environment.ProcessId), observer, Nonce());
+                phase = "server_challenge";
                 await WriteFrameAsync(client._stream, hello, LinuxLifecycleJson.Default.LinuxLifecycleHello, deadline.Token).ConfigureAwait(false);
                 var challenge = await ReadFrameAsync(client._stream, LinuxLifecycleJson.Default.LinuxLifecycleChallenge, deadline.Token).ConfigureAwait(false);
                 Require(Verify(key, hello, owner, challenge.Nonce, "server", challenge.Proof), "channel_server_proof_invalid");
+                phase = "client_proof";
                 await WriteFrameAsync(client._stream, new LinuxLifecycleProof(Mac(key, hello, owner, challenge.Nonce, "client")),
                     LinuxLifecycleJson.Default.LinuxLifecycleProof, deadline.Token).ConfigureAwait(false);
                 return client;
             }
-            catch { await client.DisposeAsync().ConfigureAwait(false); throw; }
+            catch (Exception primary)
+            {
+                try
+                {
+                    if (client is not null) await client.DisposeAsync().ConfigureAwait(false);
+                    else socket.Dispose();
+                }
+                catch (Exception cleanup)
+                {
+                    throw new LinuxProbeException("channel_" + phase + "_and_cleanup_failed", new AggregateException(primary, cleanup));
+                }
+                throw new LinuxProbeException("channel_" + phase + "_failed", primary);
+            }
             finally { CryptographicOperations.ZeroMemory(key); }
         }
 
@@ -194,6 +215,7 @@ internal static partial class LinuxOwnerChannel
         private long _generation;
         private long _controlEpoch;
         private bool _final;
+        private bool _failureOutputRecorded;
 
         internal Owner(LinuxOwnerConfiguration config, LinuxLifecycleSetup setup, LinuxEvidence log)
         {
@@ -323,7 +345,7 @@ internal static partial class LinuxOwnerChannel
                     case "finish_natural":
                         if (_session is null) return Response(false, "native_session_absent");
                         _exit = await _session.WaitAsync(TimeSpan.FromSeconds(15)).ConfigureAwait(false);
-                        if (_exit.TimedOut) return Response(false, "natural_exit_deadline");
+                        if (_exit.TimedOut) { RecordFailureOutput("lifecycle_natural_exit"); return Response(false, "natural_exit_deadline"); }
                         await _session.DisposeAsync().ConfigureAwait(false); _session = null; _state = "cleaning"; break;
                     case "finalize":
                         if (!OnlyOwnerRemains() || _session is not null || _exit is null) { _state = "recovery_required"; return Response(false, "cleanup_unresolved"); }
@@ -343,6 +365,7 @@ internal static partial class LinuxOwnerChannel
             catch (Exception error)
             {
                 _log.Failure("lifecycle_command_" + SafeOperation(request.Operation), error);
+                RecordFailureOutput("lifecycle_command_" + SafeOperation(request.Operation));
                 _state = "recovery_required";
                 SaveState();
                 return Response(false, error is LinuxProbeException probe ? probe.Code : "native_operation_failed");
@@ -371,7 +394,16 @@ internal static partial class LinuxOwnerChannel
                 if (_setup.Scenario == "combined_selected") request.Network = LinuxNetworkCases.Selected(_peer!.Address, _peer.Port, NetworkProtocol.Tcp);
             }
             _state = "starting"; SaveState();
-            _session = LinuxSdkSession.Start(request, true, _log, "lifecycle_sdk");
+            _failureOutputRecorded = false;
+            try { _session = LinuxSdkSession.Start(request, true, _log, "lifecycle_sdk"); }
+            catch (LinuxSdkLaunchException error)
+            {
+                // Keep the actual unresolved owner reachable for diagnostics
+                // and cleanup; a failed assignment must not discard its handles.
+                _session = error.CleanupOwner;
+                RecordFailureOutput("lifecycle_native_start");
+                throw;
+            }
             _nativePid = _session.ProcessId;
             _spawnMs = _session.SpawnMs;
             try { _nativeStartTicks = LinuxCgroup.ProcessStartTicks(checked((int)_nativePid.Value)); }
@@ -383,17 +415,47 @@ internal static partial class LinuxOwnerChannel
         private async Task StopNativeAsync()
         {
             if (_session is null) { if (_exit is not null) { _state = "cleaning"; return; } throw new LinuxProbeException("native_session_absent"); }
+            if (_state == "recovery_required") RecordFailureOutput("lifecycle_native_recovery");
             _state = "cleaning"; SaveState();
             Exception? primary = null;
             Exception? disposalFailure = null;
             try { _exit = await _session.StopAsync(TimeSpan.FromSeconds(15)).ConfigureAwait(false); }
-            catch (Exception error) { primary = error; _log.Failure("lifecycle_native_stop", error); }
+            catch (Exception error) { primary = error; _log.Failure("lifecycle_native_stop", error); RecordFailureOutput("lifecycle_native_stop"); }
             try { await _session.DisposeAsync().ConfigureAwait(false); _session = null; }
-            catch (Exception cleanup) { disposalFailure = cleanup; _log.Failure("lifecycle_native_dispose", cleanup, cleanup: true); }
+            catch (Exception cleanup) { disposalFailure = cleanup; _log.Failure("lifecycle_native_dispose", cleanup, cleanup: true); RecordFailureOutput("lifecycle_native_dispose"); }
             if (primary is not null && disposalFailure is not null)
                 throw new LinuxProbeException("native_stop_and_dispose_failed", new AggregateException(primary, disposalFailure));
             if (primary is not null) throw new LinuxProbeException("native_stop_failed", primary);
             if (disposalFailure is not null) throw new LinuxProbeException("native_dispose_failed", disposalFailure);
+        }
+
+        private void RecordFailureOutput(string phase)
+        {
+            if (_session is null || _failureOutputRecorded) return;
+            _failureOutputRecorded = true;
+            // Only these fixed synthetic qualification fixtures use this owner.
+            // Private bounded bytes are diagnostic input, never trusted state.
+            foreach (bool stderr in new[] { false, true })
+            {
+                try
+                {
+                    var page = _session.ReadOutput(0, 32_768, stderr);
+                    _log.Detail(phase + "/failure_output", stderr ? "lifecycle_stderr" : "lifecycle_stdout", page.Data);
+                    _log.Phase(phase + "/failure_output", "bounded_snapshot_before_dispose", new(StringComparer.Ordinal)
+                    {
+                        ["stream"] = stderr ? "stderr" : "stdout",
+                        ["startSequence"] = Text(page.StartSequence),
+                        ["nextSequence"] = Text(page.NextSequence),
+                        ["availableFrom"] = Text(page.AvailableFrom),
+                        ["availableUntil"] = Text(page.AvailableUntil),
+                        ["gapFrom"] = page.GapFrom is { } from ? Text(from) : "none",
+                        ["gapUntil"] = page.GapUntil is { } until ? Text(until) : "none",
+                        ["endOfStream"] = page.EndOfStream.ToString(CultureInfo.InvariantCulture),
+                        ["drainFailureCode"] = page.FailureCode ?? "none",
+                    });
+                }
+                catch (Exception evidenceError) { _log.Failure(phase + "/failure_output", evidenceError); }
+            }
         }
 
         private bool OnlyOwnerRemains()

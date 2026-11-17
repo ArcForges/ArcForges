@@ -36,7 +36,7 @@ internal static partial class LinuxWorkload
         try
         {
             if (args.Length == 0) throw new ArgumentException("A fixed fixture mode is required.");
-            if (args[0] is not ("terminal-info" or "terminal" or "argv" or "environment" or "known-folders" or "exit" or "fake-errors" or "flood" or "load" or "load-child" or "commit" or "short-burst" or "root-exit-child" or "filesystem" or "persistence" or "network" or "combined"))
+            if (args[0] is not ("terminal-info" or "terminal" or "argv" or "environment" or "known-folders" or "exit" or "fake-errors" or "flood" or "load" or "load-child" or "commit" or "short-burst" or "root-exit-child" or "filesystem" or "persistence" or "network" or "dns" or "combined"))
                 throw new ArgumentException("Unknown fixture mode.");
             Emit("entry", "entry", writer => writer.WriteString("mode", args[0]));
             return args[0] switch
@@ -57,6 +57,7 @@ internal static partial class LinuxWorkload
                 "filesystem" when args.Length == 6 => Filesystem(args),
                 "persistence" when args.Length == 3 => Persistence(args[1], args[2]),
                 "network" when args.Length is 5 or 6 => await NetworkAsync(args[1], args[2], Number(args[3], 1, 65535), Number(args[4], 100, 4000), gated: args.Length == 6 && (args[5] == "gated" ? true : throw new ArgumentException("Unknown fixture gate."))).ConfigureAwait(false),
+                "dns" when args.Length == 1 => await DnsDeniedAsync().ConfigureAwait(false),
                 "combined" when args.Length == 11 => await CombinedAsync(args, Number(args[1], 3000, 60_000), Number(args[2], 0, 256), Number(args[3], 0, 8), Number(args[5], 1, 65535)).ConfigureAwait(false),
                 _ => throw new ArgumentException("Unknown fixture mode or argument count.")
             };
@@ -422,7 +423,7 @@ internal static partial class LinuxWorkload
         return 0;
     }
 
-    private static int Load(int durationMs, int memoryMiB, int children, CancellationToken cancellationToken = default)
+    private static int Load(int durationMs, int memoryMiB, int children, Action? ready = null, CancellationToken cancellationToken = default)
     {
         var started = Stopwatch.StartNew();
         var handles = new List<Process>(children);
@@ -432,6 +433,7 @@ internal static partial class LinuxWorkload
             var memory = GC.AllocateUninitializedArray<byte>(checked(memoryMiB * 1024 * 1024));
             for (var offset = 0; offset < memory.Length; offset += 4096) memory[offset] = 0x5a;
             Emit("load-ready", "load.active", writer => { writer.WriteNumber("memoryBytesTouched", memory.Length); writer.WriteNumber("childrenCreated", handles.Count); writer.WriteNumber("durationMs", durationMs); });
+            ready?.Invoke();
             var checksum = 1UL;
             while (started.ElapsedMilliseconds < durationMs && !cancellationToken.IsCancellationRequested)
             {
@@ -667,7 +669,20 @@ internal static partial class LinuxWorkload
             if (await Task.WhenAny(terminal, idle).ConfigureAwait(false) == terminal) return await terminal.ConfigureAwait(false);
             await idle.ConfigureAwait(false);
             Emit("combined-work-starting", "combined.work", _ => { });
-            load = Task.Run(() => { try { _ = Load(durationMs, memoryMiB, children, stop.Token); } catch (Exception exception) { Emit("load-observation-failed", "combined.load", writer => WriteException(writer, exception)); } }, CancellationToken.None);
+            var pressureReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            load = Task.Run(() =>
+            {
+                try { _ = Load(durationMs, memoryMiB, children, () => pressureReady.TrySetResult(), stop.Token); }
+                catch (Exception exception)
+                {
+                    Emit("load-observation-failed", "combined.load", writer => WriteException(writer, exception));
+                    pressureReady.TrySetException(exception);
+                }
+            }, CancellationToken.None);
+            var readiness = pressureReady.Task.WaitAsync(stop.Token);
+            if (await Task.WhenAny(terminal, readiness).ConfigureAwait(false) == terminal) return await terminal.ConfigureAwait(false);
+            await readiness.ConfigureAwait(false);
+            Emit("combined-pressure-ready", "combined.work", _ => { });
             network = ObserveCombinedNetworkAsync(args[4], port, stop.Token);
             _ = Filesystem(["filesystem", .. args.Skip(6)]);
             Emit("combined-ready", "combined.active", writer => { writer.WriteNumber("durationMs", durationMs); writer.WriteNumber("memoryMiB", memoryMiB); writer.WriteNumber("children", children); });

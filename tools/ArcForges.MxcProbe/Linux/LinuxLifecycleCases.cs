@@ -351,6 +351,7 @@ internal static class LinuxLifecycleCases
                 allowedRefusal = (SocketError)code.GetInt32() is SocketError.AccessDenied or SocketError.NetworkUnreachable or SocketError.HostUnreachable or SocketError.TimedOut;
             Require(allowedRefusal, "combined_network_failure_not_a_policy_or_namespace_refusal");
         }
+        VerifyCombinedPressureOverlap(context, network);
         var status = (await replacement.RequireAsync("status").ConfigureAwait(false)).Snapshot;
         context.Facts["terminalMeasurementWindowMs"] = throughputWatch.Elapsed.TotalMilliseconds.ToString("F3", CultureInfo.InvariantCulture);
         long measuredBytes = status.OutputCursor - original.OutputCursor;
@@ -376,6 +377,41 @@ internal static class LinuxLifecycleCases
         context.Facts["nodeRestart"] = "same_authenticated_sdk_and_pty_owner";
         context.Facts["outputBytesObserved"] = Text(status.OutputCursor);
         context.Facts["limitsUpdatedBeforeStop"] = "cpu_500_to_250_millicores_actual_readback";
+    }
+
+    private static void VerifyCombinedPressureOverlap(Context context, JsonElement network)
+    {
+        // These bounded fixture events establish workload ordering only. The
+        // held cgroup, native namespace mapping and external peer establish the
+        // resource/network boundary separately.
+        int rootPid = network.GetProperty("pid").GetInt32();
+        var events = LinuxTerminalCases.ReadEvents(context.Data)
+            .Where(item => item.GetProperty("pid").GetInt32() == rootPid).ToArray();
+        int ready = Array.FindIndex(events, item => Event(item, "load-ready"));
+        int release = Array.FindIndex(events, item => Event(item, "combined-pressure-ready"));
+        int attempt = Array.FindIndex(events, item => Event(item, "network-attempt"));
+        int completed = Array.FindIndex(events, item => Event(item, "network") || Event(item, "network-observation-failed"));
+        var filesystem = events.Select((item, index) => (Item: item, Index: index))
+            .Where(value => Event(value.Item, "filesystem")).ToArray();
+        Require(ready >= 0 && release > ready && attempt > release && completed > attempt,
+            "combined_network_did_not_run_after_pressure_ready");
+        Require(events[ready].GetProperty("memoryBytesTouched").GetInt32() == 32 * 1024 * 1024
+            && events[ready].GetProperty("childrenCreated").GetInt32() == 2,
+            "combined_pressure_setup_incomplete");
+        Require(filesystem.Length == 10 && filesystem.All(value => value.Index > release),
+            "combined_filesystem_did_not_run_after_pressure_ready");
+        Require(!events.Any(item => Event(item, "load-finished") || Event(item, "load-observation-failed")),
+            "combined_pressure_ended_before_effect_observation");
+        context.Facts["pressureOverlap"] = "load_ready_before_network_and_filesystem_no_load_completion_at_observation";
+        context.Log.Phase("combined_pressure_overlap", "observed", new(StringComparer.Ordinal)
+        {
+            ["rootNamespacePid"] = Text(rootPid),
+            ["loadReadyIndex"] = Text(ready),
+            ["pressureReleasedIndex"] = Text(release),
+            ["networkAttemptIndex"] = Text(attempt),
+            ["networkResultIndex"] = Text(completed),
+            ["filesystemEffects"] = Text(filesystem.Length),
+        });
     }
 
     private static void VerifyCombinedFiles(string data)

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Diagnostics;
 using System.Globalization;
-using System.Security.Cryptography;
 using System.Runtime.Versioning;
+using System.Security.Cryptography;
 using System.Text;
 
 namespace ArcForges.MxcProbe.Linux;
@@ -14,7 +14,7 @@ internal sealed class LinuxServiceScope : IAsyncDisposable
 {
     private const string ToolPath = "/usr/bin:/bin:/usr/sbin:/sbin";
     private static readonly string[] Properties = ["Id", "Description", "LoadState", "ActiveState", "SubState", "Result",
-        "MainPID", "ControlPID", "ExecMainCode", "ExecMainStatus", "ControlGroup", "InvocationID", "Delegate", "KillMode", "Restart"];
+        "MainPID", "ControlPID", "ExecMainCode", "ExecMainStatus", "ControlGroup", "InvocationID", "Delegate", "KillMode", "Restart", "DisableControllers", "Slice"];
     private readonly string _unit;
     private readonly string _tag = "afv2-mxc03-" + Guid.NewGuid().ToString("N");
     private readonly string _boot = LinuxCgroup.BootId();
@@ -30,8 +30,16 @@ internal sealed class LinuxServiceScope : IAsyncDisposable
 
     private LinuxServiceScope(string unit, LinuxEvidence evidence) { _unit = unit; _evidence = evidence; }
 
-    internal static async Task<LinuxServiceScope> StartAsync(string stage, string privateOwnerConfigPath,
+    internal static Task<LinuxServiceScope> StartAsync(string stage, string privateOwnerConfigPath,
         string unitName, LinuxScopeLimits limits, LinuxEvidence evidence)
+        => StartCoreAsync(stage, privateOwnerConfigPath, unitName, limits, evidence, StartFault.None, null);
+
+    // Closed experiment inputs only; ordinary callers cannot select arbitrary
+    // manager properties, executables, slices or working directories.
+    private enum StartFault { None, MissingWorkingDirectory, MissingCpuController }
+
+    private static async Task<LinuxServiceScope> StartCoreAsync(string stage, string privateOwnerConfigPath,
+        string unitName, LinuxScopeLimits limits, LinuxEvidence evidence, StartFault fault, string? ownedSlice)
     {
         ValidateLimits(limits);
         if (!unitName.StartsWith("arcforges-mxc03-", StringComparison.Ordinal) || !unitName.EndsWith(".service", StringComparison.Ordinal)
@@ -44,6 +52,10 @@ internal sealed class LinuxServiceScope : IAsyncDisposable
         var executable = Path.Combine(stage, "arcforges-mxc-probe");
         if (!File.Exists(executable) || stage.Any(x => x is '%' or '$' or '\n' or '\r')
             || privateOwnerConfigPath.Any(x => x is '%' or '$' or '\n' or '\r')) throw new LinuxProbeException("service_role_path_invalid");
+        if (fault == StartFault.MissingWorkingDirectory
+            && (File.Exists(Path.Combine(control, "intentionally-missing-working-directory"))
+                || Directory.Exists(Path.Combine(control, "intentionally-missing-working-directory"))))
+            throw new LinuxProbeException("creation_negative_fault_path_exists");
         using var executableLease = File.Open(executable, FileMode.Open, FileAccess.Read, FileShare.Read);
         using var configLease = File.Open(privateOwnerConfigPath, FileMode.Open, FileAccess.Read, FileShare.Read);
         var scope = new LinuxServiceScope(unitName, evidence);
@@ -70,7 +82,15 @@ internal sealed class LinuxServiceScope : IAsyncDisposable
                 "--property=RuntimeMaxSec=360s", "--property=UMask=0077", "--property=CPUAccounting=yes",
                 "--property=MemoryAccounting=yes", "--property=TasksAccounting=yes", "--property=CPUQuotaPeriodSec=100ms",
                 "--property=MemorySwapMax=0", "--property=StandardInput=null", "--property=StandardOutput=null", "--property=StandardError=append:" + bootstrapError,
-                "--working-directory=" + control };
+                "--working-directory=" + (fault == StartFault.MissingWorkingDirectory ? Path.Combine(control, "intentionally-missing-working-directory") : control) };
+            if (fault == StartFault.MissingCpuController)
+            {
+                LinuxCgroup.VerifyTrustedProgram("/usr/bin/sleep");
+                arguments.Add("--slice=" + ownedSlice);
+                // Observe the actual delegated scope while a fixed trusted
+                // pre-exec helper is live. The owner/SDK is never admitted.
+                arguments.Add("--property=ExecStartPre=/usr/bin/sleep 2");
+            }
             arguments.AddRange(LimitArguments(limits).Select(x => "--property=" + x));
             // A fixed env executable clears the user manager's ambient values
             // without reading them. It execs the fixed owner at the same PID.
@@ -93,6 +113,39 @@ internal sealed class LinuxServiceScope : IAsyncDisposable
             {
                 var state = await scope.ShowAsync().ConfigureAwait(false);
                 scope.RequireTag(state);
+                if (fault == StartFault.MissingCpuController && Integer(state, "ControlPID") > 0
+                    && Get(state, "ControlGroup").Length > 0)
+                {
+                    var group = Get(state, "ControlGroup");
+                    var controlPid = Integer(state, "ControlPID");
+                    var controlStart = LinuxCgroup.ProcessStartTicks(controlPid);
+                    var controlGroup = LinuxCgroup.ProcessControlGroup(controlPid);
+                    if (Get(state, "Slice") != ownedSlice || Get(state, "InvocationID").Length != 32
+                        || !group.EndsWith('/' + ownedSlice + '/' + unitName, StringComparison.Ordinal)
+                        || controlGroup != group && !controlGroup.StartsWith(group + '/', StringComparison.Ordinal))
+                        throw new LinuxProbeException("controller_negative_scope_identity_mismatch");
+                    scope._cgroup = LinuxCgroup.Open(group);
+                    var controllers = scope._cgroup.ReadControllerState();
+                    evidence.Phase("service_start", "actual_controller_absence", new()
+                    {
+                        ["unit"] = unitName,
+                        ["invocationId"] = Get(state, "InvocationID"),
+                        ["controlPid"] = Get(state, "ControlPID"),
+                        ["controlStartTicks"] = Text(controlStart),
+                        ["bootId"] = scope._boot,
+                        ["controlGroup"] = group,
+                        ["inode"] = Text(scope._cgroup.Inode),
+                        ["mountId"] = Text(scope._cgroup.MountId),
+                        ["availableControllers"] = controllers.Available,
+                        ["enabledControllers"] = controllers.Enabled,
+                        ["cpuMaxPresent"] = controllers.CpuMaxPresent.ToString(CultureInfo.InvariantCulture)
+                    });
+                    if (LinuxCgroup.ProcessStartTicks(controlPid) != controlStart || LinuxCgroup.ProcessControlGroup(controlPid) != controlGroup)
+                        throw new LinuxProbeException("controller_negative_control_process_changed");
+                    if (controllers.Available.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains("cpu", StringComparer.Ordinal)
+                        || controllers.CpuMaxPresent) throw new LinuxProbeException("controller_negative_cpu_still_available");
+                    throw new LinuxProbeException("service_required_cpu_controller_absent");
+                }
                 var pid = Integer(state, "MainPID");
                 if (pid > 0 && Get(state, "ControlGroup").Length > 0 && Get(state, "InvocationID").Length == 32)
                 {
@@ -109,7 +162,25 @@ internal sealed class LinuxServiceScope : IAsyncDisposable
                     evidence.Phase("service_start", "resource_readback_confirmed", scope.IdentityFacts());
                     return scope;
                 }
-                if (Get(state, "ActiveState") is "failed" or "inactive") throw new LinuxProbeException("service_owner_failed_before_identity");
+                if (Get(state, "ActiveState") is "failed" or "inactive")
+                {
+                    evidence.Phase("service_start", "native_owner_start_failure", new()
+                    {
+                        ["unit"] = unitName,
+                        ["invocationId"] = Get(state, "InvocationID"),
+                        ["managerResult"] = Get(state, "Result"),
+                        ["execMainCode"] = Get(state, "ExecMainCode"),
+                        ["execMainStatus"] = Get(state, "ExecMainStatus"),
+                        ["mainPid"] = Get(state, "MainPID"),
+                        ["controlPid"] = Get(state, "ControlPID"),
+                        ["controlGroup"] = Get(state, "ControlGroup")
+                    });
+                    if (fault == StartFault.MissingWorkingDirectory && Get(state, "Result") == "exit-code"
+                        && Integer(state, "ExecMainCode") == 1 && Integer(state, "ExecMainStatus") == 200
+                        && Integer(state, "MainPID") == 0 && Integer(state, "ControlPID") == 0)
+                        throw new LinuxProbeException("service_native_preexec_chdir_refused");
+                    throw new LinuxProbeException("service_owner_failed_before_identity");
+                }
                 await Task.Delay(25).ConfigureAwait(false);
             }
             throw new LinuxProbeException("service_owner_start_deadline");
@@ -121,6 +192,135 @@ internal sealed class LinuxServiceScope : IAsyncDisposable
             catch (Exception cleanup) { evidence.Failure("service_start_cleanup", cleanup, true); UnresolvedStartupScopes.Add(scope); }
             throw;
         }
+    }
+
+    internal static async Task RequireNativeCreationRefusalAsync(string stage, string ownerConfig,
+        string unit, LinuxScopeLimits limits, LinuxEvidence evidence)
+    {
+        LinuxServiceScope? unexpected = null;
+        try
+        {
+            unexpected = await StartCoreAsync(stage, ownerConfig, unit, limits, evidence, StartFault.MissingWorkingDirectory, null).ConfigureAwait(false);
+            throw new LinuxProbeException("creation_negative_native_owner_was_started");
+        }
+        catch (LinuxProbeException error) when (error.Code == "service_native_preexec_chdir_refused")
+        { evidence.Phase("resource_native_creation_refusal", "manager_preexec_200_chdir_confirmed"); }
+        finally
+        {
+            if (unexpected is not null)
+            {
+                try { await unexpected.DisposeAsync().ConfigureAwait(false); }
+                catch (Exception error)
+                { evidence.Failure("resource_native_creation_refusal_cleanup", error, true); UnresolvedStartupScopes.Add(unexpected); }
+            }
+        }
+    }
+
+    internal static async Task RequireCpuControllerAbsenceRefusalAsync(string stage, string ownerConfig,
+        string unit, LinuxScopeLimits limits, LinuxEvidence evidence)
+    {
+        LinuxCgroup.VerifyTrustedProgram("/usr/bin/busctl");
+        // No '-' means no implicit intermediate slices. This fresh exclusive
+        // slice changes only its own descendants, never app.slice/shared state.
+        var slice = "arcforgesmxc03n" + Guid.NewGuid().ToString("N") + ".slice";
+        var parent = new LinuxServiceScope(slice, evidence);
+        LinuxServiceScope? unexpected = null;
+        try
+        {
+            if (Get(await parent.ShowAsync().ConfigureAwait(false), "LoadState") != "not-found")
+                throw new LinuxProbeException("controller_negative_slice_already_exists");
+            evidence.Phase("resource_controller_absence", "before_fresh_slice_create", new() { ["slice"] = slice });
+            parent._submitted = true;
+            await parent.CommandAsync("/usr/bin/busctl",
+                ["--user", "call", "org.freedesktop.systemd1", "/org/freedesktop/systemd1", "org.freedesktop.systemd1.Manager",
+                    "StartTransientUnit", "ssa(sv)a(sa(sv))", slice, "fail", "10",
+                    "Description", "s", parent._tag, "DisableControllers", "as", "1", "cpu",
+                    "CPUQuotaPerSecUSec", "t", "500000", "CPUQuotaPeriodUSec", "t", "100000",
+                    "MemoryMax", "t", "536870912", "MemorySwapMax", "t", "0", "TasksMax", "t", "128",
+                    "CPUAccounting", "b", "true", "MemoryAccounting", "b", "true", "TasksAccounting", "b", "true", "0"],
+                "resource_controller_slice_create", TimeSpan.FromSeconds(8)).ConfigureAwait(false);
+            var deadline = Stopwatch.StartNew();
+            while (true)
+            {
+                var state = await parent.ShowAsync().ConfigureAwait(false);
+                parent.RequireTag(state);
+                if (Get(state, "ActiveState") == "active" && Get(state, "ControlGroup").Length > 0)
+                {
+                    var group = Get(state, "ControlGroup");
+                    var expected = "/user.slice/user-" + Text(LinuxCgroup.UserId) + ".slice/user@" + Text(LinuxCgroup.UserId) + ".service/" + slice;
+                    if (group != expected || Get(state, "DisableControllers") != "cpu")
+                        throw new LinuxProbeException("controller_negative_slice_identity_mismatch");
+                    parent._cgroup = LinuxCgroup.Open(group);
+                    var actual = parent._cgroup.Read();
+                    RequireLimits(actual, new(500, 536870912, 128));
+                    var controllers = parent._cgroup.ReadControllerState();
+                    if (actual.Populated || actual.ProcessIds.Length != 0
+                        || controllers.Enabled.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains("cpu", StringComparer.Ordinal))
+                        throw new LinuxProbeException("controller_negative_slice_not_fresh_and_disabled");
+                    evidence.Phase("resource_controller_absence", "fresh_parent_bounded_before_child", new()
+                    {
+                        ["slice"] = slice,
+                        ["controlGroup"] = group,
+                        ["inode"] = Text(parent._cgroup.Inode),
+                        ["mountId"] = Text(parent._cgroup.MountId),
+                        ["cpuQuota"] = Text(actual.CpuQuotaMicros),
+                        ["memoryMax"] = Text(actual.MemoryMaxBytes!.Value),
+                        ["pidsMax"] = Text(actual.PidsMax!.Value),
+                        ["enabledControllers"] = controllers.Enabled
+                    });
+                    break;
+                }
+                if (deadline.Elapsed > TimeSpan.FromSeconds(8)) throw new LinuxProbeException("controller_negative_slice_start_deadline");
+                await Task.Delay(25).ConfigureAwait(false);
+            }
+            try
+            {
+                unexpected = await StartCoreAsync(stage, ownerConfig, unit, limits, evidence, StartFault.MissingCpuController, slice).ConfigureAwait(false);
+                throw new LinuxProbeException("controller_negative_owner_was_admitted");
+            }
+            catch (LinuxProbeException error) when (error.Code == "service_required_cpu_controller_absent")
+            { evidence.Phase("resource_controller_absence", "actual_missing_cpu_refused_before_owner"); }
+        }
+        catch (Exception error) { evidence.Failure("resource_controller_absence", error); throw; }
+        finally
+        {
+            if (unexpected is not null)
+            {
+                try { await unexpected.DisposeAsync().ConfigureAwait(false); }
+                catch (Exception error)
+                { evidence.Failure("resource_controller_child_cleanup", error, true); UnresolvedStartupScopes.Add(unexpected); }
+            }
+            try { await parent.CleanupFailedStartAsync().ConfigureAwait(false); }
+            catch (Exception error)
+            { evidence.Failure("resource_controller_slice_cleanup", error, true); UnresolvedStartupScopes.Add(parent); }
+        }
+    }
+
+    internal async Task RequireNativeSettingRefusalAsync()
+    {
+        LinuxCgroup.VerifyTrustedProgram("/usr/bin/busctl");
+        await _gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            var before = await ObserveCoreAsync().ConfigureAwait(false);
+            _evidence.Phase("resource_setting_refusal", "before_manager_write", IdentityFacts());
+            // This typed zero value reaches the real manager, whose public
+            // resource setter rejects it. It cannot remove/broaden a quota.
+            var result = await CommandAsync("/usr/bin/busctl",
+                ["--user", "call", "org.freedesktop.systemd1", "/org/freedesktop/systemd1", "org.freedesktop.systemd1.Manager",
+                    "SetUnitProperties", "sba(sv)", _unit, "true", "1", "CPUQuotaPerSecUSec", "t", "0"],
+                "resource_setting_refusal", TimeSpan.FromSeconds(5), allowNonzero: true).ConfigureAwait(false);
+            if (result.ExitCode == 0 || !result.Error.Contains("CPUQuotaPerSecUSec= value out of range", StringComparison.Ordinal))
+                throw new LinuxProbeException("resource_expected_manager_setting_refusal_missing");
+            var after = await ObserveCoreAsync().ConfigureAwait(false);
+            if (after.Identity != before.Identity || after.Cgroup.Removed
+                || after.Cgroup.CpuQuotaMicros != before.Cgroup.CpuQuotaMicros || after.Cgroup.CpuPeriodMicros != before.Cgroup.CpuPeriodMicros
+                || after.Cgroup.MemoryMaxBytes != before.Cgroup.MemoryMaxBytes || after.Cgroup.PidsMax != before.Cgroup.PidsMax)
+                throw new LinuxProbeException("resource_failed_setting_changed_actual_policy");
+            _evidence.Phase("resource_setting_refusal", "native_manager_refusal_and_unchanged_readback", IdentityFacts());
+        }
+        catch (Exception error) { _evidence.Failure("resource_setting_refusal", error); throw; }
+        finally { _gate.Release(); }
     }
 
     internal async Task<LinuxScopeObservation> ObserveAsync()
@@ -262,7 +462,21 @@ internal sealed class LinuxServiceScope : IAsyncDisposable
                 || Get(state, "ActiveState") is "inactive" or "failed" && Integer(state, "MainPID") == 0
                 && Integer(state, "ControlPID") == 0 && Get(state, "ControlGroup").Length == 0);
             if (empty)
-            { _cgroup?.Dispose(); _gate.Dispose(); _disposed = true; _evidence.Phase("service_start_cleanup", "confirmed_no_live_scope"); return; }
+            {
+                _evidence.Phase("service_start_cleanup", "confirmed_no_live_scope", new()
+                {
+                    ["unit"] = _unit,
+                    ["invocationId"] = invocation,
+                    ["cleanupAuthority"] = _cgroup is null ? "manager_no_live_native_scope" : "held_native_cgroup_empty_proof",
+                    ["controlGroup"] = _cgroup?.ControlGroup ?? Get(state, "ControlGroup"),
+                    ["heldInode"] = _cgroup is null ? "not_held" : Text(_cgroup.Inode),
+                    ["heldMountId"] = _cgroup is null ? "not_held" : Text(_cgroup.MountId),
+                    ["mainPid"] = Get(state, "MainPID"),
+                    ["controlPid"] = Get(state, "ControlPID")
+                });
+                _cgroup?.Dispose(); _gate.Dispose(); _disposed = true;
+                return;
+            }
             await Task.Delay(25).ConfigureAwait(false);
         }
         throw new LinuxProbeException("service_start_cleanup_unresolved");

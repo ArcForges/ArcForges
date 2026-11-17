@@ -61,11 +61,13 @@ internal static partial class LinuxPolicyCases
     {
         var fixture = NewFixture(work, control, "baseline-reads");
         var request = LinuxRequestFactory.Create("/bin/sh", ["-c", "test -r /etc/os-release && test -r /bin/sh"], fixture.Data, fixture.Control, 10_000);
-        request.Filesystem!.ReadonlyPaths.Add("/etc/os-release");
-        log.Phase("baseline-reads/request", "explicit_system_file_grant", new(StringComparer.Ordinal)
+        // The pinned official Bubblewrap baseline already binds /etc and
+        // /usr/lib read-only. Rebinding the /etc/os-release symlink itself
+        // targets a symlink in that existing mount and is refused by bwrap.
+        log.Phase("baseline-reads/request", "official_readonly_system_baseline", new(StringComparer.Ordinal)
         {
-            ["osReleaseReadonly"] = "true",
-            ["wholeEtcGranted"] = "false",
+            ["etcSource"] = "official_baseline",
+            ["additionalSystemFileGrant"] = "false",
         });
         return await ExecuteAsync("baseline-reads", request, fixture, log, _ => { }).ConfigureAwait(false);
     }

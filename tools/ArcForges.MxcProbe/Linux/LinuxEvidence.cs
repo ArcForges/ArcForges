@@ -96,8 +96,9 @@ internal sealed class LinuxEvidence : IDisposable
         }
     }
 
-    // Used only for bounded output of fixed trusted control tools with no
-    // credentials or workload arguments. A hash alone cannot diagnose an error.
+    // Used only for bounded output of fixed control tools or this probe's known
+    // synthetic fixtures, never arbitrary user workloads or credentials.
+    // A hash alone cannot diagnose an error; private detail is not trusted state.
     internal void Detail(string phase, string label, byte[] data)
     {
         lock (_gate)
