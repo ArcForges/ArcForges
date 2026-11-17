@@ -7,6 +7,19 @@ using System.Text.Json;
 
 namespace ArcForges.MxcProbe;
 
+internal sealed class WindowsLifecycleMember
+{
+    public uint ProcessId { get; set; }
+    public string? CreatedUtc { get; set; }
+    public string? ImageName { get; set; }
+    public string? ImagePath { get; set; }
+    public string? ImageSha256 { get; set; }
+    public bool HeldOwner { get; set; }
+    public bool MemberBeforeIdentityRead { get; set; }
+    public bool MemberAfterIdentityRead { get; set; }
+    public WindowsQualificationFailure? ObservationFailure { get; set; }
+}
+
 internal sealed class WindowsLifecycleEvidence
 {
     public string Case { get; set; } = "";
@@ -26,6 +39,9 @@ internal sealed class WindowsLifecycleEvidence
     public ProbeOwnerRecord? FinalOwner { get; set; }
     public ConPtyJobObservation? BeforeHelperDrain { get; set; }
     public ConPtyJobObservation? AfterHelperDrain { get; set; }
+    public List<WindowsLifecycleMember> BeforeHelperMembers { get; set; } = [];
+    public List<WindowsLifecycleMember> AfterHelperMembers { get; set; } = [];
+    public bool HelperMemberCaptureTruncated { get; set; }
     public WindowsQualificationFailure? HelperDrainObservationFailure { get; set; }
     public ConPtyJobObservation? FinalAggregate { get; set; }
     public Dictionary<string, bool> Checks { get; set; } = new(StringComparer.Ordinal);
@@ -511,6 +527,32 @@ internal static class WindowsLifecycleCases
         if (verifyPrivate) WindowsPolicy.VerifyPrivateFile(path);
     }
 
+    private static List<WindowsLifecycleMember> ObserveMembers(WindowsOwnerHost guardian, ConPtyJobObservation snapshot)
+    {
+        var observations = new List<WindowsLifecycleMember>();
+        foreach (var pid in snapshot.ProcessIds.Take(16))
+        {
+            var item = new WindowsLifecycleMember { ProcessId = pid, HeldOwner = pid == guardian.ProcessId };
+            observations.Add(item);
+            try
+            {
+                using var process = Process.GetProcessById(checked((int)pid));
+                _ = process.SafeHandle; // Hold the native process before rechecking exact Job membership.
+                item.MemberBeforeIdentityRead = !process.HasExited && guardian.ObserveAggregate().ProcessIds.Contains(pid);
+                if (!item.MemberBeforeIdentityRead) continue;
+                item.CreatedUtc = process.StartTime.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
+                var image = process.MainModule?.FileName ?? throw new InvalidOperationException("The held member image is unavailable.");
+                item.ImagePath = image;
+                item.ImageName = Path.GetFileName(image);
+                using (var file = File.Open(image, FileMode.Open, FileAccess.Read, FileShare.Read))
+                    item.ImageSha256 = Convert.ToHexStringLower(SHA256.HashData(file));
+                item.MemberAfterIdentityRead = !process.HasExited && guardian.ObserveAggregate().ProcessIds.Contains(pid);
+            }
+            catch (Exception error) { item.ObservationFailure = WindowsQualification.ObserveFailure(error); }
+        }
+        return observations;
+    }
+
     private sealed class Fixture(ProbeOwnerConfig config, WindowsOwnerHost guardian, WindowsPolicyArtifact policy,
         WindowsQualificationCase result, WindowsLifecycleEvidence evidence, string root, string events) : IAsyncDisposable
     {
@@ -544,11 +586,18 @@ internal static class WindowsLifecycleCases
             var status = await SendAsync("status").ConfigureAwait(false);
             Check(status.Job is { ActiveProcesses: 0 } && status.Job.ProcessIds.Length == 0, "inner_job_not_independently_empty");
             evidence.BeforeHelperDrain = guardian.ObserveAggregate();
+            evidence.HelperMemberCaptureTruncated = evidence.BeforeHelperDrain.ProcessIds.Length > 16;
+            evidence.BeforeHelperMembers = ObserveMembers(guardian, evidence.BeforeHelperDrain);
             ConPtyJobObservation aggregate;
             try { aggregate = await guardian.WaitOwnerOnlyAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false); }
             finally
             {
-                try { evidence.AfterHelperDrain = guardian.ObserveAggregate(); }
+                try
+                {
+                    evidence.AfterHelperDrain = guardian.ObserveAggregate();
+                    evidence.HelperMemberCaptureTruncated |= evidence.AfterHelperDrain.ProcessIds.Length > 16;
+                    evidence.AfterHelperMembers = ObserveMembers(guardian, evidence.AfterHelperDrain);
+                }
                 catch (Exception error) { evidence.HelperDrainObservationFailure = WindowsQualification.ObserveFailure(error); }
             }
             Check(aggregate.ActiveProcesses == 1 && aggregate.ProcessIds.Length == 1 && aggregate.ProcessIds[0] == guardian.ProcessId,

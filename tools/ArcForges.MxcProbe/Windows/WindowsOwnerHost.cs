@@ -90,8 +90,10 @@ internal sealed class WindowsOwnerHost : IAsyncDisposable
         fixed (char* environmentPointer = environment)
         {
             // SUSPENDED | UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT |
-            // NO_WINDOW. No shell, breakaway, stdio or inheritable handle list.
-            if (!ConPtyNative.CreateProcess(executable, commandPointer, 0, 0, false, 0x4 | 0x400 | 0x80000 | 0x08000000,
+            // DETACHED_PROCESS. The owner has no inherited or hidden console;
+            // it explicitly creates the separate workload ConPTY. No shell,
+            // breakaway, stdio or inheritable handle list.
+            if (!ConPtyNative.CreateProcess(executable, commandPointer, 0, 0, false, 0x4 | 0x400 | 0x80000 | 0x8,
                 environmentPointer, Path.GetDirectoryName(executable)!, ref startup, out process))
                 throw Error("Create suspended background owner");
         }

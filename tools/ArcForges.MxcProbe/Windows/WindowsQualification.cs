@@ -21,8 +21,11 @@ internal static class WindowsQualification
         try
         {
             if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Native Windows is required.");
-            if (args.Length != 6 || args[0] != "--manifest" || args[2] != "--work" || args[4] != "--report")
-                throw new ArgumentException("Expected --manifest, --work and --report.");
+            if ((args.Length != 6 && args.Length != 8) || args[0] != "--manifest" || args[2] != "--work" || args[4] != "--report"
+                || (args.Length == 8 && (args[6] != "--only" || args[7] is not ("terminal" or "resource" or "policy" or "network" or "lifecycle" or "combined" or "cli"))))
+                throw new ArgumentException("Expected --manifest, --work and --report, optionally followed by --only <terminal|resource|policy|network|lifecycle|combined|cli>.");
+            report.SelectionGroup = args.Length == 8 ? args[7] : "full";
+            report.DiagnosticSelection = report.SelectionGroup != "full";
             var manifest = Path.GetFullPath(args[1]);
             var stage = Path.GetDirectoryName(manifest)!;
             var work = Path.GetFullPath(args[3]);
@@ -34,15 +37,32 @@ internal static class WindowsQualification
             Program.ValidateStage(manifest);
             report.StageVerified = true;
             Directory.CreateDirectory(work);
-            report.Cases = await RunTerminalCasesAsync(stage, work).ConfigureAwait(false);
-            if (report.Cases.Count > 0 && report.Cases[0].Passed && report.Cases.All(item => item.UnresolvedCleanupOwner is null && item.CleanupFailure is null))
+            if (report.DiagnosticSelection)
             {
-                report.Cases.AddRange(await WindowsResourceCases.RunAsync(stage, work).ConfigureAwait(false));
-                if (report.Cases.All(item => item.UnresolvedCleanupOwner is null && item.CleanupFailure is null)) report.Cases.AddRange(await WindowsPolicyCases.RunAsync(stage, work).ConfigureAwait(false));
-                if (report.Cases.All(item => item.UnresolvedCleanupOwner is null && item.CleanupFailure is null)) report.Cases.AddRange(await WindowsNetworkCases.RunAsync(stage, work).ConfigureAwait(false));
-                if (report.Cases.All(item => item.UnresolvedCleanupOwner is null && item.CleanupFailure is null)) report.Cases.AddRange(await WindowsCliCases.RunAsync(stage, work).ConfigureAwait(false));
-                if (report.Cases.All(item => item.UnresolvedCleanupOwner is null && item.CleanupFailure is null)) report.Cases.AddRange(await WindowsLifecycleCases.RunAsync(stage, work).ConfigureAwait(false));
-                if (report.Cases.All(item => item.UnresolvedCleanupOwner is null && item.CleanupFailure is null)) report.Cases.AddRange(await WindowsCombinedCases.RunAsync(stage, work).ConfigureAwait(false));
+                report.Cases = report.SelectionGroup switch
+                {
+                    "terminal" => await RunTerminalCasesAsync(stage, work).ConfigureAwait(false),
+                    "resource" => await WindowsResourceCases.RunAsync(stage, work).ConfigureAwait(false),
+                    "policy" => await WindowsPolicyCases.RunAsync(stage, work).ConfigureAwait(false),
+                    "network" => await WindowsNetworkCases.RunAsync(stage, work).ConfigureAwait(false),
+                    "lifecycle" => await WindowsLifecycleCases.RunAsync(stage, work).ConfigureAwait(false),
+                    "combined" => await WindowsCombinedCases.RunAsync(stage, work).ConfigureAwait(false),
+                    "cli" => await WindowsCliCases.RunAsync(stage, work).ConfigureAwait(false),
+                    _ => throw new ArgumentException("Unknown diagnostic group.")
+                };
+            }
+            else
+            {
+                report.Cases = await RunTerminalCasesAsync(stage, work).ConfigureAwait(false);
+                if (report.Cases.Count > 0 && report.Cases[0].Passed && report.Cases.All(item => item.UnresolvedCleanupOwner is null && item.CleanupFailure is null))
+                {
+                    report.Cases.AddRange(await WindowsResourceCases.RunAsync(stage, work).ConfigureAwait(false));
+                    if (report.Cases.All(item => item.UnresolvedCleanupOwner is null && item.CleanupFailure is null)) report.Cases.AddRange(await WindowsPolicyCases.RunAsync(stage, work).ConfigureAwait(false));
+                    if (report.Cases.All(item => item.UnresolvedCleanupOwner is null && item.CleanupFailure is null)) report.Cases.AddRange(await WindowsNetworkCases.RunAsync(stage, work).ConfigureAwait(false));
+                    if (report.Cases.All(item => item.UnresolvedCleanupOwner is null && item.CleanupFailure is null)) report.Cases.AddRange(await WindowsCliCases.RunAsync(stage, work).ConfigureAwait(false));
+                    if (report.Cases.All(item => item.UnresolvedCleanupOwner is null && item.CleanupFailure is null)) report.Cases.AddRange(await WindowsLifecycleCases.RunAsync(stage, work).ConfigureAwait(false));
+                    if (report.Cases.All(item => item.UnresolvedCleanupOwner is null && item.CleanupFailure is null)) report.Cases.AddRange(await WindowsCombinedCases.RunAsync(stage, work).ConfigureAwait(false));
+                }
             }
             report.ExecutedCasesPassed = report.Cases.Count > 0 && report.Cases.All(x => x.Passed);
         }
@@ -54,7 +74,8 @@ internal static class WindowsQualification
             report.Failure = ObserveFailure(exception);
         }
 
-        // This terminal slice alone cannot qualify the six-protocol combination.
+        // A selected diagnostic group can never qualify the combined profile.
+        if (report.DiagnosticSelection) { report.Status = "partial"; report.QualificationPassed = false; }
         report.FinishedUtc = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
         var json = JsonSerializer.Serialize(report, WindowsQualificationJson.Default.WindowsQualificationReport);
         if (reportPath is not null)
@@ -479,17 +500,30 @@ internal static class WindowsQualification
     internal static string FailureCode(Exception exception) => exception is WindowsQualificationCheckException check ? check.Code : "native_operation_failed";
     internal static WindowsQualificationFailure ObserveFailure(Exception exception)
     {
-        var native = exception as Win32Exception;
+        var native = exception as Win32Exception ?? exception.InnerException as Win32Exception ?? exception.InnerException?.InnerException as Win32Exception;
         var message = native?.Message;
         // ConPtySession's native helper uses fixed operation strings ending in
         // " failed.". Arbitrary exception/request/OS messages are not exported.
         var operation = message is { Length: <= 160 } && message.EndsWith(" failed.", StringComparison.Ordinal)
             && message.All(x => char.IsAsciiLetterOrDigit(x) || x is ' ' or '.' or '-' or '(' or ')') ? message : null;
-        return new(FailureCode(exception), exception.GetType().Name, exception.HResult, native?.NativeErrorCode, operation);
+        var details = new Dictionary<string, string>(StringComparer.Ordinal);
+        // Only fixed diagnostic fields emitted by our controlled peer/calibrator,
+        // never arbitrary exception messages, environment or payload output.
+        for (Exception? current = exception; current is not null && details.Count < 48; current = current.InnerException)
+        {
+            foreach (System.Collections.DictionaryEntry item in current.Data)
+            {
+                if (item.Key is not string key || !(key.StartsWith("remotePeer", StringComparison.Ordinal) || key.StartsWith("networkCalibration", StringComparison.Ordinal))) continue;
+                if (item.Value is not (string or int or long or uint or bool)) continue;
+                var value = Convert.ToString(item.Value, CultureInfo.InvariantCulture);
+                if (value is not null && value.Length <= 160 && value.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-' or '.')) details.TryAdd(key, value);
+            }
+        }
+        return new(FailureCode(exception), exception.GetType().Name, exception.HResult, native?.NativeErrorCode, operation, details.Count == 0 ? null : details, exception.InnerException?.GetType().Name);
     }
 }
 
-internal sealed class WindowsQualificationCheckException(string code) : Exception
+internal sealed class WindowsQualificationCheckException(string code, Exception? inner = null) : Exception(null, inner)
 {
     internal string Code { get; } = code;
 }
@@ -780,7 +814,7 @@ internal sealed class WindowsTerminalControlObservation
     public uint? FixtureChildPid { get; set; }
     public ConPtyJobObservation? BeforeEtxJob { get; set; }
 }
-internal sealed record WindowsQualificationFailure(string Code, string Type, int HResult, int? NativeErrorCode, string? Operation);
+internal sealed record WindowsQualificationFailure(string Code, string Type, int HResult, int? NativeErrorCode, string? Operation, Dictionary<string, string>? Details = null, string? CauseType = null);
 internal sealed record WindowsPrivateDiagnostic(string File, string Sha256, int Bytes);
 internal sealed record WindowsThreadDiagnostic(int Id, string State, string? WaitReason);
 internal sealed class WindowsOwnedProcessDiagnostic
@@ -853,6 +887,8 @@ internal sealed class WindowsQualificationCase
 internal sealed class WindowsQualificationReport
 {
     public string Profile { get; set; } = "windows-process-executor-v1";
+    public string SelectionGroup { get; set; } = "full";
+    public bool DiagnosticSelection { get; set; }
     public string Status { get; set; } = "partial";
     public bool QualificationPassed { get; set; }
     public bool ExecutedCasesPassed { get; set; }

@@ -280,10 +280,12 @@ internal static partial class WindowsPolicyCases
         var watch = Stopwatch.StartNew();
         ConPtySession? session = null;
         WindowsTerminalCapture? capture = null;
+        var officialCreateProcessRefused = false;
         try
         {
             // A probe failure alone cannot pass this case: launch the pinned official executor.
-            session = ConPtySession.Start(new(Path.Combine(stage, "wxc-exec.exe"), policy.Path, control, 80, 24, new(5000, 1024UL * 1024 * 1024, 16)));
+            session = ConPtySession.Start(new(Path.Combine(stage, "wxc-exec.exe"), policy.Path, control, 80, 24, new(5000, 1024UL * 1024 * 1024, 16),
+                PrivateDiagnostics: variant == "invalid-environment"));
             result.ExecutorProcessId = session.ProcessId;
             result.ExecutorStartUtc = session.ProcessStartTimeUtc.ToString("O", CultureInfo.InvariantCulture);
             result.InheritedJob = session.InheritedJob;
@@ -296,10 +298,16 @@ internal static partial class WindowsPolicyCases
             result.JobEmpty = exited.JobEmpty;
             result.FinalJob = exited.Job;
             Check(exited.ExitSource == "official_executor" && exited.JobEmpty, "refusal_exit_or_job_cleanup_missing");
-            Check(exited.RawExitCode != 0 && (exited.RawExitCode & 0x80000000) == 0, "refusal_was_success_or_native_startup_crash");
             Check(!File.Exists(entry), "rejected_policy_entered_payload");
+            Check(WindowsTerminalCapture.ReadFixtureEvents(events).Length == 0, "rejected_policy_emitted_payload_event");
             Check(capture.ObservedBytes > 0 && capture.DrainFailure is null, "official_refusal_diagnostics_missing");
             Check(!capture.Contains("script timed out"), "execution_timeout_is_not_policy_refusal");
+            if (variant == "invalid-environment")
+            {
+                VerifyInvalidEnvironmentRefusal(result, session, control, owned.Work, exited);
+                officialCreateProcessRefused = true;
+            }
+            else Check(exited.RawExitCode != 0 && (exited.RawExitCode & 0x80000000) == 0, "refusal_was_success_or_native_startup_crash");
             result.Passed = true;
         }
         catch (ConPtyLaunchException exception)
@@ -349,10 +357,76 @@ internal static partial class WindowsPolicyCases
         {
             writer.WriteString("variant", variant);
             writer.WriteBoolean("entryFileAbsent", !File.Exists(entry));
-            writer.WriteString("scope", "Actual official executor refusal before the controlled entry marker; marker absence is not a trusted payload-start identity.");
+            writer.WriteBoolean("officialCreateProcessRefused", officialCreateProcessRefused);
+            writer.WriteString("scope", "Actual official executor refusal before the controlled entry marker. Invalid environment requires its owner-private official diagnostic, exact CreateProcessW error 87, structured error-envelope agreement and an outer Job containing only the executor; payload stdout and marker absence alone are not authority.");
         });
         CheckAcls(result, fixture);
         return result;
+    }
+
+    private static void VerifyInvalidEnvironmentRefusal(WindowsQualificationCase result, ConPtySession session, string control, string work, ConPtyExit exited)
+    {
+        // The pinned executor explicitly returns ScriptResponse.exit_code = -1
+        // for this failed native CreateProcessW call. It is not a payload exit
+        // or a startup-crash classification merely because its high bit is set.
+        Check(exited.RawExitCode == uint.MaxValue && exited.Job is { TotalProcesses: 1, ActiveProcesses: 0 }
+            && exited.Job.ProcessIds.Length == 0, "invalid_environment_native_refusal_not_proven");
+        var path = Path.Combine(control, "executor-diagnostic.log");
+        WindowsPolicy.VerifyPrivateFile(path);
+        using var input = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        Check(input.Length is > 0 and <= WindowsPolicy.MaximumUtf8Bytes, "official_refusal_diagnostic_bound");
+        var bytes = new byte[checked((int)input.Length)];
+        input.ReadExactly(bytes);
+        var diagnostic = RemoveOfficialLogTimestamps(new UTF8Encoding(false, true).GetString(bytes));
+        var extended = "CreateProcessW(PROC_THREAD_ATTRIBUTE_SECURITY_ENVIRONMENT) failed: WIN32_ERROR(87) (working directory: " + work + " (from process.cwd))";
+        const string message = "CreateProcessW failed with error code 87 (0x00000057).";
+        Check(diagnostic.Contains("Error: " + extended, StringComparison.Ordinal)
+            && diagnostic.Contains("Error: Launch diagnostic [create_process_failed]: " + message, StringComparison.Ordinal)
+            && !diagnostic.Contains("process created (PID:", StringComparison.Ordinal), "official_private_create_process_refusal_missing");
+        var policyAudit = false;
+        foreach (var line in diagnostic.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (!line.StartsWith("{\"event\":\"mxc.PolicyHash\",", StringComparison.Ordinal)) continue;
+            using var audit = JsonDocument.Parse(line, new JsonDocumentOptions { MaxDepth = 8 });
+            policyAudit |= audit.RootElement.GetProperty("backend").GetString() == "processcontainer"
+                && audit.RootElement.GetProperty("config_schema_version").GetString() == "1.0.0";
+        }
+        Check(policyAudit, "official_private_policy_audit_missing");
+
+        // PTY bytes remain untrusted output. This envelope is only a required
+        // agreement with the inaccessible-to-payload native failure log and
+        // OS Job history above, never an independent source of launch state.
+        var replay = session.ReadReplay(0, 32_768);
+        Check(replay.GapFrom is null && replay.NextSequence == replay.AvailableUntil && replay.DrainFailure is null, "official_refusal_envelope_capture_incomplete");
+        var text = WindowsTerminalCapture.FixtureParsingView(new UTF8Encoding(false, true).GetString(replay.Data));
+        const string prefix = "{\"error\":";
+        var offset = text.IndexOf(prefix, StringComparison.Ordinal);
+        Check(offset >= 0 && text.IndexOf(prefix, offset + prefix.Length, StringComparison.Ordinal) < 0, "official_refusal_envelope_missing_or_ambiguous");
+        using var envelope = JsonDocument.Parse(text.AsMemory(offset), new JsonDocumentOptions { MaxDepth = 8 });
+        var error = envelope.RootElement.GetProperty("error");
+        Check(error.GetProperty("code").GetString() == "backend_error" && error.GetProperty("message").GetString() == message
+            && error.GetProperty("extended_error").GetString() == extended, "official_refusal_envelope_disagrees_with_private_log");
+        result.PrivateDiagnostics.Add(new("executor-diagnostic.log", Convert.ToHexStringLower(SHA256.HashData(bytes)), bytes.Length));
+    }
+
+    private static string RemoveOfficialLogTimestamps(string text)
+    {
+        var output = new StringBuilder(text.Length);
+        for (var index = 0; index < text.Length; index++)
+        {
+            if (text[index] == '[')
+            {
+                var end = index + 1;
+                while (end < text.Length && char.IsAsciiDigit(text[end])) end++;
+                if (end > index + 1 && end + 1 < text.Length && text[end] == ']' && text[end + 1] == ' ')
+                {
+                    index = end + 1;
+                    continue;
+                }
+            }
+            output.Append(text[index]);
+        }
+        return output.ToString();
     }
 
     private static async Task<WindowsQualificationCase> MissingPolicyAsync(string stage, string work)

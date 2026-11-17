@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.Net;
@@ -43,12 +44,13 @@ internal static class WindowsNetworkCases
     internal static async Task<List<WindowsQualificationCase>> RunAsync(string stage, string work)
     {
         var results = new List<WindowsQualificationCase>();
-        var address = ControlledAddress();
+        // SSH is a trusted control channel, never a payload-data tunnel.
+        await using var peer = await WindowsRemoteNetworkPeer.StartAsync().ConfigureAwait(false);
         // UDP on the exact same IP/port distinguishes protocol permission from
-        // a port-only allow. Alternate port/IP are owned independent negatives.
-        await using var tcp = WindowsNetworkEndpoint.StartTcp(address);
-        await using var udp = WindowsNetworkEndpoint.StartUdp(address, tcp.Port);
-        await using var otherPort = WindowsNetworkEndpoint.StartTcp(address);
+        // a port-only allow. The alternate TCP port is another live H-22 endpoint.
+        await using var tcp = WindowsNetworkEndpoint.ForRemotePeer(peer, "tcp");
+        await using var udp = WindowsNetworkEndpoint.ForRemotePeer(peer, "udp");
+        await using var otherPort = WindowsNetworkEndpoint.ForRemotePeer(peer, "tcp", otherTcpPort: true);
         foreach (var endpoint in new[] { tcp, udp, otherPort })
             await endpoint.CalibrateAsync().ConfigureAwait(false);
 
@@ -266,8 +268,9 @@ internal static class WindowsNetworkCases
         WindowsNetworkEndpoint endpoint, WindowsNetworkObservation before, bool allowed) => AppendMetadataAsync(result, policy, writer =>
     {
         var after = endpoint.Observe();
-        writer.WriteString("direction", "egress_to_owned_local_nonloopback");
-        writer.WriteBoolean("localNonloopbackMayStillBeHostLoopbackClassified", true);
+        writer.WriteString("direction", endpoint.IsRemote ? "egress_to_owned_h22_peer" : "egress_to_owned_local_nonloopback");
+        writer.WriteBoolean("localNonloopbackMayStillBeHostLoopbackClassified", !endpoint.IsRemote);
+        endpoint.WritePeerIdentity(writer);
         writer.WriteString("protocol", endpoint.Protocol);
         writer.WriteString("controlledAddress", endpoint.Address.ToString());
         writer.WriteNumber("port", endpoint.Port);
@@ -315,19 +318,24 @@ internal static class WindowsNetworkCases
 
 internal sealed record WindowsNetworkObservation(long AcceptedOrReceived, long MatchedRequests);
 
-// Host-side real sockets. Bind loopback or the coordinator's explicitly selected,
-// already assigned IPv4 address. No host network configuration is changed.
+// Real local ingress sockets or an actual H-22 peer. Remote data does not pass
+// through SSH; snapshots are peer counters over its fixed control protocol.
+// No host network configuration is changed.
 [SupportedOSPlatform("windows")]
 internal sealed class WindowsNetworkEndpoint : IAsyncDisposable
 {
     private static readonly byte[] SentinelBytes = "AFV2_NET_SENTINEL\n"u8.ToArray();
     private readonly TcpListener? _tcp;
     private readonly UdpClient? _udp;
+    private readonly WindowsRemoteNetworkPeer? _remote;
+    private readonly bool _otherTcpPort;
+    private readonly bool _ownsRemote;
     private readonly CancellationTokenSource _stop = new();
     private readonly Task _serve;
     private long _received;
     private long _matched;
     private Exception? _failure;
+    private WindowsNetworkObservation? _lastObservation;
     private bool _disposed;
 
     private WindowsNetworkEndpoint(TcpListener? tcp, UdpClient? udp)
@@ -341,14 +349,65 @@ internal sealed class WindowsNetworkEndpoint : IAsyncDisposable
         _serve = ServeAsync();
     }
 
+    private WindowsNetworkEndpoint(WindowsRemoteNetworkPeer peer, string protocol, bool otherTcpPort, bool ownsRemote)
+    {
+        _remote = peer;
+        _otherTcpPort = otherTcpPort;
+        _ownsRemote = ownsRemote;
+        Address = peer.Address;
+        Port = otherTcpPort ? peer.OtherTcpPort : peer.Port;
+        Protocol = protocol;
+        _serve = Task.CompletedTask;
+    }
+
     internal static ReadOnlyMemory<byte> Sentinel => SentinelBytes;
     internal static int SentinelLength => SentinelBytes.Length;
     internal IPAddress Address { get; }
     internal int Port { get; }
     internal string Protocol { get; }
+    internal bool IsRemote => _remote is not null;
     internal bool CalibrationPassed { get; private set; }
     internal Exception? Failure => Volatile.Read(ref _failure);
-    internal WindowsNetworkObservation Observe() => new(Interlocked.Read(ref _received), Interlocked.Read(ref _matched));
+    internal WindowsNetworkObservation Observe()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_remote is null) return _lastObservation = new(Interlocked.Read(ref _received), Interlocked.Read(ref _matched));
+        try
+        {
+            // Preserve the driver's synchronous observer surface. The serialized
+            // peer control exchange itself has a fixed five-second bound.
+            var actual = _remote.SnapshotAsync().GetAwaiter().GetResult();
+            _lastObservation = Protocol == "udp" ? new(actual.UdpReceived, actual.UdpMatched)
+                : _otherTcpPort ? new(actual.OtherTcpAccepted, actual.OtherTcpMatched) : new(actual.TcpAccepted, actual.TcpMatched);
+            if (!actual.PeerHealthy) throw new IOException("The actual H-22 peer reported an endpoint failure.");
+            return _lastObservation;
+        }
+        catch (Exception error) { Volatile.Write(ref _failure, error); throw; }
+    }
+
+    internal static WindowsNetworkEndpoint ForRemotePeer(WindowsRemoteNetworkPeer peer, string protocol, bool otherTcpPort = false)
+    {
+        ArgumentNullException.ThrowIfNull(peer);
+        if (protocol is not ("tcp" or "udp") || (otherTcpPort && protocol != "tcp"))
+            throw new ArgumentException("Expected the controlled TCP/UDP endpoint or its alternate TCP port.", nameof(protocol));
+        return new(peer, protocol, otherTcpPort, ownsRemote: false);
+    }
+
+    internal static async Task<WindowsNetworkEndpoint> StartControlledTcpAsync()
+    {
+        var peer = await WindowsRemoteNetworkPeer.StartAsync().ConfigureAwait(false);
+        return new(peer, "tcp", otherTcpPort: false, ownsRemote: true);
+    }
+
+    internal void WritePeerIdentity(Utf8JsonWriter writer)
+    {
+        if (_remote is null) return;
+        writer.WriteNumber("peerProtocolVersion", _remote.ProtocolVersion);
+        writer.WriteString("peerSourceSha256", _remote.SourceSha256);
+        writer.WriteNumber("peerProcessId", _remote.PeerProcessId);
+        writer.WriteString("peerControl", "fixed_h22_ssh_stdio");
+        writer.WriteString("peerData", "direct_tcp_udp_no_tunnel");
+    }
 
     internal static WindowsNetworkEndpoint StartTcp(IPAddress address, int port = 0)
     {
@@ -380,32 +439,93 @@ internal sealed class WindowsNetworkEndpoint : IAsyncDisposable
 
     internal async Task CalibrateAsync()
     {
-        RequireHealthy();
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-        if (_tcp is not null)
+        var phase = "network_calibration_peer_unhealthy";
+        WindowsNetworkObservation? before = null;
+        try
         {
-            using var client = new TcpClient(AddressFamily.InterNetwork);
-            await client.ConnectAsync(Address, Port, deadline.Token).ConfigureAwait(false);
-            if (await ExchangeAsync(client.GetStream(), deadline.Token).ConfigureAwait(false) != SentinelLength)
-                throw new IOException("Host-side controlled TCP endpoint calibration failed.");
-        }
-        else
-        {
-            using var client = new UdpClient(AddressFamily.InterNetwork);
-            client.Connect(Address, Port);
-            _ = await client.SendAsync(Sentinel, deadline.Token).ConfigureAwait(false);
-            var reply = await client.ReceiveAsync(deadline.Token).ConfigureAwait(false);
-            if (!reply.Buffer.AsSpan().SequenceEqual(Sentinel.Span)) throw new IOException("Host-side controlled UDP endpoint calibration failed.");
-        }
+            RequireHealthy();
+            before = _remote is null ? Observe() : _lastObservation;
+            // Preserve the original single three-second I/O budget.
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            if (Protocol == "tcp")
+            {
+                using var client = new TcpClient(AddressFamily.InterNetwork);
+                phase = "network_calibration_tcp_connect";
+                await client.ConnectAsync(Address, Port, deadline.Token).ConfigureAwait(false);
+                phase = "network_calibration_tcp_exchange";
+                var length = await ExchangeAsync(client.GetStream(), deadline.Token).ConfigureAwait(false);
+                phase = "network_calibration_tcp_mismatch";
+                if (length != SentinelLength) throw new InvalidDataException("Controlled TCP reply differed from the fixed sentinel.");
+            }
+            else
+            {
+                using var client = new UdpClient(AddressFamily.InterNetwork);
+                phase = "network_calibration_udp_send";
+                client.Connect(Address, Port);
+                _ = await client.SendAsync(Sentinel, deadline.Token).ConfigureAwait(false);
+                phase = "network_calibration_udp_receive";
+                var reply = await client.ReceiveAsync(deadline.Token).ConfigureAwait(false);
+                phase = "network_calibration_udp_mismatch";
+                if (!reply.Buffer.AsSpan().SequenceEqual(Sentinel.Span)) throw new InvalidDataException("Controlled UDP reply differed from the fixed sentinel.");
+            }
 
-        RequireHealthy();
-        CalibrationPassed = true;
+            phase = "network_calibration_peer_unhealthy";
+            RequireHealthy();
+            CalibrationPassed = true;
+        }
+        catch (Exception error)
+        {
+            var failure = new WindowsQualificationCheckException(phase, error);
+            failure.Data["networkCalibrationPhase"] = phase;
+            failure.Data["networkCalibrationProtocol"] = Protocol;
+            failure.Data["networkCalibrationBeforeCountersAvailable"] = before is not null;
+            if (before is not null)
+            {
+                failure.Data["networkCalibrationBeforeAcceptedOrReceived"] = before.AcceptedOrReceived;
+                failure.Data["networkCalibrationBeforeMatchedRequests"] = before.MatchedRequests;
+            }
+
+            // Keep the original failure. A separate fresh snapshot may diagnose
+            // delivery, but its own failure is never replaced with zero counts.
+            WindowsNetworkObservation? after = null;
+            var last = _lastObservation;
+            try { after = Observe(); }
+            catch (Exception counterError)
+            {
+                failure.Data["networkCalibrationCounterErrorType"] = counterError.GetType().Name;
+                if (!ReferenceEquals(last, _lastObservation)) after = _lastObservation;
+            }
+
+            failure.Data["networkCalibrationAfterCountersAvailable"] = after is not null;
+            if (after is not null)
+            {
+                failure.Data["networkCalibrationAfterAcceptedOrReceived"] = after.AcceptedOrReceived;
+                failure.Data["networkCalibrationAfterMatchedRequests"] = after.MatchedRequests;
+            }
+
+            Exception? original = error;
+            for (var depth = 0; original is not null && depth < 3; depth++, original = original.InnerException)
+            {
+                if (original is Win32Exception native) failure.Data["networkCalibrationNativeErrorCode"] = native.NativeErrorCode;
+                if (original is SocketException socket) failure.Data["networkCalibrationSocketErrorCode"] = (int)socket.SocketErrorCode;
+            }
+
+            if (_remote is not null)
+            {
+                failure.Data["networkCalibrationPeerProtocolVersion"] = _remote.ProtocolVersion;
+                failure.Data["networkCalibrationPeerSourceSha256"] = _remote.SourceSha256;
+                failure.Data["networkCalibrationPeerProcessId"] = _remote.PeerProcessId;
+            }
+
+            throw failure;
+        }
     }
 
     internal void RequireHealthy()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (Failure is { } error) throw new IOException("The owned controlled network endpoint failed.", error);
+        if (_remote is not null) _ = Observe();
     }
 
     private async Task ServeAsync()
@@ -467,6 +587,15 @@ internal sealed class WindowsNetworkEndpoint : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         if (_disposed) return;
+        if (_remote is not null)
+        {
+            // Shared wrappers leave sibling endpoints alive. RunAsync owns their
+            // common peer; a combined-run wrapper instead owns its own peer.
+            if (_ownsRemote) await _remote.DisposeAsync().ConfigureAwait(false);
+            _stop.Dispose();
+            _disposed = true;
+            return;
+        }
         _stop.Cancel();
         _tcp?.Stop();
         _udp?.Dispose();

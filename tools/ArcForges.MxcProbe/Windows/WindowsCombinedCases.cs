@@ -47,7 +47,7 @@ internal static class WindowsCombinedCases
         var outsideFile = Path.Combine(outside, "outside.txt");
         const string initial = "AFV2_COMBINED_INITIAL\n";
         foreach (var file in new[] { writable, readonlyFile, neighborFile, outsideFile }) File.WriteAllText(file, initial);
-        await using var endpoint = WindowsNetworkEndpoint.StartTcp(WindowsNetworkCases.ControlledAddress());
+        await using var endpoint = await WindowsNetworkEndpoint.StartControlledTcpAsync().ConfigureAwait(false);
         await endpoint.CalibrateAsync().ConfigureAwait(false);
         var beforeNetwork = endpoint.Observe();
         var request = WindowsPolicy.BuildRequest(Path.Combine(stage, "arcforges-mxc-probe.exe"),
@@ -71,11 +71,13 @@ internal static class WindowsCombinedCases
         double? idleWindowMs = null;
         double? idleAggregateCpuMs = null;
         double? consoleReadyMs = null;
+        double? admissionToConsoleReadyMs = null;
         var rebound = false;
         var resized = false;
         var unicodeOutput = false;
         try
         {
+            var admissionWatch = Stopwatch.StartNew();
             var started = await WindowsLifecycleCases.StartOwnerAsync(stage, control, request, beforeLaunch: policy =>
             {
                 foreach (var path in new[] { owned.Home, owned.Config, owned.Cache, owned.Temp, owned.Work, owned.Data,
@@ -92,6 +94,7 @@ internal static class WindowsCombinedCases
             result.ExecutorStartUtc = first.ExecutorCreatedUtc?.ToString("O", CultureInfo.InvariantCulture);
             _ = await WindowsTerminalCapture.WaitForFixtureEventAsync(eventsDirectory, "combined-idle-ready", TimeSpan.FromSeconds(10)).ConfigureAwait(false);
             consoleReadyMs = timer.Elapsed.TotalMilliseconds;
+            admissionToConsoleReadyMs = admissionWatch.Elapsed.TotalMilliseconds;
             var idleBefore = guardian.ObserveAggregate();
             Require(!WindowsTerminalCapture.ReadFixtureEvents(eventsDirectory).Any(value => value.GetProperty("event").GetString() == "combined-work-starting"),
                 "combined_idle_window_already_finished");
@@ -219,6 +222,8 @@ internal static class WindowsCombinedCases
             {
                 writer.WriteStartObject();
                 writer.WriteString("scenario", name);
+                endpoint.WritePeerIdentity(writer);
+                if (admissionToConsoleReadyMs.HasValue) writer.WriteNumber("admissionToConsoleReadyMs", admissionToConsoleReadyMs.Value); else writer.WriteNull("admissionToConsoleReadyMs");
                 writer.WriteBoolean("sameOwnerRebound", rebound);
                 writer.WriteBoolean("actualResize", resized);
                 writer.WriteBoolean("unicodeTerminalOutput", unicodeOutput);
