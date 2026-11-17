@@ -121,6 +121,19 @@ internal sealed partial class LinuxCgroup : IDisposable
         return (available, enabled, present);
     }
 
+    // Only the controller-absence negative experiment may inspect an absent
+    // or unbounded cpu.max. Ordinary admission continues through strict Read().
+    internal (string CpuMax, ulong? MemoryMaxBytes, ulong? PidsMax) ReadControllerAbsenceGuardLimits()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        var controllers = ReadControllerState();
+        var cpu = controllers.CpuMaxPresent ? ReadText(_directory, "cpu.max") : "not_available";
+        var memory = Limit(ReadText(_directory, "memory.max"));
+        var pids = Limit(ReadText(_directory, "pids.max"));
+        if (Removed(ValidateIdentity(), out _)) throw new LinuxProbeException("controller_guard_scope_removed_during_read");
+        return (cpu, memory, pids);
+    }
+
     internal bool EmptyProof()
     {
         if (Removed(ValidateIdentity(), out _)) return true;

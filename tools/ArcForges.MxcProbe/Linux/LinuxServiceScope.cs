@@ -86,10 +86,13 @@ internal sealed class LinuxServiceScope : IAsyncDisposable
             if (fault == StartFault.MissingCpuController)
             {
                 LinuxCgroup.VerifyTrustedProgram("/usr/bin/sleep");
+                LinuxCgroup.VerifyTrustedProgram("/usr/bin/dash");
                 arguments.Add("--slice=" + ownedSlice);
-                // Observe the actual delegated scope while a fixed trusted
-                // pre-exec helper is live. The owner/SDK is never admitted.
-                arguments.Add("--property=ExecStartPre=/usr/bin/sleep 2");
+                // This fixed trusted helper always fails after its bounded
+                // observation window. Even a lost driver can never admit the
+                // owner or an SDK payload in this missing-controller scope.
+                arguments.Add("--property=ExecStartPre=/usr/bin/dash -c '/usr/bin/sleep 2; exit 1'");
+                arguments.Add("--property=TimeoutStartSec=5s");
             }
             arguments.AddRange(LimitArguments(limits).Select(x => "--property=" + x));
             // A fixed env executable clears the user manager's ambient values
@@ -126,6 +129,7 @@ internal sealed class LinuxServiceScope : IAsyncDisposable
                         throw new LinuxProbeException("controller_negative_scope_identity_mismatch");
                     scope._cgroup = LinuxCgroup.Open(group);
                     var controllers = scope._cgroup.ReadControllerState();
+                    var guard = scope._cgroup.ReadControllerAbsenceGuardLimits();
                     evidence.Phase("service_start", "actual_controller_absence", new()
                     {
                         ["unit"] = unitName,
@@ -138,8 +142,15 @@ internal sealed class LinuxServiceScope : IAsyncDisposable
                         ["mountId"] = Text(scope._cgroup.MountId),
                         ["availableControllers"] = controllers.Available,
                         ["enabledControllers"] = controllers.Enabled,
-                        ["cpuMaxPresent"] = controllers.CpuMaxPresent.ToString(CultureInfo.InvariantCulture)
+                        ["cpuMaxPresent"] = controllers.CpuMaxPresent.ToString(CultureInfo.InvariantCulture),
+                        ["cpuMaxReadback"] = guard.CpuMax,
+                        ["memoryMaxReadback"] = guard.MemoryMaxBytes?.ToString(CultureInfo.InvariantCulture) ?? "unbounded",
+                        ["pidsMaxReadback"] = guard.PidsMax?.ToString(CultureInfo.InvariantCulture) ?? "unbounded",
+                        ["preExecDeadlineMs"] = "5000",
+                        ["ownerAdmission"] = "never"
                     });
+                    if (guard.MemoryMaxBytes != limits.MemoryBytes || guard.PidsMax != limits.ProcessLimit || Integer(state, "MainPID") != 0)
+                        throw new LinuxProbeException("controller_negative_trusted_preexec_guard_mismatch");
                     if (LinuxCgroup.ProcessStartTicks(controlPid) != controlStart || LinuxCgroup.ProcessControlGroup(controlPid) != controlGroup)
                         throw new LinuxProbeException("controller_negative_control_process_changed");
                     if (controllers.Available.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains("cpu", StringComparer.Ordinal)
@@ -251,11 +262,10 @@ internal sealed class LinuxServiceScope : IAsyncDisposable
             parent._submitted = true;
             await parent.CommandAsync("/usr/bin/busctl",
                 ["--user", "call", "org.freedesktop.systemd1", "/org/freedesktop/systemd1", "org.freedesktop.systemd1.Manager",
-                    "StartTransientUnit", "ssa(sv)a(sa(sv))", slice, "fail", "10",
+                    "StartTransientUnit", "ssa(sv)a(sa(sv))", slice, "fail", "7",
                     "Description", "s", parent._tag, "DisableControllers", "as", "1", "cpu",
-                    "CPUQuotaPerSecUSec", "t", "500000", "CPUQuotaPeriodUSec", "t", "100000",
                     "MemoryMax", "t", "536870912", "MemorySwapMax", "t", "0", "TasksMax", "t", "128",
-                    "CPUAccounting", "b", "true", "MemoryAccounting", "b", "true", "TasksAccounting", "b", "true", "0"],
+                    "MemoryAccounting", "b", "true", "TasksAccounting", "b", "true", "0"],
                 "resource_controller_slice_create", TimeSpan.FromSeconds(8)).ConfigureAwait(false);
             var deadline = Stopwatch.StartNew();
             while (true)
@@ -268,24 +278,30 @@ internal sealed class LinuxServiceScope : IAsyncDisposable
                     var expected = "/user.slice/user-" + Text(LinuxCgroup.UserId) + ".slice/user@" + Text(LinuxCgroup.UserId) + ".service/" + slice;
                     if (group != expected || Get(state, "DisableControllers") != "cpu")
                         throw new LinuxProbeException("controller_negative_slice_identity_mismatch");
+                    if (Get(state, "InvocationID").Length != 32) throw new LinuxProbeException("controller_negative_slice_invocation_missing");
                     parent._cgroup = LinuxCgroup.Open(group);
-                    var actual = parent._cgroup.Read();
-                    RequireLimits(actual, new(500, 536870912, 128));
+                    var guard = parent._cgroup.ReadControllerAbsenceGuardLimits();
                     var controllers = parent._cgroup.ReadControllerState();
-                    if (actual.Populated || actual.ProcessIds.Length != 0
-                        || controllers.Enabled.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains("cpu", StringComparer.Ordinal))
-                        throw new LinuxProbeException("controller_negative_slice_not_fresh_and_disabled");
-                    evidence.Phase("resource_controller_absence", "fresh_parent_bounded_before_child", new()
+                    evidence.Phase("resource_controller_absence", "actual_negative_scope_guard_before_child", new()
                     {
                         ["slice"] = slice,
+                        ["tag"] = parent._tag,
+                        ["invocationId"] = Get(state, "InvocationID"),
                         ["controlGroup"] = group,
                         ["inode"] = Text(parent._cgroup.Inode),
                         ["mountId"] = Text(parent._cgroup.MountId),
-                        ["cpuQuota"] = Text(actual.CpuQuotaMicros),
-                        ["memoryMax"] = Text(actual.MemoryMaxBytes!.Value),
-                        ["pidsMax"] = Text(actual.PidsMax!.Value),
-                        ["enabledControllers"] = controllers.Enabled
+                        ["cpuMaxReadback"] = guard.CpuMax,
+                        ["cpuPolicy"] = "missing_controller_negative_only",
+                        ["memoryMaxReadback"] = guard.MemoryMaxBytes?.ToString(CultureInfo.InvariantCulture) ?? "unbounded",
+                        ["pidsMaxReadback"] = guard.PidsMax?.ToString(CultureInfo.InvariantCulture) ?? "unbounded",
+                        ["availableControllers"] = controllers.Available,
+                        ["enabledControllers"] = controllers.Enabled,
+                        ["preExecDeadlineMs"] = "5000",
+                        ["ownerAdmission"] = "never"
                     });
+                    if (!parent._cgroup.EmptyProof() || guard.MemoryMaxBytes != 536870912 || guard.PidsMax != 128
+                        || controllers.Enabled.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains("cpu", StringComparer.Ordinal))
+                        throw new LinuxProbeException("controller_negative_slice_not_fresh_and_guarded");
                     break;
                 }
                 if (deadline.Elapsed > TimeSpan.FromSeconds(8)) throw new LinuxProbeException("controller_negative_slice_start_deadline");
@@ -472,9 +488,23 @@ internal sealed class LinuxServiceScope : IAsyncDisposable
             state = await ShowAsync().ConfigureAwait(false);
             if (Get(state, "LoadState") != "not-found")
             {
-                RequireTag(state);
-                if (invocation.Length > 0 && Get(state, "InvocationID").Length > 0 && Get(state, "InvocationID") != invocation)
-                    throw new LinuxProbeException("startup_cleanup_generation_changed");
+                // Stopping a transient slice unloads it. show then synthesizes
+                // a fresh loaded/inactive definition without our former tag.
+                // Only the already-tagged generation's held native scope can
+                // establish that its cleanup succeeded despite that new name.
+                bool stoppedSyntheticSlice = _unit.EndsWith(".slice", StringComparison.Ordinal) && invocation.Length == 32
+                    && LinuxCgroup.BootId() == _boot && _cgroup?.EmptyProof() == true
+                    && Get(state, "Id") == _unit && Get(state, "LoadState") == "loaded"
+                    && Get(state, "ActiveState") == "inactive" && Get(state, "SubState") == "dead"
+                    && Get(state, "InvocationID").Length == 0 && Get(state, "ControlGroup").Length == 0
+                    && Get(state, "FragmentPath").Length == 0 && Get(state, "SourcePath").Length == 0
+                    && Get(state, "Job").Length == 0 && Get(state, "Transient") == "no";
+                if (!stoppedSyntheticSlice)
+                {
+                    RequireTag(state);
+                    if (invocation.Length > 0 && Get(state, "InvocationID").Length > 0 && Get(state, "InvocationID") != invocation)
+                        throw new LinuxProbeException("startup_cleanup_generation_changed");
+                }
             }
             var empty = _cgroup?.EmptyProof() ?? (Get(state, "LoadState") == "not-found"
                 || Get(state, "ActiveState") is "inactive" or "failed" && Integer(state, "MainPID") == 0
