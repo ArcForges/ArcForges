@@ -47,6 +47,30 @@ internal static class Program
             if (!OperatingSystem.IsWindows()) return 125;
             return await WindowsQualification.RunAsync(args[1..]).ConfigureAwait(false);
         }
+        if (args.Length > 0 && args[0] == "--linux-profile")
+            return await Linux.LinuxQualification.RunAsync(args[1..]).ConfigureAwait(false);
+        if (args.Length == 2 && args[0] == "--linux-owner")
+            return await Linux.LinuxQualification.RunOwnerAsync(args[1]).ConfigureAwait(false);
+        if (args.Length > 0 && args[0] == "--linux-workload")
+            return await Linux.LinuxWorkload.RunAsync(args[1..]).ConfigureAwait(false);
+        if (args.Length == 2 && args[0] == "--linux-admission-child")
+        {
+            if (!OperatingSystem.IsLinux())
+            {
+                Console.Error.WriteLine("linux_admission_child:linux_host_required");
+                return 77;
+            }
+            return await Linux.LinuxAdmissionCases.RunChildAsync(args[1]).ConfigureAwait(false);
+        }
+        if (args.Length == 2 && args[0] == "--linux-node-client")
+        {
+            if (!OperatingSystem.IsLinux())
+            {
+                Console.Error.WriteLine("linux_node_client:linux_host_required");
+                return 77;
+            }
+            return await Linux.LinuxOwnerChannel.RunNodeClientAsync(args[1]).ConfigureAwait(false);
+        }
         var report = new ProbeReport
         {
             Host = Environment.MachineName,
