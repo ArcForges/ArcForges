@@ -25,6 +25,30 @@ internal static class Program
 
     public static async Task<int> Main(string[] args)
     {
+        if (args.Length > 0 && args[0] == "--linux-profile")
+            return await Linux.LinuxQualification.RunAsync(args[1..]).ConfigureAwait(false);
+        if (args.Length == 2 && args[0] == "--linux-owner")
+            return await Linux.LinuxQualification.RunOwnerAsync(args[1]).ConfigureAwait(false);
+        if (args.Length > 0 && args[0] == "--linux-workload")
+            return await Linux.LinuxWorkload.RunAsync(args[1..]).ConfigureAwait(false);
+        if (args.Length == 2 && args[0] == "--linux-admission-child")
+        {
+            if (!OperatingSystem.IsLinux())
+            {
+                Console.Error.WriteLine("linux_admission_child:linux_host_required");
+                return 77;
+            }
+            return await Linux.LinuxAdmissionCases.RunChildAsync(args[1]).ConfigureAwait(false);
+        }
+        if (args.Length == 2 && args[0] == "--linux-node-client")
+        {
+            if (!OperatingSystem.IsLinux())
+            {
+                Console.Error.WriteLine("linux_node_client:linux_host_required");
+                return 77;
+            }
+            return await Linux.LinuxOwnerChannel.RunNodeClientAsync(args[1]).ConfigureAwait(false);
+        }
         var report = new ProbeReport
         {
             Host = Environment.MachineName,
@@ -73,7 +97,7 @@ internal static class Program
 
     private static bool IsWithin(string path, string root) => path.StartsWith(root + Path.DirectorySeparatorChar, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
 
-    private static void ValidateStage(string path)
+    internal static void ValidateStage(string path)
     {
         foreach (var key in new[] { "MXC_FFI_DIR", "MXC_FORCE_TIER", "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH" })
         {
