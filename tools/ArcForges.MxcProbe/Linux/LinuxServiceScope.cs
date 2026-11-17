@@ -14,7 +14,7 @@ internal sealed class LinuxServiceScope : IAsyncDisposable
 {
     private const string ToolPath = "/usr/bin:/bin:/usr/sbin:/sbin";
     private static readonly string[] Properties = ["Id", "Description", "LoadState", "ActiveState", "SubState", "Result",
-        "MainPID", "ControlPID", "ExecMainCode", "ExecMainStatus", "ControlGroup", "InvocationID", "Delegate", "KillMode", "Restart", "DisableControllers", "Slice"];
+        "MainPID", "ControlPID", "ExecMainCode", "ExecMainStatus", "ControlGroup", "InvocationID", "Delegate", "KillMode", "Restart", "DisableControllers", "Slice", "FragmentPath", "SourcePath", "Job", "Transient"];
     private readonly string _unit;
     private readonly string _tag = "afv2-mxc03-" + Guid.NewGuid().ToString("N");
     private readonly string _boot = LinuxCgroup.BootId();
@@ -227,8 +227,26 @@ internal sealed class LinuxServiceScope : IAsyncDisposable
         LinuxServiceScope? unexpected = null;
         try
         {
-            if (Get(await parent.ShowAsync().ConfigureAwait(false), "LoadState") != "not-found")
-                throw new LinuxProbeException("controller_negative_slice_already_exists");
+            var previous = await parent.ShowAsync().ConfigureAwait(false);
+            evidence.Phase("resource_controller_absence", "slice_before_create", new()
+            {
+                ["slice"] = slice,
+                ["loadState"] = Get(previous, "LoadState"),
+                ["activeState"] = Get(previous, "ActiveState"),
+                ["hasFragment"] = (Get(previous, "FragmentPath").Length > 0).ToString(CultureInfo.InvariantCulture),
+                ["hasSource"] = (Get(previous, "SourcePath").Length > 0).ToString(CultureInfo.InvariantCulture),
+                ["hasJob"] = (Get(previous, "Job").Length > 0).ToString(CultureInfo.InvariantCulture),
+                ["hasControlGroup"] = (Get(previous, "ControlGroup").Length > 0).ToString(CultureInfo.InvariantCulture)
+            });
+            // A valid unknown slice is synthesized as loaded/inactive without a
+            // fragment. It is not an existing running/defined unit. The real
+            // StartTransientUnit fail call remains the authoritative creation
+            // check; only its random description tag permits later teardown.
+            if (Get(previous, "LoadState") is not ("not-found" or "loaded") || Get(previous, "ActiveState") != "inactive"
+                || Get(previous, "FragmentPath").Length > 0 || Get(previous, "SourcePath").Length > 0
+                || Get(previous, "Job").Length > 0 || Get(previous, "ControlGroup").Length > 0
+                || Get(previous, "InvocationID").Length > 0 || Get(previous, "Transient") == "yes")
+                throw new LinuxProbeException("controller_negative_slice_not_pristine");
             evidence.Phase("resource_controller_absence", "before_fresh_slice_create", new() { ["slice"] = slice });
             parent._submitted = true;
             await parent.CommandAsync("/usr/bin/busctl",
