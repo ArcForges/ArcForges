@@ -17,7 +17,9 @@ clients = {}
 error_code = None
 stop = False
 control_buffer = bytearray()
-ADDRESS_SOURCE = 'default_route_assigned_global_ipv4'
+# This experiment uses the host's existing global IPv6 route. No address or
+# route is installed, and an absent prerequisite never falls back to IPv4.
+ADDRESS_SOURCE = 'default_route_assigned_global_ipv6'
 interface_name = None
 route_candidate_count = 0
 address_candidate_count = 0
@@ -64,7 +66,7 @@ def close_client(connection):
 
 def query_ip(arguments, phase):
     try:
-        result = subprocess.run(['ip', '-j', '-4'] + arguments, stdin=subprocess.DEVNULL,
+        result = subprocess.run(['ip', '-j', '-6'] + arguments, stdin=subprocess.DEVNULL,
                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=3, check=False)
     except FileNotFoundError as issue:
         raise ValueError('iproute_unavailable') from issue
@@ -121,25 +123,27 @@ try:
         if not isinstance(item, dict) or item.get('ifname') != interface_name:
             continue
         for entry in item.get('addr_info', []):
-            if isinstance(entry, dict) and entry.get('family') == 'inet' and entry.get('scope') == 'global':
+            if isinstance(entry, dict) and entry.get('family') == 'inet6' and entry.get('scope') == 'global':
                 try:
-                    candidate = ipaddress.IPv4Address(entry.get('local', ''))
+                    candidate = ipaddress.IPv6Address(entry.get('local', ''))
                 except ipaddress.AddressValueError as issue:
-                    raise ValueError('assigned_ipv4_invalid') from issue
-                if candidate.is_loopback or candidate.is_unspecified or candidate.is_multicast:
-                    raise ValueError('assigned_ipv4_invalid')
+                    raise ValueError('assigned_ipv6_invalid') from issue
+                if not candidate.is_global or candidate.is_loopback or candidate.is_unspecified or candidate.is_multicast:
+                    raise ValueError('assigned_ipv6_invalid')
                 candidates.add(str(candidate))
     address_candidate_count = len(candidates)
     if address_candidate_count != 1:
-        raise ValueError('assigned_ipv4_not_unique')
+        raise ValueError('assigned_ipv6_not_unique')
     address = next(iter(candidates))
     phase = 'bind_tcp_udp'
     tcp = udp = None
     last_bind_error = None
     for attempt in range(8):
-        tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        tcp = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+        udp = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
         try:
+            tcp.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+            udp.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
             tcp.bind((address, 0))
             port = tcp.getsockname()[1]
             udp.bind((address, port))
@@ -152,9 +156,10 @@ try:
     if tcp is None:
         raise OSError('matching_ports_unavailable') from last_bind_error
     owned.extend((tcp, udp))
-    other = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    other = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
     owned.append(other)
     phase = 'bind_other_tcp'
+    other.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
     other.bind((address, 0))
     other_port = other.getsockname()[1]
     phase = 'register_io'
@@ -246,7 +251,7 @@ except ValueError as issue:
              'default_route_query_failed', 'default_route_query_timeout', 'default_route_json_invalid',
              'interface_address_query_failed', 'interface_address_query_timeout', 'interface_address_json_invalid',
              'iproute_unavailable', 'default_route_interface_not_unique', 'interface_name_invalid',
-             'assigned_ipv4_not_unique', 'assigned_ipv4_invalid', 'control_bound_exceeded', 'unknown_control'}
+             'assigned_ipv6_not_unique', 'assigned_ipv6_invalid', 'control_bound_exceeded', 'unknown_control'}
     error_code = str(issue) if str(issue) in known else 'peer_protocol_failed'
 except subprocess.TimeoutExpired as issue:
     record_exception(issue)

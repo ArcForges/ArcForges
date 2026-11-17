@@ -29,7 +29,7 @@ internal static class WindowsNetworkCases
     [
         new WindowsPolicyNetworkRule
         {
-            To = [new() { Cidr = permittedAddress + "/32" }],
+            To = [new() { Cidr = permittedAddress + (permittedAddress.AddressFamily == AddressFamily.InterNetworkV6 ? "/128" : "/32") }],
             Ports = [new() { Protocol = endpoint.Protocol, Port = checked((uint)endpoint.Port) }],
         },
     ]);
@@ -90,7 +90,8 @@ internal static class WindowsNetworkCases
         results.Add(await EgressAsync("network-denied-protocol", stage, work, udp, selectedTcp, allowed: false).ConfigureAwait(false));
         // Keep the actual controlled destination unchanged, but allow a different
         // CIDR. No connection or binding to an unrelated host is needed.
-        results.Add(await EgressAsync("network-denied-address", stage, work, tcp, EgressRule(tcp, IPAddress.Parse("192.0.2.1")), allowed: false).ConfigureAwait(false));
+        var otherAddress = IPAddress.Parse(tcp.Address.AddressFamily == AddressFamily.InterNetworkV6 ? "2001:db8::1" : "192.0.2.1");
+        results.Add(await EgressAsync("network-denied-address", stage, work, tcp, EgressRule(tcp, otherAddress), allowed: false).ConfigureAwait(false));
         // These two cases specifically test the independent host-loopback
         // capability against healthy local sockets, with an exact egress allow.
         await using var localTcp = WindowsNetworkEndpoint.StartTcp(IPAddress.Loopback);
@@ -512,7 +513,7 @@ internal sealed class WindowsNetworkEndpoint : IAsyncDisposable
             ioBudget = deadline.Token;
             if (Protocol == "tcp")
             {
-                using var client = new TcpClient(AddressFamily.InterNetwork);
+                using var client = new TcpClient(Address.AddressFamily);
                 phase = "network_calibration_tcp_connect";
                 phaseWatch.Restart();
                 try { await client.ConnectAsync(Address, Port, deadline.Token).ConfigureAwait(false); }
@@ -541,7 +542,7 @@ internal sealed class WindowsNetworkEndpoint : IAsyncDisposable
             }
             else
             {
-                using var client = new UdpClient(AddressFamily.InterNetwork);
+                using var client = new UdpClient(Address.AddressFamily);
                 phase = "network_calibration_udp_connect";
                 phaseWatch.Restart();
                 client.Connect(Address, Port);
@@ -585,6 +586,8 @@ internal sealed class WindowsNetworkEndpoint : IAsyncDisposable
             if (localEndpoint is not null)
             {
                 failure.Data["networkCalibrationLocalAddress"] = localEndpoint.Address.ToString();
+                failure.Data["networkCalibrationLocalAddressFamily"] = localEndpoint.AddressFamily.ToString();
+                failure.Data["networkCalibrationLocalAddressBytes"] = Convert.ToHexStringLower(localEndpoint.Address.GetAddressBytes());
                 failure.Data["networkCalibrationLocalPort"] = localEndpoint.Port;
             }
             if (localObservationFailure is not null) failure.Data["networkCalibrationLocalEndpointErrorType"] = localObservationFailure;

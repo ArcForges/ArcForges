@@ -27,11 +27,11 @@ internal sealed class WindowsRemoteNetworkPeer : IAsyncDisposable
     private const int Version = 1;
     private const int DeadlineSeconds = 240;
     private const int MaximumLineCharacters = 4096;
-    private const string AssignedAddressSource = "default_route_assigned_global_ipv4";
+    private const string AssignedAddressSource = "default_route_assigned_global_ipv6";
     private const string RemotePython = "/home/sammiller/.local/share/arcforges/toolchains/python/cpython-3.15.2-linux-x86_64-gnu/bin/python";
     private const string RemoteWorktreePrefix = "/home/sammiller/arcforges/ArcForges/.worktree/mxc02-peer-";
     private const string ScriptRelativePath = "/tools/ArcForges.MxcProbe/Windows/network_peer.py";
-    private const string ScriptHash = "922e820bb5df11f2535a6cda4845f0939ece6ea9197ec2b9ae4e5d06e83f5b1d";
+    private const string ScriptHash = "2a70a4d9933120a4875a58f7b65a1acde6c2852175a30e461587d693a0084303";
     private readonly Process _ssh;
     private readonly SemaphoreSlim _control = new(1, 1);
     private readonly CancellationTokenSource _closing = new();
@@ -124,9 +124,11 @@ internal sealed class WindowsRemoteNetworkPeer : IAsyncDisposable
             Require(peer.AddressSource == AssignedAddressSource && peer.DefaultInterfaceCandidateCount == 1
                 && peer.AddressCandidateCount == 1 && peer.InterfaceName is { Length: > 0 }, "Controlled peer assigned address is not unique.");
             var addressText = message.RootElement.GetProperty("address").GetString();
-            Require(IPAddress.TryParse(addressText, out var address) && address.AddressFamily == AddressFamily.InterNetwork
-                && !IPAddress.IsLoopback(address) && !address.Equals(IPAddress.Any) && address.GetAddressBytes()[0] < 224,
-                "Controlled peer did not report its actual nonloopback IPv4 server endpoint.");
+            Require(IPAddress.TryParse(addressText, out var address) && address.AddressFamily == AddressFamily.InterNetworkV6
+                && !IPAddress.IsLoopback(address) && !address.Equals(IPAddress.IPv6Any) && !address.IsIPv4MappedToIPv6
+                && !address.IsIPv6LinkLocal && !address.IsIPv6Multicast && address.ScopeId == 0
+                && address.GetAddressBytes()[0] is >= 0x20 and <= 0x3f,
+                "Controlled peer did not report its actual assigned global IPv6 server endpoint.");
             peer.Address = address!;
             peer.Port = ValidPort(message.RootElement.GetProperty("port").GetInt32());
             peer.OtherTcpPort = ValidPort(message.RootElement.GetProperty("otherTcpPort").GetInt32());
@@ -328,9 +330,9 @@ internal sealed class WindowsRemoteNetworkPeer : IAsyncDisposable
         "default_route_query_failed" or "default_route_query_timeout" or "default_route_json_invalid"
             or "interface_address_query_failed" or "interface_address_query_timeout" or "interface_address_json_invalid"
             or "iproute_unavailable" or "default_route_interface_not_unique" or "interface_name_invalid"
-            or "assigned_ipv4_not_unique" or "assigned_ipv4_invalid" or "control_bound_exceeded" or "unknown_control" => code,
+            or "assigned_ipv6_not_unique" or "assigned_ipv6_invalid" or "control_bound_exceeded" or "unknown_control" => code,
         "source_commit_invalid" or "designated_host_identity_mismatch" or "source_worktree_path_mismatch"
-            or "source_origin_mismatch" or "source_head_mismatch" or "source_script_modified" or "source_git_query_failed" => code,
+            or "source_origin_mismatch" or "source_head_mismatch" or "source_script_modified" or "source_git_query_failed" or "source_git_query_timeout" => code,
         _ => "unrecognized_peer_error",
     };
 
