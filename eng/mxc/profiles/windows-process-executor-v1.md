@@ -57,14 +57,18 @@ cases retain local controlled sockets to exercise those specific capabilities.
 If policies cannot compose, qualification fails; there is no broader-policy
 retry or inferred pass.
 
-The current fixture selects H22's existing global IPv6 literal and exact `/128`
-rules. Read-only route inspection found that the existing Windows route to this
-address uses its physical interface, whereas the IPv4 attempt used the virtual
-interface and delivered no request to the peer. This is an endpoint selection,
-not a host-route change or an inferred reachability pass. Preserve the original
-IPv4 calibration failure; any successful IPv6-literal result does not qualify
-the failed IPv4 path or imply domain-name semantics. Local loopback/inbound
-cases retain their separate IPv4 addresses and `/32` policies.
+The default IPv4 calibration used the virtual interface and delivered no request
+to the peer. An existing IPv6 route was then tried with exact `/128` policies,
+but TCP connection establishment timed out before a payload ran. Both failures
+remain original evidence; a route's existence is not a reachability pass.
+
+The current IPv4 fixture selects the designated host's already observed physical
+interface17 through `IP_UNICAST_IF` on each outgoing test socket. Calibration,
+actual workload and combined scenarios share the same setting/readback; there is
+no global route/proxy change, interface scan or fallback. Real socket endpoints
+and peer counters still determine effects. The exact external `/32` rules and
+separate local loopback/inbound policies remain unchanged. This fixture does not
+claim that the earlier default paths passed or imply domain-name semantics.
 
 The same controlled external peer implementation is used by both bounded combined scenarios. Actual memory
 pressure and children must be ready before network/filesystem operations, with

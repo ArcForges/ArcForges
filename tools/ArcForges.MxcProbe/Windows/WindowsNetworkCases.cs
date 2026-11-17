@@ -16,6 +16,7 @@ internal static class WindowsNetworkCases
 {
     private const string Protocol = "MXC-WIN-04";
     private const int WorkloadDeadlineMs = 4000;
+    internal const int ControlledIpv4InterfaceIndex = 17;
     // Retain the real control owner if its bounded remote teardown is unresolved.
     internal static WindowsRemoteNetworkPeer? UnresolvedPeer { get; private set; }
 
@@ -24,6 +25,36 @@ internal static class WindowsNetworkCases
     internal static WindowsNetworkChoice DenyEgress { get; } = WindowsNetworkChoice.DenyAll;
 
     internal static WindowsNetworkChoice SelectedEgress(WindowsNetworkEndpoint endpoint) => EgressRule(endpoint, endpoint.Address);
+
+    // One already observed physical interface for this controlled experiment.
+    // IP_UNICAST_IF is socket-local: set is network byte order, get is host
+    // byte order. No host route, adapter, source binding or fallback is changed.
+    internal static int ConfigureControlledSocket(Socket socket, IPAddress destination)
+    {
+        if (destination.AddressFamily != AddressFamily.InterNetwork || IPAddress.IsLoopback(destination)) return 0;
+        const SocketOptionName unicastInterface = (SocketOptionName)31;
+        var phase = "set_ip_unicast_if";
+        int? readback = null;
+        try
+        {
+            socket.SetSocketOption(SocketOptionLevel.IP, unicastInterface, IPAddress.HostToNetworkOrder(ControlledIpv4InterfaceIndex));
+            phase = "get_ip_unicast_if";
+            var bytes = socket.GetSocketOption(SocketOptionLevel.IP, unicastInterface, sizeof(int));
+            Require(bytes.Length == sizeof(int), "controlled_socket_interface_readback_size");
+            readback = BitConverter.ToInt32(bytes);
+            Require(readback == ControlledIpv4InterfaceIndex, "controlled_socket_interface_readback_mismatch");
+            return readback.Value;
+        }
+        catch (Exception error)
+        {
+            var failure = new WindowsQualificationCheckException("controlled_socket_route_failed", error);
+            failure.Data["networkCalibrationSocketRoutePhase"] = phase;
+            failure.Data["networkCalibrationRequestedInterfaceIndex"] = ControlledIpv4InterfaceIndex;
+            failure.Data["networkCalibrationRequestedInterfaceSetNetworkOrder"] = IPAddress.HostToNetworkOrder(ControlledIpv4InterfaceIndex);
+            if (readback.HasValue) failure.Data["networkCalibrationInterfaceReadback"] = readback.Value;
+            throw failure;
+        }
+    }
 
     private static WindowsNetworkChoice EgressRule(WindowsNetworkEndpoint endpoint, IPAddress permittedAddress) => new(Allow:
     [
@@ -127,6 +158,9 @@ internal static class WindowsNetworkCases
             Require(attempt.GetProperty("mode").GetString() == mode && attempt.GetProperty("port").GetInt32() == endpoint.Port
                 && attempt.GetProperty("addressSha256").GetString() == addressDigest,
                 "controlled_network_attempt_missing");
+            var route = await capture.WaitForEventAsync("network-socket-route", TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+            Require(route.GetProperty("interfaceIndex").GetInt32() == (endpoint.Address.AddressFamily == AddressFamily.InterNetwork
+                && !IPAddress.IsLoopback(endpoint.Address) ? ControlledIpv4InterfaceIndex : 0), "controlled_socket_route_setup_missing");
             if (allowed)
             {
                 var reply = await WaitForEgressReplyAsync(capture, mode, TimeSpan.FromSeconds(8)).ConfigureAwait(false);
@@ -314,6 +348,12 @@ internal static class WindowsNetworkCases
         writer.WriteNumber("port", endpoint.Port);
         writer.WriteBoolean("allowed", allowed);
         writer.WriteBoolean("hostCalibrationPassed", endpoint.CalibrationPassed);
+        writer.WriteNumber("calibrationInterfaceIndex", endpoint.CalibrationInterfaceIndex);
+        if (endpoint.CalibrationLocalEndpoint is { } source)
+        {
+            writer.WriteString("calibrationSourceAddress", source.Address.ToString());
+            writer.WriteNumber("calibrationSourcePort", source.Port);
+        }
         writer.WriteNumber("beforeAcceptedOrReceived", before.AcceptedOrReceived);
         writer.WriteNumber("afterAcceptedOrReceived", after.AcceptedOrReceived);
         writer.WriteNumber("beforeMatchedRequests", before.MatchedRequests);
@@ -406,6 +446,8 @@ internal sealed class WindowsNetworkEndpoint : IAsyncDisposable
     internal bool IsRemote => _remote is not null;
     internal bool PeerCleanupConfirmed => _remote?.CleanupConfirmed ?? _disposed;
     internal bool CalibrationPassed { get; private set; }
+    internal int CalibrationInterfaceIndex { get; private set; }
+    internal IPEndPoint? CalibrationLocalEndpoint { get; private set; }
     internal Exception? Failure => Volatile.Read(ref _failure);
     internal WindowsNetworkObservation Observe()
     {
@@ -514,6 +556,9 @@ internal sealed class WindowsNetworkEndpoint : IAsyncDisposable
             if (Protocol == "tcp")
             {
                 using var client = new TcpClient(Address.AddressFamily);
+                phase = "network_calibration_tcp_interface";
+                phaseWatch.Restart();
+                CalibrationInterfaceIndex = WindowsNetworkCases.ConfigureControlledSocket(client.Client, Address);
                 phase = "network_calibration_tcp_connect";
                 phaseWatch.Restart();
                 try { await client.ConnectAsync(Address, Port, deadline.Token).ConfigureAwait(false); }
@@ -543,6 +588,9 @@ internal sealed class WindowsNetworkEndpoint : IAsyncDisposable
             else
             {
                 using var client = new UdpClient(Address.AddressFamily);
+                phase = "network_calibration_udp_interface";
+                phaseWatch.Restart();
+                CalibrationInterfaceIndex = WindowsNetworkCases.ConfigureControlledSocket(client.Client, Address);
                 phase = "network_calibration_udp_connect";
                 phaseWatch.Restart();
                 client.Connect(Address, Port);
@@ -564,6 +612,7 @@ internal sealed class WindowsNetworkEndpoint : IAsyncDisposable
 
             phase = "network_calibration_peer_unhealthy";
             RequireHealthy();
+            CalibrationLocalEndpoint = localEndpoint;
             CalibrationPassed = true;
         }
         catch (Exception error)
@@ -582,6 +631,9 @@ internal sealed class WindowsNetworkEndpoint : IAsyncDisposable
             failure.Data["networkCalibrationIoBudgetExpired"] = ioBudget.IsCancellationRequested;
             failure.Data["networkCalibrationOriginalErrorType"] = error.GetType().Name;
             failure.Data["networkCalibrationOriginalHResult"] = error.HResult;
+            failure.Data["networkCalibrationAppliedInterfaceIndex"] = CalibrationInterfaceIndex;
+            failure.Data["networkCalibrationInterfaceSetNetworkOrder"] = CalibrationInterfaceIndex == 0 ? 0
+                : IPAddress.HostToNetworkOrder(WindowsNetworkCases.ControlledIpv4InterfaceIndex);
             failure.Data["networkCalibrationLocalEndpointObserved"] = localEndpoint is not null;
             if (localEndpoint is not null)
             {

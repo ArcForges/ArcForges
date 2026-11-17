@@ -189,6 +189,19 @@ internal static partial class WindowsWorkload
             writer.WriteNumber("socketErrorCode", (int)socket.SocketErrorCode);
             writer.WriteNumber("nativeErrorCode", socket.NativeErrorCode);
         }
+        if (exception is WindowsQualificationCheckException { Code: "controlled_socket_route_failed" } route)
+        {
+            writer.WriteString("fixtureErrorCode", route.Code);
+            if (route.Data["networkCalibrationSocketRoutePhase"] is string phase) writer.WriteString("routePhase", phase);
+            if (route.Data["networkCalibrationRequestedInterfaceIndex"] is int requested) writer.WriteNumber("routeRequestedInterface", requested);
+            if (route.Data["networkCalibrationInterfaceReadback"] is int readback) writer.WriteNumber("routeInterfaceReadback", readback);
+            if (route.InnerException is { } cause)
+            {
+                writer.WriteString("routeErrorType", cause.GetType().Name);
+                writer.WriteNumber("routeHResult", cause.HResult);
+                if (cause is SocketException native) writer.WriteNumber("routeNativeErrorCode", native.NativeErrorCode);
+            }
+        }
     }
 
     private static void WriteDigest(Utf8JsonWriter writer, string value)
@@ -1087,6 +1100,7 @@ internal static partial class WindowsWorkload
 
     private static async Task<int> NetworkAsync(string mode, string address, int port, int durationMs, CancellationToken cancellationToken = default)
     {
+        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Native Windows network fixture.");
         if (!IPAddress.TryParse(address, out var ip) || ip.Equals(IPAddress.Any) || ip.Equals(IPAddress.IPv6Any))
         {
             throw new ArgumentException("An explicit controlled fixture IP is required.");
@@ -1103,7 +1117,10 @@ internal static partial class WindowsWorkload
         if (mode == "tcp-connect")
         {
             using var client = new TcpClient(ip.AddressFamily);
-            await client.ConnectAsync(ip, port, deadline.Token).ConfigureAwait(false);
+            var interfaceIndex = WindowsNetworkCases.ConfigureControlledSocket(client.Client, ip);
+            Emit("network-socket-route", writer => WriteSocketRoute(writer, interfaceIndex));
+            try { await client.ConnectAsync(ip, port, deadline.Token).ConfigureAwait(false); }
+            finally { EmitSocketSource(client.Client); }
             var matched = await ExchangeAsync(client.GetStream(), writeFirst: true, deadline.Token).ConfigureAwait(false);
             Emit("network", writer => { writer.WriteString("mode", mode); writer.WriteBoolean("replyMatch", matched); });
             return matched ? 0 : 73;
@@ -1126,7 +1143,10 @@ internal static partial class WindowsWorkload
             using var socket = mode == "udp-listen" ? new UdpClient(new IPEndPoint(ip, port)) : new UdpClient(ip.AddressFamily);
             if (mode == "udp-send")
             {
-                socket.Connect(ip, port);
+                var interfaceIndex = WindowsNetworkCases.ConfigureControlledSocket(socket.Client, ip);
+                Emit("network-socket-route", writer => WriteSocketRoute(writer, interfaceIndex));
+                try { socket.Connect(ip, port); }
+                finally { EmitSocketSource(socket.Client); }
                 var count = await socket.SendAsync(NetworkSentinel, deadline.Token).ConfigureAwait(false);
                 Emit("network-sent", writer => { writer.WriteString("mode", mode); writer.WriteNumber("bytes", count); });
             }
@@ -1148,6 +1168,34 @@ internal static partial class WindowsWorkload
         }
 
         throw new ArgumentException("Unknown network mode.");
+    }
+
+    private static void WriteSocketRoute(Utf8JsonWriter writer, int interfaceIndex)
+    {
+        writer.WriteNumber("interfaceIndex", interfaceIndex);
+        writer.WriteNumber("setNetworkByteOrder", interfaceIndex == 0 ? 0 : IPAddress.HostToNetworkOrder(interfaceIndex));
+        writer.WriteNumber("readbackHostByteOrder", interfaceIndex);
+    }
+
+    private static void EmitSocketSource(Socket socket)
+    {
+        try
+        {
+            var local = socket.LocalEndPoint as IPEndPoint;
+            Emit("network-source", writer =>
+            {
+                writer.WriteBoolean("observed", local is not null);
+                if (local is null) return;
+                writer.WriteString("address", local.Address.ToString());
+                writer.WriteNumber("port", local.Port);
+            });
+        }
+        catch (Exception error)
+        {
+            // Source observation cannot replace a failed native Connect call.
+            try { EmitObservationFailure("network-source-observation-failed", error, canceled: false); }
+            catch (Exception) { /* The primary network operation still propagates. */ }
+        }
     }
 
     [StructLayout(LayoutKind.Sequential)]
