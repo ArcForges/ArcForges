@@ -32,8 +32,13 @@ internal static class LinuxRequestFactory
             if (!Directory.Exists(child)) Directory.CreateDirectory(child, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             _ = OwnedDirectory(child);
         }
-        var readonlyPaths = RuntimePaths.Where(path => Directory.Exists(path) || File.Exists(path)).Append(stage).Append(program)
+        var readonlyPaths = RuntimePaths.Where(path => Directory.Exists(path) || File.Exists(path)).Append(stage)
             .Distinct(StringComparer.Ordinal).ToList();
+        // A directory grant already exposes its executable, including symlinks
+        // such as /bin/sh. Binding that file again can target a symlink inside
+        // the mounted directory, which Bubblewrap correctly refuses.
+        if (!readonlyPaths.Any(path => Directory.Exists(path) && program.StartsWith(path + '/', StringComparison.Ordinal)))
+            readonlyPaths.Add(program);
         if (readonlyPaths.Any(path => Overlaps(path, privateControl) || Overlaps(path, data)))
             throw new LinuxProbeException("runtime_overlaps_mutable_fixture");
         return new ContainerRequest(Command(program, args))

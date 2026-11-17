@@ -61,6 +61,12 @@ internal static partial class LinuxPolicyCases
     {
         var fixture = NewFixture(work, control, "baseline-reads");
         var request = LinuxRequestFactory.Create("/bin/sh", ["-c", "test -r /etc/os-release && test -r /bin/sh"], fixture.Data, fixture.Control, 10_000);
+        request.Filesystem!.ReadonlyPaths.Add("/etc/os-release");
+        log.Phase("baseline-reads/request", "explicit_system_file_grant", new(StringComparer.Ordinal)
+        {
+            ["osReleaseReadonly"] = "true",
+            ["wholeEtcGranted"] = "false",
+        });
         return await ExecuteAsync("baseline-reads", request, fixture, log, _ => { }).ConfigureAwait(false);
     }
 

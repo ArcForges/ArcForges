@@ -31,6 +31,15 @@ internal static class Program
             return await Linux.LinuxQualification.RunOwnerAsync(args[1]).ConfigureAwait(false);
         if (args.Length > 0 && args[0] == "--linux-workload")
             return await Linux.LinuxWorkload.RunAsync(args[1..]).ConfigureAwait(false);
+        if (args.Length == 2 && args[0] == "--linux-admission-child")
+        {
+            if (!OperatingSystem.IsLinux())
+            {
+                Console.Error.WriteLine("linux_admission_child:linux_host_required");
+                return 77;
+            }
+            return await Linux.LinuxAdmissionCases.RunChildAsync(args[1]).ConfigureAwait(false);
+        }
         if (args.Length == 2 && args[0] == "--linux-node-client")
         {
             if (!OperatingSystem.IsLinux())

@@ -75,7 +75,9 @@ internal static partial class LinuxQualification
             Require(ReadOwnerScope(config) == ready, "owner_scope_changed_before_sdk");
             phase = "owner_cases";
             log.Phase(phase, "begin");
-            if (config.Group == "terminal")
+            if (config.Group == "admission")
+                report.Cases = await LinuxAdmissionCases.RunAsync(config, log).ConfigureAwait(false);
+            else if (config.Group == "terminal")
                 report.Cases = await LinuxTerminalCases.RunAsync(Environment.ProcessPath!, config.Work, config.Control, log).ConfigureAwait(false);
             else if (config.Group == "policy")
                 report.Cases = await LinuxPolicyCases.RunAsync(AppContext.BaseDirectory, config.Work, config.Control, log).ConfigureAwait(false);
