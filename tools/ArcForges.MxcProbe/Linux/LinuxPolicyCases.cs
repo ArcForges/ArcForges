@@ -289,6 +289,16 @@ internal static partial class LinuxPolicyCases
         catch (Exception exception) { log.Failure(id + "/execution", exception); }
         finally
         {
+            var diagnosticOwner = session ?? UnresolvedCleanupOwner;
+            if (!passed && diagnosticOwner is not null)
+            {
+                try
+                {
+                    RecordFailureOutput(diagnosticOwner, log, id, stderr: false);
+                    RecordFailureOutput(diagnosticOwner, log, id, stderr: true);
+                }
+                catch (Exception exception) { log.Failure(id + "/failure_output", exception); }
+            }
             if (session is not null)
             {
                 try { await session.DisposeAsync().ConfigureAwait(false); facts["sdkOwnerDisposed"] = "true"; log.Phase(id + "/cleanup", "sdk_owner_disposed"); }
@@ -304,6 +314,25 @@ internal static partial class LinuxPolicyCases
         // SDK process absence is not cgroup emptiness; the owner/driver checks
         // the outer boundary and helpers separately before final qualification.
         return new(id, passed && UnresolvedCleanupOwner is null, facts);
+    }
+
+    private static void RecordFailureOutput(LinuxSdkSession session, LinuxEvidence log, string id, bool stderr)
+    {
+        var label = stderr ? "policy_stderr" : "policy_stdout";
+        var page = session.ReadOutput(0, 32_768, stderr);
+        log.Detail(id + "/failure_output", label, page.Data);
+        log.Phase(id + "/failure_output", "bounded_snapshot_before_dispose", new(StringComparer.Ordinal)
+        {
+            ["stream"] = stderr ? "stderr" : "stdout",
+            ["startSequence"] = page.StartSequence.ToString(CultureInfo.InvariantCulture),
+            ["nextSequence"] = page.NextSequence.ToString(CultureInfo.InvariantCulture),
+            ["availableFrom"] = page.AvailableFrom.ToString(CultureInfo.InvariantCulture),
+            ["availableUntil"] = page.AvailableUntil.ToString(CultureInfo.InvariantCulture),
+            ["gapFrom"] = page.GapFrom?.ToString(CultureInfo.InvariantCulture) ?? "none",
+            ["gapUntil"] = page.GapUntil?.ToString(CultureInfo.InvariantCulture) ?? "none",
+            ["endOfStream"] = page.EndOfStream.ToString(CultureInfo.InvariantCulture),
+            ["drainFailureCode"] = page.FailureCode ?? "none",
+        });
     }
 
     private static JsonElement[] ReadObservations(string data, LinuxEvidence log, string id)
