@@ -31,14 +31,16 @@ package or the later product distribution task.
 Publish on the actual target OS using the repository's installed toolchain:
 
 ```text
-dotnet restore tools/ArcForges.MxcProbe/ArcForges.MxcProbe.csproj --locked-mode -r <rid>
+dotnet restore tools/ArcForges.MxcProbe/ArcForges.MxcProbe.csproj --locked-mode
 dotnet publish tools/ArcForges.MxcProbe/ArcForges.MxcProbe.csproj -c Release -r <rid> --no-restore -o <new-publish-directory> -warnaserror -tl:off -clp:Summary;ForceNoAlign -p:TrimmerSingleWarn=false
 python eng/mxc/stage.py --rid <rid> --package <nupkg> --release <zip> --publish <publish-directory> --output <new-private-install-with-spaces-and-Unicode>
 <install>/arcforges-mxc-probe[.exe] --manifest <install>/mxc-manifest.json --work <new-fixture-with-spaces-and-Unicode> --report <outside-install>/report.json
 ```
 
-Use the existing native tool selector on Linux and the existing VS developer
-environment on Windows, as for `eng/publish.ps1`. Require zero build, trim and
+Restore preserves both declared runtime identifiers in the committed lock; select
+the host RID only when publishing. Use the existing native tool selector on Linux
+and the existing VS developer environment on Windows, as for `eng/publish.ps1`.
+Require zero build, trim and
 AOT warnings. The executable runs without a .NET SDK/JIT. Do not set
 `MXC_FFI_DIR`, `MXC_FORCE_TIER`, or native loader overrides. The probe rejects
 them and validates the complete private installation **before** calling any

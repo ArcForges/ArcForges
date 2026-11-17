@@ -1041,10 +1041,10 @@
       "source": "https://api.nuget.org/v3-flatcontainer/microsoft.mxc.sdk/1.0.1/microsoft.mxc.sdk.1.0.1.nupkg",
       "sourceCommit": "fda29ac63bc306b7f97f3b86b4b63d44f7f40cf2",
       "provenance": "Official immutable 1.0.1 nupkg SHA256 d47b1f70c3fcaaed1705a0c3872807e2878fe8c1b778c0dd9eb9325bf421a672. Native x64 files match the official v1.0.1 release ZIP. MIT LICENSE.md SHA256 d9a1b1e30d633d5732ea18e3cba9538d293ebc53e1a9e4e96ab739e0c5c4f1cb; eng/mxc records the exact distribution unit and bundled SPDX limitations.",
-      "aot": "PENDING actual warning-free Native AOT probe/native execution on designated Windows and Linux; no product runtime admission.",
+      "aot": "PASS for isolated win-x64/linux-x64 probe at 9a9378bc3a6bc8190d896ca7ef0e43eee5abd886 on 2026-11-17: warning-free Native AOT, five real native execution/cleanup observations per host and four fail-closed staging negatives per host. Windows summary SHA256 9e1676addeedbbb465a4a0e0f1544220fc76a095db815075907167fd6355f12e; H-22 Linux summary SHA256 e499109bd69dd5476522c0fd1996a999e5dfdad745941c3aeea37a461dc9781b. Trusted owner-local argv visibility follows amended AD-0022; historical rejection remains recorded. No composed-profile or product runtime admission.",
       "reason": "AFV2-MXC-01 / MXC-AOT-01 exact reviewed design pin, independent of newer release metadata.",
-      "admittedBy": "AFV2-MXC-01 author; independent source/evidence review remains required.",
-      "reviewedOn": "2026-11-16"
+      "admittedBy": "AFV2-MXC-01 native probe qualification; independent final source/evidence review and exact-head required checks are recorded in ArcForges PR93 before merge.",
+      "reviewedOn": "2026-11-17"
     }
   ],
   "nugetWarningExceptions": [
