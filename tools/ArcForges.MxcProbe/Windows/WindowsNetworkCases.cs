@@ -175,7 +175,7 @@ internal static class WindowsNetworkCases
             endpoint.RequireHealthy();
             var after = endpoint.Observe();
             Require(allowed
-                    ? after.AcceptedOrReceived == before.AcceptedOrReceived + 1 && after.MatchedRequests == before.MatchedRequests + 1
+                    ? after.HasSingleMatchSince(before)
                     : after.AcceptedOrReceived == before.AcceptedOrReceived && after.MatchedRequests == before.MatchedRequests,
                 allowed ? "external_endpoint_did_not_confirm_request" : "denied_traffic_reached_external_endpoint");
         }, expectedExecutorExit: allowed ? 0U : null, fixtureEventsDirectory: events).ConfigureAwait(false);
@@ -394,7 +394,11 @@ internal static class WindowsNetworkCases
     }
 }
 
-internal sealed record WindowsNetworkObservation(long AcceptedOrReceived, long MatchedRequests);
+internal sealed record WindowsNetworkObservation(long AcceptedOrReceived, long MatchedRequests)
+{
+    internal bool HasSingleMatchSince(WindowsNetworkObservation before) =>
+        AcceptedOrReceived - before.AcceptedOrReceived == 1 && MatchedRequests - before.MatchedRequests == 1;
+}
 
 // Real local ingress sockets or an actual H22 peer. Remote data does not pass
 // through SSH; snapshots are peer counters over its fixed control protocol.
@@ -409,11 +413,13 @@ internal sealed class WindowsNetworkEndpoint : IAsyncDisposable
     private readonly bool _otherTcpPort;
     private readonly bool _ownsRemote;
     private readonly CancellationTokenSource _stop = new();
+    private readonly object _counterGate = new();
     private readonly Task _serve;
     private long _received;
     private long _matched;
     private Exception? _failure;
     private WindowsNetworkObservation? _lastObservation;
+    private (WindowsNetworkObservation Before, WindowsNetworkObservation After)? _calibrationCounts;
     private bool _disposed;
 
     private WindowsNetworkEndpoint(TcpListener? tcp, UdpClient? udp)
@@ -445,14 +451,18 @@ internal sealed class WindowsNetworkEndpoint : IAsyncDisposable
     internal string Protocol { get; }
     internal bool IsRemote => _remote is not null;
     internal bool PeerCleanupConfirmed => _remote?.CleanupConfirmed ?? _disposed;
-    internal bool CalibrationPassed { get; private set; }
+    internal bool CalibrationPassed => _calibrationCounts.HasValue;
     internal int CalibrationInterfaceIndex { get; private set; }
     internal IPEndPoint? CalibrationLocalEndpoint { get; private set; }
     internal Exception? Failure => Volatile.Read(ref _failure);
+
     internal WindowsNetworkObservation Observe()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (_remote is null) return _lastObservation = new(Interlocked.Read(ref _received), Interlocked.Read(ref _matched));
+        if (_remote is null)
+        {
+            lock (_counterGate) return _lastObservation = new(_received, _matched);
+        }
         try
         {
             // Preserve the driver's synchronous observer surface. The serialized
@@ -482,6 +492,14 @@ internal sealed class WindowsNetworkEndpoint : IAsyncDisposable
 
     internal void WritePeerIdentity(Utf8JsonWriter writer)
     {
+        if (_calibrationCounts is { } counts)
+        {
+            writer.WriteNumber("calibrationBeforeAcceptedOrReceived", counts.Before.AcceptedOrReceived);
+            writer.WriteNumber("calibrationBeforeMatchedRequests", counts.Before.MatchedRequests);
+            writer.WriteNumber("calibrationAfterAcceptedOrReceived", counts.After.AcceptedOrReceived);
+            writer.WriteNumber("calibrationAfterMatchedRequests", counts.After.MatchedRequests);
+        }
+
         if (_remote is null)
         {
             using var process = Process.GetCurrentProcess();
@@ -529,8 +547,14 @@ internal sealed class WindowsNetworkEndpoint : IAsyncDisposable
 
     internal async Task CalibrateAsync()
     {
-        var phase = "network_calibration_peer_unhealthy";
+        _calibrationCounts = null;
+        CalibrationInterfaceIndex = 0;
+        CalibrationLocalEndpoint = null;
+        var phase = "network_calibration_before_counters";
         WindowsNetworkObservation? before = null;
+        WindowsNetworkObservation? after = null;
+        WindowsNetworkObservation? lastBeforeAfterAttempt = null;
+        var attemptedAfter = false;
         var watch = Stopwatch.StartNew();
         var phaseWatch = Stopwatch.StartNew();
         var connectMs = -1L;
@@ -548,8 +572,8 @@ internal sealed class WindowsNetworkEndpoint : IAsyncDisposable
         }
         try
         {
-            RequireHealthy();
-            before = _remote is null ? Observe() : _lastObservation;
+            ThrowIfUnhealthy();
+            before = Observe();
             // Preserve the original single three-second I/O budget.
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(3));
             ioBudget = deadline.Token;
@@ -610,10 +634,21 @@ internal sealed class WindowsNetworkEndpoint : IAsyncDisposable
                 if (!reply.Buffer.AsSpan().SequenceEqual(Sentinel.Span)) throw new InvalidDataException("Controlled UDP reply differed from the fixed sentinel.");
             }
 
-            phase = "network_calibration_peer_unhealthy";
-            RequireHealthy();
+            // Both listeners count the matched request before writing the reply.
+            // Sample once after the reply, and retain that same sample as evidence.
+            phase = "network_calibration_after_counters";
+            phaseWatch.Restart();
+            lastBeforeAfterAttempt = _lastObservation;
+            attemptedAfter = true;
+            ThrowIfUnhealthy();
+            after = Observe();
+            phase = "network_calibration_peer_counts_mismatch";
+            phaseWatch.Restart();
+            if (!after.HasSingleMatchSince(before))
+                throw new InvalidDataException("Controlled calibration must increment both peer counters exactly once.");
+
             CalibrationLocalEndpoint = localEndpoint;
-            CalibrationPassed = true;
+            _calibrationCounts = (before, after);
         }
         catch (Exception error)
         {
@@ -650,16 +685,17 @@ internal sealed class WindowsNetworkEndpoint : IAsyncDisposable
                 failure.Data["networkCalibrationBeforeMatchedRequests"] = before.MatchedRequests;
             }
 
-            // Keep the original failure. A separate fresh snapshot may diagnose
-            // delivery, but its own failure is never replaced with zero counts.
-            WindowsNetworkObservation? after = null;
-            var last = _lastObservation;
-            try { after = Observe(); }
-            catch (Exception counterError)
+            // Only an earlier I/O/setup failure gets a new diagnostic sample.
+            // A failed counter read or mismatch keeps the original observation.
+            if (!attemptedAfter)
             {
-                failure.Data["networkCalibrationCounterErrorType"] = counterError.GetType().Name;
-                if (!ReferenceEquals(last, _lastObservation)) after = _lastObservation;
+                lastBeforeAfterAttempt = _lastObservation;
+                try { after = Observe(); }
+                catch (Exception counterError) { failure.Data["networkCalibrationCounterErrorType"] = counterError.GetType().Name; }
             }
+            else if (after is null) failure.Data["networkCalibrationCounterErrorType"] = error.GetType().Name;
+            if (after is null && !ReferenceEquals(lastBeforeAfterAttempt, _lastObservation))
+                after = _lastObservation;
 
             failure.Data["networkCalibrationAfterCountersAvailable"] = after is not null;
             if (after is not null)
@@ -688,9 +724,14 @@ internal sealed class WindowsNetworkEndpoint : IAsyncDisposable
 
     internal void RequireHealthy()
     {
+        ThrowIfUnhealthy();
+        if (_remote is not null) _ = Observe();
+    }
+
+    private void ThrowIfUnhealthy()
+    {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (Failure is { } error) throw new IOException("The owned controlled network endpoint failed.", error);
-        if (_remote is not null) _ = Observe();
     }
 
     private async Task ServeAsync()
@@ -702,23 +743,27 @@ internal sealed class WindowsNetworkEndpoint : IAsyncDisposable
                 if (_tcp is not null)
                 {
                     using var peer = await _tcp.AcceptTcpClientAsync(_stop.Token).ConfigureAwait(false);
-                    Interlocked.Increment(ref _received);
+                    lock (_counterGate) _received++;
                     using var deadline = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
                     deadline.CancelAfter(TimeSpan.FromSeconds(10));
                     var data = await ReadSentinelAsync(peer.GetStream(), deadline.Token).ConfigureAwait(false);
                     if (data.AsSpan().SequenceEqual(Sentinel.Span))
                     {
-                        Interlocked.Increment(ref _matched);
+                        lock (_counterGate) _matched++;
                         await peer.GetStream().WriteAsync(Sentinel, deadline.Token).ConfigureAwait(false);
                     }
                 }
                 else
                 {
                     var packet = await _udp!.ReceiveAsync(_stop.Token).ConfigureAwait(false);
-                    Interlocked.Increment(ref _received);
-                    if (packet.Buffer.AsSpan().SequenceEqual(Sentinel.Span))
+                    var matches = packet.Buffer.AsSpan().SequenceEqual(Sentinel.Span);
+                    lock (_counterGate)
                     {
-                        Interlocked.Increment(ref _matched);
+                        _received++;
+                        if (matches) _matched++;
+                    }
+                    if (matches)
+                    {
                         _ = await _udp.SendAsync(Sentinel, packet.RemoteEndPoint, _stop.Token).ConfigureAwait(false);
                     }
                 }
