@@ -158,7 +158,26 @@ internal sealed class LinuxServiceScope : IAsyncDisposable
                     throw new LinuxProbeException("service_required_cpu_controller_absent");
                 }
                 var pid = Integer(state, "MainPID");
-                if (pid > 0 && Get(state, "ControlGroup").Length > 0 && Get(state, "InvocationID").Length == 32)
+                if (fault == StartFault.MissingWorkingDirectory)
+                    evidence.Phase("service_start", "native_preexec_state", new()
+                    {
+                        ["unit"] = unitName,
+                        ["invocationId"] = Get(state, "InvocationID"),
+                        ["activeState"] = Get(state, "ActiveState"),
+                        ["subState"] = Get(state, "SubState"),
+                        ["managerResult"] = Get(state, "Result"),
+                        ["execMainCode"] = Get(state, "ExecMainCode"),
+                        ["execMainStatus"] = Get(state, "ExecMainStatus"),
+                        ["mainPid"] = Get(state, "MainPID"),
+                        ["controlPid"] = Get(state, "ControlPID"),
+                        ["controlGroup"] = Get(state, "ControlGroup")
+                    });
+                // With --no-block and Type=exec, MainPID/cgroup may be visible
+                // while the manager's child is still performing pre-exec setup.
+                // Only active/running establishes that the fixed owner exec
+                // succeeded; a transient activating PID is not that owner.
+                if (pid > 0 && Get(state, "ActiveState") == "active" && Get(state, "SubState") == "running"
+                    && Get(state, "ControlGroup").Length > 0 && Get(state, "InvocationID").Length == 32)
                 {
                     var group = Get(state, "ControlGroup");
                     var userPrefix = "/user.slice/user-" + Text(LinuxCgroup.UserId) + ".slice/user@" + Text(LinuxCgroup.UserId) + ".service/";
