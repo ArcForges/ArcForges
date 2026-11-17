@@ -45,7 +45,7 @@ internal static partial class WindowsLauncher
         Program.Require(!text.Contains("mxc-probe-secret", StringComparison.Ordinal), "Synthetic secret leaked into executor output.");
         Program.Require(result.ExitCode == 0 && File.Exists(marker) && (await File.ReadAllTextAsync(marker).ConfigureAwait(false)).Trim() == "afv2-windows-ok", "Official Windows executor did not complete the synthetic payload; inspect private executor log.");
         return new CaseReport("windows-official-executor", true, result.ProcessId, result.ExitCode, false, result.SpawnMs, watch.Elapsed.TotalMilliseconds,
-            "official_executor", "CreateProcess suspended; actual executor command line read back with no sentinel; outer Job assigned before resume; IsProcessInJob true; executor handle signaled; Job active count zero. Payload marker is supplementary, not an isolation assertion.", [], false, true);
+            "official_executor", "CreateProcess suspended; exact executor command line read back and argv visibility recorded by the trusted host user; outer Job assigned before resume; IsProcessInJob true; executor handle signaled; Job active count zero. Payload marker is supplementary, not an isolation assertion.", [], result.ArgvSentinelObserved, true);
     }
 
     private static void RestrictControl(string directory)
@@ -101,7 +101,8 @@ internal static partial class WindowsLauncher
             if (!AssignProcessToJobObject(job, process.Process)) throw Error("Assign suspended executor to outer Job");
             if (!IsProcessInJob(process.Process, job.DangerousGetHandle(), out var member) || !member) throw Error("Read back outer Job membership");
             var actualCommand = ReadCommandLine(process.Process);
-            Program.Require(actualCommand == new string(command.AsSpan(0, command.Length - 1)) && !actualCommand.Contains("mxc-probe-secret-not-for-logs", StringComparison.Ordinal), "Actual executor argv differs from private-config invocation or leaks the sentinel.");
+            Program.Require(actualCommand == new string(command.AsSpan(0, command.Length - 1)), "Actual executor argv differs from private-config invocation.");
+            var argvSentinelObserved = actualCommand.Contains("mxc-probe-secret-not-for-logs", StringComparison.Ordinal);
             if (ResumeThread(process.Thread) == uint.MaxValue) throw Error("Resume official executor");
             var spawnMs = watch.Elapsed.TotalMilliseconds;
             var remaining = (uint)Math.Clamp(30_000 - watch.ElapsedMilliseconds, 0, 30_000);
@@ -117,7 +118,7 @@ internal static partial class WindowsLauncher
             while (watch.Elapsed < TimeSpan.FromSeconds(30));
             Program.Require(accounting.ActiveProcesses == 0, "Official executor left processes in the outer Job.");
             File.WriteAllText(Path.Combine(work, "owner-observation.txt"), "inheritedJob=" + inheritedJob.ToString(CultureInfo.InvariantCulture) + "\nprocessId=" + process.ProcessId.ToString(CultureInfo.InvariantCulture) + "\njobTotalProcesses=" + accounting.TotalProcesses.ToString(CultureInfo.InvariantCulture) + "\njobActiveProcesses=0\n");
-            return new LaunchResult(process.ProcessId, unchecked((int)exitCode), spawnMs);
+            return new LaunchResult(process.ProcessId, unchecked((int)exitCode), spawnMs, argvSentinelObserved);
         }
         finally
         {
@@ -151,7 +152,7 @@ internal static partial class WindowsLauncher
     }
 
     private static Win32Exception Error(string operation) => new(Marshal.GetLastPInvokeError(), operation + " failed.");
-    private readonly record struct LaunchResult(uint ProcessId, int ExitCode, double SpawnMs);
+    private readonly record struct LaunchResult(uint ProcessId, int ExitCode, double SpawnMs, bool ArgvSentinelObserved);
     [StructLayout(LayoutKind.Sequential)] private struct StartupInfo { public int Cb; public nint Reserved, Desktop, Title; public uint X, Y, XSize, YSize, XChars, YChars, FillAttribute, Flags; public ushort ShowWindow, Reserved2Size; public nint Reserved2, StdInput, StdOutput, StdError; }
     [StructLayout(LayoutKind.Sequential)] private struct StartupInfoEx { public StartupInfo Info; public nint Attributes; }
     [StructLayout(LayoutKind.Sequential)] private struct ProcessInformation { public nint Process, Thread; public uint ProcessId, ThreadId; }

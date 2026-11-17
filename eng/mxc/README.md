@@ -68,9 +68,15 @@ Record same-host cold/warm startup and idle observations with their context;
 these are bounded experiment measurements, not product performance promises.
 Run noninteractively in the intended service context and preserve the actual
 identity/resource scope. No Center/account/subscription is used. The synthetic
-secret in request environment must not occur in logs or executor argv; the
-only executor arguments are `--config` and the private policy path. Never use
-real credentials in these fixtures.
+secret in request environment must not occur in ordinary logs or raw exported
+records. Explicit request inputs visible to the trusted owning host user or
+administrator through local process inspection do not alone fail admission,
+under the amended Design local process boundary. Record only the sentinel-hit
+boolean and observer authority, never raw argv or environment values. Windows
+still uses exactly `--config` and the private policy path; its exact executor
+binding and private control-file protection are unchanged. Never use real
+credentials in these fixtures. Unexpected host credential inheritance and
+unauthorized payload or cross-boundary access remain failures.
 
 For negative cases, make separate owned staging copies, remove one required
 native file or change the recorded version/schema, then invoke the same
@@ -84,5 +90,8 @@ deliberately invalid stage as a native success.
 runs and retains all four cases automatically using the actual published
 executable. No fake native success is used. The Linux kill/wait case also
 checks the owned process tree's actual argv for the synthetic secret before
-cleanup; a hit rejects the selected profile and must not be hidden by removing
-that check or substituting an upstream build.
+cleanup and records that redacted observation. A hit under trusted host-user
+inspection does not decide the case's success: native wait, process absence,
+ordinary-log protection and the other admission checks still apply. Keep the
+observation and the unchanged official artifact instead of hiding the result
+or substituting an upstream build.

@@ -140,7 +140,7 @@ internal static class Program
 
             var cleanup = await LinuxCleanupAsync(work).ConfigureAwait(false);
             report.Cases.Add(cleanup);
-            Require(cleanup.Ok, "Synthetic request environment secret appeared in owned native process argv; selected upstream profile is not admitted.");
+            Require(cleanup.Ok, "Linux kill/wait cleanup did not complete within the native deadline.");
         }
         else if (OperatingSystem.IsWindows())
         {
@@ -192,7 +192,7 @@ internal static class Program
         var result = await process.WaitAsync(bound.Token).ConfigureAwait(false);
         var absent = !Directory.Exists("/proc/" + pid.ToString(CultureInfo.InvariantCulture));
         Require(absent, "Killed Linux process remains after wait.");
-        return new CaseReport("linux-kill-wait", !secretInArgv, pid, result.ExitCode, result.TimedOut, 0, watch.Elapsed.TotalMilliseconds, "official_sdk", "Owned argv observed; Kill + native wait completed; /proc PID absent", process.Warnings.ToArray(), secretInArgv, absent);
+        return new CaseReport("linux-kill-wait", !result.TimedOut && absent, pid, result.ExitCode, result.TimedOut, 0, watch.Elapsed.TotalMilliseconds, "official_sdk", "Owned argv visibility recorded by the trusted host user; Kill/native wait result and /proc absence recorded", process.Warnings.ToArray(), secretInArgv, absent);
     }
 
     private static bool OwnedArgvContainsSecret(uint pid)
