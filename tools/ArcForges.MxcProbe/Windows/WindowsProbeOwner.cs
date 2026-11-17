@@ -15,7 +15,10 @@ internal sealed record ProbeOwnerRecord(string RunId, string OwnerEpoch, long Ge
     string SnapshotDigest, string PipeName, int OwnerPid, DateTimeOffset OwnerCreatedUtc,
     uint? ExecutorPid, DateTimeOffset? ExecutorCreatedUtc, string State, bool StopRequested,
     bool CleanupConfirmed, uint? RawExitCode, string ExitSource, long OutputCursor,
-    ConPtyJobObservation? Job, string? FailureCode, DateTimeOffset UpdatedUtc);
+    ConPtyJobObservation? Job, string? FailureCode, DateTimeOffset UpdatedUtc)
+{
+    public WindowsQualificationFailure? EvidenceFailure { get; init; }
+}
 
 [SupportedOSPlatform("windows")]
 internal sealed partial class WindowsProbeOwner : IDisposable
@@ -30,6 +33,8 @@ internal sealed partial class WindowsProbeOwner : IDisposable
     private readonly Dictionary<long, (byte[] Digest, ProbeOwnerResponse Response)> _acks = [];
     private readonly object _evidenceGate = new();
     private FileStream? _events;
+    private WindowsQualificationFailure? _evidenceFailure;
+    private ProbeOwnerRecord? _lastRecord;
     private ConPtySession? _session;
     private long _generation;
     private string _state = "STARTING";
@@ -58,10 +63,10 @@ internal sealed partial class WindowsProbeOwner : IDisposable
         }
         catch (Exception error)
         {
+            EvidenceFailure("evidence_open", error);
             try { _events?.Dispose(); }
             catch (Exception cleanupError) { EvidenceFailure("evidence_open_cleanup", cleanupError, error); }
             _events = null;
-            EvidenceFailure("evidence_open", error);
         }
         ObservePhase("owner", "created");
     }
@@ -213,6 +218,9 @@ internal sealed partial class WindowsProbeOwner : IDisposable
             response = Response(false, "operation_refused");
         }
         finally { _gate.Release(); }
+        // Cached acknowledgements preserve the terminal effect, while a later
+        // diagnostic sink failure must remain visible on every response.
+        response = response with { EvidenceFailure = Volatile.Read(ref _evidenceFailure) };
         await OwnerProtocol.WriteAsync(pipe, response, OwnerJson.Default.ProbeOwnerResponse, deadline.Token).ConfigureAwait(false);
     }
 
@@ -276,8 +284,8 @@ internal sealed partial class WindowsProbeOwner : IDisposable
                         _empty = true;
                     }
                     else SetFinal(await _session.ForceStopAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false));
-                    SaveRecord();
                     ObservePhase("stop_cleanup", "confirmed");
+                    SaveRecord();
                     return Response(true, effect: "CONFIRMED");
                 }
                 catch (Exception error)
@@ -423,7 +431,8 @@ internal sealed partial class WindowsProbeOwner : IDisposable
         ExecutorPid = _session?.ProcessId,
         ExecutorCreatedUtc = _session?.ProcessStartTimeUtc,
         RawExitCode = _exitCode,
-        ExitSource = _exitCode.HasValue ? "official_executor" : "unknown"
+        ExitSource = _exitCode.HasValue ? "official_executor" : "unknown",
+        EvidenceFailure = Volatile.Read(ref _evidenceFailure)
     };
 
     private void SaveRecord(ConPtySession? observationSession = null)
@@ -432,7 +441,15 @@ internal sealed partial class WindowsProbeOwner : IDisposable
         var record = new ProbeOwnerRecord(_config.RunId, _config.OwnerEpoch, _generation, _config.SnapshotDigest,
             _config.PipeName, Environment.ProcessId, _createdUtc, observed?.ProcessId, observed?.ProcessStartTimeUtc,
             _state, _stopRequested, _empty, _exitCode, _exitCode.HasValue ? "official_executor" : "unknown",
-            observed?.ReadReplay(0, 1).AvailableUntil ?? 0, observed?.ObserveJob(), _failure, DateTimeOffset.UtcNow);
+            observed?.ReadReplay(0, 1).AvailableUntil ?? 0, observed?.ObserveJob(), _failure, DateTimeOffset.UtcNow)
+        {
+            EvidenceFailure = Volatile.Read(ref _evidenceFailure)
+        };
+        PublishRecord(record);
+    }
+
+    private void PublishRecord(ProbeOwnerRecord record)
+    {
         var temporary = _recordPath + ".new-" + Guid.NewGuid().ToString("N");
         // The containing private directory was verified; every write is flushed
         // before atomic publication. Never treat a stale policy as a new launch.
@@ -444,6 +461,7 @@ internal sealed partial class WindowsProbeOwner : IDisposable
         if (!ReplaceRecord(temporary, _recordPath, 0x1 | 0x8))
             throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Publish durable owner record failed.");
         WindowsPolicy.VerifyPrivateFile(_recordPath);
+        _lastRecord = record;
     }
 
     private static FileStream NewDurableFile(string path) => new(path, FileMode.CreateNew, FileAccess.Write,
@@ -495,8 +513,13 @@ internal sealed partial class WindowsProbeOwner : IDisposable
         }
     }
 
-    private static void EvidenceFailure(string phase, Exception evidenceError, Exception? primary = null)
+    private void EvidenceFailure(string phase, Exception evidenceError, Exception? primary = null)
     {
+        // Stderr is normally absent in this detached owner. Persist the first
+        // evidence failure independently of native Run/cleanup state so the
+        // qualification consumer cannot accept an otherwise successful Run.
+        Interlocked.CompareExchange(ref _evidenceFailure,
+            WindowsQualification.ObserveFailure(evidenceError) with { Code = "owner_evidence_" + phase }, null);
         try
         {
             Console.Error.WriteLine("windows_owner_evidence_failed:phase=" + phase
@@ -516,7 +539,23 @@ internal sealed partial class WindowsProbeOwner : IDisposable
     public void Dispose()
     {
         try { _events?.Dispose(); }
-        catch (Exception error) { EvidenceFailure("evidence_dispose", error); }
+        catch (Exception error)
+        {
+            EvidenceFailure("evidence_dispose", error);
+            try
+            {
+                // RunCore has already disposed the session after proving native
+                // emptiness. Add the sticky fact without reopening closed Job
+                // handles or changing the last published native observation.
+                if (_lastRecord is not null)
+                    PublishRecord(_lastRecord with
+                    {
+                        EvidenceFailure = Volatile.Read(ref _evidenceFailure),
+                        UpdatedUtc = DateTimeOffset.UtcNow
+                    });
+            }
+            catch (Exception recordError) { EvidenceFailure("evidence_dispose_record", recordError, error); }
+        }
         _shutdown.Dispose();
         _gate.Dispose();
         GC.SuppressFinalize(this);

@@ -108,7 +108,7 @@ internal static class WindowsLifecycleCases
     }
 
     internal static async Task<ProbeOwnerResponse> AwaitStatusAsync(ProbeOwnerConfig config,
-        Func<ProbeOwnerResponse, bool> accept, TimeSpan timeout)
+        Func<ProbeOwnerResponse, bool> accept, TimeSpan timeout, WindowsQualificationCase? result = null)
     {
         var clock = Stopwatch.StartNew();
         while (clock.Elapsed < timeout)
@@ -118,6 +118,7 @@ internal static class WindowsLifecycleCases
                 using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
                 var status = await OwnerProtocol.SendAsync(config, new() { Operation = "status", Generation = config.Generation },
                     cancellationToken: deadline.Token).ConfigureAwait(false);
+                if (result is not null) CaptureOwnerEvidenceFailure(result, status.EvidenceFailure);
                 if (status.Ok && accept(status)) return status;
                 if (status.State == "FAILED") throw new WindowsQualificationCheckException("owner_launch_failed");
             }
@@ -127,7 +128,8 @@ internal static class WindowsLifecycleCases
         throw new WindowsQualificationCheckException("owner_status_timeout");
     }
 
-    internal static async Task<WindowsPhaseObservation> KillAuthenticatedClientAsync(ProbeOwnerConfig config, string privateControlDirectory)
+    internal static async Task<WindowsPhaseObservation> KillAuthenticatedClientAsync(ProbeOwnerConfig config, string privateControlDirectory,
+        WindowsQualificationCase? result = null)
     {
         var name = "authenticated-client-" + Guid.NewGuid().ToString("N");
         using var client = await StartClientAsync(Path.GetDirectoryName(config.Launch.ExecutorPath)!, config,
@@ -139,6 +141,7 @@ internal static class WindowsLifecycleCases
             Check(observed.Phase == "client-attached" && observed.OwnerPid is > 0 && observed.ExecutorPid is > 0,
                 "independent_client_did_not_authenticate");
             var busy = await OwnerProtocol.SendAsync(config, new() { Operation = "acquire", Generation = config.Generation }).ConfigureAwait(false);
+            if (result is not null) CaptureOwnerEvidenceFailure(result, busy.EvidenceFailure);
             Check(!busy.Ok && busy.Error == "writer_busy", "authenticated_client_did_not_hold_writer_lease");
             KillClient(client, new WindowsLifecycleEvidence());
             return observed with { Phase = "authenticated-client-killed" };
@@ -191,7 +194,7 @@ internal static class WindowsLifecycleCases
             result.PolicySha256 = fixture.Policy.Sha256;
             result.SamePolicyProbePassed = true;
             await exercise(fixture).ConfigureAwait(false);
-            result.Passed = true;
+            result.Passed = result.EvidenceFailure is null;
         }
         catch (Exception error)
         {
@@ -215,9 +218,57 @@ internal static class WindowsLifecycleCases
             {
                 WritePrivate(Path.Combine(root, "lifecycle-evidence.json"), evidence, PhaseJson.Default.WindowsLifecycleEvidence, verifyPrivate: false);
             }
-            catch (Exception error) { result.Passed = false; result.EvidenceFailure = WindowsQualification.ObserveFailure(error); }
+            catch (Exception error) { result.Passed = false; result.EvidenceFailure ??= WindowsQualification.ObserveFailure(error); }
         }
+        result.Passed &= result.EvidenceFailure is null;
         return result;
+    }
+
+    internal static void CaptureOwnerEvidenceFailure(WindowsQualificationCase result, WindowsQualificationFailure? failure)
+    {
+        if (failure is null) return;
+        result.EvidenceFailure ??= failure;
+        result.Passed = false;
+    }
+
+    internal static async Task<ProbeOwnerResponse> SendOwnerAsync(ProbeOwnerConfig config, WindowsQualificationCase result,
+        ProbeOwnerRequest request, bool observer = false)
+    {
+        var response = await OwnerProtocol.SendAsync(config, request, observer).ConfigureAwait(false);
+        CaptureOwnerEvidenceFailure(result, response.EvidenceFailure);
+        // Evidence failure invalidates qualification, not the native Stop or
+        // shutdown result. The caller must continue its real teardown.
+        return response;
+    }
+
+    internal static ProbeOwnerRecord? CaptureFinalOwnerEvidence(ProbeOwnerConfig config, WindowsQualificationCase result)
+    {
+        try
+        {
+            var record = ReadOwnerRecord(config);
+            CaptureOwnerEvidenceFailure(result, record.EvidenceFailure);
+            return record;
+        }
+        catch (Exception error)
+        {
+            CaptureOwnerEvidenceFailure(result, WindowsQualification.ObserveFailure(error) with { Code = "owner_evidence_final_record_read" });
+            return null;
+        }
+    }
+
+    private static ProbeOwnerRecord ReadOwnerRecord(ProbeOwnerConfig config)
+    {
+        string path = Path.Combine(config.Launch.ControlDirectory, "owner-record.json");
+        WindowsPolicy.VerifyPrivateFile(path);
+        // Allow the live owner to atomically replace its record. Only the
+        // explicit publication fault case takes a delete-denying share lock.
+        using var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        Check(input.Length <= 65_536, "owner_evidence_record_bound");
+        var record = JsonSerializer.Deserialize(input, OwnerJson.Default.ProbeOwnerRecord)
+            ?? throw new InvalidDataException("Missing exact owner record.");
+        Check(record.RunId == config.RunId && record.OwnerEpoch == config.OwnerEpoch && record.SnapshotDigest == config.SnapshotDigest,
+            "owner_evidence_record_identity_mismatch");
+        return record;
     }
 
     private static ProbeOwnerConfig NewConfig(string stage, WindowsPolicyArtifact policy, string? pause) => new(
@@ -233,12 +284,12 @@ internal static class WindowsLifecycleCases
         fixture.Evidence.ForeignCreatedUtc = sentinel.StartTime.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
         try
         {
-            var observer = await OwnerProtocol.SendAsync(fixture.Config, new() { Operation = "status", Generation = 1 }, true).ConfigureAwait(false);
+            var observer = await SendOwnerAsync(fixture.Config, fixture.Result, new() { Operation = "status", Generation = 1 }, true).ConfigureAwait(false);
             Check(observer.Ok, "observer_status_refused");
-            observer = await OwnerProtocol.SendAsync(fixture.Config, new() { Operation = "write", Generation = 1, Sequence = 1, Input = "x"u8.ToArray() }, true).ConfigureAwait(false);
+            observer = await SendOwnerAsync(fixture.Config, fixture.Result, new() { Operation = "write", Generation = 1, Sequence = 1, Input = "x"u8.ToArray() }, true).ConfigureAwait(false);
             Check(!observer.Ok && observer.Error == "observer_read_only", "observer_mutation_not_refused");
-            await ExpectAuthenticationRefusalAsync(fixture.Config with { ControllerKey = Key() }).ConfigureAwait(false);
-            await ExpectAuthenticationRefusalAsync(fixture.Config with { OwnerEpoch = Guid.NewGuid().ToString("N") }).ConfigureAwait(false);
+            await ExpectAuthenticationRefusalAsync(fixture.Config with { ControllerKey = Key() }, fixture.Result).ConfigureAwait(false);
+            await ExpectAuthenticationRefusalAsync(fixture.Config with { OwnerEpoch = Guid.NewGuid().ToString("N") }, fixture.Result).ConfigureAwait(false);
             fixture.Evidence.Checks["observer_read_only_and_bad_capability_refused"] = true;
 
             var acquired = await fixture.SendAsync("acquire").ConfigureAwait(false);
@@ -246,10 +297,10 @@ internal static class WindowsLifecycleCases
             var busy = await fixture.SendAsync("acquire").ConfigureAwait(false);
             Check(!busy.Ok && busy.Error == "writer_busy", "second_writer_not_refused");
             var input = new ProbeOwnerRequest { Operation = "write", Generation = 1, LeaseId = acquired.LeaseId, Sequence = 1, Input = "x"u8.ToArray() };
-            var first = await OwnerProtocol.SendAsync(fixture.Config, input).ConfigureAwait(false);
-            var duplicate = await OwnerProtocol.SendAsync(fixture.Config, input).ConfigureAwait(false);
-            Check(first.Ok && duplicate == first, "transient_input_ack_replay_mismatch");
-            var resized = await OwnerProtocol.SendAsync(fixture.Config, new()
+            var first = await SendOwnerAsync(fixture.Config, fixture.Result, input).ConfigureAwait(false);
+            var duplicate = await SendOwnerAsync(fixture.Config, fixture.Result, input).ConfigureAwait(false);
+            Check(first.Ok && (duplicate with { EvidenceFailure = null }) == (first with { EvidenceFailure = null }), "transient_input_ack_replay_mismatch");
+            var resized = await SendOwnerAsync(fixture.Config, fixture.Result, new()
             {
                 Operation = "resize",
                 Generation = 1,
@@ -259,7 +310,7 @@ internal static class WindowsLifecycleCases
                 Rows = 30
             }).ConfigureAwait(false);
             Check(resized.Ok, "writer_resize_refused");
-            var conflict = await OwnerProtocol.SendAsync(fixture.Config, new()
+            var conflict = await SendOwnerAsync(fixture.Config, fixture.Result, new()
             {
                 Operation = "resize",
                 Generation = 1,
@@ -269,7 +320,7 @@ internal static class WindowsLifecycleCases
                 Rows = 31
             }).ConfigureAwait(false);
             Check(!conflict.Ok && conflict.Error == "terminal_sequence_conflict", "terminal_sequence_reuse_not_refused");
-            Check((await OwnerProtocol.SendAsync(fixture.Config, new() { Operation = "detach", Generation = 1, LeaseId = acquired.LeaseId }).ConfigureAwait(false)).Ok,
+            Check((await SendOwnerAsync(fixture.Config, fixture.Result, new() { Operation = "detach", Generation = 1, LeaseId = acquired.LeaseId }).ConfigureAwait(false)).Ok,
                 "writer_detach_refused");
             var detached = await fixture.SendAsync("status").ConfigureAwait(false);
             SameOwner(initial, detached);
@@ -279,11 +330,11 @@ internal static class WindowsLifecycleCases
             SameOwner(initial, await fixture.SendAsync("status").ConfigureAwait(false));
             var rebound = await fixture.SendAsync("rebind").ConfigureAwait(false);
             Check(rebound.Ok && rebound.Generation == 2, "control_generation_not_rebound");
-            await ExpectAuthenticationRefusalAsync(fixture.Config).ConfigureAwait(false); // Old generation is not accepted.
+            await ExpectAuthenticationRefusalAsync(fixture.Config, fixture.Result).ConfigureAwait(false); // Old generation is not accepted.
             fixture.Config = fixture.Config with { Generation = rebound.Generation };
             var fresh = await fixture.SendAsync("acquire").ConfigureAwait(false);
             Check(fresh.Ok && fresh.LeaseId is not null, "writer_not_reacquired_after_rebind");
-            var staleLease = await OwnerProtocol.SendAsync(fixture.Config, new()
+            var staleLease = await SendOwnerAsync(fixture.Config, fixture.Result, new()
             {
                 Operation = "write",
                 Generation = 2,
@@ -359,11 +410,11 @@ internal static class WindowsLifecycleCases
     private static async Task ExerciseReplayAsync(Fixture fixture)
     {
         _ = await fixture.StartedAsync(allowTerminal: true).ConfigureAwait(false);
-        var ended = await AwaitStatusAsync(fixture.Config, x => x.State == "EXITED", TimeSpan.FromSeconds(25)).ConfigureAwait(false);
+        var ended = await AwaitStatusAsync(fixture.Config, x => x.State == "EXITED", TimeSpan.FromSeconds(25), fixture.Result).ConfigureAwait(false);
         Check(ended.RawExitCode == 0 && ended.CleanupConfirmed, "detached_flood_did_not_drain");
         // No terminal subscriber has read any output during the flood. The
         // owner's independent drain must have retained an honest bounded tail.
-        var response = await OwnerProtocol.SendAsync(fixture.Config, new() { Operation = "read", Generation = 1, Cursor = 0 }, true).ConfigureAwait(false);
+        var response = await SendOwnerAsync(fixture.Config, fixture.Result, new() { Operation = "read", Generation = 1, Cursor = 0 }, true).ConfigureAwait(false);
         var replay = response.Replay ?? throw new WindowsQualificationCheckException("bounded_replay_unavailable");
         Check(response.Ok && replay.AvailableUntil >= 1_048_576 && replay.AvailableFrom > 0
             && replay.GapFrom == 0 && replay.GapUntil == replay.AvailableFrom && replay.Data.Length > 0 && replay.DrainFailure is null,
@@ -373,7 +424,7 @@ internal static class WindowsLifecycleCases
         var captured = replay.Data.Length;
         for (var read = 0; !replay.EndOfStream && read < 9; read++)
         {
-            response = await OwnerProtocol.SendAsync(fixture.Config, new() { Operation = "read", Generation = 1, Cursor = replay.NextSequence }, true).ConfigureAwait(false);
+            response = await SendOwnerAsync(fixture.Config, fixture.Result, new() { Operation = "read", Generation = 1, Cursor = replay.NextSequence }, true).ConfigureAwait(false);
             var next = response.Replay ?? throw new WindowsQualificationCheckException("bounded_replay_unavailable");
             Check(response.Ok && next.StartSequence == replay.NextSequence && next.GapFrom is null && next.DrainFailure is null,
                 "retained_replay_cursor_discontinuity");
@@ -399,6 +450,7 @@ internal static class WindowsLifecycleCases
                 using var input = new FileStream(Path.Combine(fixture.Config.Launch.ControlDirectory, "owner-record.json"),
                     FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
                 var prepared = JsonSerializer.Deserialize(input, OwnerJson.Default.ProbeOwnerRecord);
+                if (prepared is not null) CaptureOwnerEvidenceFailure(fixture.Result, prepared.EvidenceFailure);
                 Check(prepared is { State: "STARTING", ExecutorPid: > 0, Job.ActiveProcesses: 1 }
                     && observed.ExecutorPid is uint executorPid && prepared.ExecutorPid == executorPid && prepared.Job.ProcessIds.Length == 1
                     && prepared.Job.ProcessIds[0] == executorPid
@@ -432,7 +484,7 @@ internal static class WindowsLifecycleCases
             FileMode.Open, FileAccess.Read, FileShare.Read))
         {
             ReleasePhase(fixture);
-            var unresolved = await AwaitStatusAsync(fixture.Config, x => x.State == "RECOVERY_REQUIRED", TimeSpan.FromSeconds(15)).ConfigureAwait(false);
+            var unresolved = await AwaitStatusAsync(fixture.Config, x => x.State == "RECOVERY_REQUIRED", TimeSpan.FromSeconds(15), fixture.Result).ConfigureAwait(false);
             Check(!unresolved.CleanupConfirmed && !unresolved.DataDeletionAllowed, "unresolved_completion_allowed_deletion");
             var refused = await fixture.SendAsync("shutdown").ConfigureAwait(false);
             Check(!refused.Ok && refused.Error == "cleanup_unresolved", "unresolved_owner_shutdown_succeeded");
@@ -455,7 +507,7 @@ internal static class WindowsLifecycleCases
         Check(item.GetProperty("childCreatedUtc").GetDateTimeOffset() == created, "background_child_creation_identity_mismatch");
         fixture.Evidence.ChildPid = pid;
         fixture.Evidence.ChildCreatedUtc = created.ToString("O", CultureInfo.InvariantCulture);
-        var ended = await AwaitStatusAsync(fixture.Config, x => x.State == "EXITED", TimeSpan.FromSeconds(20)).ConfigureAwait(false);
+        var ended = await AwaitStatusAsync(fixture.Config, x => x.State == "EXITED", TimeSpan.FromSeconds(20), fixture.Result).ConfigureAwait(false);
         Check(ended.RawExitCode == 0 && ended.CleanupConfirmed && ended.Job?.ActiveProcesses == 0, "root_exit_cleanup_not_confirmed");
         await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false);
         fixture.Evidence.ChildHeldIdentityExited = child.HasExited;
@@ -466,7 +518,7 @@ internal static class WindowsLifecycleCases
     private static async Task ExercisePersistenceAsync(Fixture fixture, bool second)
     {
         var ended = await fixture.StartedAsync(allowTerminal: true).ConfigureAwait(false);
-        if (ended.State != "EXITED") ended = await AwaitStatusAsync(fixture.Config, x => x.State == "EXITED", TimeSpan.FromSeconds(20)).ConfigureAwait(false);
+        if (ended.State != "EXITED") ended = await AwaitStatusAsync(fixture.Config, x => x.State == "EXITED", TimeSpan.FromSeconds(20), fixture.Result).ConfigureAwait(false);
         var item = await AwaitFixtureEventAsync(fixture.Events, "persistence", TimeSpan.FromSeconds(5)).ConfigureAwait(false);
         Check(item.GetProperty("succeeded").GetBoolean() && item.GetProperty("operation").GetString() == (second ? "read" : "write")
             && ended.RawExitCode == 0 && ended.CleanupConfirmed, "payload_persistence_not_proven");
@@ -474,11 +526,12 @@ internal static class WindowsLifecycleCases
         await fixture.FinishAsync().ConfigureAwait(false);
     }
 
-    private static async Task ExpectAuthenticationRefusalAsync(ProbeOwnerConfig config)
+    private static async Task ExpectAuthenticationRefusalAsync(ProbeOwnerConfig config, WindowsQualificationCase? result = null)
     {
         try
         {
             var response = await OwnerProtocol.SendAsync(config, new() { Operation = "status", Generation = config.Generation }).ConfigureAwait(false);
+            if (result is not null) CaptureOwnerEvidenceFailure(result, response.EvidenceFailure);
             Check(!response.Ok, "invalid_authentication_accepted");
         }
         catch (Exception error) when (error is UnauthorizedAccessException or IOException) { return; }
@@ -625,11 +678,12 @@ internal static class WindowsLifecycleCases
         internal string Stage => Path.GetDirectoryName(Config.Launch.ExecutorPath)!;
         internal Process? Client { get; init; }
 
-        internal Task<ProbeOwnerResponse> SendAsync(string operation) => OwnerProtocol.SendAsync(Config, new() { Operation = operation, Generation = Config.Generation });
+        internal Task<ProbeOwnerResponse> SendAsync(string operation) =>
+            SendOwnerAsync(Config, result, new() { Operation = operation, Generation = Config.Generation });
 
         internal async Task<ProbeOwnerResponse> StartedAsync(bool allowTerminal = false)
         {
-            var observed = await AwaitStatusAsync(Config, x => x.State == "RUNNING" || allowTerminal && x.State == "EXITED", TimeSpan.FromSeconds(25)).ConfigureAwait(false);
+            var observed = await AwaitStatusAsync(Config, x => x.State == "RUNNING" || allowTerminal && x.State == "EXITED", TimeSpan.FromSeconds(25), result).ConfigureAwait(false);
             Check(observed.OwnerPid == guardian.ProcessId && observed.OwnerCreatedUtc == guardian.ProcessStartTimeUtc
                 && observed.ExecutorPid is > 0 && observed.ExecutorCreatedUtc is not null, "background_native_identity_mismatch");
             result.ExecutorProcessId = observed.ExecutorPid.Value;
@@ -671,12 +725,9 @@ internal static class WindowsLifecycleCases
 
         private ProbeOwnerRecord ReadOwner()
         {
-            // Ordinary inspection must allow atomic owner-record replacement;
-            // only the explicit fault case takes a delete-denying share lock.
-            using var input = new FileStream(Path.Combine(Config.Launch.ControlDirectory, "owner-record.json"),
-                FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-            return JsonSerializer.Deserialize(input, OwnerJson.Default.ProbeOwnerRecord)
-                ?? throw new InvalidDataException("Missing exact owner record.");
+            var record = ReadOwnerRecord(Config);
+            CaptureOwnerEvidenceFailure(result, record.EvidenceFailure);
+            return record;
         }
 
         public async ValueTask DisposeAsync()
@@ -699,6 +750,11 @@ internal static class WindowsLifecycleCases
                 result.CleanupFailure = WindowsQualification.ObserveFailure(error);
                 UnresolvedGuardians.Add(guardian);
             }
+            // This read occurs after the held native scope is empty, so it also
+            // observes evidence-sink failures during the owner's final Dispose.
+            // It cannot turn evidence I/O into a native cleanup failure.
+            if (result.JobEmpty)
+                evidence.FinalOwner = CaptureFinalOwnerEvidence(Config, result) ?? evidence.FinalOwner;
         }
     }
 }

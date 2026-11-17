@@ -58,6 +58,7 @@ internal sealed record ProbeOwnerResponse
     public DateTimeOffset? ExecutorCreatedUtc { get; init; }
     public uint? RawExitCode { get; init; }
     public string ExitSource { get; init; } = "unknown";
+    public WindowsQualificationFailure? EvidenceFailure { get; init; }
     public override string ToString() => "ProbeOwnerResponse (terminal capability omitted)";
 }
 

@@ -89,7 +89,7 @@ internal static class WindowsCombinedCases
             guardian = started.Guardian;
             result.PolicySha256 = started.Policy.Sha256;
             result.SamePolicyProbePassed = true;
-            first = await WindowsLifecycleCases.AwaitStatusAsync(config, value => value.Ok && value.State == "RUNNING", TimeSpan.FromSeconds(10)).ConfigureAwait(false);
+            first = await WindowsLifecycleCases.AwaitStatusAsync(config, value => value.Ok && value.State == "RUNNING", TimeSpan.FromSeconds(10), result).ConfigureAwait(false);
             Require(first.ExecutorPid.HasValue && first.OwnerPid == guardian.ProcessId, "combined_owner_identity_missing");
             result.ExecutorProcessId = first.ExecutorPid.Value;
             result.ExecutorStartUtc = first.ExecutorCreatedUtc?.ToString("O", CultureInfo.InvariantCulture);
@@ -122,37 +122,37 @@ internal static class WindowsCombinedCases
                 Require(process.StartTime.ToUniversalTime() == guardian.ProcessStartTimeUtc.UtcDateTime, "combined_owner_identity_changed");
                 ownerWorkingSet = process.WorkingSet64;
             }
-            var lease = await SendAsync(config, "acquire").ConfigureAwait(false);
+            var lease = await SendAsync(config, result, "acquire").ConfigureAwait(false);
             Require(lease.Ok && lease.LeaseId is not null, "combined_writer_acquire_failed");
-            var size = await OwnerProtocol.SendAsync(config, new() { Operation = "resize", Generation = config.Generation, LeaseId = lease.LeaseId, Sequence = 1, Columns = 120, Rows = 40 }).ConfigureAwait(false);
+            var size = await WindowsLifecycleCases.SendOwnerAsync(config, result, new() { Operation = "resize", Generation = config.Generation, LeaseId = lease.LeaseId, Sequence = 1, Columns = 120, Rows = 40 }).ConfigureAwait(false);
             Require(size.Ok, "combined_resize_failed");
             _ = await WindowsTerminalCapture.WaitForFixtureEventAsync(eventsDirectory, "resize", TimeSpan.FromSeconds(4), value => value.GetProperty("columns").GetInt32() == 120 && value.GetProperty("rows").GetInt32() == 40).ConfigureAwait(false);
             resized = true;
-            var initialRead = await OwnerProtocol.SendAsync(config, new() { Operation = "read", Generation = config.Generation, Cursor = 0 }, observer: true).ConfigureAwait(false);
+            var initialRead = await WindowsLifecycleCases.SendOwnerAsync(config, result, new() { Operation = "read", Generation = config.Generation, Cursor = 0 }, observer: true).ConfigureAwait(false);
             Require(initialRead.Ok && initialRead.Replay is not null && initialRead.Replay.DrainFailure is null, "combined_terminal_read_failed");
             unicodeOutput = Encoding.UTF8.GetString(initialRead.Replay.Data).Contains('星');
             Require(unicodeOutput, "combined_unicode_terminal_missing");
             var cursor = initialRead.Replay.NextSequence;
-            var detached = await OwnerProtocol.SendAsync(config, new() { Operation = "detach", Generation = config.Generation, LeaseId = lease.LeaseId }).ConfigureAwait(false);
+            var detached = await WindowsLifecycleCases.SendOwnerAsync(config, result, new() { Operation = "detach", Generation = config.Generation, LeaseId = lease.LeaseId }).ConfigureAwait(false);
             Require(detached.Ok, "combined_detach_failed");
-            _ = await WindowsLifecycleCases.KillAuthenticatedClientAsync(config, control).ConfigureAwait(false);
+            _ = await WindowsLifecycleCases.KillAuthenticatedClientAsync(config, control, result).ConfigureAwait(false);
             // The authenticated controller really died while this same workload,
             // pseudoconsole and native resource owner remained alive.
-            var reconnect = await SendAsync(config, "rebind").ConfigureAwait(false);
+            var reconnect = await SendAsync(config, result, "rebind").ConfigureAwait(false);
             Require(reconnect.Ok && reconnect.Generation == config.Generation + 1 && reconnect.OwnerPid == first.OwnerPid && reconnect.ExecutorPid == first.ExecutorPid
                 && reconnect.OwnerCreatedUtc == first.OwnerCreatedUtc && reconnect.ExecutorCreatedUtc == first.ExecutorCreatedUtc,
                 "combined_reconnect_changed_identity");
             config = config with { Generation = reconnect.Generation };
-            var recovered = await SendAsync(config, "status").ConfigureAwait(false);
+            var recovered = await SendAsync(config, result, "status").ConfigureAwait(false);
             Require(recovered.Ok && recovered.Job?.Limits == first.Job?.Limits && recovered.Job is { ActiveProcesses: > 0 },
                 "combined_recovered_limits_or_scope_changed");
             rebound = true;
-            var replay = await OwnerProtocol.SendAsync(config, new() { Operation = "read", Generation = config.Generation, Cursor = cursor }, observer: true).ConfigureAwait(false);
+            var replay = await WindowsLifecycleCases.SendOwnerAsync(config, result, new() { Operation = "read", Generation = config.Generation, Cursor = cursor }, observer: true).ConfigureAwait(false);
             Require(replay.Ok && replay.Replay is not null && replay.Replay.DrainFailure is null, "combined_replay_failed");
             result.ObservedTerminalBytes = replay.Replay.AvailableUntil;
             if (replay.Replay.GapFrom is { } from && replay.Replay.GapUntil is { } until) result.ReplayGaps.Add(new(from, until));
             var limits = new ConPtyLimits(2500, 768UL * 1024 * 1024, 12);
-            var changed = await OwnerProtocol.SendAsync(config, new() { Operation = "limits", Generation = config.Generation, Limits = limits }).ConfigureAwait(false);
+            var changed = await WindowsLifecycleCases.SendOwnerAsync(config, result, new() { Operation = "limits", Generation = config.Generation, Limits = limits }).ConfigureAwait(false);
             Require(changed.Ok && changed.Job?.Limits == limits && changed.Job.ActiveProcesses >= 4, "combined_limit_update_not_effective");
             applied = changed.Job;
             foreach (var role in new[] { "readonly", "control-denied", "neighbor", "outside" })
@@ -175,16 +175,17 @@ internal static class WindowsCombinedCases
             Require(selected ? afterNetwork.MatchedRequests == beforeNetwork.MatchedRequests + 1 : afterNetwork.AcceptedOrReceived == beforeNetwork.AcceptedOrReceived,
                 "combined_external_network_observation_mismatch");
             var stoppedAt = Stopwatch.StartNew();
-            var stopped = await SendAsync(config, "stop").ConfigureAwait(false);
+            var stopped = await SendAsync(config, result, "stop").ConfigureAwait(false);
             Require(stopped.Ok && stopped.CleanupConfirmed && stopped.ExitSource == "official_executor", "combined_stop_not_confirmed");
-            var final = await SendAsync(config, "status").ConfigureAwait(false);
+            var final = await SendAsync(config, result, "status").ConfigureAwait(false);
             Require(final.Job is { ActiveProcesses: 0 } && final.Job.ProcessIds.Length == 0, "combined_inner_scope_not_empty");
             result.FinalJob = final.Job;
             result.RawExecutorExit = stopped.RawExitCode;
             result.JobEmpty = true;
-            var shutdown = await SendAsync(config, "shutdown").ConfigureAwait(false);
+            var shutdown = await SendAsync(config, result, "shutdown").ConfigureAwait(false);
             Require(shutdown.Ok, "combined_owner_shutdown_refused");
             _ = await guardian.WaitEmptyAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
+            _ = WindowsLifecycleCases.CaptureFinalOwnerEvidence(config, result);
             stopMs = stoppedAt.Elapsed.TotalMilliseconds;
             await guardian.DisposeAsync().ConfigureAwait(false);
             guardian = null;
@@ -193,7 +194,7 @@ internal static class WindowsCombinedCases
             foreach (var file in new[] { readonlyFile, neighborFile, outsideFile }) Require(File.ReadAllText(file) == initial, "combined_ungranted_file_changed");
             foreach (var item in aclBefore) aclAfter.Add(item.Key, WindowsPolicyCases.AclHash(item.Key));
             Require(aclBefore.All(item => aclAfter[item.Key] == item.Value), "combined_host_acl_changed");
-            result.Passed = true;
+            result.Passed = result.EvidenceFailure is null;
         }
         catch (Exception exception)
         {
@@ -206,13 +207,19 @@ internal static class WindowsCombinedCases
         {
             if (guardian is not null)
             {
-                try { await guardian.DisposeAsync().ConfigureAwait(false); result.CleanupCompleted = true; }
+                try
+                {
+                    await guardian.DisposeAsync().ConfigureAwait(false);
+                    result.CleanupCompleted = true;
+                }
                 catch (Exception exception)
                 {
                     UnresolvedGuardians.Add(guardian);
                     result.Passed = false;
                     result.CleanupFailure = WindowsQualification.ObserveFailure(exception) with { Code = "combined_guardian_cleanup_unresolved" };
                 }
+                if (result.CleanupCompleted && config is not null)
+                    _ = WindowsLifecycleCases.CaptureFinalOwnerEvidence(config, result);
             }
         }
         result.ElapsedMs = timer.Elapsed.TotalMilliseconds;
@@ -282,6 +289,7 @@ internal static class WindowsCombinedCases
             var bytes = File.ReadAllBytes(path);
             result.PrivateDiagnostics.Add(new(Path.GetFileName(path), Convert.ToHexStringLower(SHA256.HashData(bytes)), bytes.Length));
         }
+        result.Passed &= result.EvidenceFailure is null;
         return result;
     }
 
@@ -317,8 +325,8 @@ internal static class WindowsCombinedCases
 
     private static bool Event(JsonElement item, string name) => item.GetProperty("event").GetString() == name;
 
-    private static Task<ProbeOwnerResponse> SendAsync(ProbeOwnerConfig config, string operation) =>
-        OwnerProtocol.SendAsync(config, new() { Operation = operation, Generation = config.Generation });
+    private static Task<ProbeOwnerResponse> SendAsync(ProbeOwnerConfig config, WindowsQualificationCase result, string operation) =>
+        WindowsLifecycleCases.SendOwnerAsync(config, result, new() { Operation = operation, Generation = config.Generation });
 
     private static void Require([DoesNotReturnIf(false)] bool value, string code)
     {
