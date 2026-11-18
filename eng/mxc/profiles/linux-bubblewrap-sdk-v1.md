@@ -1,8 +1,9 @@
 # Linux Bubblewrap qualification experiments
 
 AFV2-MXC-03 develops the five native Linux protocols in Design
-`docs/verification/mxc-experiments.md`. This is an experimental probe, not the
-Node runtime or a qualified product profile. A successful diagnostic slice
+`docs/verification/mxc-experiments.md`. AFV2-MXC-04 uses the [scoped native
+qualification record](linux-bubblewrap-sdk-v1.qualification.json) for profile
+admission. A successful diagnostic slice
 does not establish the full terminal/resource/filesystem/network/recovery
 combination. Keep every original failed report and its event log.
 

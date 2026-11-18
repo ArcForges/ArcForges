@@ -1,0 +1,319 @@
+{
+  "schemaVersion": 1,
+  "profileId": "windows-process-executor-v1",
+  "profileRevision": "win-wrapper-local-v1",
+  "official": {
+    "name": "Microsoft.Mxc.Sdk",
+    "componentVersion": "1.0.1",
+    "requestSchemaVersion": "1.0.0",
+    "backend": "process-container",
+    "tier": "base-container",
+    "nativeSourceCommit": "fda29ac63bc306b7f97f3b86b4b63d44f7f40cf2",
+    "packageSha256": "d47b1f70c3fcaaed1705a0c3872807e2878fe8c1b778c0dd9eb9325bf421a672",
+    "releaseSha256": "0e832239454ba7fcd338ff56218a287eef4c0a01c1484084b869f55feff8abe9",
+    "runtimeFiles": [
+      {
+        "path": "mxc_ffi.dll",
+        "sha256": "bd45522f06dc9cc8001dcd5d7320bc2bf303fb08a39bf10f3404bd9a8001812c"
+      },
+      {
+        "path": "plm.exe",
+        "sha256": "beffc9c9ab974ca9e7455089fd8ecb36eb8c92811ddd1705db91370a689692c3"
+      },
+      {
+        "path": "wslcsdk.dll",
+        "sha256": "8d4d55d4283fb32a5909b57e78b576d01363d7b28bb9b2595115e80faf61db5b"
+      },
+      {
+        "path": "wxc-exec.exe",
+        "sha256": "090f5d1f7bb93104ab08dcd4e8034ef954aeefcdaf6658dde5f7dff4cfc12f3a"
+      },
+      {
+        "path": "wxc-wslc-daemon.exe",
+        "sha256": "84f61c1bc13abde8da1c3f2ff100e6d59368ecaabdbfeca939e6fdb696202d0c"
+      }
+    ]
+  },
+  "platform": {
+    "rid": "win-x64",
+    "architecture": "x64",
+    "osVersion": "10.0.26300.0",
+    "osDescription": "Microsoft Windows 10.0.26300",
+    "evidenceHost": "DEKU"
+  },
+  "prerequisites": [
+    "protected-official-runtime",
+    "native-base-container-tier",
+    "native-denied-paths",
+    "no-dacl-mutation",
+    "outer-job-membership-and-limits-before-resume",
+    "owner-cleanup-proof",
+    "conpty-and-output-drain-for-interactive"
+  ],
+  "evidence": {
+    "decision": "qualified",
+    "originalSourceCommit": "da7f5bfcfe497a35cece41f0e97b5863481bcc56",
+    "originalDesignCommit": "0ce78f55465b15de82eb1d214b4c02d24809e80f",
+    "originalPlanCommit": "3f987c08d7bc8543ccab187027c527084161b6bd",
+    "originalReportSha256": "f7f9914550d3f9cbf0933735e8703a36e8b16312ac9c6521f1f9dd3dedceb1ef",
+    "probeExecutableSha256": "ff573694e4aeae1b9577e11b574fab23ffae6853be79f839422dcfc6de42df0b",
+    "probeManifestSha256": "e410036bce3097242d2daa07236dbf7b36b553b71b99a8f4a95e1d2c625a1e06",
+    "probeStageFiles": [
+      {
+        "path": "arcforges-mxc-probe.exe",
+        "sha256": "ff573694e4aeae1b9577e11b574fab23ffae6853be79f839422dcfc6de42df0b"
+      },
+      {
+        "path": "arcforges-mxc-probe.pdb",
+        "sha256": "c37ef887f34255cacab4c5c65b478ee23fcffe382b97875c325bedd62f9ffc2d"
+      },
+      {
+        "path": "mxc-release.spdx.json",
+        "sha256": "c759a523c07772c869e14c5afc0a69a1bcd178d656aab368982ca4f5a3b2e1bb"
+      },
+      {
+        "path": "mxc.LICENSE.md",
+        "sha256": "d9a1b1e30d633d5732ea18e3cba9538d293ebc53e1a9e4e96ab739e0c5c4f1cb"
+      },
+      {
+        "path": "mxc_ffi.dll",
+        "sha256": "bd45522f06dc9cc8001dcd5d7320bc2bf303fb08a39bf10f3404bd9a8001812c"
+      },
+      {
+        "path": "plm.exe",
+        "sha256": "beffc9c9ab974ca9e7455089fd8ecb36eb8c92811ddd1705db91370a689692c3"
+      },
+      {
+        "path": "windows-signatures.json",
+        "sha256": "a652cbd039dc63b6df5056d4065a3b1a9be597d33e3567e3aa3a5f04a53021fd"
+      },
+      {
+        "path": "wslcsdk.dll",
+        "sha256": "8d4d55d4283fb32a5909b57e78b576d01363d7b28bb9b2595115e80faf61db5b"
+      },
+      {
+        "path": "wxc-exec.exe",
+        "sha256": "090f5d1f7bb93104ab08dcd4e8034ef954aeefcdaf6658dde5f7dff4cfc12f3a"
+      },
+      {
+        "path": "wxc-wslc-daemon.exe",
+        "sha256": "84f61c1bc13abde8da1c3f2ff100e6d59368ecaabdbfeca939e6fdb696202d0c"
+      }
+    ],
+    "nativePassCount": 60,
+    "nativeCaseCount": 60,
+    "cleanupConfirmed": true,
+    "aotCohort": {
+      "id": "F-AOT-01",
+      "sourceCommit": "9a9378bc3a6bc8190d896ca7ef0e43eee5abd886",
+      "summarySha256": "9e1676addeedbbb465a4a0e0f1544220fc76a095db815075907167fd6355f12e"
+    },
+    "originalStatus": "wrapper_passed",
+    "localWrapperPassed": true,
+    "strictExternalQualificationPassed": false,
+    "externalNetworkStatus": "unverified",
+    "originalStageVerified": true,
+    "originalFinalIdentityVerified": true,
+    "nativeCases": [
+      "console-info",
+      "line-editing",
+      "raw-resize",
+      "detached-flood",
+      "exit-0",
+      "exit-1",
+      "exit-23",
+      "fake-error-output",
+      "interactive-cmd",
+      "invalid-payload-executable",
+      "native-invalid-image",
+      "official-policy-timeout",
+      "etx-cooperative",
+      "etx-raw",
+      "etx-ignore-etx",
+      "resource-cpu-capped",
+      "resource-cpu-control",
+      "resource-memory-cap",
+      "resource-process-control",
+      "resource-process-cap",
+      "resource-short-lived-burst",
+      "resource-native-assignment-refusal",
+      "resource-live-update",
+      "resource-invalid-before-launch",
+      "argv-roundtrip",
+      "clean-environment",
+      "known-folder-observations",
+      "filesystem-policy",
+      "filesystem-reparse",
+      "filesystem-external-grant",
+      "reject-malformed",
+      "reject-schema-version",
+      "reject-missing-policy",
+      "reject-invalid-environment",
+      "reject-least-privilege",
+      "reject-proxy-peer-without-proxy",
+      "cli-named-pipe-roundtrip",
+      "cli-native-compile-link-test",
+      "owner-detach-auth-lease",
+      "owner-detached-bounded-replay",
+      "center-observer-loss",
+      "owner-loss-native-drain",
+      "root-exit-background-child",
+      "cleanup-record-publication-failure",
+      "client-loss-at-prepared",
+      "client-loss-at-scope-created",
+      "client-loss-at-owner-ack",
+      "client-loss-at-executor-created",
+      "client-loss-at-active",
+      "client-loss-at-cleaning",
+      "client-loss-at-final",
+      "persistent-data-first-run",
+      "persistent-data-new-run",
+      "network-host-loopback-denied-tcp",
+      "network-host-loopback-denied-udp",
+      "network-ingress-denied-tcp",
+      "network-ingress-loopback-tcp",
+      "network-ingress-denied-udp",
+      "network-ingress-loopback-udp",
+      "combined-local-host-loopback-deny"
+    ],
+    "composedCases": [
+      {
+        "id": "combined-local-host-loopback-deny",
+        "policySha256": "15ef9c4799e5a671ed028e63540bfe127ccde3ca416c8b12d6cbc850c1f847f6"
+      }
+    ],
+    "nativeRefusals": [
+      {
+        "case": "resource-native-assignment-refusal",
+        "code": 125,
+        "exitSource": "official_executor",
+        "payloadStarted": "NOT_STARTED",
+        "cleanupConfirmed": true
+      },
+      {
+        "case": "reject-missing-policy",
+        "code": 1,
+        "exitSource": "official_executor_config_rejection",
+        "payloadStarted": "UNKNOWN",
+        "cleanupConfirmed": true
+      },
+      {
+        "case": "reject-least-privilege",
+        "code": 1,
+        "exitSource": "official_executor",
+        "payloadStarted": "UNKNOWN",
+        "cleanupConfirmed": true
+      }
+    ],
+    "limitations": [
+      "Lower-capability-host rejection: NOT_RUN; no designated lower-capability host is available. The deterministic official policy refusals remain required.",
+      "The calling-process Job snapshot does not enumerate unknown ancestors. Each experiment verifies native assignment, limits, enforcement and cleanup through its held owned Job handles."
+    ]
+  },
+  "capabilities": [
+    {
+      "id": "terminal.interactive",
+      "support": "supported",
+      "observation": "passed",
+      "scope": "Native ConPTY with the official executor, including console detection, resize, input, bounded replay and reconnect."
+    },
+    {
+      "id": "terminal.pipes",
+      "support": "supported",
+      "observation": "unverified",
+      "scope": "Explicit mode only. This admitted interactive composition does not qualify the separate executor pipes adapter."
+    },
+    {
+      "id": "files.owned-root-explicit-grants",
+      "support": "supported",
+      "observation": "passed",
+      "scope": "Native same-path read/write, read-only and denied paths, private control denial, reparse checks and persistent private data, without DACL mutation."
+    },
+    {
+      "id": "environment.clean-explicit",
+      "support": "supported",
+      "observation": "passed",
+      "scope": "Clean environment and configured known folders in the exercised fixtures. Some applications can ignore configured paths."
+    },
+    {
+      "id": "resources.cpu-memory-process-count",
+      "support": "supported",
+      "observation": "passed",
+      "scope": "ArcForges outer Job assignment before resume, enforcement, live update and readback with the official executor. Observations concern the owned Job scope."
+    },
+    {
+      "id": "recovery.authenticated-owner",
+      "support": "supported",
+      "observation": "passed",
+      "scope": "Owner survives client detach and Node reconnect, scopes Stop and cleanup, and refuses to treat unresolved cleanup as success."
+    },
+    {
+      "id": "network.default-deny",
+      "support": "supported",
+      "observation": "passed",
+      "scope": "Observed the composed default-deny effect against a calibrated host-loopback TCP peer. Separate local TCP/UDP and ingress observations are recorded below."
+    },
+    {
+      "id": "network.host-loopback-deny",
+      "support": "supported",
+      "observation": "passed",
+      "scope": "Local host-loopback TCP and UDP denied in separate cases."
+    },
+    {
+      "id": "network.ingress-deny",
+      "support": "supported",
+      "observation": "passed",
+      "scope": "Controlled local TCP/UDP ingress denied in separate cases."
+    },
+    {
+      "id": "network.local-loopback-ingress",
+      "support": "supported",
+      "observation": "passed",
+      "scope": "Explicit loopback TCP/UDP ingress observed in separate controlled local cases."
+    },
+    {
+      "id": "network.external-selected-tcp-udp",
+      "support": "supported",
+      "observation": "unverified",
+      "scope": "Official address, protocol and port rule semantics remain available for explicitly permitted requests. External result and dependent combined Runs lack applicable qualifying native evidence.",
+      "history": "See Plan docs/afv2-mxc-02-progress.md for original failed calibration attempts and unrun combinations."
+    },
+    {
+      "id": "process-container.least-privilege",
+      "support": "unsupported",
+      "observation": "refused",
+      "scope": "Official BaseContainer rejects the LPAC-specific leastPrivilege option.",
+      "nativeCase": "reject-least-privilege"
+    },
+    {
+      "id": "network.shared-host",
+      "support": "unsupported",
+      "observation": "not-run",
+      "scope": "Outside both product isolation profiles."
+    },
+    {
+      "id": "filesystem.path-remapping",
+      "support": "unsupported",
+      "observation": "not-run",
+      "scope": "Same-path grants only. No universal host-to-guest path remapping."
+    },
+    {
+      "id": "environment.host-inheritance",
+      "support": "unsupported",
+      "observation": "not-run",
+      "scope": "Only explicit request environment plus the selected platform baseline."
+    },
+    {
+      "id": "recovery.reattach-across-reboot",
+      "support": "unsupported",
+      "observation": "not-run",
+      "scope": "The boot-scoped owner and native resources cannot survive a reboot."
+    },
+    {
+      "id": "recovery.pause-resume",
+      "support": "unsupported",
+      "observation": "not-run",
+      "scope": "Stable MXC does not expose generic tree, terminal and deadline semantics for pause/resume."
+    }
+  ]
+}
