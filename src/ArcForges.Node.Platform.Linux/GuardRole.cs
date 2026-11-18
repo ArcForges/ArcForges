@@ -241,9 +241,31 @@ public static partial class GuardRole
             }
 
             // TERMINATE: at once, without the graceful phase; frozen first (04 section 6 step 4).
-            var stop = UnitControl.FreezeAndKill(manager, unit, state.ControlGroup.Length > 0 ? ProcFs.CgroupDirectory(state.ControlGroup) : null, (int)state.MainPid);
+            var rootSignalObserved = false;
+            var stop = UnitControl.FreezeAndKill(manager, unit,
+                state.ControlGroup.Length > 0 ? ProcFs.CgroupDirectory(state.ControlGroup) : null, (int)state.MainPid,
+                (pid, start, at) =>
+                {
+                    if (spec.AttemptId != attempt.Files.AttemptName)
+                    {
+                        return;
+                    }
+
+                    rootSignalObserved = true;
+                    UnitControl.RecordRootSignal(attempt.Files.GuardRootSignalPath, new LinuxRootSignalRecord
+                    {
+                        AttemptId = spec.AttemptId,
+                        Actor = "GUARD",
+                        RootPid = pid,
+                        RootStartTicks = start,
+                        RootStartedAt = ProcFs.StartInstant(start),
+                        Signal = Libc.SigKill,
+                        At = at,
+                    });
+                });
             attempt.Stopped = true;
-            Append(attempt, GuardEventKinds.Terminate, "OUTPUT_LIMIT", total, watch, clock);
+            var kind = rootSignalObserved ? GuardEventKinds.Terminate : GuardEventKinds.TerminateUnconfirmed;
+            Append(attempt, kind, "OUTPUT_LIMIT", total, watch, clock, rootSignalObserved);
             Console.Error.WriteLine($"arcforges guard: stopped {unit} at {total.ToString(CultureInfo.InvariantCulture)} bytes of output (limit {spec.MaxOutputBytes.ToString(CultureInfo.InvariantCulture)}): {stop.Describe()}");
         }
         catch (Exception exception) when (exception is DBusExceptionBase or TimeoutException or IOException or InvalidOperationException
@@ -255,7 +277,8 @@ public static partial class GuardRole
         }
     }
 
-    private static void Append(Guarded attempt, string kind, string? reason, long? output, HeartbeatWatch watch, TimeProvider clock)
+    private static void Append(Guarded attempt, string kind, string? reason, long? output, HeartbeatWatch watch, TimeProvider clock,
+        bool? rootSignalObserved = null)
     {
         try
         {
@@ -269,6 +292,7 @@ public static partial class GuardRole
                 LimitBytes = reason is null ? null : attempt.Spec.MaxOutputBytes,
                 HeartbeatAgeMs = (long)watch.Age.TotalMilliseconds,
                 HeartbeatInstance = watch.Last?.Instance ?? string.Empty,
+                RootSignalObserved = rootSignalObserved,
             }.Append(attempt.Files.GuardEventsPath);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)

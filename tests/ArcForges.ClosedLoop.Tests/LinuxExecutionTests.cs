@@ -6,8 +6,12 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using ArcForges.Client;
+using ArcForges.Contracts.Node.V1;
 using ArcForges.Node.Platform;
+using ArcForges.Node.Platform.Linux;
+using ArcForges.Node.Store;
 using ArcForges.Tests;
+using Microsoft.Data.Sqlite;
 
 namespace ArcForges.ClosedLoop.Tests;
 
@@ -399,19 +403,19 @@ public sealed class LinuxExecutionTests
         InstallGuardUnit(node);
         var first = await node.StartNodeAsync();
         var id = Encoding.UTF8.GetString((await node.CliBytesAsync(Bound, "run", "--detach", "--", TestNode.TestLoad, "output", "--bytes", "268435456", "--rate", Rate.ToString(CultureInfo.InvariantCulture))).Stdout).Trim();
-        var attempt = Path.Combine(node.DataRoot, "logs", await RunningAttemptAsync(node, id));
+        var files = new AttemptFiles(node.DataRoot, await RunningAttemptAsync(node, id));
+        var shortRestart = lifetimeMs < 100;
+        (int Pid, long Ticks, DateTimeOffset StartedAt) root = shortRestart ? default : ReadFloodRoot(files);
         first.Kill();
         await first.WaitForExitAsync(Ct);
 
-        // The node is killed lifetimeMs after every start. At 300 ms whichever acts first stops the flood: the guard (no instance renews the
-        // heartbeat) or an instance that completed recovery and enforced the limit before it was killed (a Native AOT start gets that far).
+        // The node is killed lifetimeMs after every start. At 300 ms a node instance may recover and enforce the limit before it is
+        // killed. The guard can enforce once the heartbeat expires, so both actors may reach the same root.
         // At 40 ms no instance reaches enforcement, so the guard must stop it although nodes keep starting. A heartbeat comes only from an
         // enforcing node.
-        var events = Path.Combine(attempt, AttemptFiles.GuardEvents);
-        var exit = Path.Combine(attempt, AttemptFiles.Exit);
         var restarts = 0;
         var watch = Stopwatch.StartNew();
-        while (!File.Exists(exit) && watch.Elapsed < TimeSpan.FromSeconds(30))
+        while (!File.Exists(files.ExitPath) && watch.Elapsed < TimeSpan.FromSeconds(30))
         {
             using var restarted = node.Start(TestNode.Host, ["node", "run", "--test-mode"]);
             await Task.Delay(lifetimeMs, Ct);
@@ -420,20 +424,203 @@ public sealed class LinuxExecutionTests
             restarts++;
         }
 
-        var output = new FileInfo(Path.Combine(attempt, AttemptFiles.Stdout)).Length;
-        var guardStop = GuardEvent.ReadAll(events).FirstOrDefault(item => item.Event == GuardEventKinds.Terminate);
-        TestContext.Current.TestOutputHelper?.WriteLine($"{restarts} restarts; output {output} for a {Limit} limit at {Rate} B/s; stopped by {(guardStop is null ? "a node instance" : "the guard")}");
-        Assert.True(File.Exists(exit), "The flood was not stopped within 30 s of restarts.");
+        var output = new FileInfo(files.StdoutPath).Length;
+        TestContext.Current.TestOutputHelper?.WriteLine($"{restarts} restarts; output {output} for a {Limit} limit at {Rate} B/s");
+        Assert.True(File.Exists(files.ExitPath), "The flood was not stopped within 30 s of restarts.");
         Assert.True(output - Limit <= Rate * (Takeover + 600) / 1000, $"The overshoot {output - Limit} exceeds the stated bound.");
-        if (lifetimeMs < 100)
+        if (shortRestart)
         {
-            Assert.NotNull(guardStop);
+            Assert.Contains(GuardEvent.ReadAll(files.GuardEventsPath), item =>
+                item.AttemptId == files.AttemptName && item.Event == GuardEventKinds.Terminate && item.Reason == "OUTPUT_LIMIT");
         }
 
         await node.StartNodeAsync();
         var task = JsonElement.Parse((await node.CliAsync("tasks", "wait", id, "--json")).Output);
-        Assert.Equal("TERMINATION_REASON_OUTPUT_LIMIT", task.GetProperty("currentAttempt").GetProperty("result").GetProperty("terminationReason").GetString());
-        Assert.Equal(guardStop is null ? "NODE" : "GUARD", task.GetProperty("currentAttempt").GetProperty("limitEnforcedBy").GetString());
+        var attempt = task.GetProperty("currentAttempt");
+        Assert.Equal(files.AttemptName, attempt.GetProperty("attemptId").GetString());
+        Assert.Equal("TERMINATION_REASON_OUTPUT_LIMIT", attempt.GetProperty("result").GetProperty("terminationReason").GetString());
+        if (shortRestart)
+        {
+            Assert.Equal("GUARD", attempt.GetProperty("limitEnforcedBy").GetString());
+            return;
+        }
+
+        var exit = ExitRecord.TryRead(files.ExitPath);
+        Assert.NotNull(exit);
+        Assert.Equal(files.AttemptName, exit.AttemptId);
+        Assert.Equal("killed", exit.ExitCodeKind);
+        Assert.Equal(9, exit.ExitStatus);
+        Assert.Equal(0L, exit.OomKills);
+        Assert.NotEqual("oom-kill", exit.ServiceResult);
+        Assert.True(DateTimeOffset.TryParse(exit.RecordedAt, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var exitedAt));
+
+        // An aggregate Guard event can trail the durable exit. Classify using the root receipts after steady recovery.
+        var guardStop = GuardEvent.ReadAll(files.GuardEventsPath).FirstOrDefault(item => item.Event == GuardEventKinds.Terminate);
+        var guardSignal = ReadFloodRootSignal(files.GuardRootSignalPath, "GUARD");
+        var nodeSignal = ReadFloodRootSignal(files.NodeRootSignalPath, "NODE");
+        TestContext.Current.TestOutputHelper?.WriteLine(
+            $"Guard root signal receipt = {guardSignal is not null}, Node root signal receipt = {nodeSignal is not null}, Guard terminate event = {guardStop is not null}.");
+        if (guardStop is not null)
+        {
+            Assert.Equal(files.AttemptName, guardStop.AttemptId);
+            Assert.Equal("OUTPUT_LIMIT", guardStop.Reason);
+            Assert.NotNull(guardSignal);
+        }
+
+        var hasActor = attempt.TryGetProperty("limitEnforcedBy", out var actor);
+        if (guardSignal is not null && nodeSignal is not null)
+        {
+            Assert.False(hasActor, "Both actors signaled the same root. The optional actor must be absent.");
+            return;
+        }
+
+        Assert.Equal(guardSignal is null ? "NODE" : "GUARD", hasActor ? actor.GetString() : null);
+
+        LinuxRootSignalRecord? ReadFloodRootSignal(string path, string expectedActor)
+        {
+            if (!File.Exists(path))
+            {
+                return null;
+            }
+
+            var signal = LinuxRootSignalRecord.TryRead(path, files.AttemptName, expectedActor);
+            Assert.NotNull(signal);
+            Assert.Equal(root.Pid, signal.RootPid);
+            Assert.Equal(root.Ticks, signal.RootStartTicks);
+            Assert.Equal(root.StartedAt, signal.RootStartedAt);
+            Assert.Equal(exit.ExitStatus, signal.Signal);
+            Assert.True(signal.At < exitedAt.AddMilliseconds(1), "The root signal must precede the matching native exit, within its timestamp precision.");
+            return signal;
+        }
+    }
+
+    private static (int Pid, long Ticks, DateTimeOffset StartedAt) ReadFloodRoot(AttemptFiles files)
+    {
+        var unit = LinuxExecutionPlatform.UnitName(files.AttemptName);
+        Assert.True(int.TryParse(SystemdTestEnvironment.Property(unit, "MainPID"), CultureInfo.InvariantCulture, out var pid) && pid > 0,
+            "The transient attempt unit must report the real workload PID.");
+        var root = ProcFs.StartOf(pid);
+        Assert.NotNull(root);
+        return (pid, root.Value.Ticks, root.Value.Start);
+    }
+
+    // isolation=exclusive: the guard takes over a real attempt after the held node is killed.
+    [Fact(Timeout = 300_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
+    public async Task TheGuardOwnsTheRootKillAfterTheNodeCommitsAnOutputStopAndCrashes()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        RequireUnits();
+        const long Limit = 4L << 20;
+        const long Rate = 1L << 20;
+        const int SigKill = 9;
+        await using var node = TestNode.Create();
+        SeedLimit(node, Limit, 2_000);
+        InstallGuardUnit(node);
+        node.Environment["ARCFORGES_TEST_FAULT"] = "hold-stop-before-stop=60";
+        var first = await node.StartNodeAsync();
+        var id = Encoding.UTF8.GetString((await node.CliBytesAsync(Bound, "run", "--detach", "--", TestNode.TestLoad,
+            "output", "--bytes", "268435456", "--rate", Rate.ToString(CultureInfo.InvariantCulture))).Stdout).Trim();
+        var files = new AttemptFiles(node.DataRoot, await RunningAttemptAsync(node, id));
+        var unit = LinuxExecutionPlatform.UnitName(files.AttemptName);
+        Assert.True(int.TryParse(SystemdTestEnvironment.Property(unit, "MainPID"), CultureInfo.InvariantCulture, out var rootPid) && rootPid > 0,
+            "The transient attempt unit must report the real workload PID.");
+        var root = ProcFs.Stat(rootPid);
+        Assert.NotNull(root);
+        Assert.True(root.Value.State is not ('Z' or 'X'), "The real output workload root must be alive before the stop hold.");
+
+        // This hook is entered after the STOPPING commit and before the node can signal the workload.
+        var hold = Path.Combine(node.DataRoot, "run", "fault-hold-stop-before-stop.done");
+        DateTimeOffset crashRequestedAt;
+        try
+        {
+            await TestNode.WaitAsync(() => File.Exists(hold), TimeSpan.FromSeconds(25), "the committed output stop to be held before native signaling");
+            Assert.False(first.HasExited, "The node exited before the fixture interrupted the held stop.");
+            Assert.False(File.Exists(files.NodeRootSignalPath), "The held node signaled the workload before the crash.");
+            Assert.False(File.Exists(files.GuardRootSignalPath), "The guard acted before the node crash.");
+            Assert.Null(ExitRecord.TryRead(files.ExitPath));
+            crashRequestedAt = DateTimeOffset.UtcNow;
+        }
+        finally
+        {
+            if (!first.HasExited)
+            {
+                first.Kill();
+            }
+
+            await first.WaitForExitAsync(Ct);
+        }
+
+        var stoppingAt = CommittedOutputStopAt(files);
+        Assert.True(stoppingAt < crashRequestedAt, "The recovered WAL must show the same-attempt Running to STOPPING commit for OUTPUT_LIMIT before the node crash.");
+
+        LinuxRootSignalRecord? signal = null;
+        ExitRecord? exit = null;
+        GuardEvent? guardStop = null;
+        await TestNode.WaitAsync(() =>
+            (signal = LinuxRootSignalRecord.TryRead(files.GuardRootSignalPath, files.AttemptName, "GUARD")) is not null &&
+            (exit = ExitRecord.TryRead(files.ExitPath)) is not null &&
+            (guardStop = GuardEvent.ReadAll(files.GuardEventsPath).FirstOrDefault(item =>
+                item.AttemptId == files.AttemptName && item.Event == GuardEventKinds.Terminate)) is not null,
+            Bound, "a guard root signal, durable exit, and limit event for the same attempt while the node is down");
+        Assert.NotNull(signal);
+        Assert.NotNull(exit);
+        Assert.NotNull(guardStop);
+        Assert.False(File.Exists(files.NodeRootSignalPath), "A node signal receipt appeared before cold recovery.");
+        Assert.True(signal.At > crashRequestedAt, "The guard's successful signal must follow the node crash request.");
+        Assert.Equal(rootPid, signal.RootPid);
+        Assert.Equal(root.Value.StartTicks, signal.RootStartTicks);
+        Assert.Equal(SigKill, signal.Signal);
+        Assert.Equal(files.AttemptName, exit.AttemptId);
+        Assert.Equal("killed", exit.ExitCodeKind);
+        Assert.Equal(SigKill, exit.ExitStatus);
+        Assert.Equal(0L, exit.OomKills);
+        Assert.Equal("OUTPUT_LIMIT", guardStop.Reason);
+        Assert.Equal(Limit, guardStop.LimitBytes);
+        TestContext.Current.TestOutputHelper?.WriteLine(
+            $"Node STOPPING committed at {stoppingAt:O}; node crash requested at {crashRequestedAt:O}; guard sent SIGKILL at {signal.At:O}. The real root exit recorded SIGKILL.");
+
+        node.Environment.Remove("ARCFORGES_TEST_FAULT");
+        await node.StartNodeAsync();
+        var task = JsonElement.Parse((await node.CliAsync("tasks", "wait", id, "--json")).Output);
+        var attempt = task.GetProperty("currentAttempt");
+        Assert.Equal(files.AttemptName, attempt.GetProperty("attemptId").GetString());
+        Assert.Equal("TERMINATION_REASON_OUTPUT_LIMIT", attempt.GetProperty("result").GetProperty("terminationReason").GetString());
+        Assert.Equal("GUARD", attempt.GetProperty("limitEnforcedBy").GetString());
+    }
+
+    private static DateTimeOffset? CommittedOutputStopAt(AttemptFiles files)
+    {
+        Assert.True(IdText.TryParse(files.AttemptName, out var id), "The attempt directory name must be an attempt ID.");
+        using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = StorePaths.Database(files.DataRoot),
+            Mode = SqliteOpenMode.ReadOnly,
+            Pooling = false,
+        }.ToString());
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT at, payload FROM event_journal WHERE topic = $topic AND EXISTS (
+                SELECT 1 FROM attempt WHERE attempt_id = $id AND state = $state AND termination_reason = $cause
+            );
+            """;
+        command.Parameters.AddWithValue("$topic", (int)EventTopic.Tasks);
+        command.Parameters.AddWithValue("$id", id);
+        command.Parameters.AddWithValue("$state", (int)AttemptState.Stopping);
+        command.Parameters.AddWithValue("$cause", (int)TerminationReason.OutputLimit);
+        using var rows = command.ExecuteReader();
+        while (rows.Read())
+        {
+            var change = NodeEvent.Parser.ParseFrom((byte[])rows.GetValue(1)).Attempt;
+            if (change is { PreviousState: AttemptState.Running, Attempt: { State: AttemptState.Stopping } attempt } &&
+                IdText.Format(attempt.AttemptId) == files.AttemptName)
+            {
+                return StoreTime.FromMicroseconds(rows.GetInt64(0));
+            }
+        }
+
+        return null;
     }
 
     [Theory(Timeout = 240_000)]
