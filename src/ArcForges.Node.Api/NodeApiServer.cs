@@ -21,6 +21,8 @@ public static class NodeApiServer
     private const string Approvals = "arcforges.node.v1.ApprovalService";
     private const string Fleet = "arcforges.fleet.v1.FleetService";
     private const string Files = "arcforges.node.v1.FileService";
+    private const string SandboxNode = "arcforges.sandbox.v2.NodeService";
+    private const string Sandbox = "arcforges.sandbox.v2.SandboxService";
 
     /// <summary>Builds the server (not started).</summary>
     /// <param name="endpoint">The node's endpoint.</param>
@@ -43,6 +45,16 @@ public static class NodeApiServer
         var approvals = new ApprovalServiceHandler(node, sessions, executors);
         builder.AddService(new NodeServiceHandler(node, sessions, executors, images ?? ClientImages.ForNode(testMode: false)));
         builder.AddService(new NodeEventServiceHandler(node, streamBuffer));
+        builder.AddService(new SandboxNodeServiceHandler(node));
+        builder.AddService(new SandboxServiceHandler(node));
+        var sandboxDeadline = new LocalRpcCallProfile(TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
+        builder.RegisterMethod(SandboxNode, "Handshake", sandboxDeadline);
+        builder.RegisterMethod(SandboxNode, "GetOperation", sandboxDeadline);
+        foreach (var method in (ReadOnlySpan<string>)["Create", "Configure", "List", "Inspect"])
+        {
+            builder.RegisterMethod(Sandbox, method, sandboxDeadline);
+        }
+
         var tasks = new TaskServiceHandler(node, sessions, executors);
         var files = new FileServiceHandler(node);
         executors.RegisterReference("FileService.WriteFile", ArcForges.Node.Core.Security.PermissionMatrix.FileWrite, files.ExecuteApprovedReferenceAsync);
