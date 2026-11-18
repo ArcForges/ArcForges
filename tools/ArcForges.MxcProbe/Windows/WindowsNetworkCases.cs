@@ -65,7 +65,7 @@ internal static class WindowsNetworkCases
         },
     ]);
 
-    internal static async Task<List<WindowsQualificationCase>> RunAsync(string stage, string work)
+    internal static async Task<List<WindowsQualificationCase>> RunExternalAsync(string stage, string work)
     {
         Require(UnresolvedPeer is null, "network_peer_cleanup_already_unresolved");
         WindowsRemoteNetworkPeer? peer = null;
@@ -76,7 +76,7 @@ internal static class WindowsNetworkCases
         try
         {
             peer = await WindowsRemoteNetworkPeer.StartAsync().ConfigureAwait(false);
-            results = await RunCasesAsync(stage, work, peer).ConfigureAwait(false);
+            results = await RunExternalCasesAsync(stage, work, peer).ConfigureAwait(false);
         }
         catch (WindowsRemoteNetworkPeerLaunchException error) { UnresolvedPeer = error.CleanupOwner; primary = error; }
         catch (Exception error) { primary = error; }
@@ -101,7 +101,7 @@ internal static class WindowsNetworkCases
         return results!;
     }
 
-    private static async Task<List<WindowsQualificationCase>> RunCasesAsync(string stage, string work, WindowsRemoteNetworkPeer peer)
+    private static async Task<List<WindowsQualificationCase>> RunExternalCasesAsync(string stage, string work, WindowsRemoteNetworkPeer peer)
     {
         var results = new List<WindowsQualificationCase>();
         // UDP on the exact same IP/port distinguishes protocol permission from
@@ -123,6 +123,12 @@ internal static class WindowsNetworkCases
         // CIDR. No connection or binding to an unrelated host is needed.
         var otherAddress = IPAddress.Parse(tcp.Address.AddressFamily == AddressFamily.InterNetworkV6 ? "2001:db8::1" : "192.0.2.1");
         results.Add(await EgressAsync("network-denied-address", stage, work, tcp, EgressRule(tcp, otherAddress), allowed: false).ConfigureAwait(false));
+        return results;
+    }
+
+    internal static async Task<List<WindowsQualificationCase>> RunLocalAsync(string stage, string work)
+    {
+        var results = new List<WindowsQualificationCase>();
         // These two cases specifically test the independent host-loopback
         // capability against healthy local sockets, with an exact egress allow.
         await using var localTcp = WindowsNetworkEndpoint.StartTcp(IPAddress.Loopback);
@@ -799,7 +805,7 @@ internal sealed class WindowsNetworkEndpoint : IAsyncDisposable
         if (_disposed) return;
         if (_remote is not null)
         {
-            // Shared wrappers leave sibling endpoints alive. RunAsync owns their
+            // Shared wrappers leave sibling endpoints alive. RunExternalAsync owns their
             // common peer; a combined-run wrapper instead owns its own peer.
             if (_ownsRemote) await _remote.DisposeAsync().ConfigureAwait(false);
             _stop.Dispose();

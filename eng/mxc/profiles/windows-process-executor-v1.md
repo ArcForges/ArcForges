@@ -8,7 +8,11 @@ Run the published probe on the designated native Windows host:
 & './artifacts/mxc-02/install/arcforges-mxc-probe.exe' --windows-profile --manifest './artifacts/mxc-02/install/mxc-manifest.json' --work './artifacts/mxc-02/fresh-run' --report './artifacts/mxc-02/fresh-report.json' --source '<exact-source-sha>' --design '<design-baseline-sha>' --plan '<plan-baseline-sha>'
 ```
 
-The stage, workspace and report above are examples: use the actual verified stage and new workspace/report paths. Existing evidence must not be overwritten. For a targeted diagnosis, omit the source/design/plan arguments and append `--only terminal`, `resource`, `policy`, `network`, `lifecycle`, `combined`, or `cli`. These selections always remain partial. Exit 2 means the executed slice passed while qualification remains partial; exit 1 means an experiment or its setup failed. Neither grants product admission. Full exit0 requires the exact required case set, all native outcomes and applicable cleanup, and unchanged verified stage/source identities; the later product-admission task remains separate.
+Use the verified stage and fresh workspace and report paths. For a targeted diagnosis, replace the source, design and plan arguments with `--only` and one of `local`, `terminal`, `resource`, `policy`, `network`, `lifecycle`, `combined`, or `cli`.
+
+`--only local` runs 59 cases on the native Windows workstation. It includes the terminal, resource, policy, CLI and lifecycle groups and six host-loopback and inbound network cases. It uses local sockets and requires no SSH session. The `network` selection runs the six local cases followed by the seven external network cases. The full profile collects the same 59 local cases before the external network and combined groups. The receipt retains completed groups if a subsequent group fails or cannot start.
+
+Diagnostic runs report partial qualification and exit 2 when the selected slice passes. An experiment or setup failure exits 1. Full qualification exits 0 after all 68 required cases pass with their native outcomes and applicable cleanup, and the probe revalidates the stage and source identities.
 
 ## Diagnostics and cleanup
 

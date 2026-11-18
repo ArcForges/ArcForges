@@ -15,6 +15,18 @@ namespace ArcForges.MxcProbe;
 
 internal static class WindowsQualification
 {
+    private static readonly string[] ExternalNetworkCaseNames =
+    [
+        "network-deny-all-tcp", "network-deny-all-udp", "network-selected-tcp", "network-selected-udp",
+        "network-denied-port", "network-denied-protocol", "network-denied-address",
+    ];
+
+    private static readonly string[] LocalNetworkCaseNames =
+    [
+        "network-host-loopback-denied-tcp", "network-host-loopback-denied-udp",
+        "network-ingress-denied-tcp", "network-ingress-loopback-tcp", "network-ingress-denied-udp", "network-ingress-loopback-udp",
+    ];
+
     private static readonly Dictionary<string, string[]> RequiredCases = new(StringComparer.Ordinal)
     {
         ["MXC-WIN-01"] = ["argv-roundtrip", "reject-malformed", "reject-schema-version", "reject-missing-policy",
@@ -26,10 +38,7 @@ internal static class WindowsQualification
             "resource-process-cap", "resource-short-lived-burst", "resource-native-assignment-refusal", "resource-live-update",
             "resource-invalid-before-launch"],
         ["MXC-WIN-04"] = ["clean-environment", "known-folder-observations", "filesystem-policy", "filesystem-reparse",
-            "filesystem-external-grant", "network-deny-all-tcp", "network-deny-all-udp", "network-selected-tcp", "network-selected-udp",
-            "network-denied-port", "network-denied-protocol", "network-denied-address", "network-host-loopback-denied-tcp",
-            "network-host-loopback-denied-udp", "network-ingress-denied-tcp",
-            "network-ingress-loopback-tcp", "network-ingress-denied-udp", "network-ingress-loopback-udp",
+            "filesystem-external-grant", .. ExternalNetworkCaseNames, .. LocalNetworkCaseNames,
             "cli-named-pipe-roundtrip", "cli-native-compile-link-test"],
         ["MXC-WIN-05"] = ["owner-detach-auth-lease", "owner-detached-bounded-replay", "owner-loss-native-drain", "center-observer-loss",
             "root-exit-background-child", "cleanup-record-publication-failure", "client-loss-at-prepared", "client-loss-at-scope-created",
@@ -49,7 +58,7 @@ internal static class WindowsQualification
         {
             if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Native Windows is required.");
             if (args.Length is not (8 or 12) || args[0] != "--manifest" || args[2] != "--work" || args[4] != "--report"
-                || (args.Length == 8 && (args[6] != "--only" || args[7] is not ("terminal" or "resource" or "policy" or "network" or "lifecycle" or "combined" or "cli")))
+                || (args.Length == 8 && (args[6] != "--only" || args[7] is not ("terminal" or "resource" or "policy" or "network" or "lifecycle" or "combined" or "cli" or "local")))
                 || (args.Length == 12 && (args[6] != "--source" || args[8] != "--design" || args[10] != "--plan")))
                 throw new WindowsQualificationCheckException("full_exact_commits_or_diagnostic_selection_required");
             report.SelectionGroup = args.Length == 8 ? args[7] : "full";
@@ -130,46 +139,36 @@ internal static class WindowsQualification
                 report.Limitations = [.. report.Limitations, "The calling-process Job snapshot does not enumerate unknown ancestors. Each experiment verifies native assignment, limits, enforcement and cleanup through its held owned Job handles."];
             }
             Directory.CreateDirectory(work);
-            if (report.DiagnosticSelection)
+            (string Name, Func<Task<List<WindowsQualificationCase>>> Run)[] localGroups =
+            [
+                ("terminal", () => RunTerminalCasesAsync(stage, work)),
+                ("resource", () => WindowsResourceCases.RunAsync(stage, work)),
+                ("policy", () => WindowsPolicyCases.RunAsync(stage, work)),
+                ("cli", () => WindowsCliCases.RunAsync(stage, work)),
+                ("lifecycle", () => WindowsLifecycleCases.RunAsync(stage, work)),
+            ];
+            (string Name, Func<Task<List<WindowsQualificationCase>>> Run) localNetwork = ("network_local", () => WindowsNetworkCases.RunLocalAsync(stage, work));
+            (string Name, Func<Task<List<WindowsQualificationCase>>> Run) externalNetwork = ("network_external", () => WindowsNetworkCases.RunExternalAsync(stage, work));
+            (string Name, Func<Task<List<WindowsQualificationCase>>> Run) combined = ("combined", () => WindowsCombinedCases.RunAsync(stage, work));
+            (string Name, Func<Task<List<WindowsQualificationCase>>> Run)[] groups = report.SelectionGroup switch
             {
-                phase = "diagnostic_" + report.SelectionGroup;
+                "full" => [.. localGroups, localNetwork, externalNetwork, combined],
+                "local" => [.. localGroups, localNetwork],
+                "network" => [localNetwork, externalNetwork],
+                "combined" => [combined],
+                _ => localGroups.Where(group => group.Name == report.SelectionGroup).ToArray(),
+            };
+            var phasePrefix = report.DiagnosticSelection ? "diagnostic_" : "full_";
+            foreach (var group in groups)
+            {
+                phase = phasePrefix + group.Name;
                 WritePhase(events, report.RunId, phase, "begin");
-                report.Cases = report.SelectionGroup switch
-                {
-                    "terminal" => await RunTerminalCasesAsync(stage, work).ConfigureAwait(false),
-                    "resource" => await WindowsResourceCases.RunAsync(stage, work).ConfigureAwait(false),
-                    "policy" => await WindowsPolicyCases.RunAsync(stage, work).ConfigureAwait(false),
-                    "network" => await WindowsNetworkCases.RunAsync(stage, work).ConfigureAwait(false),
-                    "lifecycle" => await WindowsLifecycleCases.RunAsync(stage, work).ConfigureAwait(false),
-                    "combined" => await WindowsCombinedCases.RunAsync(stage, work).ConfigureAwait(false),
-                    "cli" => await WindowsCliCases.RunAsync(stage, work).ConfigureAwait(false),
-                    _ => throw new ArgumentException("Unknown diagnostic group.")
-                };
-                WritePhase(events, report.RunId, phase, report.Cases.All(CaseSucceeded) ? "passed" : "failed");
-            }
-            else
-            {
-                (string Name, Func<Task<List<WindowsQualificationCase>>> Run)[] groups =
-                [
-                    ("terminal", () => RunTerminalCasesAsync(stage, work)),
-                    ("resource", () => WindowsResourceCases.RunAsync(stage, work)),
-                    ("policy", () => WindowsPolicyCases.RunAsync(stage, work)),
-                    ("network", () => WindowsNetworkCases.RunAsync(stage, work)),
-                    ("cli", () => WindowsCliCases.RunAsync(stage, work)),
-                    ("lifecycle", () => WindowsLifecycleCases.RunAsync(stage, work)),
-                    ("combined", () => WindowsCombinedCases.RunAsync(stage, work)),
-                ];
-                foreach (var group in groups)
-                {
-                    phase = "full_" + group.Name;
-                    WritePhase(events, report.RunId, phase, "begin");
-                    var cases = await group.Run().ConfigureAwait(false);
-                    report.Cases.AddRange(cases);
-                    bool passed = cases.Count > 0 && cases.All(CaseSucceeded);
-                    WritePhase(events, report.RunId, phase, passed ? "passed" : "failed");
-                    // Diagnose a failed slice before starting more native workloads.
-                    if (!passed) break;
-                }
+                var cases = await group.Run().ConfigureAwait(false);
+                report.Cases.AddRange(cases);
+                bool passed = cases.Count > 0 && cases.All(CaseSucceeded);
+                WritePhase(events, report.RunId, phase, passed ? "passed" : "failed");
+                // Diagnose a failed slice before starting more native workloads.
+                if (!passed) break;
             }
             phase = "final_stage_identity";
             WritePhase(events, report.RunId, phase, "begin");
@@ -251,9 +250,18 @@ internal static class WindowsQualification
         report.IncompleteProtocols = RequiredCases.Where(protocol => protocol.Value.Any(name =>
             !observed.TryGetValue(name, out var cases) || cases.Length != 1 || cases[0].Protocol != protocol.Key || !CaseSucceeded(cases[0])))
             .Select(protocol => protocol.Key).ToArray();
+        var selectedCases = report.SelectionGroup switch
+        {
+            "local" => expectedNames.Except(ExternalNetworkCaseNames, StringComparer.Ordinal).Except(RequiredCases["MXC-WIN-06"], StringComparer.Ordinal),
+            "network" => LocalNetworkCaseNames.Concat(ExternalNetworkCaseNames),
+            _ => null,
+        };
+        bool selectionComplete = selectedCases is null || report.DuplicateCases.Length == 0
+            && observed.Keys.ToHashSet(StringComparer.Ordinal).SetEquals(selectedCases);
         report.ExpectedCases = expectedNames.Count;
-        report.ExecutedCasesPassed = report.Cases.Count > 0 && report.Cases.All(CaseSucceeded);
-        report.CleanupConfirmed = report.Cases.Count > 0 && report.Cases.All(item => item.CleanupCompleted && item.UnresolvedCleanupOwner is null && item.CleanupFailure is null);
+        report.ExecutedCasesPassed = selectionComplete && report.Cases.Count > 0 && report.Cases.All(CaseSucceeded);
+        report.CleanupConfirmed = report.Failure is null && report.Cases.Count > 0
+            && report.Cases.All(item => item.CleanupCompleted && item.UnresolvedCleanupOwner is null && item.CleanupFailure is null);
         report.QualificationPassed = !report.DiagnosticSelection && report.StageVerified && report.FinalIdentityVerified && report.DriverJobContextObserved
             && report.Failure is null && report.EvidenceFailure is null && report.ExecutedCasesPassed && report.CleanupConfirmed
             && report.Cases.Count == report.ExpectedCases && report.IncompleteProtocols.Length == 0
