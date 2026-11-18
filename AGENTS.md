@@ -74,7 +74,9 @@ any change. They are binding; this file summarizes them and adds the repository 
   (clang and zlib). linux-arm64 links only on an arm64 host or with an arm64 sysroot (hosted CI).
 - **Tests:** select suites by trait with `eng/test.ps1` or `eng/test.sh` (`-List` / `--list`
   shows suites and task kinds; definitions in `eng/test-suites.conf`). The scripts run up to `-Parallel` / `--parallel` test
-  projects at once (default 2, measured: the longest project bounds the run; each project's log in `artifacts/test-logs/`); `-Repeat` /
+  projects at once. Windows `ci` alone or with `exclusive` defaults to one project with live output. Two runs with
+  concurrent projects failed timing-sensitive tests on the native runner. The same build passed with one project at a time.
+  Other selections default to two projects with logs in `artifacts/test-logs/`. `-Repeat` /
   `--repeat N` reruns the selected suites until the first failing iteration. Tests run in parallel inside their projects too, each
   with its own node, platform, data root, endpoint and slice; never add a serial collection. Test nodes see only themselves and their
   attempts on the machine (the `--test-mode` hook `ARCFORGES_TEST_MACHINE=isolated`, `MachineIsolation`): their budgets and pressure
@@ -250,8 +252,8 @@ The Plan's rule 7 applies. In this repository:
 - Restore once (`dotnet restore ArcForges.slnx --locked-mode`) and build once
   (`dotnet build ArcForges.slnx -c Release --no-restore`); then run tests with `-NoBuild` / `--no-build`.
 - While iterating, run the affected suites: `./eng/test.ps1 -Kind <kind> -NoBuild` or `-Suite <name>`
-  (`eng/test.sh --kind <kind> --no-build` on Linux; `-List` shows kinds and suites). `-Parallel` (default 2,
-  measured) runs test projects concurrently; never lower it without a measurement. Run the `exclusive` suite when you
+  (`eng/test.sh --kind <kind> --no-build` on Linux; `-List` shows kinds and suites). `-Parallel` overrides the
+  measured project concurrency described above. Measure before lowering it. Run the `exclusive` suite when you
   change an exclusive test or the code it covers; `-Repeat <n>` is the deep tier's stress and flake hunt.
 - Format only the changed files: `dotnet format ArcForges.slnx --include <files> --no-restore`.
 - Publish only the changed component with Native AOT: `./eng/publish.ps1 -RuntimeIdentifier win-x64 -Component <name>

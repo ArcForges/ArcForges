@@ -8,9 +8,9 @@
   (or after a bare '--') is passed to each test application. The script parses its own arguments so that
   pass-through works both as `./eng/test.ps1 ...` and as `pwsh -File eng/test.ps1 ...`.
 
-  -Parallel <n> runs up to n test projects at once (default 2: measured on 18 logical processors, the ci suite takes as long
-  at 2 as at 4 or 9, because its longest project bounds it, and uses the least CPU; projects also run their tests in parallel).
-  Each project's output goes to artifacts/test-logs/ and is printed when the project completes.
+  -Parallel <n> runs up to n test projects at once. On Windows, ci alone or with exclusive defaults to 1.
+  Other suite selections default to 2. Tests within each regular project retain their configured parallelism.
+  Parallel projects write to artifacts/test-logs/ and print their output when they finish.
   -Parallel 1 runs the projects one after another with live output. A suite that selects
   isolation=exclusive (the exclusive suite) runs after the other suites, one project at a time and
   one test at a time (xUnit's --parallel none, so passing -- --parallel <x> to that suite fails with
@@ -32,7 +32,7 @@ $Kind = $null
 $Configuration = 'Release'
 $NoBuild = $false
 $List = $false
-$Parallel = 2
+$Parallel = $null
 $Repeat = 1
 $PassThru = @()
 # -Command mode passes 'a,b' as one array argument; -File mode passes it as one string.
@@ -56,7 +56,7 @@ while ($i -lt $arguments.Count) {
     default { throw "test.ps1: unknown argument '$argument'. Options: -Suite, -Kind, -Configuration, -NoBuild, -List, -Parallel, -Repeat; test application arguments start with '--'." }
   }
 }
-if ($Parallel -lt 1 -or $Repeat -lt 1) { throw 'test.ps1: -Parallel and -Repeat need a positive number.' }
+if (($null -ne $Parallel -and $Parallel -lt 1) -or $Repeat -lt 1) { throw 'test.ps1: -Parallel and -Repeat need a positive number.' }
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -101,6 +101,10 @@ if ($Suite.Count -eq 0) { $Suite = @('unit') }
 $Suite = @($Suite | ForEach-Object { $_ -split ',' } | Where-Object { $_ } | Select-Object -Unique)
 foreach ($name in $Suite) {
   if (-not $suites.Contains($name)) { throw "Unknown suite '$name'. Known: $($suites.Keys -join ', ')." }
+}
+if ($null -eq $Parallel) {
+  $regularSuites = @($Suite | Where-Object { $_ -ne 'exclusive' })
+  $Parallel = if ($IsWindows -and $regularSuites.Count -eq 1 -and $regularSuites[0] -eq 'ci') { 1 } else { 2 }
 }
 
 # One work item per suite and project. Exit code 8 (no test ran) is accepted only where trait filters select a subset of a project.
