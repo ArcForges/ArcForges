@@ -2,6 +2,7 @@
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
+using System.Net;
 using System.Runtime.Versioning;
 using System.Security.Cryptography;
 using System.Text;
@@ -19,19 +20,24 @@ internal static class WindowsCombinedCases
     internal static async Task<List<WindowsQualificationCase>> RunAsync(string stage, string work)
     {
         var results = new List<WindowsQualificationCase>();
-        foreach (var selected in new[] { false, true })
+        foreach (var network in new[] { CombinedNetwork.ExternalDefaultDeny, CombinedNetwork.ExternalSelectedEgress })
         {
-            var result = await RunOneAsync(stage, work, selected).ConfigureAwait(false);
+            var result = await RunOneAsync(stage, work, network).ConfigureAwait(false);
             results.Add(result);
             if (result.CleanupFailure is not null) break;
         }
         return results;
     }
 
-    private static async Task<WindowsQualificationCase> RunOneAsync(string stage, string work, bool selected)
+    internal static async Task<List<WindowsQualificationCase>> RunLocalAsync(string stage, string work) =>
+        [await RunOneAsync(stage, work, CombinedNetwork.LocalHostLoopbackDeny).ConfigureAwait(false)];
+
+    private static async Task<WindowsQualificationCase> RunOneAsync(string stage, string work, CombinedNetwork networkMode)
     {
-        var name = selected ? "combined-selected-egress" : "combined-default-deny";
-        var result = new WindowsQualificationCase { Name = name, Protocol = "MXC-WIN-06", FixtureObservationSource = "bounded_untrusted_fixture_files" };
+        bool local = networkMode == CombinedNetwork.LocalHostLoopbackDeny;
+        bool selected = networkMode == CombinedNetwork.ExternalSelectedEgress;
+        var name = local ? WindowsQualification.WrapperCombinedCase : selected ? "combined-selected-egress" : "combined-default-deny";
+        var result = new WindowsQualificationCase { Name = name, Protocol = WindowsQualification.CombinedProtocol, FixtureObservationSource = "bounded_untrusted_fixture_files" };
         var timer = Stopwatch.StartNew();
         var root = Path.Combine(work, name);
         Directory.CreateDirectory(root);
@@ -72,11 +78,15 @@ internal static class WindowsCombinedCases
         var rebound = false;
         var resized = false;
         var unicodeOutput = false;
+        double? terminalReplayWindowMs = null;
+        long? terminalReplayBytes = null;
         WindowsCombinedPressureOverlap? pressureOverlap = null;
         try
         {
-            endpoint = await WindowsNetworkEndpoint.StartControlledTcpAsync().ConfigureAwait(false);
-            Require(endpoint.IsRemote, "combined_independent_network_peer_required");
+            endpoint = local ? WindowsNetworkEndpoint.StartTcp(IPAddress.Loopback)
+                : await WindowsNetworkEndpoint.StartControlledTcpAsync().ConfigureAwait(false);
+            Require(local ? IPAddress.IsLoopback(endpoint.Address) : endpoint.IsRemote,
+                local ? "combined_local_loopback_peer_required" : "combined_independent_network_peer_required");
             await endpoint.CalibrateAsync().ConfigureAwait(false);
             beforeNetwork = endpoint.Observe();
             var request = WindowsPolicy.BuildRequest(Path.Combine(stage, "arcforges-mxc-probe.exe"),
@@ -141,6 +151,7 @@ internal static class WindowsCombinedCases
             unicodeOutput = Encoding.UTF8.GetString(initialRead.Replay.Data).Contains('星');
             Require(unicodeOutput, "combined_unicode_terminal_missing");
             var cursor = initialRead.Replay.NextSequence;
+            var replayWatch = Stopwatch.StartNew();
             var detached = await WindowsLifecycleCases.SendOwnerAsync(config, result, new() { Operation = "detach", Generation = config.Generation, LeaseId = lease.LeaseId }).ConfigureAwait(false);
             Require(detached.Ok, "combined_detach_failed");
             _ = await WindowsLifecycleCases.KillAuthenticatedClientAsync(config, control, result).ConfigureAwait(false);
@@ -157,6 +168,9 @@ internal static class WindowsCombinedCases
             rebound = true;
             var replay = await WindowsLifecycleCases.SendOwnerAsync(config, result, new() { Operation = "read", Generation = config.Generation, Cursor = cursor }, observer: true).ConfigureAwait(false);
             Require(replay.Ok && replay.Replay is not null && replay.Replay.DrainFailure is null, "combined_replay_failed");
+            terminalReplayWindowMs = replayWatch.Elapsed.TotalMilliseconds;
+            terminalReplayBytes = replay.Replay.AvailableUntil - initialRead.Replay.AvailableUntil;
+            Require(terminalReplayBytes >= 0, "combined_output_cursor_regressed");
             result.ObservedTerminalBytes = replay.Replay.AvailableUntil;
             if (replay.Replay.GapFrom is { } from && replay.Replay.GapUntil is { } until) result.ReplayGaps.Add(new(from, until));
             var limits = new ConPtyLimits(2500, 768UL * 1024 * 1024, 12);
@@ -180,11 +194,10 @@ internal static class WindowsCombinedCases
             pressureOverlap = VerifyPressureOverlap(eventsDirectory, network, aggregate);
             endpoint.RequireHealthy();
             afterNetwork = endpoint.Observe();
-            Require(selected ? afterNetwork.MatchedRequests == beforeNetwork.MatchedRequests + 1
-                    && afterNetwork.AcceptedOrReceived == beforeNetwork.AcceptedOrReceived + 1
+            Require(selected ? afterNetwork.HasSingleMatchSince(beforeNetwork)
                 : afterNetwork.AcceptedOrReceived == beforeNetwork.AcceptedOrReceived
                     && afterNetwork.MatchedRequests == beforeNetwork.MatchedRequests,
-                "combined_external_network_observation_mismatch");
+                local ? "combined_local_network_observation_mismatch" : "combined_external_network_observation_mismatch");
             var stoppedAt = Stopwatch.StartNew();
             var stopped = await SendAsync(config, result, "stop").ConfigureAwait(false);
             Require(stopped.Ok && stopped.CleanupConfirmed && stopped.ExitSource == "official_executor", "combined_stop_not_confirmed");
@@ -258,13 +271,16 @@ internal static class WindowsCombinedCases
                 {
                     await endpoint.DisposeAsync().ConfigureAwait(false);
                     peerCleanupConfirmed = endpoint.PeerCleanupConfirmed;
-                    Require(peerCleanupConfirmed, "combined_remote_peer_cleanup_not_confirmed");
+                    Require(peerCleanupConfirmed, local ? "combined_local_peer_cleanup_not_confirmed" : "combined_remote_peer_cleanup_not_confirmed");
                 }
                 catch (Exception exception)
                 {
                     UnresolvedEndpoints.Add(endpoint);
                     result.Passed = false;
-                    peerCleanupFailure = WindowsQualification.ObserveFailure(exception) with { Code = "combined_remote_peer_cleanup_unresolved" };
+                    peerCleanupFailure = WindowsQualification.ObserveFailure(exception) with
+                    {
+                        Code = local ? "combined_local_peer_cleanup_unresolved" : "combined_remote_peer_cleanup_unresolved",
+                    };
                     result.CleanupFailure ??= peerCleanupFailure;
                 }
             }
@@ -281,13 +297,15 @@ internal static class WindowsCombinedCases
             {
                 writer.WriteStartObject();
                 writer.WriteString("scenario", name);
+                writer.WriteString("networkEvidenceScope", local ? "host_loopback_only" : "external_controlled_peer");
+                writer.WriteString("requestedNetworkPolicy", selected ? "selected_egress" : "default_deny");
                 if (endpoint is not null) endpoint.WritePeerIdentity(writer);
                 writer.WriteBoolean("independentNetworkPeer", endpoint?.IsRemote == true);
                 writer.WriteBoolean("networkCalibrationPassed", endpoint?.CalibrationPassed == true);
                 writer.WriteBoolean("peerCleanupConfirmed", peerCleanupConfirmed);
                 writer.WritePropertyName("peerCleanupFailure");
                 JsonSerializer.Serialize(writer, peerCleanupFailure, WindowsQualificationJson.Default.WindowsQualificationFailure);
-                writer.WriteStartObject("externalNetworkCounters");
+                writer.WriteStartObject(local ? "localNetworkCounters" : "externalNetworkCounters");
                 writer.WriteBoolean("beforeAvailable", beforeNetwork is not null);
                 if (beforeNetwork is not null)
                 {
@@ -305,6 +323,10 @@ internal static class WindowsCombinedCases
                 writer.WriteBoolean("sameOwnerRebound", rebound);
                 writer.WriteBoolean("actualResize", resized);
                 writer.WriteBoolean("unicodeTerminalOutput", unicodeOutput);
+                writer.WriteStartObject("terminalReplayObservation");
+                if (terminalReplayWindowMs is { } elapsed) writer.WriteNumber("windowMs", elapsed); else writer.WriteNull("windowMs");
+                if (terminalReplayBytes is { } bytesObserved) writer.WriteNumber("byteDelta", bytesObserved); else writer.WriteNull("byteDelta");
+                writer.WriteEndObject();
                 writer.WriteStartObject("pressureOverlap");
                 writer.WriteBoolean("observed", pressureOverlap is not null);
                 if (pressureOverlap is not null)
@@ -370,13 +392,15 @@ internal static class WindowsCombinedCases
 
     private sealed record WindowsCombinedMemory(uint Pid, string ImageName, string CreatedUtc, long ResidentBytes, long PrivateBytes);
 
+    private enum CombinedNetwork { LocalHostLoopbackDeny, ExternalDefaultDeny, ExternalSelectedEgress }
+
     private sealed record WindowsCombinedPressureOverlap(uint PayloadPid, int LoadReadyIndex, int PressureReleasedIndex,
         int NetworkAttemptIndex, int NetworkResultIndex, int FilesystemEffects);
 
     private static WindowsCombinedPressureOverlap VerifyPressureOverlap(string eventsDirectory, JsonElement network, ConPtyJobObservation aggregate)
     {
         // Bounded fixture records establish workload ordering only. Native Job
-        // membership and external endpoint counters establish the boundary.
+        // membership and independently observed endpoint counters establish the boundary.
         uint rootPid = network.GetProperty("pid").GetUInt32();
         Require(aggregate.ProcessIds.Contains(rootPid), "combined_pressure_payload_not_in_native_job");
         var events = WindowsTerminalCapture.ReadFixtureEvents(eventsDirectory)

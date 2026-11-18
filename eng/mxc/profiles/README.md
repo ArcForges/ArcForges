@@ -12,14 +12,16 @@ private stage using `eng/mxc/stage.py`. The additional native entry point is:
 <stage>/arcforges-mxc-probe.exe --windows-profile --manifest <stage>/mxc-manifest.json --work <fresh-owned-workspace> --report <fresh-outside-stage-report.json> --source <exact-source-sha> --design <design-baseline-sha> --plan <plan-baseline-sha>
 ```
 
-The full profile verifies its embedded source identity, stage members and exact
-required case set before it can return exit0 with `QualificationPassed=true`.
-Every required case must pass with its applicable native cleanup confirmed.
-The Design/Plan SHA fields identify the coordinator's explicit baselines; the
-probe does not claim to fetch or verify remote Git state itself. Exit1 preserves
-failure or incomplete qualification. A targeted invocation uses the original
-manifest/work/report arguments plus `--only <group>`; it always remains partial
-and returns2 for successful diagnostic cases, never full qualification.
+The default native Windows entry point qualifies the wrapper using 60 local
+cases. It verifies the embedded source identity, stage members, exact case set,
+and native cleanup. Wrapper success exits 0 with `wrapperQualificationPassed=true`
+and `externalNetworkStatus=unverified`. Append `--external` to select the strict
+68-case profile. That profile exits 0 with `qualificationPassed=true` after
+validating the original external network cases and composed workload.
+The Design and Plan SHAs identify the coordinator's selected baselines.
+Exit 1 records failure or incomplete qualification. A targeted invocation
+uses the manifest, work and report arguments plus `--only <group>`. Successful
+diagnostic slices exit 2 with partial qualification.
 No compiler success or pipe output substitutes for actual console APIs, composed
 resource enforcement or owner-loss evidence. See [the detailed profile](windows-process-executor-v1.md).
 

@@ -187,7 +187,8 @@ public sealed class JobTests
         Assert.Contains(exits, exit => exit.ExitStatus != 0);
     }
 
-    [Fact(Timeout = 120_000)]
+    [Fact(Timeout = 120_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public void TerminatingTheJobEndsTheWholeProcessTree()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();

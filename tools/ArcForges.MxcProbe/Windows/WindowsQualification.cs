@@ -15,6 +15,11 @@ namespace ArcForges.MxcProbe;
 
 internal static class WindowsQualification
 {
+    internal const string WrapperCombinedCase = "combined-local-host-loopback-deny";
+    internal const string CombinedProtocol = "MXC-WIN-06";
+    private const string WrapperSelection = "wrapper";
+    private const string ExternalSelection = "full";
+
     private static readonly string[] ExternalNetworkCaseNames =
     [
         "network-deny-all-tcp", "network-deny-all-udp", "network-selected-tcp", "network-selected-udp",
@@ -44,8 +49,18 @@ internal static class WindowsQualification
             "root-exit-background-child", "cleanup-record-publication-failure", "client-loss-at-prepared", "client-loss-at-scope-created",
             "client-loss-at-owner-ack", "client-loss-at-executor-created", "client-loss-at-active", "client-loss-at-cleaning",
             "client-loss-at-final", "persistent-data-first-run", "persistent-data-new-run"],
-        ["MXC-WIN-06"] = ["combined-default-deny", "combined-selected-egress"],
+        [CombinedProtocol] = ["combined-default-deny", "combined-selected-egress"],
     };
+
+    private static readonly Dictionary<string, string[]> WrapperRequiredCases = BuildWrapperRequiredCases();
+
+    private static Dictionary<string, string[]> BuildWrapperRequiredCases()
+    {
+        var cases = new Dictionary<string, string[]>(RequiredCases, StringComparer.Ordinal);
+        cases["MXC-WIN-04"] = cases["MXC-WIN-04"].Except(ExternalNetworkCaseNames, StringComparer.Ordinal).ToArray();
+        cases[CombinedProtocol] = [WrapperCombinedCase];
+        return cases;
+    }
 
     [SupportedOSPlatform("windows")]
     internal static async Task<int> RunAsync(string[] args)
@@ -57,12 +72,14 @@ internal static class WindowsQualification
         try
         {
             if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Native Windows is required.");
-            if (args.Length is not (8 or 12) || args[0] != "--manifest" || args[2] != "--work" || args[4] != "--report"
+            if (args.Length is not (8 or 12 or 13) || args[0] != "--manifest" || args[2] != "--work" || args[4] != "--report"
                 || (args.Length == 8 && (args[6] != "--only" || args[7] is not ("terminal" or "resource" or "policy" or "network" or "lifecycle" or "combined" or "cli" or "local")))
-                || (args.Length == 12 && (args[6] != "--source" || args[8] != "--design" || args[10] != "--plan")))
+                || (args.Length is 12 or 13 && (args[6] != "--source" || args[8] != "--design" || args[10] != "--plan"))
+                || (args.Length == 13 && args[12] != "--external"))
                 throw new WindowsQualificationCheckException("full_exact_commits_or_diagnostic_selection_required");
-            report.SelectionGroup = args.Length == 8 ? args[7] : "full";
-            report.DiagnosticSelection = report.SelectionGroup != "full";
+            report.SelectionGroup = args.Length switch { 8 => args[7], 12 => WrapperSelection, _ => ExternalSelection };
+            report.DiagnosticSelection = args.Length == 8;
+            if (report.SelectionGroup == WrapperSelection) report.ProfileRevision = "win-wrapper-local-v1";
             if (!report.DiagnosticSelection)
             {
                 Check(IsCommit(args[7]) && IsCommit(args[9]) && IsCommit(args[11]), "full_exact_commits_required");
@@ -152,13 +169,14 @@ internal static class WindowsQualification
             (string Name, Func<Task<List<WindowsQualificationCase>>> Run) combined = ("combined", () => WindowsCombinedCases.RunAsync(stage, work));
             (string Name, Func<Task<List<WindowsQualificationCase>>> Run)[] groups = report.SelectionGroup switch
             {
-                "full" => [.. localGroups, localNetwork, externalNetwork, combined],
+                WrapperSelection => [.. localGroups, localNetwork, ("combined_local", () => WindowsCombinedCases.RunLocalAsync(stage, work))],
+                ExternalSelection => [.. localGroups, localNetwork, externalNetwork, combined],
                 "local" => [.. localGroups, localNetwork],
                 "network" => [localNetwork, externalNetwork],
                 "combined" => [combined],
                 _ => localGroups.Where(group => group.Name == report.SelectionGroup).ToArray(),
             };
-            var phasePrefix = report.DiagnosticSelection ? "diagnostic_" : "full_";
+            var phasePrefix = report.DiagnosticSelection ? "diagnostic_" : report.SelectionGroup + "_";
             foreach (var group in groups)
             {
                 phase = phasePrefix + group.Name;
@@ -191,7 +209,7 @@ internal static class WindowsQualification
         report.FinishedUtc = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
         try
         {
-            if (events is not null) WritePhase(events, report.RunId, "qualification", report.QualificationPassed ? "passed" : "partial_or_failed");
+            if (events is not null) WritePhase(events, report.RunId, "pre_publication_checks", "results_collected");
         }
         catch (Exception exception) { RecordEvidenceFailure(report, exception); }
         finally
@@ -218,7 +236,8 @@ internal static class WindowsQualification
         }
         catch (Exception exception) { RecordEvidenceFailure(report, exception); }
         Console.WriteLine(JsonSerializer.Serialize(report, WindowsQualificationJson.Default.WindowsQualificationReport));
-        return report.QualificationPassed ? 0 : report.DiagnosticSelection && report.ExecutedCasesPassed && report.Failure is null && report.EvidenceFailure is null ? 2 : 1;
+        if (report.WrapperQualificationPassed || report.QualificationPassed) return 0;
+        return report.DiagnosticSelection && report.ExecutedCasesPassed && report.Failure is null && report.EvidenceFailure is null ? 2 : 1;
     }
 
     private static bool IsCommit(string value) => value.Length == 40 && value.All(char.IsAsciiHexDigit);
@@ -242,17 +261,19 @@ internal static class WindowsQualification
 
     private static void FinalizeReport(WindowsQualificationReport report)
     {
+        bool wrapper = report.SelectionGroup == WrapperSelection;
+        var requiredCases = wrapper ? WrapperRequiredCases : RequiredCases;
         var observed = report.Cases.GroupBy(item => item.Name, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
-        var expectedNames = RequiredCases.Values.SelectMany(names => names).ToHashSet(StringComparer.Ordinal);
+        var expectedNames = requiredCases.Values.SelectMany(names => names).ToHashSet(StringComparer.Ordinal);
         report.DuplicateCases = observed.Where(item => item.Value.Length != 1).Select(item => item.Key).Order(StringComparer.Ordinal).ToArray();
         report.UnexpectedCases = observed.Keys.Where(name => !expectedNames.Contains(name)).Order(StringComparer.Ordinal).ToArray();
-        report.IncompleteProtocols = RequiredCases.Where(protocol => protocol.Value.Any(name =>
+        report.IncompleteProtocols = requiredCases.Where(protocol => protocol.Value.Any(name =>
             !observed.TryGetValue(name, out var cases) || cases.Length != 1 || cases[0].Protocol != protocol.Key || !CaseSucceeded(cases[0])))
             .Select(protocol => protocol.Key).ToArray();
         var selectedCases = report.SelectionGroup switch
         {
-            "local" => expectedNames.Except(ExternalNetworkCaseNames, StringComparer.Ordinal).Except(RequiredCases["MXC-WIN-06"], StringComparer.Ordinal),
+            "local" => expectedNames.Except(ExternalNetworkCaseNames, StringComparer.Ordinal).Except(RequiredCases[CombinedProtocol], StringComparer.Ordinal),
             "network" => LocalNetworkCaseNames.Concat(ExternalNetworkCaseNames),
             _ => null,
         };
@@ -262,11 +283,22 @@ internal static class WindowsQualification
         report.ExecutedCasesPassed = selectionComplete && report.Cases.Count > 0 && report.Cases.All(CaseSucceeded);
         report.CleanupConfirmed = report.Failure is null && report.Cases.Count > 0
             && report.Cases.All(item => item.CleanupCompleted && item.UnresolvedCleanupOwner is null && item.CleanupFailure is null);
-        report.QualificationPassed = !report.DiagnosticSelection && report.StageVerified && report.FinalIdentityVerified && report.DriverJobContextObserved
+        if (wrapper)
+        {
+            report.StartupObservations = report.Cases
+                .Where(item => item.Name is "console-info" or "line-editing" && CaseSucceeded(item) && item.SpawnMs > 0)
+                .Select((item, index) => new WindowsStartupObservation(item.Name, index == 0 ? "first" : "subsequent",
+                    item.SpawnMs, item.ExecutorProcessId, item.ExecutorStartUtc))
+                .ToArray();
+        }
+        bool qualificationPassed = !report.DiagnosticSelection && report.StageVerified && report.FinalIdentityVerified && report.DriverJobContextObserved
             && report.Failure is null && report.EvidenceFailure is null && report.ExecutedCasesPassed && report.CleanupConfirmed
             && report.Cases.Count == report.ExpectedCases && report.IncompleteProtocols.Length == 0
             && report.DuplicateCases.Length == 0 && report.UnexpectedCases.Length == 0;
-        report.Status = report.DiagnosticSelection ? "partial" : report.QualificationPassed ? "passed" : "failed";
+        report.WrapperQualificationPassed = wrapper && qualificationPassed && report.StartupObservations.Length == 2;
+        report.QualificationPassed = report.SelectionGroup == ExternalSelection && qualificationPassed;
+        if (report.QualificationPassed) report.ExternalNetworkStatus = "verified";
+        report.Status = report.DiagnosticSelection ? "partial" : report.WrapperQualificationPassed ? "wrapper_passed" : report.QualificationPassed ? "passed" : "failed";
     }
 
     private static void WritePhase(FileStream stream, string runId, string phase, string outcome, WindowsQualificationFailure? failure = null)
@@ -289,7 +321,9 @@ internal static class WindowsQualification
     private static void RecordEvidenceFailure(WindowsQualificationReport report, Exception exception)
     {
         report.EvidenceFailure ??= ObserveFailure(exception);
+        report.WrapperQualificationPassed = false;
         report.QualificationPassed = false;
+        report.ExternalNetworkStatus = "unverified";
         report.Status = report.DiagnosticSelection ? "partial" : "failed";
         Console.Error.WriteLine("windows_qualification_evidence_failed:type=" + exception.GetType().Name
             + ":hresult=" + exception.HResult.ToString("X8", CultureInfo.InvariantCulture));
@@ -1099,7 +1133,10 @@ internal sealed class WindowsQualificationReport
     public string SelectionGroup { get; set; } = "full";
     public bool DiagnosticSelection { get; set; }
     public string Status { get; set; } = "partial";
+    public bool WrapperQualificationPassed { get; set; }
     public bool QualificationPassed { get; set; }
+    public string ExternalNetworkStatus { get; set; } = "unverified";
+    public WindowsStartupObservation[] StartupObservations { get; set; } = [];
     public bool ExecutedCasesPassed { get; set; }
     public bool CleanupConfirmed { get; set; }
     public bool StageVerified { get; set; }
@@ -1142,6 +1179,9 @@ internal sealed class WindowsQualificationReport
 }
 
 internal sealed record WindowsQualificationPhase(string RunId, string Phase, string Outcome, DateTimeOffset AtUtc, WindowsQualificationFailure? Failure);
+
+internal sealed record WindowsStartupObservation(string CaseName, string Order, double SpawnThroughResumeMs, uint ExecutorProcessId,
+    string? ExecutorStartUtc);
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, WriteIndented = true)]
 [JsonSerializable(typeof(WindowsQualificationReport))]

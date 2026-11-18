@@ -2,17 +2,21 @@
 
 This is the AFV2-MXC-02 native experiment, not an admitted product runtime. Keep the existing product executors and data/recovery guards. Use the official cohort selected by `eng/mxc/stage.py`; every invocation verifies its manifest before execution.
 
-Run the published probe on the designated native Windows host:
+Run the published probe on the designated native Windows host to qualify the wrapper:
 
 ```powershell
 & './artifacts/mxc-02/install/arcforges-mxc-probe.exe' --windows-profile --manifest './artifacts/mxc-02/install/mxc-manifest.json' --work './artifacts/mxc-02/fresh-run' --report './artifacts/mxc-02/fresh-report.json' --source '<exact-source-sha>' --design '<design-baseline-sha>' --plan '<plan-baseline-sha>'
 ```
 
+The default run executes 60 cases on this workstation. It collects 59 local cases and a combined run that verifies native terminal resize and replay, file access with persistence, live Job limits, owner reconnection, and cleanup. The combined run attempts TCP to a calibrated host-loopback listener while the resource fixture is active. The official executor uses default-deny egress without exceptions, denied ingress and denied host loopback. The local listener independently records its unchanged counters. The case receipt includes the applied policy hash, and its private observation identifies the host-loopback scope and counters.
+
+The wrapper receipt records the first and subsequent native executor launches from `console-info` and `line-editing`. Their timings run from the start of executor launch through resume, including pre-resume Job checks, with the host cache in its existing state. The combined run records admission-to-console-ready timing separately. Its private observation also measures elapsed time and the owner's output-byte cursor delta between the replay reads around detach and reconnect.
+
+Wrapper success exits 0 with `status=wrapper_passed`, `wrapperQualificationPassed=true` and `externalNetworkStatus=unverified`. The strict external profile runs when the command above ends in `--external`. It executes the original 68 cases and exits 0 with `qualificationPassed=true` and `externalNetworkStatus=verified` after all native outcomes, applicable cleanup, and stage and source identities are confirmed. The external status records whether that complete qualification exists. Each executed case records its actual outcome.
+
 Use the verified stage and fresh workspace and report paths. For a targeted diagnosis, replace the source, design and plan arguments with `--only` and one of `local`, `terminal`, `resource`, `policy`, `network`, `lifecycle`, `combined`, or `cli`.
 
-`--only local` runs 59 cases on the native Windows workstation. It includes the terminal, resource, policy, CLI and lifecycle groups and six host-loopback and inbound network cases. It uses local sockets and requires no SSH session. The `network` selection runs the six local cases followed by the seven external network cases. The full profile collects the same 59 local cases before the external network and combined groups. The receipt retains completed groups if a subsequent group fails or cannot start.
-
-Diagnostic runs report partial qualification and exit 2 when the selected slice passes. An experiment or setup failure exits 1. Full qualification exits 0 after all 68 required cases pass with their native outcomes and applicable cleanup, and the probe revalidates the stage and source identities.
+`--only local` includes the terminal, resource, policy, CLI and lifecycle groups and six host-loopback and inbound network cases. The `network` selection runs the six local cases followed by the seven external network cases. The `combined` selection runs the two external combined cases. Diagnostic slices report partial qualification and exit 2 when the selected cases pass. Any run with an experiment or setup failure exits 1. The receipt retains completed groups after a later failure.
 
 ## Diagnostics and cleanup
 
@@ -28,22 +32,21 @@ the cases must prove real suspended assignment, owned Job limits, descendants
 and cleanup. Failed context queries cannot establish full qualification.
 The immediate Job snapshot does not enumerate all external ancestors, and
 an unknown ancestor CPU cap does not prove an exact whole-machine CPU share.
-Final receipts are published only after successful write, flush and close;
-failed publication retains a uniquely named pending file for diagnosis.
+The event log marks when checks finish before publication. The process exit
+and final receipt record the result after write, flush and close. A publication
+failure retains a uniquely named pending file for diagnosis.
 
-## Controlled network peer
+## Optional external network diagnosis
 
 Current native result (2026-11-18): `network-resume-01` passed only8/13.
 HostLoopback allow also allowed the five intended fine-egress deny cases;
 matching replies and independent peer counters confirmed actual communication.
 This local candidate therefore cannot qualify selected egress or the combined
 profile. Preserve the failed receipt; do not repeat this setup expecting a
-different policy result. The original WIN04/06 controlled-endpoint requirement
-therefore uses the separate H22 network stack for fine-egress effects. SSH is
-only the host execution/control transport; it does not add an acceptance or
-owner-approval requirement.
+different policy result. The optional external profile uses a separate H22
+network stack for fine-egress effects and uses SSH for peer control.
 
-Before running the exact published candidate, independently fetch that commit
+Before running the external profile, independently fetch the exact published commit
 from GitHub on H22 into `/home/sammiller/arcforges/ArcForges/.worktree/mxc02-peer-<40-character-source-sha>`.
 The trusted driver executes its committed `tools/ArcForges.MxcProbe/Windows/network_peer.py`
 using the installed Python through `ssh netcup`. The source commit and script
