@@ -8,9 +8,10 @@
   (or after a bare '--') is passed to each test application. The script parses its own arguments so that
   pass-through works both as `./eng/test.ps1 ...` and as `pwsh -File eng/test.ps1 ...`.
 
-  -Parallel <n> runs up to n test projects at once (default 2: measured on 18 logical processors, the ci suite takes as long
-  at 2 as at 4 or 9, because its longest project bounds it, and uses the least CPU; projects also run their tests in parallel).
-  Each project's output goes to artifacts/test-logs/ and is printed when the project completes.
+  -Parallel <n> runs up to n test projects at once. On Windows, ci alone or with exclusive defaults to 1.
+  Other suite selections default to 2. In that default Windows ci run, Node.Core.Tests runs up to nine tests
+  concurrently. An explicit project count, test parallelism option or runner configuration takes precedence.
+  Parallel projects write to artifacts/test-logs/ and print their output when they finish.
   -Parallel 1 runs the projects one after another with live output. A suite that selects
   isolation=exclusive (the exclusive suite) runs after the other suites, one project at a time and
   one test at a time (xUnit's --parallel none, so passing -- --parallel <x> to that suite fails with
@@ -32,7 +33,7 @@ $Kind = $null
 $Configuration = 'Release'
 $NoBuild = $false
 $List = $false
-$Parallel = 2
+$Parallel = $null
 $Repeat = 1
 $PassThru = @()
 # -Command mode passes 'a,b' as one array argument; -File mode passes it as one string.
@@ -56,7 +57,7 @@ while ($i -lt $arguments.Count) {
     default { throw "test.ps1: unknown argument '$argument'. Options: -Suite, -Kind, -Configuration, -NoBuild, -List, -Parallel, -Repeat; test application arguments start with '--'." }
   }
 }
-if ($Parallel -lt 1 -or $Repeat -lt 1) { throw 'test.ps1: -Parallel and -Repeat need a positive number.' }
+if (($null -ne $Parallel -and $Parallel -lt 1) -or $Repeat -lt 1) { throw 'test.ps1: -Parallel and -Repeat need a positive number.' }
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -101,6 +102,19 @@ if ($Suite.Count -eq 0) { $Suite = @('unit') }
 $Suite = @($Suite | ForEach-Object { $_ -split ',' } | Where-Object { $_ } | Select-Object -Unique)
 foreach ($name in $Suite) {
   if (-not $suites.Contains($name)) { throw "Unknown suite '$name'. Known: $($suites.Keys -join ', ')." }
+}
+$limitCoreCiWorkers = $false
+if ($null -eq $Parallel) {
+  $regularSuites = @($Suite -ne 'exclusive')
+  $Parallel = 2
+  if ($IsWindows -and $regularSuites.Count -eq 1 -and $regularSuites[0] -eq 'ci') {
+    $Parallel = 1
+    $Suite = $regularSuites + @($Suite -eq 'exclusive')
+    # A response file or configuration can supply a worker limit too. Leave those calls to the test runner.
+    $overrideNames = 'max-threads|parallel|parallel-algorithm|max-parallel-test-modules|config-file|xunit-config-filename|e|environment'
+    $runnerOverrides = $PassThru -match "^(@|--?($overrideNames)($|[=:]))"
+    $limitCoreCiWorkers = [Environment]::ProcessorCount -gt 9 -and -not $runnerOverrides
+  }
 }
 
 # One work item per suite and project. Exit code 8 (no test ran) is accepted only where trait filters select a subset of a project.
@@ -158,7 +172,12 @@ for ($iteration = 1; $iteration -le $Repeat; $iteration++) {
   # One after another with live output: everything with -Parallel 1, otherwise the exclusive suite after the others.
   foreach ($item in @($work | Where-Object { $Parallel -eq 1 -or $_.Exclusive })) {
     Write-Host "==> suite $($item.Suite) : $($item.Project) $($item.Filters -join ' ')"
-    dotnet test --project $item.Path -c $Configuration --no-build @($item.Ignore) @($item.Alone) @($item.Filters) @PassThru
+    $testOptions = $PassThru
+    if ($limitCoreCiWorkers -and $item.Suite -eq 'ci' -and $item.Project -eq 'ArcForges.Node.Core.Tests') {
+      $testOptions += @('--max-threads', '9')
+      Write-Host '    Core CI test workers: 9'
+    }
+    dotnet test --project $item.Path -c $Configuration --no-build @($item.Ignore) @($item.Alone) @($item.Filters) @testOptions
     if ($LASTEXITCODE -ne 0) { $failures.Add("$($item.Suite)/$($item.Project) (exit $LASTEXITCODE)") }
   }
 

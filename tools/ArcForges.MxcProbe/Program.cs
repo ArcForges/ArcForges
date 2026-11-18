@@ -25,6 +25,28 @@ internal static class Program
 
     public static async Task<int> Main(string[] args)
     {
+        if (OperatingSystem.IsWindows()) WindowsProbeErrorMode.EnableNoninteractiveFailures();
+        // Native experiment roles are explicit; a contained workload never loads MXC.
+        if (args.Length > 0 && args[0] == "--windows-workload")
+        {
+            if (!OperatingSystem.IsWindows()) return 125;
+            return await WindowsWorkload.RunAsync(args[1..]).ConfigureAwait(false);
+        }
+        if (args.Length == 2 && args[0] == "--windows-phase-client")
+        {
+            if (!OperatingSystem.IsWindows()) return 125;
+            return await WindowsPhaseClient.RunAsync(args[1]).ConfigureAwait(false);
+        }
+        if (args.Length == 2 && args[0] == "--windows-owner")
+        {
+            if (!OperatingSystem.IsWindows()) return 125;
+            return await WindowsProbeOwner.RunAsync(args[1]).ConfigureAwait(false);
+        }
+        if (args.Length > 0 && args[0] == "--windows-profile")
+        {
+            if (!OperatingSystem.IsWindows()) return 125;
+            return await WindowsQualification.RunAsync(args[1..]).ConfigureAwait(false);
+        }
         if (args.Length > 0 && args[0] == "--linux-profile")
             return await Linux.LinuxQualification.RunAsync(args[1..]).ConfigureAwait(false);
         if (args.Length == 2 && args[0] == "--linux-owner")

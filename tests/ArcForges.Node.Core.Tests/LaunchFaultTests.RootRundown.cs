@@ -16,7 +16,8 @@ public sealed partial class LaunchFaultTests
     /// Holding the real root's EXIT_PROCESS debug event reproduces delayed run-down without CPU starvation. The root ignores
     /// CTRL_BREAK so the forced phase terminates it, and has actually executed before the hold, exercising the root wait.
     /// </summary>
-    [Fact(Timeout = 180_000)]
+    [Fact(Timeout = 180_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     [Trait("env", "windows-real")]
     [SupportedOSPlatform("windows")]
     public async Task AForcedRootStopDoesNotWaitForItsProcessToRunDownOnWindows()

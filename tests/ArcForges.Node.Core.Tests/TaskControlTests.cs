@@ -297,7 +297,8 @@ public sealed class TaskControlTests
         TestContext.Current.TestOutputHelper?.WriteLine($"attempt committed at most {attemptMax.Max} of {192L << 20}");
     }
 
-    [Fact(Timeout = 120_000)]
+    [Fact(Timeout = 120_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     public async Task LaunchStepsRunBeforeTheRootEndStepsBeforeLeftoversAndAFailingStepIsSpawnFailed()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();

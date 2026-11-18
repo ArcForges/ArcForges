@@ -36,7 +36,8 @@ public sealed partial class LaunchFaultTests
     /// the root is the command, started by the holder after the steps; on Linux the steps and the command share the unit's main process),
     /// and the effect is HAPPENED (04 section 7: DID_NOT_HAPPEN only for SPAWN_FAILED and POLICY_DENIED).
     /// </summary>
-    [Theory(Timeout = 180_000)]
+    [Theory(Timeout = 180_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
     [InlineData(3_000)]
     [InlineData(30_000)]
     public async Task ACancelDuringTheLaunchStepsCancelsTheTaskAndTheCommandNeverRuns(int stepHoldMs)
