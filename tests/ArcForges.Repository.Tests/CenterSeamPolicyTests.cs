@@ -330,14 +330,18 @@ public sealed partial class CenterSeamPolicyTests
     [Fact]
     public void TheChannelContractCohortIsThePinnedOne()
     {
-        // The hello's contract_version names the cohort the node is built with: ChannelContract.Cohort equals Directory.Packages.props.
+        // The hello still advertises the pinned V1 channel cohort.
         var packages = File.ReadAllText(Path.Combine(RepositoryFiles.Root, "Directory.Packages.props"));
         var service = File.ReadAllText(Path.Combine(RepositoryFiles.Root, "src/ArcForges.Node.CloudLink/CloudLinkService.cs"));
         var cohort = Regex.Match(service, "public const string Cohort = \"(?<v>[^\"]+)\";").Groups["v"].Value;
-        foreach (var id in (string[])["ArcForges.Contracts.Relay", "ArcForges.Contracts.Fleet", "ArcForges.Contracts.Foundation", "ArcForges.Contracts.Node"])
+        foreach (var id in (string[])["ArcForges.Contracts.Relay", "ArcForges.Contracts.Fleet", "ArcForges.Contracts.Node"])
         {
             Assert.Contains("<PackageVersion Include=\"" + id + "\" Version=\"" + cohort + "\" />", packages, StringComparison.Ordinal);
         }
+
+        // Sandbox V2 requires the newer Foundation package, which keeps the same V1 wire contract.
+        Assert.Contains("<PackageVersion Include=\"ArcForges.Contracts.Foundation\" Version=\"1.0.0-ci.481.1\" />", packages, StringComparison.Ordinal);
+        Assert.Contains("<PackageVersion Include=\"ArcForges.Contracts.Sandbox.V2\" Version=\"1.0.0-ci.481.1\" />", packages, StringComparison.Ordinal);
     }
 
     private static IEnumerable<string> Files(params string[] roots) => roots.SelectMany(root =>
