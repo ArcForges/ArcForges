@@ -103,8 +103,12 @@ foreach ($name in $Suite) {
   if (-not $suites.Contains($name)) { throw "Unknown suite '$name'. Known: $($suites.Keys -join ', ')." }
 }
 if ($null -eq $Parallel) {
-  $regularSuites = @($Suite | Where-Object { $_ -ne 'exclusive' })
-  $Parallel = if ($IsWindows -and $regularSuites.Count -eq 1 -and $regularSuites[0] -eq 'ci') { 1 } else { 2 }
+  $regularSuites = @($Suite -ne 'exclusive')
+  $Parallel = 2
+  if ($IsWindows -and $regularSuites.Count -eq 1 -and $regularSuites[0] -eq 'ci') {
+    $Parallel = 1
+    $Suite = $regularSuites + @($Suite -eq 'exclusive')
+  }
 }
 
 # One work item per suite and project. Exit code 8 (no test ran) is accepted only where trait filters select a subset of a project.
