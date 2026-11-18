@@ -458,8 +458,10 @@ public sealed class LinuxExecutionTests
         var guardStop = GuardEvent.ReadAll(files.GuardEventsPath).FirstOrDefault(item => item.Event == GuardEventKinds.Terminate);
         var guardSignal = ReadFloodRootSignal(files.GuardRootSignalPath, "GUARD");
         var nodeSignal = ReadFloodRootSignal(files.NodeRootSignalPath, "NODE");
+        var guardSignaled = guardSignal is not null;
+        var nodeSignaled = nodeSignal is not null;
         TestContext.Current.TestOutputHelper?.WriteLine(
-            $"Guard root signal receipt = {guardSignal is not null}, Node root signal receipt = {nodeSignal is not null}, Guard terminate event = {guardStop is not null}.");
+            $"Guard root signal receipt = {guardSignaled}, Node root signal receipt = {nodeSignaled}, Guard terminate event = {guardStop is not null}.");
         if (guardStop is not null)
         {
             Assert.Equal(files.AttemptName, guardStop.AttemptId);
@@ -468,13 +470,13 @@ public sealed class LinuxExecutionTests
         }
 
         var hasActor = attempt.TryGetProperty("limitEnforcedBy", out var actor);
-        if (guardSignal is not null && nodeSignal is not null)
+        if (guardSignaled == nodeSignaled)
         {
-            Assert.False(hasActor, "Both actors signaled the same root. The optional actor must be absent.");
+            Assert.False(hasActor, "Attribution requires exactly one verified root signal actor.");
             return;
         }
 
-        Assert.Equal(guardSignal is null ? "NODE" : "GUARD", hasActor ? actor.GetString() : null);
+        Assert.Equal(guardSignaled ? "GUARD" : "NODE", hasActor ? actor.GetString() : null);
 
         LinuxRootSignalRecord? ReadFloodRootSignal(string path, string expectedActor)
         {

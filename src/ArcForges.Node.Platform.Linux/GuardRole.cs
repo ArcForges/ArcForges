@@ -242,6 +242,7 @@ public static partial class GuardRole
 
             // TERMINATE: at once, without the graceful phase; frozen first (04 section 6 step 4).
             var rootSignalObserved = false;
+            var rootSignalFallbackAccepted = false;
             var stop = UnitControl.FreezeAndKill(manager, unit,
                 state.ControlGroup.Length > 0 ? ProcFs.CgroupDirectory(state.ControlGroup) : null, (int)state.MainPid,
                 (pid, start, at) =>
@@ -262,10 +263,11 @@ public static partial class GuardRole
                         Signal = Libc.SigKill,
                         At = at,
                     });
-                });
+                }, () => rootSignalFallbackAccepted = spec.AttemptId == attempt.Files.AttemptName);
             attempt.Stopped = true;
             var kind = rootSignalObserved ? GuardEventKinds.Terminate : GuardEventKinds.TerminateUnconfirmed;
-            Append(attempt, kind, "OUTPUT_LIMIT", total, watch, clock, rootSignalObserved);
+            Append(attempt, kind, "OUTPUT_LIMIT", total, watch, clock, rootSignalObserved,
+                rootSignalObserved ? null : rootSignalFallbackAccepted);
             Console.Error.WriteLine($"arcforges guard: stopped {unit} at {total.ToString(CultureInfo.InvariantCulture)} bytes of output (limit {spec.MaxOutputBytes.ToString(CultureInfo.InvariantCulture)}): {stop.Describe()}");
         }
         catch (Exception exception) when (exception is DBusExceptionBase or TimeoutException or IOException or InvalidOperationException
@@ -278,7 +280,7 @@ public static partial class GuardRole
     }
 
     private static void Append(Guarded attempt, string kind, string? reason, long? output, HeartbeatWatch watch, TimeProvider clock,
-        bool? rootSignalObserved = null)
+        bool? rootSignalObserved = null, bool? rootSignalFallbackAccepted = null)
     {
         try
         {
@@ -293,6 +295,7 @@ public static partial class GuardRole
                 HeartbeatAgeMs = (long)watch.Age.TotalMilliseconds,
                 HeartbeatInstance = watch.Last?.Instance ?? string.Empty,
                 RootSignalObserved = rootSignalObserved,
+                RootSignalFallbackAccepted = rootSignalFallbackAccepted,
             }.Append(attempt.Files.GuardEventsPath);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)

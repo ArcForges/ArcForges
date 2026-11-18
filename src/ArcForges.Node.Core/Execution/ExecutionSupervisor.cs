@@ -1693,6 +1693,12 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         if (settings.MaxOutputBytes > 0 && attempt.OutputBytes > settings.MaxOutputBytes && attempt.StopReason is null
             && !(settings.DiskLimitAction == "NOTIFY" && attempt.OutputNotified))
         {
+            if (OperatingSystem.IsLinux() && settings.DiskLimitAction != "NOTIFY" && File.Exists(attempt.Files.ExitPath))
+            {
+                BeginFinalize(attempt, incomplete: false);
+                return;
+            }
+
             // The guard may have acted on the limit while the node was down (06 section 5): its decision stands and is recorded as GUARD.
             var guard = GuardEvent.ReadAll(attempt.Files.GuardEventsPath);
             if (settings.DiskLimitAction == "NOTIFY")
@@ -2545,25 +2551,21 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
 
         var guardStop = FindGuardStop(attempt, guard);
         var guardSignal = ReadLinuxRootSignal(attempt, exit, root, attempt.Files.GuardRootSignalPath, "GUARD");
-        var guardEnforcer = guardSignal is not null && ReadLinuxRootSignal(attempt, exit, root, attempt.Files.NodeRootSignalPath, "NODE") is null
-            ? "GUARD"
-            : null;
+        var nodeSignal = ReadLinuxRootSignal(attempt, exit, root, attempt.Files.NodeRootSignalPath, "NODE");
+        var nativeEnforcer = (guardSignal is not null, nodeSignal is not null) switch
+        {
+            (true, false) => "GUARD",
+            (false, true) => "NODE",
+            _ => null,
+        };
 
         if (attempt.StopReason is { } stop)
         {
             var limitBy = stop is TerminationReason.OutputLimit or TerminationReason.DiskLimit ? attempt.LimitEnforcedBy ?? "NODE" : null;
-            if (OperatingSystem.IsLinux() && stop == TerminationReason.OutputLimit)
+            if (OperatingSystem.IsLinux() && stop == TerminationReason.OutputLimit && exit?.RecordedBy is "unit" or "exit-record")
             {
-                if (guardSignal is not null || guardStop is { Reason: "OUTPUT_LIMIT", RootSignalObserved: true })
-                {
-                    // A committed stop reason and a delivered signal describe separate events.
-                    limitBy = guardEnforcer;
-                }
-                else if (guardStop is { Reason: "OUTPUT_LIMIT" } && limitBy == "NODE")
-                {
-                    // A historical Guard event can record a native no-op. The actor is uncertain in this overlap.
-                    limitBy = null;
-                }
+                // A committed stop reason and a delivered signal describe separate events.
+                limitBy = nativeEnforcer;
             }
 
             return new AttemptOutcome(stop, EffectCertainty.Happened, exitCode, attempt.StopDetailText, limitBy, signal, coreDumped);
@@ -2571,7 +2573,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
 
         if (guardStop is { RootSignalObserved: null } || (guardStop is not null && guardSignal is not null))
         {
-            var limitBy = guardStop.RootSignalObserved is null ? "GUARD" : guardEnforcer;
+            var limitBy = guardStop.RootSignalObserved is null ? "GUARD" : nativeEnforcer;
             return new AttemptOutcome(guardStop.Reason == "DISK_LIMIT" ? TerminationReason.DiskLimit : TerminationReason.OutputLimit, EffectCertainty.Happened,
                 exitCode, $"stopped by the attempt's guard while the node was down ({guardStop.OutputBytes} bytes of output, limit {guardStop.LimitBytes})", limitBy,
                 signal, coreDumped);
@@ -2581,7 +2583,15 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         {
             // The root receipt is published before thaw. Guard can still be writing its aggregate event.
             return new AttemptOutcome(TerminationReason.OutputLimit, EffectCertainty.Happened, exitCode,
-                "the attempt's guard signaled the workload root at the output limit", guardEnforcer, signal, coreDumped);
+                "the attempt's guard signaled the workload root at the output limit", nativeEnforcer, signal, coreDumped);
+        }
+
+        if (IsLinuxRootKilled(attempt, exit) && guard.Any(item => item is
+            { Schema: 1, Event: GuardEventKinds.TerminateUnconfirmed, Reason: "OUTPUT_LIMIT", RootSignalFallbackAccepted: true }
+            && item.AttemptId == attempt.Name && DateTimeOffset.TryParse(item.At, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out _)))
+        {
+            return new AttemptOutcome(TerminationReason.OutputLimit, EffectCertainty.Happened, exitCode,
+                "the guard requested an output-limit stop through the legacy signal path", null, signal, coreDumped);
         }
 
         if (exit is not null && (exit.ServiceResult == "oom-kill" || exit.OomKills > 0))
@@ -2607,9 +2617,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
 
     private static LinuxRootSignalRecord? ReadLinuxRootSignal(RunningAttempt attempt, ExitRecord? exit, RootProcess? root, string path, string expectedActor)
     {
-        if (!OperatingSystem.IsLinux() || root is null || exit is not { Schema: 1, ExitCodeKind: "killed", ExitStatus: 9, OomKills: 0 }
-            || exit.ServiceResult == "oom-kill"
-            || exit.AttemptId != attempt.Name
+        if (root is null || exit is null || !IsLinuxRootKilled(attempt, exit)
             || !DateTimeOffset.TryParse(exit.RecordedAt, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var exitedAt)
             || LinuxRootSignalRecord.TryRead(path, attempt.Name, expectedActor) is not { } evidence)
         {
@@ -2622,6 +2630,10 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             ? evidence
             : null;
     }
+
+    private static bool IsLinuxRootKilled(RunningAttempt attempt, ExitRecord? exit) => OperatingSystem.IsLinux()
+        && exit is { Schema: 1, ExitCodeKind: "killed", ExitStatus: 9, OomKills: 0, ServiceResult: not "oom-kill" }
+        && exit.AttemptId == attempt.Name;
 
     private int RecordFinished(CommandContext context, RunningAttempt attempt, ExitRecord? exit, ContainerAccounting? accounting, AttemptOutcome outcome,
         List<GuardEvent> guard, ExecutionSettings settings, RootProcess? root)

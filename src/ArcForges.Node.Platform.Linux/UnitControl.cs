@@ -25,7 +25,7 @@ public static partial class UnitControl
         FreezeAndKill(manager, unit, cgroupDirectory, mainPid, null);
 
     internal static LimitStop FreezeAndKill(SystemdManager manager, string unit, string? cgroupDirectory, int mainPid,
-        Action<int, long, DateTimeOffset>? onRootSignal)
+        Action<int, long, DateTimeOffset>? onRootSignal, Action? onRootSignalFallback = null)
     {
         ArgumentNullException.ThrowIfNull(manager);
         // Once the main command has exited, systemd owns the bounded end steps and exit-record. Killing the unit's
@@ -74,7 +74,13 @@ public static partial class UnitControl
                 }
             }
 
-            return KillCheckedProcess(pid, start);
+            var accepted = KillCheckedProcess(pid, start);
+            if (accepted)
+            {
+                onRootSignalFallback?.Invoke();
+            }
+
+            return accepted;
         }
 
         if (state.MainPid == 0 || state.ControlPid != 0)

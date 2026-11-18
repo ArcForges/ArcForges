@@ -280,6 +280,9 @@ public sealed class GuardEvent
     /// <summary>Whether this Linux terminate action observed an accepted SIGKILL to the checked root.</summary>
     public bool? RootSignalObserved { get; set; }
 
+    /// <summary>Whether an unconfirmed Linux terminate action got a numeric SIGKILL accepted for the checked root.</summary>
+    public bool? RootSignalFallbackAccepted { get; set; }
+
     /// <summary>Serializes the event as one line (no line break).</summary>
     public string ToJson() => JsonSerializer.Serialize(this, HelperJsonContext.Default.GuardEvent);
 
@@ -586,6 +589,7 @@ public sealed class LinuxRootSignalRecord
     private const uint TypeMask = 0x0001;
     private const ushort FileTypeMask = 0xF000;
     private const ushort RegularFile = 0x8000;
+    private static readonly byte[] s_emptyNativePath = [0];
 
     /// <summary>The format version.</summary>
     [JsonRequired]
@@ -619,7 +623,7 @@ public sealed class LinuxRootSignalRecord
     /// <summary>Reads positive evidence for the specified attempt and actor.</summary>
     public static LinuxRootSignalRecord? TryRead(string path, string expectedAttemptId, string expectedActor)
     {
-        if (!OperatingSystem.IsLinux() || string.IsNullOrEmpty(expectedAttemptId) || expectedActor is not ("NODE" or "GUARD"))
+        if (!OperatingSystem.IsLinux() || path.Contains('\0') || string.IsNullOrEmpty(expectedAttemptId) || expectedActor is not ("NODE" or "GUARD"))
         {
             return null;
         }
@@ -628,14 +632,14 @@ public sealed class LinuxRootSignalRecord
         {
             // ARM64 defines O_NOFOLLOW at bit 15 instead of the generic bit 17.
             var noFollow = RuntimeInformation.ProcessArchitecture == Architecture.Arm64 ? 1 << 15 : 1 << 17;
-            var descriptor = OpenReceipt(path, NoControllingTerminal | NonBlocking | CloseOnExec | noFollow);
+            var descriptor = OpenReceipt(Encoding.UTF8.GetBytes(path + "\0"), NoControllingTerminal | NonBlocking | CloseOnExec | noFollow);
             if (descriptor < 0)
             {
                 return null;
             }
 
             using var handle = new SafeFileHandle(descriptor, ownsHandle: true);
-            if (ReadFileStatus(handle, string.Empty, EmptyPath, TypeMask, out var status) != 0 ||
+            if (ReadFileStatus(handle, s_emptyNativePath, EmptyPath, TypeMask, out var status) != 0 ||
                 (status.Mask & TypeMask) == 0 || (status.Mode & FileTypeMask) != RegularFile)
             {
                 return null;
@@ -643,7 +647,7 @@ public sealed class LinuxRootSignalRecord
 
             using var stream = new FileStream(handle, FileAccess.Read);
             Span<byte> bytes = stackalloc byte[MaximumBytes + 1];
-            var count = stream.ReadAtLeast(bytes, bytes.Length, throwIfEndOfStream: false);
+            var count = stream.ReadAtLeast(bytes, bytes.Length, false);
             if (count is <= 0 or > MaximumBytes)
             {
                 return null;
@@ -663,10 +667,10 @@ public sealed class LinuxRootSignalRecord
 
 #pragma warning disable SYSLIB1054 // This shared project compiles without unsafe code.
     [DllImport("libc", EntryPoint = "open", ExactSpelling = true)]
-    private static extern int OpenReceipt([MarshalAs(UnmanagedType.LPUTF8Str)] string path, int flags);
+    private static extern int OpenReceipt([In] byte[] path, int flags);
 
     [DllImport("libc", EntryPoint = "statx", ExactSpelling = true)]
-    private static extern int ReadFileStatus(SafeFileHandle fd, [MarshalAs(UnmanagedType.LPUTF8Str)] string path,
+    private static extern int ReadFileStatus(SafeFileHandle fd, [In] byte[] path,
         int flags, uint mask, out LinuxFileStatus status);
 #pragma warning restore SYSLIB1054
 
