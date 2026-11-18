@@ -76,6 +76,9 @@ any change. They are binding; this file summarizes them and adds the repository 
   shows suites and task kinds; definitions in `eng/test-suites.conf`). The scripts run up to `-Parallel` / `--parallel` test
   projects at once. Windows `ci` alone or with `exclusive` defaults to one project with live output. Two runs with
   concurrent projects failed timing-sensitive tests on the native runner. The same build passed with one project at a time.
+  The default Windows `ci` run caps Core at nine concurrent tests. All 846 selected cases ran at that cap on the
+  18-logical-processor workstation. The median host CPU load fell from 86% to 54%. Smaller machines keep their
+  lower worker count. Explicit project or test concurrency settings take precedence.
   Other selections default to two projects with logs in `artifacts/test-logs/`. `-Repeat` /
   `--repeat N` reruns the selected suites until the first failing iteration. Tests run in parallel inside their projects too, each
   with its own node, platform, data root, endpoint and slice; never add a serial collection. Test nodes see only themselves and their
