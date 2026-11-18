@@ -12,6 +12,7 @@ using ArcForges.Node.Platform.Linux;
 using ArcForges.Node.Store;
 using ArcForges.Tests;
 using Microsoft.Data.Sqlite;
+using ProcessIdentity = ArcForges.Tests.ProcessIdentity;
 
 namespace ArcForges.ClosedLoop.Tests;
 
