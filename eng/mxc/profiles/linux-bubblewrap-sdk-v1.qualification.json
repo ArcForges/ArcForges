@@ -1,0 +1,409 @@
+{
+  "schemaVersion": 1,
+  "profileId": "linux-bubblewrap-sdk-v1",
+  "profileRevision": "linux-bubblewrap-sdk-v1",
+  "official": {
+    "name": "Microsoft.Mxc.Sdk",
+    "componentVersion": "1.0.1",
+    "requestSchemaVersion": "1.0.0",
+    "backend": "bubblewrap",
+    "tier": null,
+    "nativeSourceCommit": "fda29ac63bc306b7f97f3b86b4b63d44f7f40cf2",
+    "packageSha256": "d47b1f70c3fcaaed1705a0c3872807e2878fe8c1b778c0dd9eb9325bf421a672",
+    "releaseSha256": "0e832239454ba7fcd338ff56218a287eef4c0a01c1484084b869f55feff8abe9",
+    "runtimeFiles": [
+      {
+        "path": "libmxc_ffi.so",
+        "sha256": "18a1cba8f2980af79570141c4eec9cd3982872162ae6b63634d45862913002bc"
+      }
+    ]
+  },
+  "platform": {
+    "rid": "linux-x64",
+    "architecture": "x64",
+    "osVersion": "13",
+    "osDescription": "Debian GNU/Linux 13 (trixie)",
+    "distribution": "debian",
+    "kernelRelease": "6.12.63+deb13-amd64",
+    "kernelVersion": "#1 SMP PREEMPT_DYNAMIC Debian 6.12.63-1 (2025-12-30)",
+    "systemd": "257.9-1~deb13u1",
+    "evidenceHost": "H-22",
+    "helperSearchPath": "/usr/bin:/bin:/usr/sbin:/sbin",
+    "helpers": [
+      {
+        "id": "bwrap",
+        "version": "0.12.0",
+        "resolvedPath": "/usr/bin/bwrap",
+        "sha256": "573236e5328ac2ebb08f59ae3a9805b4f8d12bdef14be8af4450d5463294985f"
+      },
+      {
+        "id": "sh",
+        "identity": "resolved dash with successful POSIX probe",
+        "resolvedPath": "/usr/bin/dash",
+        "sha256": "a6f559e00b69a4aa4d8cb607be18d9386c5aee55c509e2c075549dcf00e00fc7"
+      },
+      {
+        "id": "slirp4netns",
+        "version": "1.2.1",
+        "resolvedPath": "/usr/bin/slirp4netns",
+        "sha256": "c51b2fda8e64140d8856060e1e845542d99994882136fe7ef21a64325a486dda"
+      },
+      {
+        "id": "ip",
+        "version": "iproute2-6.15.0",
+        "resolvedPath": "/usr/bin/ip",
+        "sha256": "024784c6d16b183dc7c97d93a943a9270976f167f95f771e14d72442dc657f0c"
+      },
+      {
+        "id": "unshare",
+        "version": "2.41",
+        "resolvedPath": "/usr/bin/unshare",
+        "sha256": "d82900dfd64b5dd01493d206236575623c2dcf306c466dbe127e171c18cb4614"
+      },
+      {
+        "id": "nsenter",
+        "version": "2.41",
+        "resolvedPath": "/usr/bin/nsenter",
+        "sha256": "14da23b43284fac1180840cf2742fc9d25b7d87da7ee5676b8ba487df3793609"
+      },
+      {
+        "id": "iptables",
+        "version": "1.8.11",
+        "backend": "nf_tables",
+        "resolvedPath": "/usr/sbin/xtables-nft-multi",
+        "sha256": "4cf54664bf7bf3388186bfca48c065b5ff675961c78c5ee59fb9648e0e7602d9"
+      },
+      {
+        "id": "ip6tables",
+        "version": "1.8.11",
+        "backend": "nf_tables",
+        "resolvedPath": "/usr/sbin/xtables-nft-multi",
+        "sha256": "4cf54664bf7bf3388186bfca48c065b5ff675961c78c5ee59fb9648e0e7602d9"
+      },
+      {
+        "id": "iptables-restore",
+        "version": "1.8.11",
+        "backend": "nf_tables",
+        "resolvedPath": "/usr/sbin/xtables-nft-multi",
+        "sha256": "4cf54664bf7bf3388186bfca48c065b5ff675961c78c5ee59fb9648e0e7602d9"
+      },
+      {
+        "id": "ip6tables-restore",
+        "version": "1.8.11",
+        "backend": "nf_tables",
+        "resolvedPath": "/usr/sbin/xtables-nft-multi",
+        "sha256": "4cf54664bf7bf3388186bfca48c065b5ff675961c78c5ee59fb9648e0e7602d9"
+      }
+    ]
+  },
+  "prerequisites": [
+    "protected-official-runtime",
+    "native-bubblewrap",
+    "official-helper-identity",
+    "unprivileged-namespaces",
+    "systemd-user-manager",
+    "cgroup-v2-cpu-memory-pids",
+    "resource-membership-and-limits-before-sdk",
+    "owner-cleanup-proof",
+    "pty-and-output-drain-for-interactive",
+    "selected-ipv4-network-helpers-when-requested"
+  ],
+  "evidence": {
+    "decision": "qualified",
+    "originalSourceCommit": "50e602a83ece2c4de75d8dbd32777c7833a6eaf7",
+    "originalDesignCommit": "af28dc6378d91d678870abc628362476611efa32",
+    "originalPlanCommit": "cf937ddc1c52778007bdc0980a1ae139c809d25f",
+    "originalReportSha256": "57f41658b57c18ff350fde2a9afc428c9434946b1aa829735325336019288fcf",
+    "probeExecutableSha256": "eda60f8c071559985f88d17e1d6722f1be1f6b48a87b0845befc425496d99e7c",
+    "probeManifestSha256": "5eedcd1733c25a38545d77f9f1d9f2d9aae1bee04d07b71584272c08f3f02616",
+    "probeStageFiles": [
+      {
+        "path": "arcforges-mxc-probe",
+        "sha256": "eda60f8c071559985f88d17e1d6722f1be1f6b48a87b0845befc425496d99e7c"
+      },
+      {
+        "path": "arcforges-mxc-probe.dbg",
+        "sha256": "cadd8d12fe9e6e635523060eab09fe3a118cab84e4c02b8ef6b58a04810efd75"
+      },
+      {
+        "path": "libmxc_ffi.so",
+        "sha256": "18a1cba8f2980af79570141c4eec9cd3982872162ae6b63634d45862913002bc"
+      },
+      {
+        "path": "mxc-release.spdx.json",
+        "sha256": "c759a523c07772c869e14c5afc0a69a1bcd178d656aab368982ca4f5a3b2e1bb"
+      },
+      {
+        "path": "mxc.LICENSE.md",
+        "sha256": "d9a1b1e30d633d5732ea18e3cba9538d293ebc53e1a9e4e96ab739e0c5c4f1cb"
+      }
+    ],
+    "nativePassCount": 72,
+    "nativeCaseCount": 72,
+    "cleanupConfirmed": true,
+    "aotCohort": {
+      "id": "F-AOT-01",
+      "sourceCommit": "9a9378bc3a6bc8190d896ca7ef0e43eee5abd886",
+      "summarySha256": "e499109bd69dd5476522c0fd1996a999e5dfdad745941c3aeea37a461dc9781b"
+    },
+    "originalStatus": "passed",
+    "fullQualificationPassed": true,
+    "originalEventsSha256": "3b85f0b9475972bcdd6bb8bf6508ff7113f657493b79185556cfd3eb0bfe2d48",
+    "groups": [
+      {
+        "id": "admission",
+        "reportSha256": "2a7572c381c2ef193a8d1e434ccb1b71e4bbfce2b6e2afe8022b680df2c11680",
+        "eventsSha256": "ebf66d58cfb02e4982760a8f356a86de233dfebde228c19add12e9ea6b07f9f3",
+        "cleanupConfirmed": true,
+        "nativeCases": [
+          "admission_public_sdk",
+          "admission_helpers",
+          "admission_namespace_spawn",
+          "admission_missing_bwrap"
+        ]
+      },
+      {
+        "id": "terminal",
+        "reportSha256": "0f1d5df1b223b5af37e525f1ce936a274633d14817c0a49cebafa759d9d2acf4",
+        "eventsSha256": "9f5493e74ef99dbdc707a21fb2b589db23d30f8510fa3c04aa7c8bf2c097f9aa",
+        "cleanupConfirmed": true,
+        "nativeCases": [
+          "lnx02_pty_info",
+          "lnx02_pipe_comparison",
+          "lnx02_canonical_edit",
+          "lnx02_raw_unicode_resize",
+          "lnx02_canonical_eof",
+          "lnx02_raw_eot_close",
+          "lnx02_foreground_sigint",
+          "lnx02_ignore_etx_stop",
+          "lnx02_detached_flood",
+          "lnx02_client_wait_cancel",
+          "lnx02_posix_argv",
+          "lnx02_shell_editing",
+          "lnx02_exit_0",
+          "lnx02_exit_1",
+          "lnx02_exit_23",
+          "lnx02_fake_output",
+          "lnx02_policy_timeout"
+        ]
+      },
+      {
+        "id": "policy",
+        "reportSha256": "b0aa891d99ebe1d14d07f3c214f36b6219e54da73c12f29019dabe027bf44708",
+        "eventsSha256": "dd43bca7ebffa59bff75b8db84fd7cabd597821b088fb4db72f797715768d8f5",
+        "cleanupConfirmed": true,
+        "nativeCases": [
+          "baseline-reads",
+          "policy-filesystem",
+          "policy-directory-deny",
+          "policy-file-deny",
+          "policy-symlink-escape",
+          "policy-external-grant",
+          "policy-clean-environment",
+          "policy-owned-folders",
+          "policy-persistent-sandbox-second-run",
+          "policy-reject-invalid-environment",
+          "policy-reject-ingress-default-allow",
+          "policy-reject-ingress-host-loopback-allow"
+        ]
+      },
+      {
+        "id": "network",
+        "reportSha256": "53b516224a2ed3396c737239e3380babf2c8ba39b63af79a6dc1504e1978db75",
+        "eventsSha256": "7932d484252cd2af43d0d535bc63f4a6900c7a685dc93a17b1ab3c19140a6c0d",
+        "cleanupConfirmed": true,
+        "nativeCases": [
+          "network_default_deny_tcp",
+          "network_default_deny_udp",
+          "network_selected_tcp",
+          "network_selected_udp",
+          "network_denied_port",
+          "network_denied_protocol",
+          "network_selected_dns_denied",
+          "network_denied_address",
+          "network_listener_not_host_reachable",
+          "network_ipv6_allow_stays_unreachable"
+        ]
+      },
+      {
+        "id": "resource",
+        "reportSha256": "f0d771db3ddddf02af08ec854398b9d8de05d2334579ab18c0bdd419ef44fd0e",
+        "eventsSha256": "6d59f572030187d9104ced9305b0adcc05080ed6c280f46b60b5be8c5c1e08b1",
+        "cleanupConfirmed": true,
+        "nativeCases": [
+          "resource_cpu_low",
+          "resource_cpu_control",
+          "resource_burst",
+          "resource_dynamic",
+          "resource_pids_limit",
+          "resource_memory",
+          "resource_lower_refusal",
+          "resource_creation_refusal",
+          "resource_readback_refusal",
+          "resource_setting_refusal",
+          "resource_controller_absence",
+          "resource_native_creation_refusal",
+          "resource_cpu_comparison"
+        ]
+      },
+      {
+        "id": "lifecycle",
+        "reportSha256": "b0781b50537d44ee7c473f55a1f74a98c6ee3a22a8a23ae7f1d71095b0682d14",
+        "eventsSha256": "c1d92c1d625b3c534b14dd47236d8b724b212833b3d69c985e97443c1c750b7c",
+        "cleanupConfirmed": true,
+        "nativeCases": [
+          "LNX05-reconnect_prepared",
+          "LNX05-reconnect_scope_created",
+          "LNX05-reconnect_owner_ack",
+          "LNX05-reconnect_native_created",
+          "LNX05-reconnect_active",
+          "LNX05-reconnect_cleaning",
+          "LNX05-reconnect_final",
+          "LNX05-authentication_and_single_writer",
+          "LNX05-client_and_center_loss",
+          "LNX05-owner_loss",
+          "LNX05-root_exit_descendants",
+          "LNX05-retained_cleanup",
+          "LNX05-persistence_write",
+          "LNX05-persistence_read",
+          "LNX05-combined_default_deny",
+          "LNX05-combined_selected"
+        ]
+      }
+    ],
+    "composedCases": [
+      {
+        "id": "LNX05-combined_default_deny",
+        "networkMode": "default-deny"
+      },
+      {
+        "id": "LNX05-combined_selected",
+        "networkMode": "selected-ipv4-tcp"
+      }
+    ],
+    "nativeRefusals": [
+      {
+        "case": "admission_missing_bwrap",
+        "code": 12,
+        "error": "BackendError",
+        "source": "official_sdk_in_clean_independent_child",
+        "payloadMarkerAbsent": true
+      }
+    ],
+    "limitations": [
+      "Independent namespace-denial injection was NOT_RUN under the protocol where-feasible rule. Actual namespaced spawn was observed.",
+      "Selected egress observations are limited to literal IPv4 TCP/UDP and deny-only DNS. The composed selected case exercised TCP."
+    ]
+  },
+  "capabilities": [
+    {
+      "id": "terminal.interactive",
+      "support": "supported",
+      "observation": "passed",
+      "scope": "Official SDK PTY with raw/canonical input, resize, native SIGINT, bounded replay and reconnect."
+    },
+    {
+      "id": "terminal.pipes",
+      "support": "supported",
+      "observation": "unverified",
+      "scope": "Explicit official SDK pipe mode passed a direct PTY comparison. End-to-end composition with pipe mode remains unverified.",
+      "nativeCase": "lnx02_pipe_comparison"
+    },
+    {
+      "id": "files.owned-root-explicit-grants",
+      "support": "supported",
+      "observation": "passed",
+      "scope": "Owned RW/RO/deny, symlink escape refusal, explicit grant and persistent private data on same-path mounts."
+    },
+    {
+      "id": "environment.clean-explicit",
+      "support": "supported",
+      "observation": "passed",
+      "scope": "Clean environment, HOME/XDG, and explicit variable handling under the trusted local process boundary."
+    },
+    {
+      "id": "resources.cpu-memory-process-count",
+      "support": "supported",
+      "observation": "passed",
+      "scope": "ArcForges user systemd/cgroup v2 places the owner before SDK entry with live cpu, memory and pids readback, limit updates and native enforcement."
+    },
+    {
+      "id": "recovery.authenticated-owner",
+      "support": "supported",
+      "observation": "passed",
+      "scope": "Node replacement, client loss, owner loss, authentication, held-scope cleanup and durable private data."
+    },
+    {
+      "id": "network.default-deny",
+      "support": "supported",
+      "observation": "passed",
+      "scope": "Actual TCP/UDP denial without selected-network-only helpers."
+    },
+    {
+      "id": "network.selected-ipv4",
+      "support": "supported",
+      "observation": "passed",
+      "scope": "Selected literal IPv4 TCP/UDP distinguished from wrong address, port, and protocol. Same-Run selected composition used TCP."
+    },
+    {
+      "id": "network.dns-deny",
+      "support": "supported",
+      "observation": "passed",
+      "scope": "DNS denied in observed selected-egress policy. This gives no evidence of an allowed resolver or domain-name policy."
+    },
+    {
+      "id": "network.dns-selected",
+      "support": "unsupported",
+      "observation": "not-run",
+      "scope": "Initial profile supports literal IPv4 rules and deny-only DNS."
+    },
+    {
+      "id": "network.host-ingress",
+      "support": "unsupported",
+      "observation": "refused",
+      "scope": "Stable Bubblewrap lacks the requested host/public or host-loopback ingress capability.",
+      "nativeCases": [
+        "policy-reject-ingress-default-allow",
+        "policy-reject-ingress-host-loopback-allow",
+        "network_listener_not_host_reachable"
+      ]
+    },
+    {
+      "id": "network.ipv6",
+      "support": "unsupported",
+      "observation": "refused",
+      "scope": "Stable selected egress has no available IPv6 connectivity. Adding an allow rule did not make the tested IPv6 destination available.",
+      "nativeCase": "network_ipv6_allow_stays_unreachable"
+    },
+    {
+      "id": "network.shared-host",
+      "support": "unsupported",
+      "observation": "not-run",
+      "scope": "Outside both product isolation profiles."
+    },
+    {
+      "id": "filesystem.path-remapping",
+      "support": "unsupported",
+      "observation": "not-run",
+      "scope": "Same-path grants only. No universal host-to-guest path remapping."
+    },
+    {
+      "id": "environment.host-inheritance",
+      "support": "unsupported",
+      "observation": "not-run",
+      "scope": "Only explicit request environment plus the selected platform baseline."
+    },
+    {
+      "id": "recovery.reattach-across-reboot",
+      "support": "unsupported",
+      "observation": "not-run",
+      "scope": "The boot-scoped owner and native resources cannot survive a reboot."
+    },
+    {
+      "id": "recovery.pause-resume",
+      "support": "unsupported",
+      "observation": "not-run",
+      "scope": "Stable MXC does not expose generic tree, terminal and deadline semantics for pause/resume."
+    }
+  ]
+}

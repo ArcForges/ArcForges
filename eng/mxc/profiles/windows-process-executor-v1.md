@@ -1,6 +1,6 @@
 # Windows composed-profile experiment
 
-This is the AFV2-MXC-02 native experiment, not an admitted product runtime. Keep the existing product executors and data/recovery guards. Use the official cohort selected by `eng/mxc/stage.py`; every invocation verifies its manifest before execution.
+This describes the AFV2-MXC-02 native experiment. AFV2-MXC-04 uses the [scoped native qualification record](windows-process-executor-v1.qualification.json) for profile admission. Runtime integration retains the existing execution and recovery guards until their replacements qualify. Use the official cohort selected by `eng/mxc/stage.py`; every invocation verifies its manifest before execution.
 
 Run the published probe on the designated native Windows host to qualify the wrapper:
 
