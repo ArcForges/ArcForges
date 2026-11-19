@@ -173,6 +173,9 @@ public sealed partial class LinuxWorkerInterruptionHostTests
             Assert.Equal(afterWorker, File.ReadAllBytes(target));
 
             await node.StopNodeAsync();
+            // Endpoint shutdown can precede release of the original process instance lock.
+            await host.WaitForExitAsync(ct).WaitAsync(TimeSpan.FromSeconds(15), ct);
+            Assert.Equal(0, host.ExitCode);
             await node.StartNodeAsync();
             connection = await center.Channel.ProvedAsync(2);
             await using var restartedHuman = await node.HumanChannelAsync();
