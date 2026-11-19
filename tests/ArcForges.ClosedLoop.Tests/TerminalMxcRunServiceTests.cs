@@ -85,7 +85,20 @@ public sealed partial class MxcRunServiceTests
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         await using var installed = await InstalledTerminal.StartAsync();
-        var run = await installed.RunAsync(TerminalMode.Pipes, "echo");
+        bool waitAfterEof = OperatingSystem.IsLinux();
+        var eofObserved = Path.Combine(installed.Working, "pipe-eof-observed");
+        var release = Path.Combine(installed.Working, "pipe-eof-release");
+        const string echoThenHold = """
+            "$1" echo || exit $?
+            : > "$2" || exit $?
+            "$1" hold --hold-ms 20000 --until-file "$3" > /dev/null || exit $?
+            test -f "$3"
+            """;
+        // Keep the Linux owner alive after echo reads native EOF so the client can collect its acknowledgment.
+        var run = waitAfterEof
+            ? await installed.StartRunAsync(TerminalMode.Pipes,
+                ["/usr/bin/dash", "-c", echoThenHold, "arcforges-pipe-fixture", installed.TestLoad, eofObserved, release])
+            : await installed.RunAsync(TerminalMode.Pipes, "echo");
         Assert.Equal(TerminalMode.Pipes, run.TerminalMode);
         var writer = await AcquireWriterAsync(installed.Runs, run);
         var bytes = new byte[65_536];
@@ -122,8 +135,26 @@ public sealed partial class MxcRunServiceTests
         var mixed = Input(run, newWriter, 1, [0]);
         mixed.CloseStdin = true;
         Assert.Equal("invalid_argument", (await WriteAsync(resumed, mixed)).Error?.Code);
+        if (waitAfterEof)
+        {
+            Assert.False(File.Exists(eofObserved));
+        }
+
         await AcceptInputAsync(resumed, eof, 0);
-        await AssertTerminalExitAsync(installed, run);
+        if (waitAfterEof)
+        {
+            await TestNode.WaitAsync(() => File.Exists(eofObserved), NativeBound, "the native pipe EOF marker");
+            Assert.Equal(RunState.Running, (await InspectAsync(resumed, run.RunId, Ct)).State);
+            await File.WriteAllTextAsync(release, "release", Ct);
+        }
+
+        var final = await AssertTerminalExitAsync(installed, run);
+        if (waitAfterEof)
+        {
+            Assert.True(final.Exit.HasRawCode);
+            Assert.Equal(0, final.Exit.RawCode);
+        }
+
         var stdout = await WatchAsync(resumed, run, StreamKind.Stdout);
         Assert.Null(stdout.Gap);
         Assert.Equal(65_536UL, stdout.Offset);

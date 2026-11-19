@@ -91,27 +91,35 @@ public sealed partial class MxcRunServiceTests
         Assert.Empty(TestNode.LogEvents(package.Fixture.NodeLog, PressureStopEvent));
         Assert.Equal(RunState.Running, (await InspectAsync(package.Runs, newest.RunId, cancellation)).State);
 
-        TimeSpan reaction;
+        int sustainedChanges = TestNode.LogEvents(package.Fixture.NodeLog, PressureChangeEvent).Count;
         await using (var sustained = new InstalledPressurePulse(package.Fixture, "sustained", critical))
         {
             _ = await sustained.WaitForCriticalAsync(cancellation);
             var crossed = DateTimeOffset.UtcNow;
-            DateTimeOffset? decisionAt = null;
+            TestContext.Current.TestOutputHelper?.WriteLine(FormattableString.Invariant(
+                $"Independent native available-memory crossing at {crossed:O}; waiting up to 3s for Node raw Critical."));
+            var firstRaw = await WaitForPressureChangeAsync(package.Fixture, sustainedChanges,
+                entry => PressureState(entry, "raw") == "critical", TimeSpan.FromSeconds(3));
+            var detected = PressureEventTime(firstRaw) - crossed;
+            TestContext.Current.TestOutputHelper?.WriteLine(FormattableString.Invariant(
+                $"Node first observed raw Critical at sample {PressureSampleSequence(firstRaw)}, {detected.TotalMilliseconds:F0}ms after the independent crossing."));
+            Assert.True(detected <= TimeSpan.FromSeconds(3), "The first coherent Node raw Critical observation exceeded the 3s diagnostic bound.");
+            Assert.NotEqual("critical", PressureState(firstRaw, "effective"));
+
+            JsonElement decision = default;
             await TestNode.WaitAsync(async () =>
             {
                 sustained.RequireAvailableHeadroom();
                 var stops = TestNode.LogEvents(package.Fixture.NodeLog, PressureStopEvent);
                 if (stops.Count == 0) return false;
-                var entry = Assert.Single(stops);
-                Assert.Equal(Hex(newest.RunId), PressureState(entry, "runId"));
-                decisionAt = PressureEventTime(entry);
+                decision = Assert.Single(stops);
+                Assert.Equal(Hex(newest.RunId), PressureState(decision, "runId"));
                 return (await InspectAsync(package.Runs, newest.RunId, cancellation)).State
                     is RunState.Stopping or RunState.Draining or RunState.Exited;
             }, TimeSpan.FromSeconds(12), "one authorized native pressure stop");
-            reaction = Assert.IsType<DateTimeOffset>(decisionAt) - crossed;
-            Assert.InRange(reaction.TotalSeconds, 4.25, 6.25);
             await sustained.ReleaseAsync(cancellation);
             lowestAvailable = Math.Min(lowestAvailable, sustained.LowestAvailable);
+            RequirePressureDecisionTiming(package.Fixture, sustainedChanges, crossed, decision);
         }
 
         // The observed effective level retains Critical after the physical release. Even interactive admissions are refused.
@@ -170,7 +178,7 @@ public sealed partial class MxcRunServiceTests
         Assert.True((await package.DrainAsync(older.RunId, cancellation)).Exit.GroupEmptyVerified);
         Assert.True((await package.DrainAsync(protectedRun.RunId, cancellation)).Exit.GroupEmptyVerified);
         TestContext.Current.TestOutputHelper?.WriteLine(FormattableString.Invariant(
-            $"Native available memory bottomed at {lowestAvailable >> 20} MiB under a fixture Critical threshold of {critical >> 20} MiB. One verified pressure stop followed sustained pressure in {reaction.TotalMilliseconds:F0}ms; both peer Runs survived."));
+            $"Native available memory bottomed at {lowestAvailable >> 20} MiB under a fixture Critical threshold of {critical >> 20} MiB. One verified pressure stop completed; both peer Runs survived."));
     }
 
     private static string? PressureState(JsonElement entry, string field) =>
@@ -178,6 +186,37 @@ public sealed partial class MxcRunServiceTests
 
     private static DateTimeOffset PressureEventTime(JsonElement entry) =>
         DateTimeOffset.Parse(entry.GetProperty("at").GetString()!, CultureInfo.InvariantCulture);
+
+    private static ulong PressureSampleSequence(JsonElement entry) => entry.GetProperty("fields").GetProperty("sampleSequence").GetUInt64();
+
+    private static void RequirePressureDecisionTiming(TestNode fixture, int offset, DateTimeOffset crossed, JsonElement decision)
+    {
+        var stopSample = PressureSampleSequence(decision);
+        var transitions = TestNode.LogEvents(fixture.NodeLog, PressureChangeEvent).Skip(offset)
+            .Where(entry => PressureSampleSequence(entry) <= stopSample).ToArray();
+        int effectiveIndex = Array.FindIndex(transitions, entry => PressureState(entry, "effective") == "critical");
+        Assert.True(effectiveIndex >= 0, $"Stop sample {stopSample} has no matching effective Critical transition after physical crossing {crossed:O}.");
+
+        // The raw stream records changes. A noncritical raw observation resets persistence, even if the OS observer crossed earlier.
+        int rawIndex = effectiveIndex;
+        while (rawIndex > 0 && PressureState(transitions[rawIndex - 1], "raw") == "critical") rawIndex--;
+        var raw = transitions[rawIndex];
+        var effective = transitions[effectiveIndex];
+        var rawSample = PressureSampleSequence(raw);
+        var effectiveSample = PressureSampleSequence(effective);
+        var rawAt = PressureEventTime(raw);
+        var persistence = PressureEventTime(effective) - rawAt;
+        var stopReaction = PressureEventTime(decision) - rawAt;
+        var details = FormattableString.Invariant(
+            $"Physical crossing to contiguous raw Critical {(rawAt - crossed).TotalMilliseconds:F0}ms (sample {rawSample}), raw to effective Critical {persistence.TotalMilliseconds:F0}ms (sample {effectiveSample}), raw to Stop {stopReaction.TotalMilliseconds:F0}ms (sample {stopSample}).");
+        TestContext.Current.TestOutputHelper?.WriteLine(details);
+        Assert.Equal("critical", PressureState(raw, "raw"));
+        Assert.Equal("critical", PressureState(effective, "raw"));
+        Assert.True(rawSample < effectiveSample, details);
+        Assert.True(stopSample == effectiveSample, details);
+        Assert.InRange(persistence.TotalSeconds, 4.25, 6.25);
+        Assert.InRange(stopReaction.TotalSeconds, 4.25, 6.25);
+    }
 
     private static async Task<JsonElement> WaitForPressureChangeAsync(TestNode fixture, int offset,
         Func<JsonElement, bool> predicate, TimeSpan bound)
