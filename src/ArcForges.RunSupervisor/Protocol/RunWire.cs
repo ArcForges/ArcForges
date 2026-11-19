@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Buffers.Binary;
 using System.Runtime.InteropServices;
-using Microsoft.Win32.SafeHandles;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Win32.SafeHandles;
 
 namespace ArcForges.RunSupervisor.Protocol;
 

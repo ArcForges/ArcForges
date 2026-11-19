@@ -51,7 +51,7 @@ internal sealed partial class SandboxManager
         var terminal = request.TerminalMode switch
         {
             TerminalMode.Interactive when request.TerminalSize is
-                { Rows: >= 1 and <= 32767, Columns: >= 1 and <= 32767 } => MxcTerminalMode.Interactive,
+            { Rows: >= 1 and <= 32767, Columns: >= 1 and <= 32767 } => MxcTerminalMode.Interactive,
             TerminalMode.Pipes when request.TerminalSize is null => MxcTerminalMode.Pipes,
             _ => MxcTerminalMode.Unspecified,
         };

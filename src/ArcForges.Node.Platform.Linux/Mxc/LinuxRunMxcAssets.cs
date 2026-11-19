@@ -46,7 +46,7 @@ internal static class LinuxRunMxcAssets
         const string nativeMember = "libmxc_ffi.so";
         var nativeHash = Hash(Path.Combine(spec.InstallationRoot, nativeMember), rootOnly: false, executable: false);
         if (!MxcProfileAdmission.MatchesNativeMembers(false, new Dictionary<string, string>(StringComparer.Ordinal)
-            { [nativeMember] = nativeHash }))
+        { [nativeMember] = nativeHash }))
         {
             throw new RunNativeException("linux_mxc_profile", "pinned_sdk_native_member_mismatch", payloadNotStarted: true);
         }

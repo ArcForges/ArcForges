@@ -132,8 +132,11 @@ public sealed class MxcRunServiceTests
                 AssertRunProjection(settled, sandbox, original.Argv[0]);
                 var renamed = await sandboxes.ConfigureAsync(new SandboxServiceConfigureRequest
                 {
-                    Meta = Mutation(sandbox.Revision), OwnerEpoch = ownerEpoch, SandboxId = sandbox.SandboxId,
-                    Config = sandbox.Config.Clone(), DisplayName = "Renamed native Run package fixture",
+                    Meta = Mutation(sandbox.Revision),
+                    OwnerEpoch = ownerEpoch,
+                    SandboxId = sandbox.SandboxId,
+                    Config = sandbox.Config.Clone(),
+                    DisplayName = "Renamed native Run package fixture",
                 }, deadline: Deadline, cancellationToken: Ct);
                 Assert.True(Value(renamed.Value, renamed.Error).Sandbox.Revision.Value > sandbox.Revision.Value);
                 AssertRunProjection(await InspectAsync(runs, settled.RunId, Ct), sandbox, original.Argv[0]);
@@ -491,7 +494,10 @@ public sealed class MxcRunServiceTests
 
     private static RunServiceStopRequest BuildStop(Id ownerEpoch, Run run) => new()
     {
-        Meta = Mutation(run.Revision), OwnerEpoch = ownerEpoch, RunId = run.RunId, GraceMs = 0,
+        Meta = Mutation(run.Revision),
+        OwnerEpoch = ownerEpoch,
+        RunId = run.RunId,
+        GraceMs = 0,
     };
 
     private static async Task<RunServiceStopValue> StopAsync(RunService.RunServiceClient runs, RunServiceStopRequest request,
@@ -686,7 +692,9 @@ public sealed class MxcRunServiceTests
     {
         var reply = await node.GetOperationAsync(new NodeServiceGetOperationRequest
         {
-            Meta = Query(), CommandId = commandId, OwnerEpoch = ownerEpoch,
+            Meta = Query(),
+            CommandId = commandId,
+            OwnerEpoch = ownerEpoch,
         }, deadline: Deadline, cancellationToken: Ct);
         return Value(reply.Value, reply.Error).Operation;
     }
@@ -761,7 +769,9 @@ public sealed class MxcRunServiceTests
 
     private static RequestMeta Mutation(Revision? revision = null) => new()
     {
-        CorrelationId = CommandIds.New(), CommandId = CommandIds.New(), ExpectedRev = revision,
+        CorrelationId = CommandIds.New(),
+        CommandId = CommandIds.New(),
+        ExpectedRev = revision,
     };
 
     private static T Value<T>(T? value, ArcError? error) where T : class
