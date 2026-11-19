@@ -82,8 +82,9 @@ public sealed partial class MxcRunServiceTests
             var running = await WaitForStateAsync(fixture, runs, activeRun.RunId, RunState.Running, cancellation);
 
             var nativeOwner = ReadSupervisor(fixture.DataRoot, running);
+            using var windowsOwner = OperatingSystem.IsWindows() ? HoldWindowsResourceOwner(nativeOwner) : null;
             var windowsPrepared = OperatingSystem.IsWindows()
-                ? ReadWindowsJobResource(fixture.DataRoot, running, nativeOwner.Creation, "windows-prepared.json") : null;
+                ? ReadWindowsJobResource(fixture.DataRoot, running, nativeOwner, "windows-prepared.json") : null;
             if (windowsPrepared is { } prepared)
             {
                 Assert.DoesNotContain(unmanaged.Id, prepared.ProcessIds);
@@ -233,8 +234,14 @@ public sealed partial class MxcRunServiceTests
             Assert.Equal(ResourceBytes(UnmanagedRampMiB), ResourceAllocationReport(unmanagedReport));
             if (OperatingSystem.IsWindows() && windowsPrepared is { } preparedJob)
             {
-                var drained = ReadWindowsJobResource(fixture.DataRoot, running, nativeOwner.Creation, "windows-drained.json");
-                Assert.Empty(drained.ProcessIds);
+                var drained = ReadWindowsJobResource(fixture.DataRoot, running, nativeOwner, "windows-drained.json");
+                // The worker writes its last accounting while it is the sole outer Job member.
+                // Node verifies final aggregate drain after that exact process exits.
+                Assert.Equal(nativeOwner.Pid, Assert.Single(drained.ProcessIds));
+                Assert.Empty(drained.PayloadProcessIds);
+                Assert.True(drained.OutputDrainCompleted);
+                Assert.NotNull(windowsOwner);
+                Assert.True(windowsOwner.HasExited);
                 Assert.InRange(runUsage.CumulativeCpuUsec, preparedJob.CumulativeCpuUsec, drained.CumulativeCpuUsec);
                 Assert.InRange(runUsage.PeakMemoryBytes, Math.Max(preparedJob.PeakCommitBytes, rampBytes), drained.PeakCommitBytes);
             }
@@ -362,7 +369,25 @@ public sealed partial class MxcRunServiceTests
     private static RunResourceObservation ReadLinuxResource(LinuxRunCgroup held) => Assert.IsType<RunResourceObservation>(held.ObserveResources());
 
     [SupportedOSPlatform("windows")]
-    private static WindowsJobResource ReadWindowsJobResource(string dataRoot, Run run, string ownerCreation, string fileName)
+    private static Process HoldWindowsResourceOwner((int Pid, string Creation, string Boundary) owner)
+    {
+        var process = Process.GetProcessById(owner.Pid);
+        try
+        {
+            Assert.False(process.SafeHandle.IsInvalid);
+            Assert.Equal(owner.Creation, process.StartTime.ToUniversalTime().ToFileTimeUtc().ToString(CultureInfo.InvariantCulture));
+            return process;
+        }
+        catch
+        {
+            process.Dispose();
+            throw;
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static WindowsJobResource ReadWindowsJobResource(string dataRoot, Run run,
+        (int Pid, string Creation, string Boundary) owner, string fileName)
     {
         var control = Path.Combine(dataRoot, "control", "run-" + Hex(run.RunId));
         var path = Path.Combine(control, fileName);
@@ -372,15 +397,23 @@ public sealed partial class MxcRunServiceTests
         var root = data.RootElement;
         Assert.Equal(Hex(run.RunId), root.GetProperty("runId").GetString());
         Assert.Equal(run.LaunchSha256, root.GetProperty("launchSha256").GetString());
-        Assert.Equal(ownerCreation, root.GetProperty("ownerCreationFileTime").GetInt64().ToString(CultureInfo.InvariantCulture));
+        Assert.Equal(owner.Pid, root.GetProperty("ownerPid").GetInt32());
+        Assert.Equal(owner.Creation, root.GetProperty("ownerCreationFileTime").GetInt64().ToString(CultureInfo.InvariantCulture));
         var job = root.GetProperty("aggregate");
-        var processIds = job.GetProperty("processIds").EnumerateArray().Select(pid => pid.GetInt32()).ToArray();
-        Assert.Equal((uint)processIds.Length, job.GetProperty("activeProcesses").GetUInt32());
         return new((job.GetProperty("userTimeTicks").GetUInt64() + job.GetProperty("kernelTimeTicks").GetUInt64()) / 10,
-            job.GetProperty("peakCommitBytes").GetUInt64(), processIds);
+            job.GetProperty("peakCommitBytes").GetUInt64(), ReadJobMembers(job), ReadJobMembers(root.GetProperty("payload")),
+            root.TryGetProperty("outputDrainCompleted", out var drained) && drained.GetBoolean());
+
+        static int[] ReadJobMembers(JsonElement scope)
+        {
+            var members = scope.GetProperty("processIds").EnumerateArray().Select(pid => pid.GetInt32()).ToArray();
+            Assert.Equal((uint)members.Length, scope.GetProperty("activeProcesses").GetUInt32());
+            return members;
+        }
     }
 
-    private sealed record WindowsJobResource(ulong CumulativeCpuUsec, ulong PeakCommitBytes, int[] ProcessIds);
+    private sealed record WindowsJobResource(ulong CumulativeCpuUsec, ulong PeakCommitBytes, int[] ProcessIds,
+        int[] PayloadProcessIds, bool OutputDrainCompleted);
 
     private static void RequirePsiProjection(ResourceSnapshot snapshot, double? cpuSome, double? memorySome, double? memoryFull)
     {
