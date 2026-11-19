@@ -22,6 +22,7 @@ internal sealed class WindowsRunSession : IRunWorkerSession
     private readonly WindowsMxcPathLease _policy;
     private readonly WindowsRunPathBindings _paths;
     private readonly WindowsRunEvidence _evidence;
+    private readonly RunOutputCapture _capture;
     private readonly Task _monitor;
     private readonly object _stopGate = new();
     private RunOwnerObservation _observation = new(RunOwnerState.Running, RunPayloadStart.Unknown, false);
@@ -31,7 +32,7 @@ internal sealed class WindowsRunSession : IRunWorkerSession
 
     internal WindowsRunSession(WindowsMxcJob aggregate, WindowsMxcJob payload, LaunchedProcess executor,
         WindowsRunIo io, WindowsMxcStage installed, WindowsMxcPathLease control, WindowsMxcPathLease policy,
-        WindowsRunPathBindings paths, WindowsRunEvidence evidence)
+        WindowsRunPathBindings paths, WindowsRunEvidence evidence, RunOutputCapture capture)
     {
         _aggregate = aggregate;
         _payload = payload;
@@ -42,6 +43,7 @@ internal sealed class WindowsRunSession : IRunWorkerSession
         _policy = policy;
         _paths = paths;
         _evidence = evidence;
+        _capture = capture;
         _monitor = MonitorAsync();
     }
 
@@ -50,6 +52,15 @@ internal sealed class WindowsRunSession : IRunWorkerSession
         cancellationToken.ThrowIfCancellationRequested();
         return ValueTask.FromResult(Volatile.Read(ref _observation));
     }
+
+    public ValueTask<int> WriteTerminalAsync(ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken) =>
+        _io.WriteTerminalAsync(bytes, cancellationToken);
+
+    public ValueTask CloseTerminalInputAsync(CancellationToken cancellationToken) =>
+        _io.CloseTerminalInputAsync(cancellationToken);
+
+    public ValueTask ResizeTerminalAsync(uint rows, uint columns, CancellationToken cancellationToken) =>
+        _io.ResizeTerminalAsync(rows, columns, cancellationToken);
 
     public ValueTask StopAsync(TimeSpan grace, CancellationToken cancellationToken)
     {
@@ -69,10 +80,9 @@ internal sealed class WindowsRunSession : IRunWorkerSession
 
     private async Task MonitorAsync()
     {
-        // Drain both selected pipe streams, or the ConPTY stream, even when no client is attached.
-        // Terminal export and replay are implemented by the terminal broker.
-        var output = _io.Output.CopyToAsync(Stream.Null, 16 * 1024, CancellationToken.None);
-        var error = _io.Error?.CopyToAsync(Stream.Null, 16 * 1024, CancellationToken.None) ?? Task.CompletedTask;
+        var stderr = _io.Error;
+        var output = Task.Run(() => DrainOutputAsync(_io.Output, stderr is null ? RunOutputStream.Terminal : RunOutputStream.Stdout));
+        var error = stderr is null ? Task.CompletedTask : Task.Run(() => DrainOutputAsync(stderr, RunOutputStream.Stderr));
         int? rawExit = null;
         string? reason = null;
         try
@@ -96,16 +106,44 @@ internal sealed class WindowsRunSession : IRunWorkerSession
             _io.CloseInput();
             await Task.WhenAll(_io.CloseConsoleAsync(), output, error).WaitAsync(DrainDeadline).ConfigureAwait(false);
             var aggregate = await _aggregate.WaitForDrainAsync(Environment.ProcessId, DrainDeadline, CancellationToken.None).ConfigureAwait(false);
+            var retentionFailure = await CompleteOutputRetentionAsync().ConfigureAwait(false);
             _policy.DeletePrivateFile();
             _evidence.WriteDrained(rawExit.Value, reason, aggregate, payload);
             Volatile.Write(ref _observation, new(RunOwnerState.Exited, RunPayloadStart.Unknown, true,
-                rawExit, RunExitSources.OfficialExecutor, reason));
+                rawExit, RunExitSources.OfficialExecutor, reason, retentionFailure));
         }
         catch (Exception exception) when (exception is IOException or InvalidDataException or Win32Exception or TimeoutException or UnauthorizedAccessException or ObjectDisposedException)
         {
+            _capture.Dispose();
             Volatile.Write(ref _observation, new(RunOwnerState.RecoveryRequired, RunPayloadStart.Unknown, false,
                 rawExit, rawExit.HasValue ? RunExitSources.OfficialExecutor : RunExitSources.Unknown,
                 _stopObserved ? "user_stop" : reason ?? "owner_failure", WindowsRunLauncher.NativeCode(exception)));
+        }
+    }
+
+    private async Task DrainOutputAsync(Stream source, RunOutputStream kind)
+    {
+        var buffer = new byte[16 * 1024];
+        while (await source.ReadAsync(buffer, CancellationToken.None).ConfigureAwait(false) is var count && count > 0)
+        {
+            _capture.Capture(kind, buffer.AsSpan(0, count));
+        }
+    }
+
+    private async Task<string?> CompleteOutputRetentionAsync()
+    {
+        try
+        {
+            await _capture.CompleteAsync().WaitAsync(DrainDeadline).ConfigureAwait(false);
+            return null;
+        }
+        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or TimeoutException or OperationCanceledException)
+        {
+            return "windows_output_retention/" + WindowsRunLauncher.NativeCode(error);
+        }
+        finally
+        {
+            _capture.Dispose();
         }
     }
 
@@ -174,6 +212,7 @@ internal sealed class WindowsRunSession : IRunWorkerSession
         }
         finally
         {
+            _capture.Dispose();
             _io.Dispose();
             _executor.Dispose();
             _payload.Dispose();

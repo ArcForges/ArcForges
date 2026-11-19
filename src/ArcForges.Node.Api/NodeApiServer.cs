@@ -48,7 +48,7 @@ public static class NodeApiServer
         builder.AddService(new NodeEventServiceHandler(node, streamBuffer));
         builder.AddService(new SandboxNodeServiceHandler(node));
         builder.AddService(new SandboxServiceHandler(node));
-        builder.AddService(new RunServiceHandler(node));
+        builder.AddService(new RunServiceHandler(node, sessions));
         var sandboxDeadline = new LocalRpcCallProfile(TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
         builder.RegisterMethod(SandboxNode, "Handshake", sandboxDeadline);
         builder.RegisterMethod(SandboxNode, "GetOperation", sandboxDeadline);
@@ -56,10 +56,17 @@ public static class NodeApiServer
         {
             builder.RegisterMethod(Sandbox, method, sandboxDeadline);
         }
-        foreach (var method in (ReadOnlySpan<string>)["Start", "List", "Inspect", "Stop"])
+        foreach (var method in (ReadOnlySpan<string>)["Start", "List", "Inspect", "Stop", "AcquireTerminal", "WriteTerminal",
+                     "ResizeTerminal", "DetachTerminal"])
         {
             builder.RegisterMethod(Runs, method, sandboxDeadline);
         }
+
+        builder.RegisterStream(Runs, "WatchOutput", new LocalRpcStreamProfile
+        {
+            MaxBufferedMessages = RunServiceHandler.OutputBuffer,
+            RequireReads = TimeSpan.FromSeconds(10),
+        });
 
         var tasks = new TaskServiceHandler(node, sessions, executors);
         var files = new FileServiceHandler(node);

@@ -7,6 +7,47 @@ public enum RunTerminalMode
     Interactive = 2,
 }
 
+public enum RunTerminalAction
+{
+    Acquire,
+    Write,
+    Resize,
+    Detach,
+    Revoke,
+}
+
+public enum RunTerminalLeaseMode
+{
+    Observer = 1,
+    Writer = 2,
+}
+
+public enum RunTerminalStatus
+{
+    Ok,
+    Pending,
+    InvalidArgument,
+    LeaseStale,
+    CommandIdReused,
+    Busy,
+    TerminalUnavailable,
+    Unsupported,
+    AckUnavailable,
+}
+
+/// <summary>Identity resolved by the trusted Node from the actual local transport peer.</summary>
+public sealed record RunTerminalCaller(int ProcessId, long ProcessStartTicks, string ConnectionId);
+
+public sealed record RunTerminalLease(string LeaseId, string RunEpoch, ulong Generation, RunTerminalLeaseMode Mode,
+    DateTimeOffset ExpiresAt, ulong LastInputSequence, ulong LastResizeSequence);
+
+public sealed record RunTerminalRequest(RunTerminalAction Action, RunTerminalCaller Caller, string CommandId,
+    RunTerminalLease? Lease = null, RunTerminalLeaseMode? Mode = null, string? ExistingLeaseId = null, bool Takeover = false,
+    ulong Sequence = 0, byte[]? Input = null, bool CloseStdin = false, uint Rows = 0, uint Columns = 0);
+
+public sealed record RunTerminalReply(RunTerminalStatus Status, RunTerminalLease? Lease = null,
+    int? AcceptedBytes = null, uint? Rows = null, uint? Columns = null);
+
 public enum RunOwnerState
 {
     Ready,
@@ -111,6 +152,7 @@ public interface IRunOwnerLease : IAsyncDisposable
     ValueTask ActivateAsync(CancellationToken cancellationToken);
     ValueTask StopAsync(TimeSpan grace, CancellationToken cancellationToken);
     ValueTask<RunOwnerObservation> ObserveAsync(CancellationToken cancellationToken);
+    ValueTask<RunTerminalReply> TerminalAsync(RunTerminalRequest request, CancellationToken cancellationToken);
 }
 
 /// <summary>Owner-local execution. These handles outlive the Node connection that activated the Run.</summary>
@@ -118,6 +160,9 @@ public interface IRunWorkerSession : IAsyncDisposable
 {
     ValueTask StopAsync(TimeSpan grace, CancellationToken cancellationToken);
     ValueTask<RunOwnerObservation> ObserveAsync(CancellationToken cancellationToken);
+    ValueTask<int> WriteTerminalAsync(ReadOnlyMemory<byte> input, CancellationToken cancellationToken);
+    ValueTask CloseTerminalInputAsync(CancellationToken cancellationToken);
+    ValueTask ResizeTerminalAsync(uint rows, uint columns, CancellationToken cancellationToken);
 }
 
 public sealed class RunNativeException(string phase, string nativeCode, bool boundaryEmptyVerified = false,

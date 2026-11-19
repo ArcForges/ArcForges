@@ -173,6 +173,9 @@ public sealed class LinuxRunLauncher : IRunLauncher
 
         public RunOwnerIdentity Identity { get; } = identity;
 
+        public ValueTask<RunTerminalReply> TerminalAsync(RunTerminalRequest request, CancellationToken cancellationToken) =>
+            controller.TerminalAsync(request, cancellationToken);
+
         public async ValueTask ActivateAsync(CancellationToken cancellationToken)
         {
             var current = await LinuxRunSystemd.ReadAsync(native.Name, cancellationToken).ConfigureAwait(false);

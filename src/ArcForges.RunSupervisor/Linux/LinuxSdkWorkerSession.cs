@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Globalization;
 using System.Runtime.Versioning;
+using System.Security.Cryptography;
 using ArcForges.Node.Platform.Linux.Mxc;
 using ArcForges.RunSupervisor.Protocol;
 using Microsoft.Mxc.Sdk.V1;
@@ -15,28 +16,29 @@ internal sealed class LinuxSdkWorkerSession : IRunWorkerSession
     private readonly LinuxRunCgroup _scope;
     private readonly MxcProcess _process;
     private readonly Stream _input;
+    private readonly RunOutputCapture _outputCapture;
     private readonly Task<WaitResult> _nativeWait;
-    private readonly Task _stdout;
-    private readonly Task _stderr;
+    private readonly Task _outputDrains;
+    private readonly Task _outputFinalization;
     private readonly Task _completion;
     private readonly Lock _gate = new();
     private readonly Lock _nativeGate = new();
+    private readonly SemaphoreSlim _terminalIo = new(1, 1);
     private Task? _stop;
     private Task? _nativeKill;
     private Task? _nativeDisposal;
     private RunOwnerObservation _latest = new(RunOwnerState.Running, RunPayloadStart.Unknown, false);
-    private long _outputRemaining;
+    private InputState _inputState;
     private int _stopping;
     private string? _outputError;
     private bool _disposed;
 
-    private LinuxSdkWorkerSession(RunLaunchSpec spec, LinuxRunServiceState owner, LinuxRunCgroup scope, MxcProcess process,
-        FileStream stdoutFile, FileStream stderrFile)
+    private LinuxSdkWorkerSession(LinuxRunServiceState owner, LinuxRunCgroup scope, MxcProcess process, RunOutputCapture outputCapture)
     {
         _owner = owner;
         _scope = scope;
         _process = process;
-        _outputRemaining = checked((long)spec.OutputLimitBytes);
+        _outputCapture = outputCapture;
         var terminal = process as MxcPtyProcess;
         _input = (terminal is null ? process.StandardInput : terminal.Input)
             ?? throw new IOException("The fixed MXC SDK did not return Run input.");
@@ -48,8 +50,12 @@ internal sealed class LinuxSdkWorkerSession : IRunWorkerSession
             throw new IOException("The fixed MXC SDK did not return the requested stderr pipe.");
         }
 
-        _stdout = Task.Run(() => DrainAsync(stdout, stdoutFile), CancellationToken.None);
-        _stderr = Task.Run(() => DrainAsync(stderr, stderrFile), CancellationToken.None);
+        var stdoutDrain = Task.Run(() => DrainAsync(stdout, terminal is null ? RunOutputStream.Stdout : RunOutputStream.Terminal), CancellationToken.None);
+        // The official PTY combines the workload's output. Any separate SDK
+        // diagnostics stream still needs drainage, but is not a second PTY cursor.
+        var stderrDrain = Task.Run(() => DrainAsync(stderr, terminal is null ? RunOutputStream.Stderr : null), CancellationToken.None);
+        _outputDrains = Task.WhenAll(stdoutDrain, stderrDrain);
+        _outputFinalization = Task.Run(FinalizeOutputAsync, CancellationToken.None);
         // All owner streams have been taken before the independent native waiter
         // can claim an untaken stream for its internal discard drain.
         _nativeWait = _process.WaitAsync(CancellationToken.None);
@@ -59,15 +65,14 @@ internal sealed class LinuxSdkWorkerSession : IRunWorkerSession
     internal static async ValueTask<LinuxSdkWorkerSession> StartAsync(RunLaunchSpec spec, ContainerRequest request,
         LinuxRunServiceState owner, LinuxRunCgroup scope, CancellationToken cancellationToken)
     {
-        FileStream? stdout = null;
-        FileStream? stderr = null;
+        RunOutputCapture? outputCapture = null;
         MxcProcess? process = null;
         var invoked = false;
         var transferred = false;
         try
         {
-            stdout = CreateOutput(spec, "stdout.bin");
-            stderr = CreateOutput(spec, "stderr.bin");
+            cancellationToken.ThrowIfCancellationRequested();
+            outputCapture = RunOutputCapture.Create(spec);
             cancellationToken.ThrowIfCancellationRequested();
             using var bindings = LinuxRunPathBindings.Open(spec);
             cancellationToken.ThrowIfCancellationRequested();
@@ -84,7 +89,7 @@ internal sealed class LinuxSdkWorkerSession : IRunWorkerSession
                 throw new IOException("The fixed MXC SDK did not return a native process identity.");
             }
 
-            var session = new LinuxSdkWorkerSession(spec, owner, scope, process, stdout, stderr);
+            var session = new LinuxSdkWorkerSession(owner, scope, process, outputCapture);
             transferred = true;
             return session;
         }
@@ -116,11 +121,9 @@ internal sealed class LinuxSdkWorkerSession : IRunWorkerSession
 #pragma warning restore CA1031
         finally
         {
-            // Once construction succeeds, the two independent drains own their output files.
             if (!transferred)
             {
-                stdout?.Dispose();
-                stderr?.Dispose();
+                outputCapture?.Dispose();
             }
         }
     }
@@ -140,6 +143,138 @@ internal sealed class LinuxSdkWorkerSession : IRunWorkerSession
         {
             _stop ??= StopCoreAsync(grace);
             return new(_stop.WaitAsync(cancellationToken));
+        }
+    }
+
+    public async ValueTask<int> WriteTerminalAsync(ReadOnlyMemory<byte> input, CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(input.Length, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(input.Length, 65_536);
+        await EnterTerminalIoAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (_inputState != InputState.Open)
+            {
+                throw new RunNativeException("linux_terminal_input",
+                    _inputState == InputState.Closed ? "terminal_input_closed" : "terminal_ack_unavailable");
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            var bytes = input.ToArray();
+            try
+            {
+                // The SDK reports success for the whole write or throws without
+                // an accepted prefix. Own the bytes and gate until it really ends.
+                await Task.Run(() =>
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    _input.Write(bytes, 0, bytes.Length);
+                }, cancellationToken).ConfigureAwait(false);
+                return bytes.Length;
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(bytes);
+            }
+        }
+        finally
+        {
+            _terminalIo.Release();
+        }
+    }
+
+    public async ValueTask CloseTerminalInputAsync(CancellationToken cancellationToken)
+    {
+        if (_process is MxcPtyProcess)
+        {
+            throw new RunNativeException("linux_terminal_input", "terminal_eof_pipe_only");
+        }
+
+        await EnterTerminalIoAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_inputState == InputState.Uncertain)
+            {
+                throw new RunNativeException("linux_terminal_input", "terminal_ack_unavailable");
+            }
+
+            await CloseInputCoreAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _terminalIo.Release();
+        }
+    }
+
+    public async ValueTask ResizeTerminalAsync(uint rows, uint columns, CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(rows, 1u);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(rows, (uint)short.MaxValue);
+        ArgumentOutOfRangeException.ThrowIfLessThan(columns, 1u);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(columns, (uint)short.MaxValue);
+        if (_process is not MxcPtyProcess terminal)
+        {
+            throw new RunNativeException("linux_terminal_resize", "terminal_resize_requires_pty");
+        }
+
+        await EnterTerminalIoAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await Task.Run(() =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                terminal.Resize(new MxcPtySize((ushort)rows, (ushort)columns));
+            }, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _terminalIo.Release();
+        }
+    }
+
+    private async ValueTask EnterTerminalIoAsync(CancellationToken cancellationToken)
+    {
+        if (!await _terminalIo.WaitAsync(0, cancellationToken).ConfigureAwait(false))
+        {
+            throw new RunNativeException("linux_terminal_io", "terminal_native_io_busy");
+        }
+
+        if (_nativeWait.IsCompleted)
+        {
+            _terminalIo.Release();
+            throw new RunNativeException("linux_terminal_io", "terminal_unavailable");
+        }
+    }
+
+    private async Task CloseInputCoreAsync(CancellationToken cancellationToken)
+    {
+        if (_inputState != InputState.Open)
+        {
+            return;
+        }
+
+        await Task.Run(() =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            // An exception can follow the native close. Never repeat an ambiguous EOF.
+            _inputState = InputState.Uncertain;
+            _input.Dispose();
+        }, cancellationToken).ConfigureAwait(false);
+        _inputState = InputState.Closed;
+    }
+
+    private async Task CloseInputForExitAsync()
+    {
+        await _terminalIo.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            await CloseInputCoreAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+        finally
+        {
+            _terminalIo.Release();
         }
     }
 
@@ -225,8 +360,8 @@ internal sealed class LinuxSdkWorkerSession : IRunWorkerSession
             reason = exit.TimedOut ? "timeout" : Volatile.Read(ref _stopping) != 0 ? "stopped" : "exited";
             Volatile.Write(ref _latest, new(RunOwnerState.Draining, RunPayloadStart.Unknown, false,
                 exitCode, RunExitSources.OfficialExecutor, reason));
-            await Task.WhenAll(_stdout, _stderr).WaitAsync(s_nativeDeadline).ConfigureAwait(false);
-            await Task.Run(_input.Dispose, CancellationToken.None).WaitAsync(s_nativeDeadline).ConfigureAwait(false);
+            await WaitForOutputAsync().ConfigureAwait(false);
+            await CloseInputForExitAsync().WaitAsync(s_nativeDeadline).ConfigureAwait(false);
             await DisposeOfficialAsync().WaitAsync(s_nativeDeadline).ConfigureAwait(false);
             using var clean = new CancellationTokenSource(s_nativeDeadline);
             while (!_scope.ContainsOnlyOwner(_owner.OwnerPid, _owner.OwnerStartTicks))
@@ -246,9 +381,8 @@ internal sealed class LinuxSdkWorkerSession : IRunWorkerSession
 #pragma warning restore CA1031
     }
 
-    private async Task DrainAsync(Stream? input, FileStream output)
+    private async Task DrainAsync(Stream? input, RunOutputStream? selected)
     {
-        await using var sink = output;
         if (input is null)
         {
             return;
@@ -256,54 +390,93 @@ internal sealed class LinuxSdkWorkerSession : IRunWorkerSession
 
         await using var stream = input;
         var buffer = new byte[32 * 1024];
-        var sinkAvailable = true;
         while (true)
         {
             var count = await stream.ReadAsync(buffer, CancellationToken.None).ConfigureAwait(false);
             if (count == 0)
             {
-                break;
+                return;
             }
 
-            if (sinkAvailable)
+            if (selected is not { } streamKind || Volatile.Read(ref _outputError) is not null)
             {
-                var accepted = ReserveOutput(count);
-                try
-                {
-                    await sink.WriteAsync(buffer.AsMemory(0, accepted), CancellationToken.None).ConfigureAwait(false);
-                }
-                catch (IOException error)
-                {
-                    sinkAvailable = false;
-                    Interlocked.CompareExchange(ref _outputError, NativeCode(error), null);
-                }
+                continue;
+            }
+
+            try
+            {
+                _outputCapture.Capture(streamKind, buffer.AsSpan(0, count));
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException)
+            {
+                // Output persistence failure must not stop native drainage.
+                Interlocked.CompareExchange(ref _outputError, NativeCode(error), null);
             }
         }
-
-        await sink.FlushAsync(CancellationToken.None).ConfigureAwait(false);
     }
 
-    private int ReserveOutput(int bytes)
+    private async Task WaitForOutputAsync()
     {
-        long available;
-        int accepted;
-        do
+        try
         {
-            available = Volatile.Read(ref _outputRemaining);
-            accepted = (int)Math.Min(available, bytes);
+            await _outputDrains.WaitAsync(s_nativeDeadline).ConfigureAwait(false);
         }
-        while (Interlocked.CompareExchange(ref _outputRemaining, available - accepted, available) != available);
-        return accepted;
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException or MxcException)
+        {
+            Interlocked.CompareExchange(ref _outputError, NativeCode(error), null);
+        }
+
+        try
+        {
+            await _outputFinalization.WaitAsync(s_nativeDeadline).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            // Native streams have already stopped. An index write cannot undo
+            // exact process exit or prevent independent native cleanup.
+            AbortTimedOutOutput();
+        }
     }
 
-    private static FileStream CreateOutput(RunLaunchSpec spec, string name) => new(Path.Combine(spec.ControlDirectory, name), new FileStreamOptions()
+    private async Task FinalizeOutputAsync()
     {
-        Mode = FileMode.CreateNew,
-        Access = FileAccess.Write,
-        Share = FileShare.Read,
-        Options = FileOptions.Asynchronous,
-        UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite,
-    });
+        try
+        {
+            // WhenAll settles only after both drains stop, even when one faults.
+            await _outputDrains.ConfigureAwait(false);
+            if (Volatile.Read(ref _outputError) is null)
+            {
+                await _outputCapture.CompleteAsync().WaitAsync(s_nativeDeadline).ConfigureAwait(false);
+            }
+        }
+        catch (TimeoutException)
+        {
+            AbortTimedOutOutput();
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException or MxcException
+            or OperationCanceledException)
+        {
+            Interlocked.CompareExchange(ref _outputError, NativeCode(error), null);
+        }
+        finally
+        {
+            _outputCapture.Dispose();
+        }
+    }
+
+    private void AbortTimedOutOutput()
+    {
+        Interlocked.CompareExchange(ref _outputError, "linux_output_index_finalization_timeout", null);
+        // Abort pending publication without waiting for a stalled storage call.
+        _outputCapture.Dispose();
+    }
+
+    private enum InputState
+    {
+        Open,
+        Uncertain,
+        Closed,
+    }
 
     private static string NativeCode(Exception error)
     {

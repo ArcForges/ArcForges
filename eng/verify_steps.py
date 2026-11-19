@@ -134,7 +134,7 @@ WIN_PUBLISH = (
 # The packaged native tests require a fresh extraction and the designated hosts' admitted MXC compositions.
 MXC_PACKAGE_REQUESTS = (
     "dotnet test --project tests/ArcForges.ClosedLoop.Tests/ArcForges.ClosedLoop.Tests.csproj -c Release --no-build "
-    "--filter-class ArcForges.ClosedLoop.Tests.MxcRunServiceTests --minimum-expected-tests 1 --fail-skips on"
+    "--filter-class ArcForges.ClosedLoop.Tests.MxcRunServiceTests --minimum-expected-tests 9 --fail-skips on"
 )
 WIN_PACKAGE = (
     "$tempPath = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Temp'; "
@@ -148,6 +148,7 @@ LINUX_PACKAGE = (
     'set -e; test_root=$(mktemp -d "$HOME/verified-mxc.XXXXXX"); install="$test_root/MXC 安装"; '
     'python eng/verify_linux.py package --mxc-install-root "$install"; '
     'export ARCFORGES_HOST_PATH="$install/arcforges" ARCFORGES_MXC_PACKAGE_TESTS=1; '
+    f'export ARCFORGES_TESTLOAD_PATH="$PWD/artifacts/publish/{RID_LINUX}/testload/arcforges-testload"; '
     + MXC_PACKAGE_REQUESTS
 )
 

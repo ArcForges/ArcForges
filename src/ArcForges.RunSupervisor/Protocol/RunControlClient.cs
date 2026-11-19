@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Diagnostics;
+using System.Text.Json;
+
 namespace ArcForges.RunSupervisor.Protocol;
 
 /// <summary>An ordered authenticated channel to a platform-verified supervisor process.</summary>
@@ -33,7 +36,8 @@ public sealed class RunControlClient : IAsyncDisposable
             .ConfigureAwait(false);
         var ready = await RunWire.ReadFrameAsync(stream, spec, challenge, true, cancellationToken).ConfigureAwait(false);
         if (ready is not { Sequence: 1, Command: RunControlCommand.Hello, Error: null, Identity: { } identity }
-            || ready.LaunchBinding != launchBinding || identity.Endpoint != spec.ControlEndpoint
+            || ready.LaunchBinding != launchBinding || ready.TerminalRequest is not null || ready.TerminalPoll is not null
+            || ready.TerminalReply is not null || identity.Endpoint != spec.ControlEndpoint
             || identity.ControlEpoch != spec.Epoch || identity.ProcessId <= 0)
         {
             throw new InvalidDataException("run_owner_identity_mismatch");
@@ -59,8 +63,41 @@ public sealed class RunControlClient : IAsyncDisposable
         (await SendAsync(RunControlCommand.Observe, null, 0, cancellationToken).ConfigureAwait(false)).Observation
         ?? throw new InvalidDataException("run_owner_observation_missing");
 
+    public async ValueTask<RunTerminalReply> TerminalAsync(RunTerminalRequest request, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var started = Stopwatch.GetTimestamp();
+        try
+        {
+            var frame = await SendAsync(RunControlCommand.TerminalBegin, null, 0, cancellationToken, request)
+                .ConfigureAwait(false);
+            var reply = frame.TerminalReply!;
+            var poll = new RunTerminalPoll(request.Caller, request.CommandId);
+            while (reply.Status == RunTerminalStatus.Pending)
+            {
+                if (Stopwatch.GetElapsedTime(started) >= TimeSpan.FromSeconds(9))
+                {
+                    return new(RunTerminalStatus.AckUnavailable);
+                }
+
+                // Polls carry only owner-local comparison identity. No input is retried after admission.
+                await Task.Delay(TimeSpan.FromMilliseconds(40), cancellationToken).ConfigureAwait(false);
+                frame = await SendAsync(RunControlCommand.TerminalPoll, null, 0, cancellationToken, terminalPoll: poll)
+                    .ConfigureAwait(false);
+                reply = frame.TerminalReply!;
+            }
+
+            return reply;
+        }
+        catch (Exception error) when (error is IOException or InvalidDataException or JsonException
+            || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+        {
+            return new(RunTerminalStatus.AckUnavailable);
+        }
+    }
+
     private async ValueTask<RunControlFrame> SendAsync(RunControlCommand command, RunRelease? release, int grace,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, RunTerminalRequest? terminalRequest = null, RunTerminalPoll? terminalPoll = null)
     {
         await _messages.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -71,14 +108,18 @@ public sealed class RunControlClient : IAsyncDisposable
             }
 
             var sequence = checked(++_sequence);
-            var request = new RunControlFrame(sequence, command, release, grace);
-            var sent = false;
+            var request = new RunControlFrame(sequence, command, release, grace, TerminalRequest: terminalRequest, TerminalPoll: terminalPoll);
+            var terminal = command is RunControlCommand.TerminalBegin or RunControlCommand.TerminalPoll;
+            // A caller may stop waiting, but cannot interrupt a partially sent request on the lifecycle channel.
+            using var transportDeadline = terminal ? new CancellationTokenSource(TimeSpan.FromSeconds(3)) : null;
+            var transportToken = transportDeadline?.Token ?? cancellationToken;
             try
             {
-                await RunWire.WriteFrameAsync(_stream, _spec, _challenge, false, request, cancellationToken).ConfigureAwait(false);
-                sent = true;
-                var reply = await RunWire.ReadFrameAsync(_stream, _spec, _challenge, true, cancellationToken).ConfigureAwait(false);
-                if (reply.Sequence != sequence || reply.Command != command)
+                await RunWire.WriteFrameAsync(_stream, _spec, _challenge, false, request, transportToken).ConfigureAwait(false);
+                var reply = await RunWire.ReadFrameAsync(_stream, _spec, _challenge, true, transportToken).ConfigureAwait(false);
+                if (reply.Sequence != sequence || reply.Command != command || reply.TerminalRequest is not null || reply.TerminalPoll is not null
+                    || terminal && (reply.TerminalReply is null || !Enum.IsDefined(reply.TerminalReply.Status))
+                    || !terminal && reply.TerminalReply is not null)
                 {
                     throw new InvalidDataException("run_control_response_mismatch");
                 }
@@ -90,15 +131,12 @@ public sealed class RunControlClient : IAsyncDisposable
 
                 return reply;
             }
-            catch (Exception error) when (error is IOException and not RunNativeException or OperationCanceledException)
+            catch (Exception error) when (error is IOException and not RunNativeException
+                or InvalidDataException or JsonException or OperationCanceledException)
             {
-                // A partially sent frame also invalidates the channel. Retrying a release on this connection is unsafe.
+                // Close on framing loss so the live owner immediately revokes the old Node's terminal authority.
                 _broken = true;
-                if (!sent)
-                {
-                    await _stream.DisposeAsync().ConfigureAwait(false);
-                }
-
+                await _stream.DisposeAsync().ConfigureAwait(false);
                 throw;
             }
         }

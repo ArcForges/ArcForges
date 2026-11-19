@@ -26,7 +26,7 @@ namespace ArcForges.ClosedLoop.Tests;
 [Trait("env", "windows-real")]
 [Trait("env", "linux-real")]
 [Trait("isolation", "exclusive")]
-public sealed class MxcRunServiceTests
+public sealed partial class MxcRunServiceTests
 {
     private static readonly TimeSpan NativeBound = TimeSpan.FromSeconds(35);
     private const string MarkerName = "entered.log";
@@ -400,7 +400,8 @@ public sealed class MxcRunServiceTests
         return Value(reply.Value, reply.Error);
     }
 
-    private static async Task<Sandbox> CreateSandboxAsync(SandboxService.SandboxServiceClient sandboxes, Id ownerEpoch, bool explicitLimits = true)
+    private static async Task<Sandbox> CreateSandboxAsync(SandboxService.SandboxServiceClient sandboxes, Id ownerEpoch,
+        bool explicitLimits = true, ulong? outputRetentionBytes = null)
     {
         bool windows = OperatingSystem.IsWindows();
         var resources = new ResourcePolicy { PressureAction = PressureAction.Throttle };
@@ -410,18 +411,24 @@ public sealed class MxcRunServiceTests
             resources.MemoryMaxBytes = MemoryBytes;
         }
 
+        var config = new SandboxConfig
+        {
+            ProfileId = windows ? MxcProfileAdmission.WindowsProfileId : MxcProfileAdmission.LinuxProfileId,
+            ProfileVersion = windows ? MxcProfileAdmission.WindowsProfileRevision : MxcProfileAdmission.LinuxProfileRevision,
+            Network = new NetworkPolicy { Egress = NetworkMode.Deny, Ingress = NetworkMode.Deny, HostLoopback = false },
+            Resources = resources,
+        };
+        if (outputRetentionBytes is { } cap)
+        {
+            config.OutputRetentionBytes = cap;
+        }
+
         var reply = await sandboxes.CreateAsync(new SandboxServiceCreateRequest
         {
             Meta = Mutation(),
             OwnerEpoch = ownerEpoch,
             DisplayName = "Native Run package fixture",
-            Config = new SandboxConfig
-            {
-                ProfileId = windows ? MxcProfileAdmission.WindowsProfileId : MxcProfileAdmission.LinuxProfileId,
-                ProfileVersion = windows ? MxcProfileAdmission.WindowsProfileRevision : MxcProfileAdmission.LinuxProfileRevision,
-                Network = new NetworkPolicy { Egress = NetworkMode.Deny, Ingress = NetworkMode.Deny, HostLoopback = false },
-                Resources = resources,
-            },
+            Config = config,
         }, deadline: Deadline, cancellationToken: Ct);
         var sandbox = Value(reply.Value, reply.Error).Sandbox;
         Assert.Equal(SandboxState.Ready, sandbox.State);
@@ -447,12 +454,14 @@ public sealed class MxcRunServiceTests
         return Value(reply.Value, reply.Error).Run;
     }
 
-    private static async Task<Run> WaitForStateAsync(TestNode fixture, RunService.RunServiceClient runs, Id runId, RunState state)
+    private static async Task<Run> WaitForStateAsync(TestNode fixture, RunService.RunServiceClient runs, Id runId, RunState state,
+        CancellationToken? cancellationToken = null)
     {
+        var token = cancellationToken ?? Ct;
         var clock = Stopwatch.StartNew();
         while (true)
         {
-            var run = await InspectAsync(runs, runId, Ct);
+            var run = await InspectAsync(runs, runId, token);
             if (run.State == state)
             {
                 return run;
@@ -464,7 +473,7 @@ public sealed class MxcRunServiceTests
                 Assert.Fail($"Run did not reach {state}. Observed {run.State} with {run.Exit?.TerminationReason ?? "no exit reason"}. {diagnostics}");
             }
 
-            await Task.Delay(50, Ct);
+            await Task.Delay(50, token);
         }
     }
 
