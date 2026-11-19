@@ -157,15 +157,34 @@ public sealed partial class CenterSeamPolicyTests
             Assert.DoesNotContain("DnsEndPoint", source, StringComparison.Ordinal);
             Assert.Matches(LocalUnixSocket(), Assert.Single(SocketConstruction().Matches(source).Cast<Match>()).Value);
             Assert.Contains("LinuxRunCgroup.OpenPrivateDirectory(spec.ControlDirectory)", source, StringComparison.Ordinal);
-            Assert.Contains("LinuxRunNativePeer.ControlAddress(spec, directory)", source, StringComparison.Ordinal);
         }
 
+        Assert.Contains("listener.Bind(LinuxRunNativePeer.ControlAddress(spec, directory));", worker, StringComparison.Ordinal);
+        Assert.Contains("ControlAddress(spec.ControlDirectory, spec.ControlEndpoint, directory)", controller, StringComparison.Ordinal);
+        Assert.Contains("LinuxRunNativePeer.ControlAddress(controlDirectory, controlEndpoint, directory)", controller, StringComparison.Ordinal);
+        Assert.Contains("endpoint != Path.Combine(controlDirectory, \"owner.sock\")", controller, StringComparison.Ordinal);
         Assert.Contains("new UnixDomainSocketEndPoint(LinuxRunCgroup.DescriptorPath(directory)", controller, StringComparison.Ordinal);
-        Assert.Contains("LinuxRunNativePeer.Require(socket, state.OwnerPid, state.OwnerStartTicks, spec.SupervisorPath);", controller, StringComparison.Ordinal);
-        Assert.Contains("LinuxRunMxcAssets.VerifyRunningSupervisor(spec, state.OwnerPid, state.OwnerStartTicks);", controller, StringComparison.Ordinal);
-        Assert.Contains("RunControlClient.ConnectAsync(stream, spec, launchBinding, deadline.Token)", controller, StringComparison.Ordinal);
+        Assert.Matches(
+            @"ConnectAsync\(ready\.State, controlDirectory, spec\.ControlDirectory, spec\.ControlEndpoint,\s*spec\.SupervisorPath, spec\.SupervisorSha256,\s*" +
+            @"\(stream, token\) => RunControlClient\.ConnectAsync\(stream, spec, launchBinding, token\)", controller);
+        Assert.Contains("var requester = ProcFs.Stat(Environment.ProcessId)?.StartTicks", controller, StringComparison.Ordinal);
+        Assert.Matches(
+            @"ConnectAsync\(state, controlDirectory, spec\.ControlDirectory, owner\.Endpoint,\s*spec\.SupervisorPath, spec\.SupervisorSha256,\s*" +
+            @"\(stream, token\) => RunControlClient\.ReconnectAsync\(stream, spec, requester\.ToString\(CultureInfo\.InvariantCulture\), token\)", controller);
+        Assert.Matches(
+            @"LinuxRunNativePeer\.Require\(socket, state\.OwnerPid, state\.OwnerStartTicks, supervisorPath\);\s*" +
+            @"LinuxRunMxcAssets\.VerifyRunningSupervisor\(supervisorHash, state\.OwnerPid, state\.OwnerStartTicks\);\s*" +
+            @"return await handshake\(stream, deadline\.Token\)", controller);
+        Assert.Contains("GetPeerCredentials(socket.SafeHandle.DangerousGetHandle().ToInt32(), 1, 17, out var peer, ref length)", controller, StringComparison.Ordinal);
+        Assert.Contains("pid != peer.ProcessId || LinuxRunCgroup.UserId != peer.UserId", controller, StringComparison.Ordinal);
+        Assert.Contains("process.StartTicks != start", controller, StringComparison.Ordinal);
         Assert.Contains("LinuxRunNativePeer.Require(socket, spec.LauncherProcessId, creation, spec.LauncherPath);", worker, StringComparison.Ordinal);
+        Assert.Contains("s_launcherImageHash ??= LinuxRunMxcAssets.ReadRunningImageHash(spec.LauncherProcessId, creation);", worker, StringComparison.Ordinal);
+        Assert.Contains("!long.TryParse(creationIdentity, NumberStyles.None, CultureInfo.InvariantCulture, out var creation) || creation <= 0", worker, StringComparison.Ordinal);
+        Assert.Contains("LinuxRunNativePeer.Require(socket, processId, creation, spec.LauncherPath);", worker, StringComparison.Ordinal);
+        Assert.Contains("LinuxRunMxcAssets.ReadRunningImageHash(processId, creation) != expectedImage", worker, StringComparison.Ordinal);
         Assert.Contains("LinuxRunWorker.RequireControlPeer(launch, peer);", entryPoint, StringComparison.Ordinal);
+        Assert.Contains("LinuxRunWorker.RequireRecoveryPeer(launch, peer, reconnect.ProcessId, reconnect.CreationIdentity);", entryPoint, StringComparison.Ordinal);
     }
 
     [Theory]

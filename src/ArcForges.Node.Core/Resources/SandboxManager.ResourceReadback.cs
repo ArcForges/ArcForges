@@ -58,9 +58,9 @@ internal sealed partial class SandboxManager
             return [];
         }
 
+        var owned = _liveRuns.TryGetValue(run.RunId, out var candidate) && candidate.Epoch == run.Epoch ? candidate : null;
         RunResourceLimitReading? live = run.State is StoredRunState.Starting or StoredRunState.Running or StoredRunState.Stopping
-            && _liveRuns.TryGetValue(run.RunId, out var owned) && owned.Spec.Epoch == run.Epoch
-            ? ReadOwnedLimits(owned.OwnerLease) : null;
+            ? ReadOwnedLimits(owned?.OwnerLease) : null;
         var now = _clock.GetUtcNow();
         var projected = new List<LimitState>(limits.Count);
         foreach (var limit in limits)
@@ -80,7 +80,7 @@ internal sealed partial class SandboxManager
             else if (value.Status == LimitStatus.Effective)
             {
                 value.Status = LimitStatus.Degraded;
-                value.Reason = "native_scope_unavailable";
+                value.Reason = owned?.RecoveryLimitRefusal ?? "native_scope_unavailable";
             }
 
             projected.Add(value);

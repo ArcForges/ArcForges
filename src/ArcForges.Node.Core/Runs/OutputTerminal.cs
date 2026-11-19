@@ -145,11 +145,18 @@ internal sealed partial class SandboxManager
                     return (meta, null, TerminalError(requestMeta, RunTerminalStatus.LeaseStale));
                 }
 
-                if (!_liveRuns.TryGetValue(runId, out var live) || live.Spec.Epoch != run.Epoch || live.OwnerLease is not { } active)
+                if (!_liveRuns.TryGetValue(runId, out var live) || live.Epoch != run.Epoch || live.OwnerLease is not { } active)
                 {
                     var unavailable = request is { Action: RunTerminalAction.Acquire, ExistingLeaseId: null }
                         && run.State is StoredRunState.Starting or StoredRunState.Exited or StoredRunState.Failed;
                     return (meta, null, unavailable ? TerminalError(requestMeta, RunTerminalStatus.TerminalUnavailable)
+                        : TerminalAcknowledgmentLost(requestMeta));
+                }
+
+                if (live.RecoveryLimitRefusal is not null)
+                {
+                    bool fresh = request is { Action: RunTerminalAction.Acquire, ExistingLeaseId: null };
+                    return (meta, null, fresh ? TerminalError(requestMeta, RunTerminalStatus.TerminalUnavailable)
                         : TerminalAcknowledgmentLost(requestMeta));
                 }
 

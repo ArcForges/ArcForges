@@ -229,7 +229,7 @@ internal sealed partial class SandboxManager
 
         var source = CurrentResourceSource(run.RunId, run.Epoch);
         if (source is null && run.State == StoredRunState.Starting
-            && _liveRuns.TryGetValue(run.RunId, out var live) && live.Spec.Epoch == run.Epoch && live.OwnerLease is null)
+            && _liveRuns.TryGetValue(run.RunId, out var live) && live.Epoch == run.Epoch && live.OwnerLease is null)
         {
             return expected;
         }
@@ -380,7 +380,7 @@ internal sealed partial class SandboxManager
             // ceiling is an authority for future changes once the native readback is effective.
             var cpu = run.State == StoredRunState.Starting ? launch.CpuMillicores : Charge(limits, "cpu", launch.CpuMillicores);
             var memory = Charge(limits, "memory", launch.MemoryMaxBytes);
-            var hasCurrentOwner = _liveRuns.TryGetValue(run.RunId, out var live) && live.Spec.Epoch == run.Epoch;
+            var hasCurrentOwner = _liveRuns.TryGetValue(run.RunId, out var live) && live.Epoch == run.Epoch;
             var native = hasCurrentOwner ? ReadOwnedLimits(live!.OwnerLease) : null;
             bool planned = run.State == StoredRunState.Starting && hasCurrentOwner;
             bool confirmed = planned || (native?.CpuMillicores is { } observedCpu && observedCpu <= cpu

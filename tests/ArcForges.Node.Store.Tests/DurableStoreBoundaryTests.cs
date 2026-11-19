@@ -35,8 +35,8 @@ public sealed partial class DurableCommandStoreTests
         using (var current = root.Open(clock))
         {
             Assert.Equal(15, current.Opening.MigratedFrom);
-            Assert.Equal(16, current.Metadata.SchemaVersion);
-            Assert.Equal(16, current.Metadata.MinReaderVersion);
+            Assert.Equal(17, current.Metadata.SchemaVersion);
+            Assert.Equal(17, current.Metadata.MinReaderVersion);
             Assert.NotNull(current.Opening.BackupPath);
             Assert.True(File.Exists(current.Opening.BackupPath));
             Assert.Equal(1L, current.Read(r => r.Scalar("SELECT count(*) FROM file_operation_journal WHERE phase=3 AND held=1 AND command_id=$c;", ("$c", command))));

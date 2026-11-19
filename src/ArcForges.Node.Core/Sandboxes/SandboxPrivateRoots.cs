@@ -37,6 +37,7 @@ internal sealed class SandboxPrivateRootLease(WorkspacePath dataRoot, WorkspaceP
 internal sealed class SandboxPrivateRoots(string dataRoot)
 {
     private const string ParentName = "sandboxes";
+    internal const string DeletionQuarantineName = "deletion-quarantine";
     private static readonly string[] WritableNames = ["home", "config", "cache", "tmp", "work", "data"];
     private static readonly string[] ProtectedDirectories = ["store", "control", "credentials"];
 
@@ -153,6 +154,99 @@ internal sealed class SandboxPrivateRoots(string dataRoot)
             root?.Dispose();
             parent?.Dispose();
             anchor?.Dispose();
+        }
+    }
+
+    /// <summary>Holds the exact journaled directory in its recorded location during resume authorization.</summary>
+    internal SandboxPrivateRootLease InspectDeletion(string sandboxId, string originalIdentity, string deletionId,
+        string? quarantineIdentity)
+    {
+        if (!IsLowerHex(deletionId, 32))
+        {
+            throw new SandboxPrivateRootException("deletion_identity_invalid");
+        }
+
+        var marker = ReadMarker(sandboxId, originalIdentity);
+        WorkspacePath? anchor = null;
+        WorkspacePath? originalParent = null;
+        WorkspacePath? parent = null;
+        WorkspacePath? root = null;
+        try
+        {
+            anchor = OpenDataRoot(requireControl: true);
+            originalParent = anchor.OpenSandboxDirectory(ParentName);
+            using var control = anchor.OpenSandboxDirectory("control", configuredRoot: true);
+            if (quarantineIdentity is null)
+            {
+                RequireNoQuarantine(control, deletionId);
+                root = originalParent.OpenSandboxDirectory(sandboxId);
+            }
+            else
+            {
+                if (!originalParent.InspectRemovalAbsent(sandboxId))
+                {
+                    throw new SandboxPrivateRootException("deletion_original_location_occupied");
+                }
+
+                parent = control.OpenSandboxDirectory(DeletionQuarantineName);
+                root = parent.OpenSandboxDirectory(deletionId);
+                if (quarantineIdentity != Identity(deletionId, marker, anchor, parent, root))
+                {
+                    throw new SandboxPrivateRootException("deletion_quarantine_identity_changed");
+                }
+            }
+
+            // The moved object must also match the original native identity.
+            if (originalIdentity != Identity(sandboxId, marker, anchor, originalParent, root))
+            {
+                throw new SandboxPrivateRootException("private_root_identity_changed");
+            }
+
+            if (parent is null)
+            {
+                parent = originalParent;
+                originalParent = null;
+            }
+
+            var lease = new SandboxPrivateRootLease(anchor, parent, root, []);
+            anchor = parent = root = null;
+            return lease;
+        }
+        catch (WorkspacePathException error)
+        {
+            throw new SandboxPrivateRootException(error.Reason, inner: error);
+        }
+        catch (RegisteredWorkspaceException error)
+        {
+            throw new SandboxPrivateRootException("private_root_identity_unavailable", inner: error);
+        }
+        finally
+        {
+            root?.Dispose();
+            parent?.Dispose();
+            originalParent?.Dispose();
+            anchor?.Dispose();
+        }
+    }
+
+    private static void RequireNoQuarantine(WorkspacePath control, string deletionId)
+    {
+        WorkspacePath parent;
+        try
+        {
+            parent = control.OpenSandboxDirectory(DeletionQuarantineName);
+        }
+        catch (WorkspacePathException error) when (error.Reason is "native_2" or "native_3")
+        {
+            return;
+        }
+
+        using (parent)
+        {
+            if (!parent.InspectRemovalAbsent(deletionId))
+            {
+                throw new SandboxPrivateRootException("deletion_quarantine_location_occupied");
+            }
         }
     }
 

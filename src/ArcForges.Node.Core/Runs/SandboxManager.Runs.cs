@@ -6,6 +6,7 @@ using System.Text.Json.Nodes;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Sandbox.V2;
+using ArcForges.Node.Core.Execution;
 using ArcForges.Node.Store;
 using ArcForges.RunSupervisor.Protocol;
 using Google.Protobuf;
@@ -22,7 +23,16 @@ internal sealed partial class SandboxManager
     private bool _runObservationStopped;
 
     internal IRunLauncher? RunLauncher { get; init; }
+    internal ExecutionFaults RunFaults { get; init; } = ExecutionFaults.None;
     internal Action<string, string, string?>? RunDiagnostic { get; init; }
+
+    private void HoldRunFault(string checkpoint)
+    {
+        if (RunFaults.Take(checkpoint) is { } delay)
+        {
+            RunFaults.Hold(checkpoint, delay);
+        }
+    }
 
     internal RunServiceStartResponse Start(RunServiceStartRequest request, CancellationToken cancellationToken)
     {
@@ -173,6 +183,8 @@ internal sealed partial class SandboxManager
         try
         {
             var launchDigest = Convert.ToHexStringLower(HMACSHA256.HashData(controlKey, canonical));
+            CryptographicOperations.ZeroMemory(controlKey);
+            controlKey = Receipts.DeriveRunControlKey(runId, launchDigest);
             var generation = Guid.NewGuid().ToString("N");
             var policy = PrepareRunPolicy(request, row, root, runId, generation, launchDigest, controlKey, secrets,
                 out var references, out var requestedResources);
@@ -209,9 +221,13 @@ internal sealed partial class SandboxManager
             var snapshot = RunSnapshotJson(granted, Convert.ToHexStringLower(command), commitment);
             var started = new StoredRun(runId, sandboxId, row.Revision, 1, StoredRunState.Starting, generation,
                 launchDigest, snapshot, StoredPayloadStart.Unknown, _clock.GetUtcNow());
+            var recovery = new StoredRunRecovery(RunRecoveryBootIdentity, granted.SupervisorPath,
+                granted.SupervisorSha256, granted.InstallationRoot);
+            HoldRunFault("hold-run-before-start-receipt");
             var admitted = Receipts.Admit(intent, transaction =>
             {
                 RequireChanged(RunRecords.InsertStarting(transaction, OwnerId, started));
+                RequireChanged(RunRecoveryRecords.Insert(transaction, OwnerId, started, recovery));
                 RecordRunResourceGrant(transaction, started, granted, commitment);
             });
             if (admitted.Decision == DurableDecision.Execute)
@@ -239,11 +255,12 @@ internal sealed partial class SandboxManager
                     return ResolveRunMutation(new(DurableDecision.Replay, receipt), meta, request.OwnerEpoch);
                 }
 
-                var live = new LiveRun(granted, launcher, root, command, _runObserverStop.Token);
+                var live = new LiveRun(granted.RunId, granted.Epoch, command, _runObserverStop.Token);
                 _liveRuns.Add(runId, live);
+                var launchRoot = root;
                 root = null;
                 unowned = null;
-                _ = Task.Run(() => OwnRunAsync(live), CancellationToken.None);
+                _ = Task.Run(() => OwnRunAsync(live, granted, launcher, launchRoot), CancellationToken.None);
             }
 
             return ResolveRunMutation(admitted, meta, request.OwnerEpoch);
@@ -363,6 +380,11 @@ internal sealed partial class SandboxManager
             return ResolveRunMutation(settled, meta, request.OwnerEpoch);
         }
 
+        var acceptedAt = _clock.GetUtcNow();
+        var stop = new StoredRunStop(Convert.ToHexStringLower(command), acceptedAt,
+            acceptedAt + TimeSpan.FromMilliseconds(request.HasGraceMs ? request.GraceMs : 5000), pressureRequested);
+        string startCommand = Convert.ToHexStringLower(parent!);
+
         if (!_liveRuns.TryGetValue(runId, out var live))
         {
             var recoveryRevision = run.State == StoredRunState.RecoveryRequired ? run.Revision : checked(run.Revision + 1);
@@ -370,6 +392,7 @@ internal sealed partial class SandboxManager
                 ResultBody(recoveryRevision, null, ErrorCategory.Execution, "outcome_unknown", "run_owner_identity_requires_recovery"),
                 transaction =>
                 {
+                    RequireChanged(RunRecoveryRecords.InsertStop(transaction, OwnerId, intent.OwnerEpoch, run, stop, startCommand));
                     if (run.State != StoredRunState.RecoveryRequired)
                     {
                         RequireChanged(RunRecords.TryAdvance(transaction, OwnerId, runId, run.Epoch, run.Revision, run.State,
@@ -381,6 +404,7 @@ internal sealed partial class SandboxManager
 
         var admission = Receipts.Admit(intent, transaction =>
         {
+            RequireChanged(RunRecoveryRecords.InsertStop(transaction, OwnerId, intent.OwnerEpoch, run, stop, startCommand));
             if (run.State is not (StoredRunState.Stopping or StoredRunState.Draining or StoredRunState.RecoveryRequired))
             {
                 RequireChanged(RunRecords.TryAdvance(transaction, OwnerId, runId, run.Epoch, run.Revision, run.State,
@@ -390,8 +414,7 @@ internal sealed partial class SandboxManager
         });
         if (admission.Decision == DurableDecision.Execute)
         {
-            live.StopCommand = command;
-            live.StopRequest.TrySetResult(TimeSpan.FromMilliseconds(request.HasGraceMs ? request.GraceMs : 5000));
+            live.StopRequest.TrySetResult(stop);
         }
 
         return ResolveRunMutation(admission, meta, request.OwnerEpoch);
@@ -503,16 +526,16 @@ internal sealed partial class SandboxManager
     private sealed record RunMutationResult(Run? Run, Operation? Operation, ArcError? Error = null,
         string[]? SecretReferences = null, bool AwaitingResourceBudget = false, long? ResourceBudgetAfterTimestamp = null);
 
-    private sealed class LiveRun(RunLaunchSpec spec, IRunLauncher launcher, SandboxPrivateRootLease root, byte[] startCommand,
-        CancellationToken cancellationToken)
+    private sealed class LiveRun(string runId, string epoch, byte[] startCommand, CancellationToken cancellationToken)
     {
-        internal RunLaunchSpec Spec { get; } = spec;
-        internal IRunLauncher Launcher { get; } = launcher;
-        internal SandboxPrivateRootLease Root { get; } = root;
+        internal string RunId { get; } = runId;
+        internal string Epoch { get; } = epoch;
         internal byte[] StartCommand { get; } = startCommand;
         internal CancellationToken CancellationToken { get; } = cancellationToken;
-        internal TaskCompletionSource<TimeSpan> StopRequest { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal byte[]? StopCommand { get; set; }
+        internal TaskCompletionSource<StoredRunStop> StopRequest { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal byte[]? StopCommand => StopRequest.Task.IsCompletedSuccessfully
+            ? Convert.FromHexString(StopRequest.Task.Result.CommandId) : null;
         internal IRunOwnerLease? OwnerLease { get; set; }
+        internal string? RecoveryLimitRefusal { get; set; }
     }
 }

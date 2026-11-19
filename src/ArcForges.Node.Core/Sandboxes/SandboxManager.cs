@@ -419,6 +419,11 @@ internal sealed partial class SandboxManager : IDisposable
 
         try
         {
+            if (repair && row.RootRelative != SandboxPrivateRoots.RelativePath(id))
+            {
+                return Fail(Error(request.Meta, ErrorCategory.Conflict, "identity_changed", "private_root_location_changed"));
+            }
+
             using var root = _roots.Inspect(id, row.RootIdentity);
             if (remote is not null)
             {
@@ -429,25 +434,25 @@ internal sealed partial class SandboxManager : IDisposable
                 }
             }
 
-            var admitted = receipts.Admit(intent);
-            if (admitted.Decision != DurableDecision.Execute)
-            {
-                return Resolve(admitted, request.Meta);
-            }
-
             var revision = checked(row.Revision + 1);
-            receipts.SetResult(command, "SUCCEEDED", (int)EffectCertainty.Happened, ResultBody(revision, name, capabilities: SandboxPolicyAdmission.Capabilities(policy.Admission)),
-                transaction =>
+            string result = ResultBody(revision, name, capabilities: SandboxPolicyAdmission.Capabilities(policy.Admission));
+            var admitted = receipts.AdmitObserved(intent, "SUCCEEDED", (int)EffectCertainty.Happened, result, transaction =>
+            {
+                if (repair)
                 {
-                    RequireChanged(SandboxRecords.AppendRevision(transaction, OwnerId, id, expected,
-                        name, normalized, config, repair));
-                    if (remote is not null)
-                    {
-                        RecordRemoteSandboxConfiguration(transaction, request.Meta, id, revision, remote, now);
-                    }
-                });
-            return new(View(row with { Revision = revision, DisplayName = name, Config = config, State = StoredSandboxState.Ready },
-                policy.Admission));
+                    var currentRoot = SandboxRecords.Get(transaction, OwnerId, id);
+                    RequireChanged(currentRoot is not null && currentRoot.RootIdentity == row.RootIdentity
+                        && currentRoot.RootRelative == row.RootRelative && currentRoot.RootGeneration == row.RootGeneration
+                        && !SandboxRecords.HasUnresolvedUse(transaction, OwnerId, id, intent.OwnerEpoch, ToHex(request.Meta.CommandId)));
+                }
+
+                RequireChanged(SandboxRecords.AppendRevision(transaction, OwnerId, id, expected, name, normalized, config, repair));
+                if (remote is not null)
+                {
+                    RecordRemoteSandboxConfiguration(transaction, request.Meta, id, revision, remote, now);
+                }
+            });
+            return Resolve(admitted, request.Meta);
         }
         catch (SandboxPrivateRootException failure)
         {

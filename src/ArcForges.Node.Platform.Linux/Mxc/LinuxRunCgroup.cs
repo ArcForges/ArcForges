@@ -346,6 +346,8 @@ internal sealed partial class LinuxRunCgroup : IDisposable
     private bool HasResourceIdentity() => Validate().Links > 0 &&
         new DirectoryInfo(DescriptorPath(_handle)).LinkTarget == MountPoint + Path;
 
+    internal bool MatchesIdentity(ulong mountId, ulong inode) => MountId == mountId && Inode == inode && HasResourceIdentity();
+
     private uint? ObserveMemberCount()
     {
         try
@@ -459,6 +461,29 @@ internal sealed partial class LinuxRunCgroup : IDisposable
                 && ProcFs.Stat(pid) is { State: not ('Z' or 'X') } confirmed && confirmed.StartTicks == start;
         }
         catch (IOException)
+        {
+            return false;
+        }
+    }
+
+    internal static bool IsOwnerGone(int pid, long start)
+    {
+        if (ProcFs.Stat(pid) is { } process)
+        {
+            return process.StartTicks != start || process.State is 'Z' or 'X';
+        }
+
+        try
+        {
+            // A failed or unparseable stat is not sufficient evidence of absence.
+            using var stat = File.OpenRead("/proc/" + pid.ToString(CultureInfo.InvariantCulture) + "/stat");
+            return false;
+        }
+        catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return true;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
             return false;
         }

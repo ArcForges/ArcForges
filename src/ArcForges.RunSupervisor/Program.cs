@@ -45,18 +45,43 @@ internal static class Program
         using var manifest = WindowsMxcPathLease.Open(path, directory: false, privateObject: true);
         var launch = RunWire.ReadLaunch(path, out var launchBinding);
         var identity = await WindowsRunWorker.ReadyAsync(launch, cancellationToken).ConfigureAwait(false);
-        await using var pipe = new NamedPipeServerStream(launch.ControlEndpoint, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
-            PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
-        return await new RunWorkerController(launch, launchBinding, identity, token => AcceptWindowsAsync(launch, pipe, token),
-            WindowsRunWorker.StartAsync, manifest.DeletePrivateFile).RunAsync().ConfigureAwait(false);
+        try
+        {
+            return await new RunWorkerController(launch, launchBinding, identity, token => AcceptWindowsAsync(launch, token),
+                WindowsRunWorker.StartAsync, manifest.DeletePrivateFile, () => WindowsRunWorker.RecoveryBoundaryHandle)
+                .RunAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            WindowsRunWorker.ReleaseRecoveryBoundary();
+        }
     }
 
     [SupportedOSPlatform("windows")]
-    private static async ValueTask<Stream> AcceptWindowsAsync(RunLaunchSpec launch, NamedPipeServerStream pipe, CancellationToken cancellationToken)
+    private static async ValueTask<RunControlConnection> AcceptWindowsAsync(RunLaunchSpec launch, CancellationToken cancellationToken)
     {
-        await pipe.WaitForConnectionAsync(cancellationToken).ConfigureAwait(false);
-        WindowsRunWorker.RequireControlPeer(launch, pipe.SafePipeHandle);
-        return pipe;
+        var pipe = new NamedPipeServerStream(launch.ControlEndpoint, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
+            PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+        try
+        {
+            await pipe.WaitForConnectionAsync(cancellationToken).ConfigureAwait(false);
+            return new(pipe, reconnect =>
+            {
+                if (reconnect is null)
+                {
+                    WindowsRunWorker.RequireControlPeer(launch, pipe.SafePipeHandle);
+                }
+                else
+                {
+                    WindowsRunWorker.RequireRecoveryPeer(launch, pipe.SafePipeHandle, reconnect.ProcessId, reconnect.CreationIdentity);
+                }
+            });
+        }
+        catch
+        {
+            await pipe.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
     }
 
     [SupportedOSPlatform("linux")]
@@ -77,13 +102,22 @@ internal static class Program
     }
 
     [SupportedOSPlatform("linux")]
-    private static async ValueTask<Stream> AcceptLinuxAsync(RunLaunchSpec launch, Socket server, CancellationToken cancellationToken)
+    private static async ValueTask<RunControlConnection> AcceptLinuxAsync(RunLaunchSpec launch, Socket server, CancellationToken cancellationToken)
     {
         var peer = await server.AcceptAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            LinuxRunWorker.RequireControlPeer(launch, peer);
-            return new NetworkStream(peer, ownsSocket: true);
+            return new(new NetworkStream(peer, ownsSocket: true), reconnect =>
+            {
+                if (reconnect is null)
+                {
+                    LinuxRunWorker.RequireControlPeer(launch, peer);
+                }
+                else
+                {
+                    LinuxRunWorker.RequireRecoveryPeer(launch, peer, reconnect.ProcessId, reconnect.CreationIdentity);
+                }
+            });
         }
         catch
         {

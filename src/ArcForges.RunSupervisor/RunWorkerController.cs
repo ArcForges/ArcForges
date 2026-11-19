@@ -6,21 +6,27 @@ using ArcForges.RunSupervisor.Protocol;
 
 namespace ArcForges.RunSupervisor;
 
+internal sealed record RunControlConnection(Stream Stream, Action<RunReconnectRequest?> RequirePeer);
+
 /// <summary>Owns the lifecycle independently of the lifetime of the authenticating Node connection.</summary>
 internal sealed class RunWorkerController(
     RunLaunchSpec launch,
     string launchBinding,
     RunOwnerIdentity identity,
-    Func<CancellationToken, ValueTask<Stream>> listen,
+    Func<CancellationToken, ValueTask<RunControlConnection>> listen,
     Func<RunLaunchSpec, RunRelease, CancellationToken, ValueTask<IRunWorkerSession>> start,
-    Action consumeHandoff)
+    Action consumeHandoff,
+    Func<long?>? recoveryBoundaryHandle = null)
 {
     private readonly object _gate = new();
     private readonly TaskCompletionSource<RunRelease?> _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource<TimeSpan> _stop = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly RunTerminalBroker _terminal = new(launch.Epoch, launch.TerminalMode);
     private RunOwnerObservation _observation = new(RunOwnerState.Ready, RunPayloadStart.NotStarted, false);
+    private long _controllerGeneration;
     private bool _authorized;
+    private bool _stopPreventedActivation;
+    private bool _reportedRecoveryFailure;
 
     internal async Task<int> RunAsync()
     {
@@ -181,75 +187,140 @@ internal sealed class RunWorkerController(
             return;
         }
 
-        RunWire.WriteObservation(launch, observation);
+        RunWire.WriteObservation(launch, observation, identity, Volatile.Read(ref _controllerGeneration));
         Volatile.Write(ref _observation, observation);
     }
 
     private async Task ServeAsync(CancellationToken cancellationToken)
     {
+        await ServeConnectionAsync(recovery: false, cancellationToken).ConfigureAwait(false);
+        lock (_gate)
+        {
+            if (!_authorized)
+            {
+                _release.TrySetResult(null);
+                return;
+            }
+        }
+
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            await ServeConnectionAsync(recovery: true, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task ServeConnectionAsync(bool recovery, CancellationToken cancellationToken)
+    {
+        bool authenticated = false;
         try
         {
-            await using var stream = await listen(cancellationToken).ConfigureAwait(false);
+            var connection = await listen(cancellationToken).ConfigureAwait(false);
+            await using var stream = connection.Stream;
             var challenge = RandomNumberGenerator.GetBytes(RunWire.ChallengeLength);
-            await stream.WriteAsync(challenge, cancellationToken).ConfigureAwait(false);
-            await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
-            var hello = await RunWire.ReadFrameAsync(stream, launch, challenge, false, cancellationToken).ConfigureAwait(false);
+            using var handshake = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            handshake.CancelAfter(TimeSpan.FromSeconds(5));
+            var handshakeToken = handshake.Token;
+            await stream.WriteAsync(challenge, handshakeToken).ConfigureAwait(false);
+            await stream.FlushAsync(handshakeToken).ConfigureAwait(false);
+            var hello = await RunWire.ReadFrameAsync(stream, launch.ControlKey, challenge, false, handshakeToken).ConfigureAwait(false);
+            var ready = AuthenticateController(connection, hello, recovery);
+            authenticated = true;
+            _reportedRecoveryFailure = false;
+            await RunWire.WriteFrameAsync(stream, launch, challenge, true, ready, handshakeToken).ConfigureAwait(false);
+            await ServeRequestsAsync(stream, challenge, recovery, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception error) when (error is IOException or InvalidDataException or SocketException or UnauthorizedAccessException
+            or OperationCanceledException or JsonException or RunNativeException or System.ComponentModel.Win32Exception)
+        {
+            if (recovery && !authenticated && !cancellationToken.IsCancellationRequested && !_reportedRecoveryFailure)
+            {
+                _reportedRecoveryFailure = true;
+                Console.Error.WriteLine("run_control_rebind_failed " + FailureCode(error));
+            }
+
+            if (recovery && !authenticated && !cancellationToken.IsCancellationRequested)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(100), CancellationToken.None).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            if (authenticated)
+            {
+                _terminal.InvalidateController();
+            }
+        }
+    }
+
+    private RunControlFrame AuthenticateController(RunControlConnection connection, RunControlFrame hello, bool recovery)
+    {
+        if (!recovery)
+        {
             if (hello != new RunControlFrame(1, RunControlCommand.Hello, LaunchBinding: launchBinding))
             {
                 throw new InvalidDataException("run_owner_hello_invalid");
             }
 
-            await RunWire.WriteFrameAsync(stream, launch, challenge, true, hello with { Identity = identity }, cancellationToken)
-                .ConfigureAwait(false);
-            long sequence = 1;
-            while (!cancellationToken.IsCancellationRequested)
-            {
-                var request = await RunWire.ReadFrameAsync(stream, launch, challenge, false, cancellationToken).ConfigureAwait(false);
-                RunControlFrame reply;
-                var releaseAccepted = false;
-                try
-                {
-                    if (request.Sequence != checked(++sequence) || request.Identity is not null || request.Observation is not null
-                        || request.Error is not null || request.LaunchBinding is not null || request.TerminalReply is not null)
-                    {
-                        throw new InvalidDataException("run_owner_request_invalid");
-                    }
-
-                    reply = Execute(request);
-                    releaseAccepted = request.Command == RunControlCommand.Activate && reply.Error is null;
-                }
-                finally
-                {
-                    if (request.TerminalRequest?.Input is { } input)
-                    {
-                        CryptographicOperations.ZeroMemory(input);
-                    }
-
-                    if (!releaseAccepted)
-                    {
-                        request.Release?.Inputs?.Clear();
-                    }
-                }
-
-                await RunWire.WriteFrameAsync(stream, launch, challenge, true, reply, cancellationToken).ConfigureAwait(false);
-            }
+            connection.RequirePeer(null);
+            return hello with { Identity = identity };
         }
-        catch (Exception error) when (error is IOException or InvalidDataException or SocketException or UnauthorizedAccessException
-            or OperationCanceledException or JsonException or RunNativeException)
+
+        if (hello.Reconnect is not { } reconnect || hello != new RunControlFrame(1, RunControlCommand.Rebind, Reconnect: reconnect)
+            || reconnect.Owner != identity || reconnect.RunId != launch.RunId || reconnect.Epoch != launch.Epoch
+            || reconnect.LaunchSha256 != launch.LaunchSha256 || reconnect.Generation <= Volatile.Read(ref _controllerGeneration)
+            || reconnect.ProcessId <= 0 || string.IsNullOrEmpty(reconnect.CreationIdentity))
         {
-            // A disconnected authenticated controller must not terminate an already released owner.
-            lock (_gate)
+            throw new InvalidDataException("run_recovery_identity_mismatch");
+        }
+
+        connection.RequirePeer(reconnect);
+        var boundary = recoveryBoundaryHandle?.Invoke();
+        if (recoveryBoundaryHandle is not null && boundary is null)
+        {
+            throw new InvalidDataException("run_recovery_boundary_unavailable");
+        }
+
+        Volatile.Write(ref _controllerGeneration, reconnect.Generation);
+        return hello with { Identity = identity, RecoveryBoundaryHandle = boundary };
+    }
+
+    private async Task ServeRequestsAsync(Stream stream, byte[] challenge, bool recovery, CancellationToken cancellationToken)
+    {
+        long sequence = 1;
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            var request = recovery
+                ? await RunWire.ReadFrameAsync(stream, launch.ControlKey, challenge, false, cancellationToken).ConfigureAwait(false)
+                : await RunWire.ReadFrameAsync(stream, launch, challenge, false, cancellationToken).ConfigureAwait(false);
+            RunControlFrame reply;
+            var releaseAccepted = false;
+            try
             {
-                if (!_authorized)
+                if (request.Sequence != checked(++sequence) || request.Identity is not null || request.Observation is not null
+                    || request.Error is not null || request.LaunchBinding is not null || request.TerminalReply is not null
+                    || request.Reconnect is not null || request.RecoveryBoundaryHandle is not null
+                    || recovery && request.Command == RunControlCommand.Activate)
                 {
-                    _release.TrySetResult(null);
+                    throw new InvalidDataException("run_owner_request_invalid");
+                }
+
+                reply = Execute(request);
+                releaseAccepted = request.Command == RunControlCommand.Activate && reply.Error is null;
+            }
+            finally
+            {
+                if (request.TerminalRequest?.Input is { } input)
+                {
+                    CryptographicOperations.ZeroMemory(input);
+                }
+
+                if (!releaseAccepted)
+                {
+                    request.Release?.Inputs?.Clear();
                 }
             }
-        }
-        finally
-        {
-            // Losing the Node control connection destroys terminal authority, not the Run or its native handles.
-            _terminal.RevokeAll();
+
+            await RunWire.WriteFrameAsync(stream, launch, challenge, true, reply, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -275,8 +346,9 @@ internal sealed class RunWorkerController(
                 lock (_gate)
                 {
                     _stop.TrySetResult(TimeSpan.FromMilliseconds(request.GraceMilliseconds));
-                    if (!_authorized)
+                    if (!_authorized && !_release.Task.IsCompleted)
                     {
+                        Volatile.Write(ref _stopPreventedActivation, true);
                         _release.TrySetResult(null);
                     }
                 }
@@ -297,7 +369,7 @@ internal sealed class RunWorkerController(
         }
     }
 
-    private RunOwnerObservation UnstartedOwner(string failure) => _stop.Task.IsCompletedSuccessfully
+    private RunOwnerObservation UnstartedOwner(string failure) => Volatile.Read(ref _stopPreventedActivation)
         ? new(RunOwnerState.Exited, RunPayloadStart.NotStarted, true, ExitSource: RunExitSources.Supervisor, TerminationReason: "stopped_before_payload")
         : new(RunOwnerState.Failed, RunPayloadStart.NotStarted, true, ExitSource: RunExitSources.Supervisor, TerminationReason: failure);
 

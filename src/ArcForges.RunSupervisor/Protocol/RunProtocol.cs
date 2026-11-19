@@ -138,8 +138,14 @@ public sealed record RunOwnerIdentity(
     string InstanceId, string BootId, int ProcessId, string CreationIdentity, string Endpoint,
     string BoundaryIdentity, string BackendId, string Cohort, string ControlEpoch);
 
+/// <summary>The original owner's durable identity and the scoped authority for a recovery attempt.</summary>
+public sealed record RunRecoverySpec(string RunId, string SandboxId, string Epoch, string LaunchSha256,
+    string ControlDirectory, string SupervisorPath, string SupervisorSha256, string InstallationRoot,
+    byte[] ControlKey, RunOwnerIdentity Owner, long Generation);
+
 public sealed record RunRelease(long? NativeBoundaryHandle = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] RunLaunchInputs? Inputs = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] RunLaunchInputs? Inputs = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? RecoveryBoundaryHandle = null);
 
 /// <summary>Payload values transferred once over the preauthenticated owner channel.</summary>
 public sealed class RunLaunchInputs(string[] argv, RunEnvironment[] environment)
@@ -171,6 +177,14 @@ public interface IRunLauncher
 {
     ValueTask<IRunOwnerLease> PrepareAsync(RunLaunchSpec spec, CancellationToken cancellationToken);
 }
+
+/// <summary>Reconciles a previously bound native scope without launching a workload.</summary>
+public interface IRunRecoveryLauncher
+{
+    ValueTask<RunRecoveryResult> RecoverAsync(RunRecoverySpec spec, CancellationToken cancellationToken);
+}
+
+public sealed record RunRecoveryResult(IRunOwnerLease? Lease, RunOwnerObservation? Observation);
 
 public interface IRunOwnerLease : IAsyncDisposable
 {

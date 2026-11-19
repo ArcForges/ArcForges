@@ -41,6 +41,12 @@ internal sealed class SandboxServiceHandler(NodeRuntime node) : V2.SandboxServic
             static (manager, value, cancellation) => manager.Inspect(value, cancellation),
             static (meta, error) => new V2.SandboxServiceInspectResponse { Meta = meta, Error = error });
 
+    public override Task<V2.SandboxServiceDeleteResponse> Delete(
+        V2.SandboxServiceDeleteRequest request, ServerCallContext context) =>
+        SandboxLocalCalls.Execute(node, context, request, request.Meta, V2Shapes.IsValid,
+            static (manager, value, cancellation) => manager.Delete(value, cancellation),
+            static (meta, error) => new V2.SandboxServiceDeleteResponse { Meta = meta, Error = error });
+
     // The published whole-request validator requires TemplateRevision for routed provisioning.
     // Local creation uses the same field validators with the local contract's field presence.
     private static bool ValidLocalCreate(V2.SandboxServiceCreateRequest request) =>

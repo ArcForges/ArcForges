@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Buffers.Binary;
-using System.Globalization;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
@@ -119,16 +118,13 @@ internal sealed partial class SandboxManager
             var meta = Response(request.Meta);
             try
             {
-                var storedEpoch = _store.Read(reader => reader.Scalar("""
-                    SELECT owner_epoch FROM owner_epoch WHERE owner_id=$o AND state='ACTIVE';
-                    """, ("$o", OwnerId))) as byte[];
-                if (storedEpoch is null || !request.OwnerEpoch.Value.Span.SequenceEqual(storedEpoch))
+                if (_receipts.IsValueCreated && _receipts.Value.MaintenanceRequired)
                 {
-                    return new() { Meta = meta, Error = NotFound(request.Meta) };
+                    return new() { Meta = meta, Error = StorageFailure(request.Meta) };
                 }
 
-                var receipts = Receipts;
-                var receipt = receipts.Inspect(request.CommandId.Value.Span);
+                var receipt = _store.Read(reader => DurableOperationReads.Find(reader, OwnerId,
+                    request.OwnerEpoch.Value.Span, request.CommandId.Value.Span));
                 if (receipt is null)
                 {
                     return new() { Meta = meta, Error = NotFound(request.Meta) };
@@ -149,6 +145,7 @@ internal sealed partial class SandboxManager
                     },
                     Effect = (EffectCertainty)receipt.Effect,
                     ResponseCompacted = receipt.Compacted,
+                    UpdatedAt = ProtoTime.ToInstant(receipt.UpdatedAt),
                 };
                 if (receipt.AggregateId is { } aggregate && IsSandboxId(aggregate))
                 {
@@ -168,14 +165,6 @@ internal sealed partial class SandboxManager
                 {
                     operation.Error = Error(request.Meta, ErrorCategory.Execution, "outcome_unknown", result.Reason,
                         EffectCertainty.Unknown);
-                }
-
-                var updated = _store.Read(reader => (string?)reader.Scalar("""
-                    SELECT updated_utc FROM command_receipt WHERE owner_id=$o AND owner_epoch=$e AND command_id=$c;
-                    """, ("$o", OwnerId), ("$e", receipts.OwnerEpoch.ToArray()), ("$c", receipt.CommandId)));
-                if (updated is not null)
-                {
-                    operation.UpdatedAt = ProtoTime.ToInstant(DateTimeOffset.Parse(updated, CultureInfo.InvariantCulture));
                 }
 
                 return new() { Meta = meta, Value = new() { Operation = operation } };

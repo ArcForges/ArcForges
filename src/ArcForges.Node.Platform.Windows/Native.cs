@@ -52,11 +52,16 @@ internal static unsafe partial class Native
     public const uint TokenQuery = 0x0008;
 
     public const uint JobObjectAllAccess = 0x1F001F;
+    public const uint JobObjectSetAttributes = 0x0002;
+    public const uint JobObjectQuery = 0x0004;
+    public const uint JobObjectTerminate = 0x0008;
     public const uint ProcessQueryLimitedInformation = 0x1000;
+    public const uint ProcessDuplicateHandle = 0x0040;
     public const uint ProcessTerminate = 0x0001;
     public const uint ProcessSetQuota = 0x0100;
     public const uint Synchronize = 0x00100000;
     public const uint EventModifyState = 0x0002;
+    public const uint DuplicateCloseSource = 0x00000001;
     public const uint DuplicateSameAccess = 0x00000002;
     public const uint HandleFlagInherit = 0x00000001;
 
@@ -366,6 +371,15 @@ internal static unsafe partial class Native
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool DuplicateHandle(nint sourceProcess, SafeHandle source, nint targetProcess, out nint target, uint access,
         [MarshalAs(UnmanagedType.Bool)] bool inherit, uint options);
+
+    [LibraryImport("kernel32.dll", EntryPoint = "DuplicateHandle", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool DuplicateRemoteHandle(SafeKernelHandle sourceProcess, nint source, nint targetProcess, out nint target,
+        uint access, [MarshalAs(UnmanagedType.Bool)] bool inherit, uint options);
+
+    [LibraryImport("KernelBase.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool CompareObjectHandles(SafeKernelHandle first, SafeKernelHandle second);
 
     [LibraryImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

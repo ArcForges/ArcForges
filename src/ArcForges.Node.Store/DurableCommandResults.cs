@@ -10,7 +10,8 @@ internal sealed partial class DurableCommandStore
 {
     // Effect observations are supplied by the owning subsystem. This store does not infer native success.
     internal DurableReceipt SetResult(byte[] commandId, string state, int effect, string redactedJson,
-        Action<StoreTransaction>? observedMetadata = null, byte[]? settledSafetyCommand = null, string? settledSafetyJson = null)
+        Action<StoreTransaction>? observedMetadata = null, byte[]? settledSafetyCommand = null, string? settledSafetyJson = null,
+        string settledSafetyState = "SUCCEEDED")
     {
         lock (_gate)
         {
@@ -29,18 +30,28 @@ internal sealed partial class DurableCommandStore
             }
             bool sameResult = previous.State == state && previous.Effect == effect && previous.ResponseJson == redactedJson;
             bool retainUnknown = false;
+            bool retainSafetyUnknown = false;
+            int safetyEffect = settledSafetyState == "UNKNOWN" ? 3 : 2;
             string? safetyId = null;
-            if (settledSafetyCommand is not null || settledSafetyJson is not null)
+            DurableReceipt? previousSafety = null;
+            if (settledSafetyCommand is not null || settledSafetyJson is not null || settledSafetyState != "SUCCEEDED")
             {
                 if (settledSafetyCommand is null || settledSafetyJson is null
-                    || Encoding.UTF8.GetByteCount(settledSafetyJson) > _capacity.MaximumResponseBytes
+                    || settledSafetyState is not ("SUCCEEDED" or "UNKNOWN")
                     || (state, effect) is not (("SUCCEEDED", 2) or ("FAILED", 1) or ("UNKNOWN", 3)))
                     throw new ArgumentException("An atomic Run settlement requires a valid Start result and a bounded Stop result.", nameof(settledSafetyJson));
                 StoreIds.Validate(settledSafetyCommand, nameof(settledSafetyCommand));
-                using var safetyJson = JsonDocument.Parse(settledSafetyJson);
+                ValidateResult(settledSafetyState, safetyEffect, settledSafetyJson);
                 string stopId = Convert.ToHexStringLower(settledSafetyCommand);
                 safetyId = stopId;
                 var sibling = _store.Read(reader => ReadRunSafetySibling(reader, previous, stopId));
+                previousSafety = sibling;
+                if (sibling.State == "UNKNOWN" && settledSafetyState == "UNKNOWN")
+                {
+                    settledSafetyJson = sibling.ResponseJson ?? throw new DurableStoreMaintenanceException();
+                    retainSafetyUnknown = true;
+                }
+
                 if (state == "UNKNOWN" && previous.State == "UNKNOWN")
                 {
                     redactedJson = previous.ResponseJson ?? throw new DurableStoreMaintenanceException();
@@ -48,7 +59,8 @@ internal sealed partial class DurableCommandStore
                     retainUnknown = true;
                 }
 
-                if (sameResult && sibling.State == "SUCCEEDED" && sibling.Effect == 2 && sibling.ResponseJson == settledSafetyJson)
+                if (sameResult && settledSafetyState == "SUCCEEDED" && sibling.State == "SUCCEEDED"
+                    && sibling.Effect == safetyEffect && sibling.ResponseJson == settledSafetyJson)
                     return previous;
                 if ((sameResult && !retainUnknown) || observedMetadata is null || sibling.State is not ("ACCEPTED" or "UNKNOWN"))
                     throw new InvalidOperationException("The Run terminal observation and linked unsettled Stop must commit together.");
@@ -65,11 +77,11 @@ internal sealed partial class DurableCommandStore
             }
             string now = Now();
             string? resolved = state == "UNKNOWN" ? null : now;
-            string? expires = resolved is not null || safetyId is not null ? ResultExpiry() : null;
+            string? expires = resolved is not null || safetyId is not null && settledSafetyState == "SUCCEEDED" ? ResultExpiry() : null;
             byte[] observation = ObservationDigest(state, effect, redactedJson);
             if (safetyId is not null)
             {
-                byte[] safetyProof = ObservationDigest("SUCCEEDED", 2, settledSafetyJson!);
+                byte[] safetyProof = ObservationDigest(settledSafetyState, safetyEffect, settledSafetyJson!);
                 byte[] pairProof = [.. observation, .. Convert.FromHexString(safetyId), .. safetyProof];
                 observation = HMACSHA256.HashData(_key, pairProof);
             }
@@ -78,7 +90,7 @@ internal sealed partial class DurableCommandStore
                 throw new InvalidOperationException("An unresolved effect cannot become a known settled result.");
             Advance(safetyId is null ? "observe" : "observe_run_stop", id, observation, tx =>
             {
-                if (safetyId is not null && ReadRunSafetySibling(tx, previous, safetyId).State is not ("ACCEPTED" or "UNKNOWN"))
+                if (safetyId is not null && ReadRunSafetySibling(tx, previous, safetyId) != previousSafety)
                     throw new InvalidOperationException("The linked Stop changed before atomic settlement.");
 
                 observedMetadata?.Invoke(tx);
@@ -105,10 +117,63 @@ internal sealed partial class DurableCommandStore
 
                 if (!retainUnknown)
                     WriteResult(tx, id, state, effect, redactedJson, now, resolved, resolved is null ? null : expires);
-                if (safetyId is not null)
-                    WriteResult(tx, safetyId, "SUCCEEDED", 2, settledSafetyJson!, now, now, expires);
+                if (safetyId is not null && !retainSafetyUnknown)
+                {
+                    string? resolvedSafety = settledSafetyState == "SUCCEEDED" ? now : null;
+                    WriteResult(tx, safetyId, settledSafetyState, safetyEffect, settledSafetyJson!, now,
+                        resolvedSafety, resolvedSafety is null ? null : expires);
+                }
             });
             return Inspect(commandId)!;
+        }
+    }
+
+    internal DurableReceipt SettleRunStop(byte[] startCommand, byte[] stopCommand, string state, int effect,
+        string redactedJson, Action<StoreTransaction> observedMetadata)
+    {
+        ArgumentNullException.ThrowIfNull(observedMetadata);
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (MaintenanceRequired) throw new DurableStoreMaintenanceException();
+            StoreIds.Validate(startCommand, nameof(startCommand));
+            StoreIds.Validate(stopCommand, nameof(stopCommand));
+            ValidateResult(state, effect, redactedJson);
+            if ((state, effect) is not (("SUCCEEDED", 2) or ("UNKNOWN", 3)))
+                throw new ArgumentException("A recovered Stop requires a known performed effect or an unresolved observation.", nameof(state));
+
+            var start = Inspect(startCommand) ?? throw new InvalidOperationException("No original Run Start receipt exists.");
+            string stopId = Convert.ToHexStringLower(stopCommand);
+            var stop = _store.Read(reader => ReadRunSafetySibling(reader, start, stopId));
+            if (stop.State is "SUCCEEDED" or "FAILED")
+            {
+                if (stop.State != state || stop.Effect != effect || stop.ResponseJson != redactedJson)
+                    throw new InvalidOperationException("The known Stop outcome cannot be rewritten.");
+                return stop;
+            }
+
+            // Terminal reconciliation may update the Run without rewriting its already recorded uncertainty.
+            bool keepOriginal = stop.State == "UNKNOWN" && state == "UNKNOWN";
+            string now = Now();
+            string? resolved = state == "UNKNOWN" ? null : now;
+            string? expires = resolved is null ? null : ResultExpiry();
+            byte[] evidence = ObservationDigest(state, effect, redactedJson);
+            Advance("observe_recovered_stop", stopId, evidence, transaction =>
+            {
+                if (ReadRunSafetySibling(transaction, start, stopId) != stop)
+                    throw new InvalidOperationException("The linked Stop changed before recovery settlement.");
+                observedMetadata(transaction);
+                if (!Equals(transaction.Scalar("""
+                    SELECT EXISTS(SELECT 1 FROM run r JOIN sandbox s ON s.sandbox_id=r.sandbox_id
+                      WHERE s.owner_id=$owner AND r.run_id=$run AND r.ended_utc IS NOT NULL
+                        AND r.state IN ($exited,$failed));
+                    """, ("$owner", _owner), ("$run", start.AggregateId),
+                    ("$exited", (int)StoredRunState.Exited), ("$failed", (int)StoredRunState.Failed)), 1L))
+                    throw new InvalidOperationException("The recovered Run boundary lacks a terminal observation.");
+                if (!keepOriginal)
+                    WriteResult(transaction, stopId, state, effect, redactedJson, now, resolved, expires);
+            });
+            return Inspect(stopCommand)!;
         }
     }
 
@@ -155,12 +220,17 @@ internal sealed partial class DurableCommandStore
             RestoreSafetyReserve(tx);
     }
 
-    private void RestoreSafetyReserve(StoreTransaction tx) => tx.Execute("""
-        UPDATE owner_epoch_capacity SET reserve_storage=zeroblob(length(reserve_storage)+$n)
-        WHERE owner_id=$o AND owner_epoch=$e AND length(reserve_storage)+$n<=safety_receipts*maximum_response_bytes
-          AND length(reserve_storage)+$n+(SELECT coalesce(sum(coalesce(length(CAST(response_json AS BLOB)),0)+length(reserved_response)+2048),0)
-            FROM command_receipt WHERE owner_id=$o AND owner_epoch=$e)<=maximum_journal_bytes;
-        """, ("$n", _capacity.MaximumResponseBytes), ("$o", _owner), ("$e", _fence.Epoch));
+    private void RestoreSafetyReserve(StoreTransaction tx)
+    {
+        long promised = CountOutstandingSafetyPromises(tx) * ReservedSafetyIdentityBytes;
+        tx.Execute("""
+            UPDATE owner_epoch_capacity SET reserve_storage=zeroblob(length(reserve_storage)+$n)
+            WHERE owner_id=$o AND owner_epoch=$e AND length(reserve_storage)+$n<=safety_receipts*maximum_response_bytes
+              AND length(reserve_storage)+$n+$promised+(SELECT coalesce(sum(coalesce(length(CAST(response_json AS BLOB)),0)+length(reserved_response)+$identity),0)
+                FROM command_receipt WHERE owner_id=$o AND owner_epoch=$e)<=maximum_journal_bytes;
+            """, ("$n", _capacity.MaximumResponseBytes), ("$o", _owner), ("$e", _fence.Epoch),
+            ("$identity", ReceiptIdentityBytes), ("$promised", promised));
+    }
 
     private bool HasUnresolvedEffect(StoreReader reader, string id) => !Equals(reader.Scalar("""
         SELECT (SELECT count(*) FROM transfer WHERE owner_id=$o AND owner_epoch=$e AND command_id=$c

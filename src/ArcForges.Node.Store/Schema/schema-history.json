@@ -133,6 +133,14 @@
       "sha256": "a0ed448610bed779fd8ae2a5d8f02834aa74e8ae74bc48028329467c6036bf69",
       "source": "ArcForges-Design493022fb docs/data/node-store.sql; forward adaptation and resource_sample collision mapping recorded in eng/v2-migration/afv2-data-01-source.json.",
       "addedBy": "AFV2-DATA-01"
+    },
+    {
+      "version": 17,
+      "minReaderVersion": 17,
+      "file": "0017-v2-run-recovery.sql",
+      "sha256": "1a2985ef51885cf6539fd5b82a87cc1a81ac90499df5779321b6286003a7561c",
+      "source": "AFV2-REC-01 Run controller generations and durable Stop intent.",
+      "addedBy": "AFV2-REC-01"
     }
   ]
 }

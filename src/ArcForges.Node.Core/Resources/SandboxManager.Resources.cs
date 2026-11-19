@@ -230,7 +230,7 @@ internal sealed partial class SandboxManager
     }
 
     private IRunResourceSource? CurrentResourceSource(string id, string epoch) =>
-        _liveRuns.TryGetValue(id, out var run) && run.Spec.Epoch == epoch ? run.OwnerLease as IRunResourceSource : null;
+        _liveRuns.TryGetValue(id, out var run) && run.Epoch == epoch ? run.OwnerLease as IRunResourceSource : null;
 
     private static string MemoryKind(RunMemoryAccounting kind) => kind switch
     {

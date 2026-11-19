@@ -665,7 +665,10 @@ public sealed class NodeStore : IDisposable
         long unresolved = (long)tx.Scalar("SELECT count(*) FROM file_operation_journal WHERE phase<>2 OR held=1;")!;
         string receipt = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(
             string.Create(CultureInfo.InvariantCulture, $"AFV2-DATA-01|{sourceSchema}|16|{step.Sha256}|{backupIdentity}|{unresolved}|{options.Cohort}"))));
-        tx.Execute("INSERT INTO schema_version(singleton,version,min_reader,cohort,migration_receipt) VALUES(1,16,16,$cohort,$receipt);",
+        tx.Execute("""
+            INSERT INTO schema_version(singleton,version,min_reader,cohort,migration_receipt)
+            SELECT 1,schema_version,min_reader_version,$cohort,$receipt FROM store_meta WHERE singleton=1;
+            """,
             ("$cohort", options.Cohort), ("$receipt", receipt));
         tx.Execute("""
             INSERT INTO migration_checkpoint(migration_id,source_schema,target_schema,backup_identity,state,cohort,unresolved_count,receipt_sha256,created_utc)

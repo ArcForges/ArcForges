@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+using System.ComponentModel;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using System.Security.Principal;
 using Microsoft.Win32;
 using Microsoft.Win32.SafeHandles;
 
@@ -96,15 +98,56 @@ public static partial class WindowsMxcProcess
     {
         ArgumentNullException.ThrowIfNull(job);
         ArgumentNullException.ThrowIfNull(owner);
-        const uint jobQuery = 4;
-        if (!Native.DuplicateHandle(Native.GetCurrentProcess(), job.Handle, owner.Process.DangerousGetHandle(),
-                out var target, jobQuery, inherit: false, options: 0))
+        return DuplicateJobToOwner(job, owner.Process, Native.JobObjectQuery);
+    }
+
+    internal static (long Query, long Recovery) DuplicateJobsToOwner(WindowsMxcJob job, SafeKernelHandle owner)
+    {
+        var query = DuplicateJobToOwner(job, owner, Native.JobObjectQuery);
+        try
         {
-            throw WindowsMxcJob.Error("Transfer held Job lifetime to the authenticated supervisor");
+            var recovery = DuplicateJobToOwner(job, owner,
+                Native.JobObjectQuery | Native.JobObjectSetAttributes | Native.JobObjectTerminate);
+            return (query, recovery);
+        }
+        catch (Win32Exception)
+        {
+            // This handle has never been sent to the owner. The kernel closes the source even if duplication fails.
+            _ = Native.DuplicateRemoteHandle(owner, query, 0, out _, 0, inherit: false, options: Native.DuplicateCloseSource);
+            throw;
+        }
+    }
+
+    private static nint DuplicateJobToOwner(WindowsMxcJob job, SafeKernelHandle owner, uint access)
+    {
+        var retained = false;
+        try
+        {
+            owner.DangerousAddRef(ref retained);
+            if (!Native.DuplicateHandle(Native.GetCurrentProcess(), job.Handle, owner.DangerousGetHandle(),
+                    out var target, access, inherit: false, options: 0))
+            {
+                throw WindowsMxcJob.Error("Transfer the held Job to the authenticated supervisor");
+            }
+
+            return target;
+        }
+        finally
+        {
+            if (retained) owner.DangerousRelease();
+        }
+    }
+
+    internal static nint DuplicateJobFromOwner(SafeKernelHandle owner, long remoteHandle)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(remoteHandle);
+        if (!Native.DuplicateRemoteHandle(owner, checked((nint)remoteHandle), Native.GetCurrentProcess(), out var local,
+                0, inherit: false, options: Native.DuplicateSameAccess))
+        {
+            throw WindowsMxcJob.Error("Read the authenticated supervisor's original Job capability");
         }
 
-        GC.KeepAlive(owner);
-        return target.ToInt64();
+        return local;
     }
 
     /// <summary>Creates a process suspended and atomically assigns it to a held Job.</summary>
@@ -242,19 +285,61 @@ public static partial class WindowsMxcProcess
     /// <summary>Matches a local authenticated pipe to its held peer's PID, birth identity and image.</summary>
     public static void RequirePeer(SafePipeHandle pipe, bool localIsServer, int pid, long creationFileTime, string image)
     {
-        ArgumentNullException.ThrowIfNull(pipe);
+        RequirePipeProcessId(pipe, localIsServer, pid);
+        using var peer = ProcessInfo.Open(pid)
+            ?? throw new InvalidDataException("The native MXC control pipe peer is unavailable.");
+        RequireLiveIdentity(peer, creationFileTime, image);
+    }
+
+    internal static void RequireRecoveryPeer(SafePipeHandle pipe, int pid, long creationFileTime, string image)
+    {
+        RequirePipeProcessId(pipe, localIsServer: true, pid);
+        using var peer = ProcessInfo.Open(pid)
+            ?? throw new InvalidDataException("The Windows recovery requester is unavailable.");
+        RequireLiveIdentity(peer, creationFileTime, image);
+        RequireSameUser(peer);
+    }
+
+    internal static SafeKernelHandle OpenRecoveryOwner(int pid, long creationFileTime, string image)
+    {
+        var peer = Native.OpenProcess(Native.ProcessQueryLimitedInformation | Native.Synchronize | Native.ProcessDuplicateHandle,
+            inherit: false, pid);
+        try
+        {
+            if (peer.IsInvalid) throw WindowsMxcJob.Error("Open the exact Windows recovery supervisor");
+            RequireLiveIdentity(peer, creationFileTime, image);
+            RequireSameUser(peer);
+            return peer;
+        }
+        catch
+        {
+            peer.Dispose();
+            throw;
+        }
+    }
+
+    internal static void RequireRecoveryOwnerPipe(SafePipeHandle pipe, SafeKernelHandle owner, int pid, long creationFileTime, string image)
+    {
+        RequirePipeProcessId(pipe, localIsServer: false, pid);
+        RequireLiveIdentity(owner, creationFileTime, image);
+    }
+
+    private static void RequirePipeProcessId(SafePipeHandle pipe, bool localIsServer, int pid)
+    {
         if (!(localIsServer ? GetNamedPipeClientProcessId(pipe, out var observed) : GetNamedPipeServerProcessId(pipe, out observed)))
         {
             throw WindowsMxcJob.Error("Read native MXC control pipe peer");
         }
 
-        if (observed != pid || creationFileTime <= 0)
+        if (observed != pid || pid <= 0)
         {
             throw new InvalidDataException("The native MXC control pipe peer identity differs.");
         }
+    }
 
-        using var peer = ProcessInfo.Open(pid);
-        if (peer is null || ProcessInfo.CreationFileTime(peer) != creationFileTime || !ProcessInfo.IsRunning(peer))
+    private static void RequireLiveIdentity(SafeKernelHandle peer, long creationFileTime, string image)
+    {
+        if (creationFileTime <= 0 || ProcessInfo.CreationFileTime(peer) != creationFileTime || !ProcessInfo.IsRunning(peer))
         {
             throw new InvalidDataException("The native MXC control pipe peer is stale.");
         }
@@ -262,13 +347,33 @@ public static partial class WindowsMxcProcess
         RequireImage(peer, image);
     }
 
+    private static void RequireSameUser(SafeKernelHandle peer)
+    {
+        var opened = Native.OpenProcessToken(peer, Native.TokenQuery, out var token);
+        using (token)
+        {
+            if (!opened) throw WindowsMxcJob.Error("Read the Windows recovery process owner");
+            using var identity = new WindowsIdentity(token.DangerousGetHandle());
+            using var current = WindowsIdentity.GetCurrent();
+            if (identity.User is not { } user || current.User is not { } expected || !user.Equals(expected))
+            {
+                throw new InvalidDataException("The Windows recovery process belongs to a different user.");
+            }
+        }
+    }
+
     /// <summary>Reads the raw exit code from the held process once it is signaled.</summary>
     public static uint? PollExit(LaunchedProcess process)
     {
         ArgumentNullException.ThrowIfNull(process);
-        var wait = Native.WaitForSingleObject(process.Process, 0);
+        return PollExit(process.Process);
+    }
+
+    internal static uint? PollExit(SafeKernelHandle process)
+    {
+        var wait = Native.WaitForSingleObject(process, 0);
         if (wait == Native.WaitTimeout) return null;
-        if (wait != Native.WaitObject0 || !Native.GetExitCodeProcess(process.Process, out var code))
+        if (wait != Native.WaitObject0 || !Native.GetExitCodeProcess(process, out var code))
         {
             throw WindowsMxcJob.Error("Read native MXC process completion");
         }

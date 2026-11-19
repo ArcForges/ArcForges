@@ -253,7 +253,12 @@ public static class NodeHost
         NodeStore store;
         try
         {
+            DurableCommandStore.VerifyRestorePublication(dataRoot);
             store = NodeStore.Open(new NodeStoreOptions { DataRoot = dataRoot, BootIdentity = BootIdentity.Read(), Clock = clock });
+        }
+        catch (DurableStoreMaintenanceException)
+        {
+            return await RefuseUnreconciledAuthorityAsync(options, log, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is StoreIncompatibleException or Microsoft.Data.Sqlite.SqliteException or IOException
             or UnauthorizedAccessException)
@@ -272,6 +277,15 @@ public static class NodeHost
             // Records the clean-shutdown marker and closes the writer.
             store.Dispose();
         }
+    }
+
+    private static async Task<int> RefuseUnreconciledAuthorityAsync(NodeHostOptions options, NodeLog log, CancellationToken cancellationToken)
+    {
+        log.Warning("node.store.maintenance", new LogField("reason", "owner_authority_reconciliation_required"));
+        await options.Error.WriteLineAsync(
+            "arcforges: owner_authority_reconciliation_required. Reconcile the original owner history before starting the node.".AsMemory(),
+            cancellationToken).ConfigureAwait(false);
+        return NodeExitCodes.Failure;
     }
 
     private static async Task<int> ServeAsync(NodeHostOptions options, NodeStore store, NodeLog log, SystemdNotifier notifier, WindowsReadyEvent? ready,
@@ -300,6 +314,28 @@ public static class NodeHost
 
         // The node data key loads at startup, outside the writer (secret-store I/O must never run under the writer lock).
         var secretStore = options.SecretStore?.Invoke(dataRoot) ?? NodeSecretStores.ForNode(dataRoot, options.TestMode);
+        var sandboxes = CreateSandboxManager(store, dataRoot, secretStore, clock, log, journal.Generation,
+            options.TestMode ? options.SandboxMxcInstallationRoot : null, protectedEndpoint, faults);
+        try
+        {
+            if (sandboxes is not null)
+            {
+                sandboxes.VerifyExistingAuthority();
+            }
+            else if (store.Read(reader => Equals(reader.Scalar("SELECT EXISTS(SELECT 1 FROM owner_epoch);"), 1L)))
+            {
+                throw new DurableStoreMaintenanceException();
+            }
+        }
+        catch (Exception error) when (error is DurableStoreMaintenanceException or IOException or UnauthorizedAccessException
+            or Microsoft.Data.Sqlite.SqliteException or FormatException or System.Security.Cryptography.CryptographicException
+            or SandboxPrivateRootException)
+        {
+            sandboxes?.Dispose();
+            await processor.DisposeAsync().ConfigureAwait(false);
+            return await RefuseUnreconciledAuthorityAsync(options, log, cancellationToken).ConfigureAwait(false);
+        }
+
         var keys = new NodeDataKeyRing(store, secretStore);
         var keyLoad = Task.Run(() =>
         {
@@ -370,14 +406,12 @@ public static class NodeHost
         using var node = new NodeRuntime(store, journal, hub, processor, log, settings, dataRoot, endpoint.Address, clock, recovery, capabilities)
         {
             Execution = execution,
-            Sandboxes = CreateSandboxManager(store, dataRoot, secretStore, clock, log, journal.Generation,
-                options.TestMode ? options.SandboxMxcInstallationRoot : null, protectedEndpoint),
+            Sandboxes = sandboxes,
 
             // AD-0021 section 5 (Plan decision Q8): a local SCRIPT submission only on a --test-mode node with the allowance; never in production.
             LocalScriptSubmit = options.AllowLocalScriptSubmit
                 ?? LocalSubmission.ScriptAllowed(options.TestMode, Environment.GetEnvironmentVariable(LocalSubmission.Variable)),
         };
-        await using var sandboxResources = node.Sandboxes?.StartResourceSampling(sampler as IHostResourceSource, log);
 
         // AF-CTR-05 N2b: the center-routed dispatcher, bound to the TaskService once the local server builds it.
         using var routed = new RoutedDispatcher(node);
@@ -431,6 +465,7 @@ public static class NodeHost
         using var stopSignals = RegisterSignals(node);
         using var external = cancellationToken.Register(() => node.RequestStop("cancelled"));
         LocalRpcServer? server = null;
+        IAsyncDisposable? sandboxResources = null;
         using var housekeeping = new PeriodicTimer(HousekeepingInterval);
         Task housekeepingLoop = Task.CompletedTask;
         Task versionCheck = Task.CompletedTask;
@@ -472,6 +507,13 @@ public static class NodeHost
             {
                 await participant.RecoverAsync(recovery, processor, node.Stopping).ConfigureAwait(false);
                 log.Info("node.recovery.done", new LogField("participant", participant.Name));
+            }
+
+            if (node.Sandboxes is { } recoveredSandboxes)
+            {
+                await recoveredSandboxes.RecoverRunsAsync(recovery, node.Stopping).ConfigureAwait(false);
+                log.Info("node.recovery.done", new LogField("participant", "sandbox_runs"));
+                sandboxResources = recoveredSandboxes.StartResourceSampling(sampler as IHostResourceSource, log);
             }
 
             var sessions = new ClientSessions
@@ -575,6 +617,11 @@ public static class NodeHost
             if (server is not null)
             {
                 await server.DisposeAsync().ConfigureAwait(false);
+            }
+
+            if (sandboxResources is not null)
+            {
+                await sandboxResources.DisposeAsync().ConfigureAwait(false);
             }
 
             await execution.DisposeAsync().ConfigureAwait(false);
@@ -839,7 +886,7 @@ public static class NodeHost
     }
 
     private static SandboxManager? CreateSandboxManager(NodeStore store, string dataRoot, NodeSecretStore secrets, TimeProvider clock, NodeLog log,
-        ulong journalGeneration, string? installationRoot, SandboxProtectedEndpoint? protectedEndpoint)
+        ulong journalGeneration, string? installationRoot, SandboxProtectedEndpoint? protectedEndpoint, ExecutionFaults faults)
     {
         try
         {
@@ -850,6 +897,7 @@ public static class NodeHost
                 {
                     RunLauncher = OperatingSystem.IsWindows() ? new WindowsRunLauncher()
                         : OperatingSystem.IsLinux() ? new LinuxRunLauncher() : null,
+                    RunFaults = faults,
                     RunDiagnostic = (id, phase, native) => log.Info("run.owner", new LogField("run", id),
                         new LogField("phase", phase), new LogField("native", native)),
                 };

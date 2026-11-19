@@ -84,7 +84,7 @@ public sealed class MigrationPlan
 public static class StoreMigrations
 {
     /// <summary>The schema version this binary writes; it reads stores whose <c>min_reader_version</c> is at most this.</summary>
-    public const int SupportedSchemaVersion = 16;
+    public const int SupportedSchemaVersion = 17;
 
     /// <summary>The released steps, loaded from the embedded <c>Schema/*.sql</c> resources.</summary>
     public static MigrationPlan Released { get; } = new([
@@ -138,6 +138,9 @@ public static class StoreMigrations
         // V2 durable authority/receipts cannot be shared with a reader which can evict legacy command identities.
         // This expands the schema and preserves every V1 reconciliation table and applied migration byte.
         Load(16, 16, "0016-v2-expand.sql"),
+
+        // Older readers cannot coordinate durable Run Stop and controller-generation recovery.
+        Load(17, 17, "0017-v2-run-recovery.sql"),
     ]);
 
     private static StoreMigration Load(int version, int minReaderVersion, string name)

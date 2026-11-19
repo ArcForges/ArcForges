@@ -119,7 +119,8 @@ internal static class SandboxRecords
     }
 
     /// <summary>Checks persisted managed use before admitting ERROR repair while the Sandbox lock is held.</summary>
-    internal static bool HasUnresolvedUse(StoreReader reader, string ownerId, string sandboxId) =>
+    internal static bool HasUnresolvedUse(StoreReader reader, string ownerId, string sandboxId,
+        byte[]? currentEpoch = null, string? admittedCommandId = null, StoredSandboxDeletion? continuation = null) =>
         Equals(reader.Scalar("""
             SELECT EXISTS(
                 SELECT 1 FROM sandbox AS s
@@ -127,8 +128,19 @@ internal static class SandboxRecords
                     EXISTS(SELECT 1 FROM run AS r WHERE r.sandbox_id=s.sandbox_id AND r.state IN (1,2,3,4,7))
                     OR EXISTS(
                         SELECT 1 FROM command_receipt AS r
-                        WHERE r.aggregate_kind='sandbox' AND r.aggregate_id=s.sandbox_id
+                        WHERE r.owner_id=s.owner_id
                           AND (r.state IN ('ACCEPTED','UNKNOWN') OR r.effect_certainty=3)
+                          AND NOT (r.owner_epoch IS $epoch AND (
+                            r.command_id IS $admitted OR r.command_id IS $original OR r.command_id IS $previous))
+                          AND (
+                            (r.aggregate_kind='sandbox' AND r.aggregate_id=s.sandbox_id)
+                            OR (r.aggregate_kind='run' AND EXISTS(SELECT 1 FROM run AS u
+                                WHERE u.run_id=r.aggregate_id AND u.sandbox_id=s.sandbox_id))
+                            OR EXISTS(SELECT 1 FROM transfer AS t
+                                WHERE t.sandbox_id=s.sandbox_id AND t.owner_id=r.owner_id
+                                  AND ((r.aggregate_kind='transfer' AND t.transfer_id=r.aggregate_id)
+                                    OR (t.owner_epoch=r.owner_epoch AND t.command_id=r.command_id)))
+                          )
                     )
                     OR EXISTS(
                         SELECT 1 FROM transfer AS t WHERE t.sandbox_id=s.sandbox_id
@@ -137,10 +149,12 @@ internal static class SandboxRecords
                     OR EXISTS(
                         SELECT 1 FROM deletion_journal AS d WHERE d.sandbox_id=s.sandbox_id
                           AND (d.phase<>'complete' OR d.effect_certainty=3)
+                          AND NOT (d.owner_id=s.owner_id AND d.owner_epoch IS $epoch AND d.command_id IS $original)
                     )
                 )
             );
-            """, ("$owner", ownerId), ("$id", sandboxId)), 1L);
+            """, ("$owner", ownerId), ("$id", sandboxId), ("$epoch", currentEpoch), ("$admitted", admittedCommandId),
+            ("$original", continuation?.OriginalCommandId), ("$previous", continuation?.LatestSuccessorId)), 1L);
 
     /// <summary>Reserves the identity and first configuration in the durable Create admission transaction.</summary>
     internal static void Reserve(StoreTransaction transaction, StoredSandbox reservation)
@@ -216,7 +230,7 @@ internal static class SandboxRecords
         return true;
     }
 
-    private static void InsertConfig(StoreTransaction transaction, string sandboxId, long revision, StoredSandboxConfig configuration, string created) =>
+    internal static void InsertConfig(StoreTransaction transaction, string sandboxId, long revision, StoredSandboxConfig configuration, string created) =>
         transaction.Execute("""
             INSERT INTO sandbox_config(sandbox_id, revision, profile_id, profile_version, config_json, config_sha256, created_utc)
             VALUES($id, $revision, $profile, $version, $json, $sha, $created);
@@ -236,7 +250,7 @@ internal static class SandboxRecords
             new(row.GetString(11), row.GetString(12), row.GetString(13), row.GetString(14)));
     }
 
-    private static string FormatTime(DateTimeOffset value) => value.UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
+    internal static string FormatTime(DateTimeOffset value) => value.UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
 
     private static DateTimeOffset ParseTime(string value) =>
         DateTimeOffset.Parse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal);

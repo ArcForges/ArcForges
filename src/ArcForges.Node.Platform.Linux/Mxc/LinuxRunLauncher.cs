@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using System.Security.Cryptography;
 using ArcForges.RunSupervisor.Protocol;
 using Microsoft.Win32.SafeHandles;
 
@@ -12,7 +13,7 @@ namespace ArcForges.Node.Platform.Linux.Mxc;
 
 /// <summary>Starts V2 Run owners in their dedicated native user service.</summary>
 [SupportedOSPlatform("linux")]
-public sealed class LinuxRunLauncher : IRunLauncher
+public sealed class LinuxRunLauncher : IRunLauncher, IRunRecoveryLauncher
 {
     /// <inheritdoc />
     public async ValueTask<IRunOwnerLease> PrepareAsync(RunLaunchSpec spec, CancellationToken cancellationToken)
@@ -47,7 +48,9 @@ public sealed class LinuxRunLauncher : IRunLauncher
                 spec.CpuMillicores, spec.MemoryMaxBytes, spec.MaxProcesses, spec.CpuWeight).ConfigureAwait(false);
             var ready = await LinuxRunSystemd.WaitForReadyAsync(unit, cancellationToken).ConfigureAwait(false);
             scope = ready.Scope;
-            controller = await ConnectAsync(spec, ready.State, launchBinding, cancellationToken).ConfigureAwait(false);
+            controller = await ConnectAsync(ready.State, controlDirectory, spec.ControlDirectory, spec.ControlEndpoint,
+                spec.SupervisorPath, spec.SupervisorSha256,
+                (stream, token) => RunControlClient.ConnectAsync(stream, spec, launchBinding, token), cancellationToken).ConfigureAwait(false);
             var identity = LinuxRunNativePeer.Identity(spec, ready.State, scope);
             if (identity != controller.Identity)
             {
@@ -55,7 +58,7 @@ public sealed class LinuxRunLauncher : IRunLauncher
             }
 
             RequireReadback(spec, ready.State, scope);
-            var lease = new LinuxRunLease(spec, ready.State, scope, controller, identity, controlDirectory);
+            var lease = new LinuxRunLease(ready.State, scope, controller, identity, controlDirectory, launch: spec);
             scope = null;
             controller = null;
             controlDirectory = null;
@@ -90,6 +93,129 @@ public sealed class LinuxRunLauncher : IRunLauncher
         }
     }
 
+    /// <inheritdoc />
+    public async ValueTask<RunRecoveryResult> RecoverAsync(RunRecoverySpec spec, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var owner = spec.Owner;
+        var boundary = owner.BoundaryIdentity.Split('|', 6);
+        if (boundary.Length != 5 || boundary[1] != owner.InstanceId || !Guid.TryParseExact(boundary[1], "N", out _)
+            || !boundary[2].EndsWith('/' + boundary[0], StringComparison.Ordinal)
+            || !ulong.TryParse(boundary[3], NumberStyles.None, CultureInfo.InvariantCulture, out var mount) || mount == 0
+            || !ulong.TryParse(boundary[4], NumberStyles.None, CultureInfo.InvariantCulture, out var inode) || inode == 0
+            || owner.ProcessId <= 0 || !long.TryParse(owner.CreationIdentity, NumberStyles.None, CultureInfo.InvariantCulture, out var start) || start <= 0
+            || !Guid.TryParseExact(owner.BootId, "D", out var boot) || owner.ControlEpoch != spec.Epoch
+            || owner.BackendId != "linux-bubblewrap-sdk-v1" || owner.Cohort != owner.BackendId
+            || spec.ControlKey.Length != RunWire.KeyLength || spec.Generation <= 0 || !Path.IsPathFullyQualified(spec.ControlDirectory)
+            || owner.Endpoint != Path.Combine(spec.ControlDirectory, "owner.sock")
+            || !Path.IsPathFullyQualified(spec.SupervisorPath) || Path.GetDirectoryName(spec.SupervisorPath) != spec.InstallationRoot)
+        {
+            return UnresolvedRecovery("linux_recovery_identity_invalid");
+        }
+
+        LinuxRunCgroup? scope = null;
+        RunControlClient? controller = null;
+        SafeFileHandle? controlDirectory = null;
+        bool bootChanged = false;
+        try
+        {
+            bootChanged = Guid.ParseExact(LinuxRunCgroup.BootId(), "D") != boot;
+            controlDirectory = LinuxRunCgroup.OpenPrivateDirectory(spec.ControlDirectory);
+            if (bootChanged)
+            {
+                return new(null, VerifiedEnd(RunWire.TryReadObservation(spec), "host_reboot"));
+            }
+
+            var state = await LinuxRunSystemd.ReadAsync(boundary[0], cancellationToken).ConfigureAwait(false);
+            if (!MatchesRecoveryGeneration(state, owner, boundary[2]))
+            {
+                return UnresolvedRecovery("linux_recovery_service_generation_unproven");
+            }
+
+            scope = LinuxRunCgroup.Open(state.Group);
+            if (!scope.MatchesIdentity(mount, inode))
+            {
+                return UnresolvedRecovery("linux_recovery_cgroup_identity_mismatch");
+            }
+
+            if (state.OwnerPid == 0 && LinuxRunCgroup.IsOwnerGone(owner.ProcessId, start))
+            {
+                // systemd owns this transient unit's failure cleanup. A fallback Stop is scoped to the
+                // verified generation and the originally observed cgroup, even though MainPID is gone.
+                await LinuxRunSystemd.StopAsync(state with { OwnerPid = owner.ProcessId, OwnerStartTicks = start }, scope,
+                    cancellationToken).ConfigureAwait(false);
+                return new(null, VerifiedEnd(RunWire.TryReadObservation(spec), "owner_failure"));
+            }
+
+            if (state.OwnerPid != owner.ProcessId || state.OwnerStartTicks != start
+                || !LinuxRunCgroup.MatchesProcess(owner.ProcessId, start, state.Group))
+            {
+                return UnresolvedRecovery("linux_recovery_owner_identity_unproven");
+            }
+
+            var requester = ProcFs.Stat(Environment.ProcessId)?.StartTicks
+                ?? throw new IOException("The recovering Node's birth identity is unavailable.");
+            controller = await ConnectAsync(state, controlDirectory, spec.ControlDirectory, owner.Endpoint,
+                spec.SupervisorPath, spec.SupervisorSha256,
+                (stream, token) => RunControlClient.ReconnectAsync(stream, spec, requester.ToString(CultureInfo.InvariantCulture), token),
+                cancellationToken).ConfigureAwait(false);
+            var current = await LinuxRunSystemd.ReadAsync(state.Name, cancellationToken).ConfigureAwait(false);
+            if (controller.Identity != owner || !MatchesRecoveryGeneration(current, owner, state.Group)
+                || current.OwnerPid != owner.ProcessId || current.OwnerStartTicks != start || !scope.MatchesIdentity(mount, inode))
+            {
+                return UnresolvedRecovery("linux_recovery_authenticated_owner_changed");
+            }
+
+            // Core compares the held scope's live limits against the durable effective grant. The independent owner
+            // proof also lets Core retain safe Stop authority if that comparison cannot authorize a live rebind.
+            var observed = await controller.ObserveAsync(cancellationToken).ConfigureAwait(false);
+            if (observed.IsTerminal && scope.IsEmpty())
+            {
+                return new(null, observed with { GroupEmptyVerified = true });
+            }
+
+            var lease = new LinuxRunLease(state, scope, controller, owner, controlDirectory,
+                recovery: spec with { ControlKey = spec.ControlKey.ToArray() });
+            scope = null;
+            controller = null;
+            controlDirectory = null;
+            return new(lease, observed with { GroupEmptyVerified = false });
+        }
+        catch (Exception error) when (!cancellationToken.IsCancellationRequested && error is IOException or
+            UnauthorizedAccessException or OperationCanceledException or InvalidDataException or Win32Exception or InvalidOperationException)
+        {
+            return bootChanged ? new(null, VerifiedEnd(null, "host_reboot")) : UnresolvedRecovery(NativeFailure(error));
+        }
+        finally
+        {
+            try
+            {
+                if (controller is not null)
+                {
+                    await controller.DisposeAsync().ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                scope?.Dispose();
+                controlDirectory?.Dispose();
+            }
+        }
+    }
+
+    private static bool MatchesRecoveryGeneration(LinuxRunServiceState state, RunOwnerIdentity owner, string group) =>
+        state.Loaded && state.Boot == owner.BootId && state.Invocation == owner.InstanceId && state.Group == group;
+
+    private static RunRecoveryResult UnresolvedRecovery(string reason) =>
+        new(null, new RunOwnerObservation(RunOwnerState.RecoveryRequired, RunPayloadStart.Unknown, false, NativeError: reason));
+
+    private static RunOwnerObservation VerifiedEnd(RunOwnerObservation? prior, string reason) => prior is { IsTerminal: true }
+        ? prior with { GroupEmptyVerified = true }
+        : new(RunOwnerState.Exited,
+            prior?.PayloadStarted == RunPayloadStart.Confirmed ? RunPayloadStart.Confirmed : RunPayloadStart.Unknown, true,
+            prior?.RawExitCode, prior?.ExitSource ?? RunExitSources.Unknown, TerminationReason: reason,
+            NativeError: prior?.NativeError ?? (prior?.RawExitCode is null ? "linux_official_exit_unobserved" : null));
+
     internal static void RequireReadback(RunLaunchSpec spec, LinuxRunServiceState state, LinuxRunCgroup scope)
     {
         if (state.Group != scope.Path || !scope.ContainsOnlyOwner(state.OwnerPid, state.OwnerStartTicks))
@@ -100,13 +226,13 @@ public sealed class LinuxRunLauncher : IRunLauncher
         LinuxRunSystemd.RequireLimits(spec.CpuMillicores, spec.MemoryMaxBytes, spec.MaxProcesses, spec.CpuWeight, scope.ReadLimits());
     }
 
-    private static async Task<RunControlClient> ConnectAsync(RunLaunchSpec spec, LinuxRunServiceState state, string launchBinding,
-        CancellationToken cancellationToken)
+    private static async Task<RunControlClient> ConnectAsync(LinuxRunServiceState state, SafeFileHandle directory,
+        string controlDirectory, string controlEndpoint, string supervisorPath, string supervisorHash,
+        Func<Stream, CancellationToken, ValueTask<RunControlClient>> handshake, CancellationToken cancellationToken)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(10));
-        using var directory = LinuxRunCgroup.OpenPrivateDirectory(spec.ControlDirectory);
-        var endpoint = LinuxRunNativePeer.ControlAddress(spec, directory);
+        var endpoint = LinuxRunNativePeer.ControlAddress(controlDirectory, controlEndpoint, directory);
         while (true)
         {
             var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
@@ -130,9 +256,9 @@ public sealed class LinuxRunLauncher : IRunLauncher
             var stream = new NetworkStream(socket, ownsSocket: true);
             try
             {
-                LinuxRunNativePeer.Require(socket, state.OwnerPid, state.OwnerStartTicks, spec.SupervisorPath);
-                LinuxRunMxcAssets.VerifyRunningSupervisor(spec, state.OwnerPid, state.OwnerStartTicks);
-                return await RunControlClient.ConnectAsync(stream, spec, launchBinding, deadline.Token).ConfigureAwait(false);
+                LinuxRunNativePeer.Require(socket, state.OwnerPid, state.OwnerStartTicks, supervisorPath);
+                LinuxRunMxcAssets.VerifyRunningSupervisor(supervisorHash, state.OwnerPid, state.OwnerStartTicks);
+                return await handshake(stream, deadline.Token).ConfigureAwait(false);
             }
             catch
             {
@@ -165,10 +291,11 @@ public sealed class LinuxRunLauncher : IRunLauncher
         _ => error.GetType().Name,
     };
 
-    private sealed class LinuxRunLease(RunLaunchSpec spec, LinuxRunServiceState native, LinuxRunCgroup scope,
-        RunControlClient controller, RunOwnerIdentity identity, SafeFileHandle controlDirectory) : IRunOwnerLease, IRunResourceSource, IRunResourceControl
+    private sealed class LinuxRunLease(LinuxRunServiceState native, LinuxRunCgroup scope, RunControlClient controller,
+        RunOwnerIdentity identity, SafeFileHandle controlDirectory, RunLaunchSpec? launch = null, RunRecoverySpec? recovery = null)
+        : IRunOwnerLease, IRunResourceSource, IRunResourceControl
     {
-        private bool _releaseSent;
+        private bool _releaseSent = recovery is not null;
         private int _boundaryStopVerified;
 
         public RunOwnerIdentity Identity { get; } = identity;
@@ -189,6 +316,11 @@ public sealed class LinuxRunLauncher : IRunLauncher
 
         public async ValueTask ActivateAsync(CancellationToken cancellationToken)
         {
+            if (launch is null)
+            {
+                throw new RunNativeException("release_linux_owner", "linux_recovery_activation_forbidden");
+            }
+
             var current = await LinuxRunSystemd.ReadAsync(native.Name, cancellationToken).ConfigureAwait(false);
             if (current.Invocation != native.Invocation || current.Boot != native.Boot || current.Group != native.Group ||
                 current.OwnerPid != native.OwnerPid || current.OwnerStartTicks != native.OwnerStartTicks)
@@ -196,7 +328,7 @@ public sealed class LinuxRunLauncher : IRunLauncher
                 throw new RunNativeException("release_linux_owner", "linux_owner_generation_changed");
             }
 
-            RequireReadback(spec, current, scope);
+            RequireReadback(launch, current, scope);
             Volatile.Write(ref _releaseSent, true);
             await controller.ActivateAsync(new RunRelease(), cancellationToken).ConfigureAwait(false);
         }
@@ -241,24 +373,25 @@ public sealed class LinuxRunLauncher : IRunLauncher
 
         public async ValueTask<RunOwnerObservation> ObserveAsync(CancellationToken cancellationToken)
         {
-            var result = RunWire.TryReadObservation(spec);
+            var result = ReadStoredObservation();
+            bool ownerContacted = false;
             if (result is not { IsTerminal: true } && Volatile.Read(ref _boundaryStopVerified) == 0)
             {
                 try
                 {
                     result = await controller.ObserveAsync(cancellationToken).ConfigureAwait(false);
+                    ownerContacted = true;
                 }
                 catch (Exception error) when (error is IOException or SocketException)
                 {
-                    result = RunWire.TryReadObservation(spec);
+                    result = ReadStoredObservation();
                 }
             }
 
             if (Volatile.Read(ref _boundaryStopVerified) != 0 && scope.IsEmpty())
             {
-                // The original owner is gone. Its signed sidecar can no longer change.
-                var settled = RunWire.TryReadObservation(spec) ?? result;
-                return settled is { IsTerminal: true } ? settled with { GroupEmptyVerified = true } : BoundaryStopObservation(settled);
+                // The original scope is empty. An authenticated terminal observation supplies any Stop attribution.
+                return VerifiedEnd(ReadStoredObservation() ?? result, "owned_scope_drained");
             }
 
             if (result is { IsTerminal: true })
@@ -275,21 +408,21 @@ public sealed class LinuxRunLauncher : IRunLauncher
                     : result with { State = RunOwnerState.Draining, GroupEmptyVerified = false };
             }
 
-            return result is null
-                ? new(RunOwnerState.RecoveryRequired, RunPayloadStart.Unknown, scope.IsEmpty(),
-                    NativeError: "linux_owner_observation_unavailable")
-                : result with { GroupEmptyVerified = false };
+            if (ownerContacted)
+            {
+                return result! with { GroupEmptyVerified = false };
+            }
+
+            return LinuxRunCgroup.IsOwnerGone(native.OwnerPid, native.OwnerStartTicks) && scope.IsEmpty()
+                ? VerifiedEnd(ReadStoredObservation() ?? result, "owner_failure")
+                : new(RunOwnerState.RecoveryRequired,
+                    result?.PayloadStarted == RunPayloadStart.Confirmed ? RunPayloadStart.Confirmed : RunPayloadStart.Unknown,
+                    false, NativeError: "linux_owner_observation_unavailable");
         }
 
-        private static RunOwnerObservation BoundaryStopObservation(RunOwnerObservation? previous)
-        {
-            // The explicit Stop and held-scope proof establish that execution
-            // ended. Only an independent observation can supply executor exit data.
-            return new(RunOwnerState.Exited,
-                previous?.PayloadStarted == RunPayloadStart.Confirmed ? RunPayloadStart.Confirmed : RunPayloadStart.Unknown,
-                true, previous?.RawExitCode, previous?.ExitSource ?? RunExitSources.Unknown, TerminationReason: "user_stop",
-                NativeError: previous?.NativeError ?? (previous?.RawExitCode is null ? "linux_official_exit_unobserved" : null));
-        }
+        private RunOwnerObservation? ReadStoredObservation() => launch is not null
+            ? RunWire.TryReadObservation(launch, Identity)
+            : RunWire.TryReadObservation(recovery!);
 
         public async ValueTask DisposeAsync()
         {
@@ -302,13 +435,18 @@ public sealed class LinuxRunLauncher : IRunLauncher
             {
                 try
                 {
-                    cleanupFailed = !_releaseSent && await LinuxRunSystemd.RollbackUnreleasedAsync(native.Name).ConfigureAwait(false)
-                        && !TryRemoveUnreleasedLaunch(spec, controlDirectory);
+                    cleanupFailed = launch is not null && !_releaseSent
+                        && await LinuxRunSystemd.RollbackUnreleasedAsync(native.Name).ConfigureAwait(false)
+                        && !TryRemoveUnreleasedLaunch(launch, controlDirectory);
                 }
                 finally
                 {
                     scope.Dispose();
                     controlDirectory.Dispose();
+                    if (recovery is not null)
+                    {
+                        CryptographicOperations.ZeroMemory(recovery.ControlKey);
+                    }
                 }
             }
 
@@ -330,9 +468,12 @@ internal static partial class LinuxRunNativePeer
                 $"{state.Name}|{state.Invocation}|{scope.Path}|{scope.MountId}|{scope.Inode}"),
             spec.ProfileId, spec.ProfileVersion, spec.Epoch);
 
-    internal static UnixDomainSocketEndPoint ControlAddress(RunLaunchSpec spec, SafeFileHandle directory)
+    internal static UnixDomainSocketEndPoint ControlAddress(RunLaunchSpec spec, SafeFileHandle directory) =>
+        ControlAddress(spec.ControlDirectory, spec.ControlEndpoint, directory);
+
+    internal static UnixDomainSocketEndPoint ControlAddress(string controlDirectory, string endpoint, SafeFileHandle directory)
     {
-        if (spec.ControlEndpoint != Path.Combine(spec.ControlDirectory, "owner.sock"))
+        if (endpoint != Path.Combine(controlDirectory, "owner.sock"))
         {
             throw new IOException("The Unix Run endpoint is outside its private directory.");
         }
@@ -358,7 +499,7 @@ internal static partial class LinuxRunNativePeer
                 throw new IOException("The local Run peer identity is unavailable.", new Win32Exception(Marshal.GetLastPInvokeError()));
             }
 
-            if (length != 12 || pid != peer.ProcessId || LinuxRunCgroup.UserId != peer.UserId ||
+            if (length != 12 || pid <= 0 || pid != peer.ProcessId || LinuxRunCgroup.UserId != peer.UserId ||
                 ProcFs.Stat(pid) is not { State: not ('Z' or 'X') } process || process.StartTicks != start ||
                 expectedExecutable is not null && Executable(pid) != expectedExecutable)
             {
