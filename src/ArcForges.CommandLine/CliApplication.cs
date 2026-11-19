@@ -49,11 +49,10 @@ public static class CliApplication
             return ExitCodes.Usage;
         }
 
-        // Ctrl+C and SIGTERM cancel the command's token; the wait covers the node's own shutdown budget (10 s). `run`, `login` and the `tasks`
-        // commands handle Ctrl+C themselves (once cancels the task, twice detaches; cli.md C-01), so no termination timeout applies to them.
         var command = result.CommandResult.Command;
-        // `login` cancels its sign-in on Ctrl+C (CancelSignIn) and exits 130 (AF-CTR-04 N2).
-        var handlesInterrupts = command.Name is "run" or "login" or "output" || command.Parents.OfType<Command>().Any(parent => parent.Name == "tasks");
+        // The fixed Node process and sign-in handle their own shutdown.
+        var handlesInterrupts = command.Name == "login"
+            || command.Name == "run" && command.Parents.OfType<Command>().Any(parent => parent.Name == "node");
         return await result.InvokeAsync(new InvocationConfiguration
         {
             Output = output,
@@ -66,13 +65,11 @@ public static class CliApplication
     /// <summary>Builds the command tree (also used by the completion tests).</summary>
     internal static RootCommand Build(GlobalOptions globals, NodeRunner nodeRunner, TextWriter output, TextWriter error)
     {
-        var root = new RootCommand("ArcForges: run, schedule and record local work under your control.");
+        var root = new RootCommand("Manage local Sandboxes and Runs.");
         globals.AddTo(root);
         var factory = new Func<ParseResult, Cli>(result => globals.Create(result, output, error));
         root.Subcommands.Add(SandboxCommands.Build(factory));
         root.Subcommands.Add(SandboxRunCommands.Build(factory));
-        root.Subcommands.Add(TaskCommands.Build(factory));
-        root.Subcommands.Add(TaskCommands.Output(factory));
         root.Subcommands.Add(WorkspaceCommands.Build(factory));
         root.Subcommands.Add(FileOperationCommands.Build(factory));
         root.Subcommands.Add(StatusCommands.Status(factory));
@@ -80,17 +77,11 @@ public static class CliApplication
         root.Subcommands.Add(SandboxGrantCommands.Build(factory));
         root.Subcommands.Add(SandboxOperationCommands.Build(factory));
         root.Subcommands.Add(V2NodeCommands.Doctor(factory));
-        root.Subcommands.Add(ResourceCommands.Processes(factory));
-        root.Subcommands.Add(ResourceCommands.Samples(factory));
-        root.Subcommands.Add(QueueCommands.Build(factory));
         root.Subcommands.Add(PolicyCommands.Build(factory));
         root.Subcommands.Add(ApprovalCommands.Build(factory));
-        root.Subcommands.Add(ResourceCommands.Adopt(factory));
-        root.Subcommands.Add(ResourceCommands.Terminate(factory));
         root.Subcommands.Add(NodeCommands.Build(factory, nodeRunner));
         root.Subcommands.Add(ConfigCommands.Build(factory));
         root.Subcommands.Add(EventCommands.Build(factory));
-        root.Subcommands.Add(JobCommands.Build(factory));
         root.Subcommands.Add(LoginCommands.Build(factory));
         root.Subcommands.Add(AccountCommands.Logout(factory));
         root.Subcommands.Add(CenterCommands.Build(factory));

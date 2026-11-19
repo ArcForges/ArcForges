@@ -125,7 +125,11 @@ internal static class SandboxResourceCommands
             identity.Meta.ExpectedRev = new Revision { Value = expected };
             var request = new ResourceServiceSetPolicyRequest
             {
-                Meta = identity.Meta, OwnerEpoch = identity.OwnerEpoch, ScopeKind = kind, ScopeId = id, Policy = policy,
+                Meta = identity.Meta,
+                OwnerEpoch = identity.OwnerEpoch,
+                ScopeKind = kind,
+                ScopeId = id,
+                Policy = policy,
             };
             var response = await V2Cli.SendAsync(cli, "ResourceService.SetPolicy", identity,
                 () => session.Resources.SetPolicyAsync(request, deadline: deadline, cancellationToken: cancellationToken)).ConfigureAwait(false);

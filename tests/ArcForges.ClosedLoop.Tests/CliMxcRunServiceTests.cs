@@ -165,6 +165,16 @@ public sealed partial class MxcRunServiceTests
                 Assert.True((await WaitForStateAsync(fixture, runs, heldRun, RunState.Exited, ct)).Exit.GroupEmptyVerified);
                 Assert.Equal(EffectCertainty.Happened, (await OperationAsync(node, ownerEpoch, stopCommand)).Effect);
                 heldRun = null;
+
+                var timeoutMarker = Path.Combine(working, "cli-timeout-stop.log");
+                var timeoutStart = await InstalledCliSuccessAsync(fixture, "run", "start", sandboxText, "--terminal", "off",
+                    "--cwd", RelativeWorkdir, "--", image, "hold", "--hold-ms", "60000", "--marker", timeoutMarker);
+                heldRun = InstalledCliId(timeoutStart.GetProperty("run"), "runId");
+                var timeoutStartCommand = InstalledCliId(timeoutStart, "commandId");
+                Assert.Equal(ownerEpoch, InstalledCliId(timeoutStart, "ownerEpoch"));
+                await RequireInstalledCliStopTimeoutAsync(fixture, node, runs, ownerEpoch, heldRun, timeoutStartCommand, image, timeoutMarker, ct);
+                heldRun = null;
+                Assert.Equal(3, (await ListAsync(runs, sandboxId)).Length);
             }
 
             var repairMarker = Path.Combine(renamed.DataLocation, "data", "keep-while-repairing.txt");
@@ -205,13 +215,76 @@ public sealed partial class MxcRunServiceTests
             Assert.Equal(renamed.Revision.Value + 1, afterRepair.Revision.Value);
             Assert.Equal(renamed.DataLocation, afterRepair.DataLocation);
             Assert.Equal("existing owned data", File.ReadAllText(repairMarker));
-            Assert.Equal(2, (await ListAsync(after, sandboxId)).Length);
+            // The argument, normal Stop, and deadline Stop scenarios each created exactly one Run.
+            Assert.Equal(3, (await ListAsync(after, sandboxId)).Length);
             Assert.Equal(argumentRun, await InspectAsync(after, argumentRun.RunId, ct));
         }
         finally
         {
             await CleanInstalledCliFixtureAsync(fixture, process, ownerEpoch, heldRun);
         }
+    }
+
+    private static async Task RequireInstalledCliStopTimeoutAsync(TestNode fixture, NodeService.NodeServiceClient node,
+        RunService.RunServiceClient runs, Id ownerEpoch, Id runId, Id startCommand, string image, string marker, CancellationToken ct)
+    {
+        const uint graceMs = 12_000;
+        var running = await WaitForStateAsync(fixture, runs, runId, RunState.Running, ct);
+        await TestNode.WaitAsync(() => CountFinalRecoveryMarkers(marker, "ready") == 1, NativeBound, "the deferred Stop's native Pipes payload");
+        var binding = ReadRecoveryBinding(fixture.DataRoot, running);
+        using var native = await CaptureFinalRecoveryBoundaryAsync(binding, image, marker, descendants: false);
+        Assert.True(native.Owner.IsRunning());
+        Assert.True(native.Root.IsRunning());
+        var runText = IdText.Format(runId);
+        string graceText = graceMs.ToString(CultureInfo.InvariantCulture);
+        string[] stopArguments = ["run", "stop", runText, "--expected-revision", CliRevision(running.Revision), "--grace-ms", graceText];
+        var timedOut = await InstalledCliRefusalAsync(fixture, 8, "outcome_unknown", ["--timeout", "3s", .. stopArguments]);
+        var command = InstalledCliId(timedOut, "commandId");
+        Assert.Equal(ownerEpoch, InstalledCliId(timedOut, "ownerEpoch"));
+        Assert.Equal("stop_outcome_unconfirmed", timedOut.GetProperty("error").GetProperty("details").GetProperty("state")
+            .GetProperty("reason").GetString());
+
+        var pending = await OperationAsync(node, ownerEpoch, command);
+        Assert.Equal(command, pending.CommandId);
+        Assert.Equal(ownerEpoch, pending.OwnerEpoch);
+        Assert.Equal(runId, pending.AggregateId);
+        Assert.Equal("RunService.Stop", pending.Method);
+        Assert.Equal(OperationState.Accepted, pending.State);
+        Assert.Equal(EffectCertainty.Unknown, pending.Effect);
+        Assert.True(native.Owner.IsRunning());
+        Assert.True(native.Root.IsRunning());
+        var originalStop = BuildStop(ownerEpoch, running);
+        originalStop.Meta.CommandId = command;
+        originalStop.GraceMs = graceMs;
+        var originalStart = new RunServiceStartRequest { Meta = new RequestMeta { CommandId = startCommand }, OwnerEpoch = ownerEpoch };
+        var intent = ReadRecoveryStopIntent(fixture.DataRoot, originalStart, originalStop, running.Epoch);
+        Assert.Equal("ACCEPTED", intent.ReceiptState);
+        Assert.Equal(TimeSpan.FromMilliseconds(graceMs), intent.Deadline - intent.AcceptedAt);
+
+        var settled = await WaitForStateAsync(fixture, runs, runId, RunState.Exited, ct);
+        Assert.True(settled.Exit.GroupEmptyVerified);
+        Assert.True(native.IsEmpty());
+        AssertFinalWindowsEvidence(fixture, settled, binding);
+        var settledReceipt = await OperationAsync(node, ownerEpoch, command);
+        AssertStopReceipt(settledReceipt, originalStop, settled.Revision, EffectCertainty.Happened);
+        var reconciled = await InstalledCliSuccessAsync(fixture, "operation", "inspect", IdText.Format(command), "--owner-epoch", IdText.Format(ownerEpoch));
+        var shown = reconciled.GetProperty("operation");
+        Assert.Equal(command, InstalledCliId(shown, "commandId"));
+        Assert.Equal(runId, InstalledCliId(shown, "aggregateId"));
+        using var typedReceipt = JsonDocument.Parse(JsonFormatter.Default.Format(settledReceipt));
+        Assert.Equal(typedReceipt.RootElement.GetProperty("state").GetString(), shown.GetProperty("state").GetString());
+        Assert.Equal(typedReceipt.RootElement.GetProperty("effect").GetString(), shown.GetProperty("effect").GetString());
+        var replayed = await InstalledCliSuccessAsync(fixture, [.. stopArguments, "--command-id", IdText.Format(command),
+            "--owner-epoch", IdText.Format(ownerEpoch)]);
+        Assert.Equal(command, InstalledCliId(replayed, "commandId"));
+        Assert.Equal(ownerEpoch, InstalledCliId(replayed, "ownerEpoch"));
+        Assert.Equal(runId, InstalledCliId(replayed.GetProperty("run"), "runId"));
+        Assert.Equal(1, CountFinalRecoveryMarkers(marker, "ready"));
+        using var database = ReadDatabase(fixture.DataRoot);
+        using var receipts = database.CreateCommand();
+        receipts.CommandText = "SELECT count(*) FROM command_receipt WHERE method = 'RunService.Stop' AND aggregate_id = $run;";
+        receipts.Parameters.AddWithValue("$run", Hex(runId));
+        Assert.Equal(1L, Assert.IsType<long>(receipts.ExecuteScalar()));
     }
 
     [Fact(Timeout = 180_000, DisableParallelization = true)]

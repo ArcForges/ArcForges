@@ -127,10 +127,20 @@ public sealed class CommandLineTests
     [InlineData("jobs list")]
     [InlineData("output 01m4zr")]
     [InlineData("run --local -- /bin/echo ok")]
-    [InlineData("run start 01m4zrxnr8e7d81pn7xnwfqw14 --node build-box -- /bin/echo ok")]
     [InlineData("node stop --cancel-running")]
     public void RetiredExecutionGrammarIsRejectedByTheProduct(string line) =>
         Assert.NotEmpty(Root().Parse(line.Split(' ')).Errors);
+
+    [Fact]
+    public async Task TheProductRejectsAnOldRunOptionBeforeTheArgumentBoundary()
+    {
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        string[] args = ["--json", "run", "start", "01m4zrxnr8e7d81pn7xnwfqw14", "--node", "build-box", "--", "/bin/echo", "ok"];
+        Assert.Equal(ExitCodes.Usage, await CliApplication.RunAsync(args, NoNode, output, error));
+        using var reply = JsonDocument.Parse(output.ToString());
+        Assert.Equal("invalid_argument", reply.RootElement.GetProperty("error").GetProperty("code").GetString());
+    }
 
     [Theory]
     [InlineData("--owner-epoch")]

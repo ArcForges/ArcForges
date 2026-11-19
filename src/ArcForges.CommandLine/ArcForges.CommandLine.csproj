@@ -1,9 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- SPDX-License-Identifier: AGPL-3.0-only -->
   <!--
-    The arcforges CLI (architecture 12 section 3, experience/cli.md): System.CommandLine 3.x (F-N02 decision: warning-free
-    Native AOT publish and a cold start within 15 section 1), global options, human and JSON output, exit codes and the
-    commands status, node, config, events, jobs, version and completion. The node role itself is supplied by the host.
+    The arcforges CLI provides typed local Sandbox, Run, resource and Node control using System.CommandLine.
+    The host supplies the fixed Node role. The CLI keeps the Native AOT and cold-start requirements.
   -->
   <PropertyGroup>
     <RootNamespace>ArcForges.CommandLine</RootNamespace>

@@ -357,8 +357,7 @@ internal sealed class TestNode : IAsyncDisposable
         {
             "run" => !NewRunCommand(arguments, root, end),
             "resources" => !HasSubcommand(arguments, root, end, "show", "watch", "set"),
-            "tasks" or "output" or "queue" or "jobs" or "ps" or "samples" or "adopt" or "terminate"
-                or "workspace" or "file-operation" or "login" => true,
+            "tasks" or "output" or "queue" or "jobs" or "ps" or "samples" or "adopt" or "terminate" or "login" => true,
             _ => false,
         };
     }
