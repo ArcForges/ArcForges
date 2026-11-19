@@ -17,6 +17,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../ArcForges.Node.Platform/ArcForges.Node.Platform.csproj" />
+    <ProjectReference Include="../ArcForges.RunSupervisor/Protocol/ArcForges.RunSupervisor.Protocol.csproj" />
     <PackageReference Include="ArcForges.Contracts.Node" />
     <InternalsVisibleTo Include="ArcForges.Node.Platform.Windows.Tests" />
     <InternalsVisibleTo Include="ArcForges.Node.Core.Tests" />

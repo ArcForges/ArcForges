@@ -133,6 +133,9 @@
           "Microsoft.Data.Sqlite": "[11.0.0, )"
         }
       },
+      "arcforges.runsupervisor.protocol": {
+        "type": "Project"
+      },
       "ArcForges.LocalRpc": {
         "type": "CentralTransitive",
         "requested": "[1.0.0-ci.150.1, )",

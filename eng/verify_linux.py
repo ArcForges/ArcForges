@@ -9,7 +9,7 @@ The Linux host needs no PowerShell: each command does for linux-x64 exactly what
   python eng/verify_linux.py compare-startup <baseline>   eng/compare-startup.ps1 -RuntimeIdentifier linux-x64 -BaselineExecutable <baseline>
   python eng/verify_linux.py package                      eng/package.ps1 -RuntimeIdentifier linux-x64
 
-Components: host, testload, bench (the supervisor is Windows only); a group is a comma-separated list of
+Components: host, run-supervisor, testload, bench (the legacy supervisor is Windows only); a group is a comma-separated list of
 components published in order, and several groups are published concurrently. Output and results go to the same
 artifacts/ paths as the scripts'.
 """
@@ -38,6 +38,7 @@ BENCH = PUBLISH / "bench" / "arcforges-bench"
 HOST = PUBLISH / "host" / "arcforges"
 PROJECTS = {
     "host": "src/ArcForges.Host",
+    "run-supervisor": "src/ArcForges.RunSupervisor",
     "testload": "tools/ArcForges.TestLoad",
     "bench": "tools/ArcForges.Bench",
 }
@@ -136,16 +137,21 @@ def compare_startup(baseline: str, source: str | None) -> None:
          "--max-regression-percent", "25", "--noise-floor-ms", "5", "--output", str(output)])
 
 
-def package() -> None:
-    """eng/package.ps1: Node/CLI, systemd units, notices, the lock file and build-info/digests."""
+def package(mxc_release_zip: Path | None = None, mxc_install_root: Path | None = None) -> None:
+    """eng/package.ps1: Node/CLI, protected MXC cohort, systemd units, notices, locks and build-info/digests."""
     publish_dir = PUBLISH / "host"
     if not (publish_dir / "arcforges").exists():
         raise Failure(f"Publish the {RID} host before packaging.")
+    run_publish = PUBLISH / "run-supervisor"
+    if not run_publish.is_dir():
+        raise Failure(f"Publish the {RID} run-supervisor before packaging.")
     stage = REPOSITORY / "artifacts" / "staging" / f"{RID}-{uuid.uuid4().hex}"
     packages = REPOSITORY / "artifacts" / "packages"
     stage.mkdir(parents=True)
     packages.mkdir(parents=True, exist_ok=True)
     for item in publish_dir.iterdir():
+        if item.name == "mxc":
+            raise Failure("The host output must not supply mxc. Packaging stages the exact pinned runtime separately.")
         if item.suffix in (".pdb", ".dbg", ".dSYM"):
             continue
         if item.is_dir():
@@ -161,21 +167,30 @@ def package() -> None:
     for name in ("arcforges-node.service", "arcforges-guard.service", "arcforges.slice"):
         shutil.copy2(REPOSITORY / "packaging" / "linux" / name, units)
 
+    stager = [sys.executable, "eng/mxc/stage.py", "--component", "run-supervisor", "--rid", RID,
+              "--publish", str(run_publish), "--output", str(stage / "mxc")]
+    if mxc_release_zip is not None:
+        stager.extend(("--release", str(mxc_release_zip.resolve())))
+    run(stager)
+    shutil.copy2(REPOSITORY / PROJECTS["run-supervisor"] / "packages.lock.json", stage / "run-supervisor.packages.lock.json")
+
     # Native component notices from the actual restored application closure.
-    assets = json.loads((REPOSITORY / "src" / "ArcForges.Host" / "obj" / "project.assets.json").read_text(encoding="utf-8"))
-    for library in assets["libraries"].values():
-        if library.get("type") != "package" or library["path"].startswith("arcforges.build.policy/"):
-            continue
-        package_path = next((Path(root) / library["path"] for root in assets["packageFolders"]
-                             if (Path(root) / library["path"]).exists()), None)
-        if package_path is None:
-            raise Failure(f"Restored package is missing: {library['path']}")
-        for file in package_path.rglob("*"):
-            if not file.is_file() or (not NOTICE.search(file.name) and file.suffix != ".nuspec"):
+    for component in ("host", "run-supervisor"):
+        assets_path = REPOSITORY / PROJECTS[component] / "obj" / "project.assets.json"
+        assets = json.loads(assets_path.read_text(encoding="utf-8"))
+        for library in assets["libraries"].values():
+            if library.get("type") != "package" or library["path"].startswith("arcforges.build.policy/"):
                 continue
-            destination = stage / "third-party" / "packages" / library["path"] / file.relative_to(package_path)
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(file, destination)
+            package_path = next((Path(root) / library["path"] for root in assets["packageFolders"]
+                                 if (Path(root) / library["path"]).exists()), None)
+            if package_path is None:
+                raise Failure(f"Restored package is missing: {library['path']}")
+            for file in package_path.rglob("*"):
+                if not file.is_file() or (not NOTICE.search(file.name) and file.suffix != ".nuspec"):
+                    continue
+                destination = stage / "third-party" / "packages" / library["path"] / file.relative_to(package_path)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(file, destination)
 
     def git(*args: str) -> str:
         result = subprocess.run(["git", "-C", str(REPOSITORY), *args], capture_output=True, text=True)
@@ -204,6 +219,10 @@ def package() -> None:
     run(["tar", "-czf", str(archive), "-C", str(stage), "."])
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
     Path(f"{archive}.sha256").write_text(f"{digest}  {archive.name}\n", encoding="ascii")
+    verifier = [sys.executable, "packaging/mxc/verify_install.py", "--rid", RID, "--archive", str(archive), "--commit", info["commit"]]
+    if mxc_install_root is not None:
+        verifier.extend(("--output", str(mxc_install_root.absolute())))
+    run(verifier)
     print(archive, flush=True)
 
 
@@ -216,7 +235,9 @@ def main() -> int:
     compare = commands.add_parser("compare-startup")
     compare.add_argument("baseline")
     compare.add_argument("--baseline-source")
-    commands.add_parser("package")
+    packaging = commands.add_parser("package")
+    packaging.add_argument("--mxc-release-zip", type=Path)
+    packaging.add_argument("--mxc-install-root", type=Path)
     args = parser.parse_args()
     if not sys.platform.startswith("linux"):
         print("verify_linux.py runs on Linux; on Windows use the eng/*.ps1 scripts.", file=sys.stderr)
@@ -230,7 +251,7 @@ def main() -> int:
         elif args.command == "compare-startup":
             compare_startup(args.baseline, args.baseline_source)
         else:
-            package()
+            package(args.mxc_release_zip, args.mxc_install_root)
     except Failure as error:
         print(f"verify_linux {args.command}: {error}", file=sys.stderr, flush=True)
         return 1

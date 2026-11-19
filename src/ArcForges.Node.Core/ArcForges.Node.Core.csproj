@@ -17,6 +17,7 @@
     <ProjectReference Include="../ArcForges.Node.Store/ArcForges.Node.Store.csproj" />
     <ProjectReference Include="../ArcForges.Client/ArcForges.Client.csproj" />
     <ProjectReference Include="../ArcForges.Node.Platform/ArcForges.Node.Platform.csproj" />
+    <ProjectReference Include="../ArcForges.RunSupervisor/Protocol/ArcForges.RunSupervisor.Protocol.csproj" />
     <PackageReference Include="ArcForges.Contracts.Node" />
     <PackageReference Include="ArcForges.Contracts.Sandbox.V2" />
     <!--
