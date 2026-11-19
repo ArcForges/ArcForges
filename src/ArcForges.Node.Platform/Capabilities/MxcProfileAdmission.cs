@@ -297,6 +297,24 @@ public static class MxcProfileAdmission
         return helperMismatch is null ? null : "host.linux_helpers." + helperMismatch;
     }
 
+    internal static IEnumerable<string> NativeMemberNames(bool windows) =>
+        (windows ? WindowsNativeFiles : LinuxNativeFiles).Select(file => file.FileName);
+
+    internal static bool MatchesNativeMembers(bool windows, IReadOnlyDictionary<string, string> hashes)
+    {
+        var files = windows ? WindowsNativeFiles : LinuxNativeFiles;
+        return hashes.Count == files.Length && FindFileMismatch(hashes, files) is null;
+    }
+
+    internal static IEnumerable<string> LinuxHelperNames() =>
+        LinuxBaseHelpers.Concat(LinuxSelectedNetworkHelpers).Select(file => file.FileName);
+
+    internal static bool MatchesLinuxBaseHelpers(IReadOnlyDictionary<string, string> hashes) =>
+        FindFileMismatch(hashes, LinuxBaseHelpers) is null;
+
+    internal static bool MatchesLinuxNetworkHelpers(IReadOnlyDictionary<string, string> hashes) =>
+        FindFileMismatch(hashes, LinuxSelectedNetworkHelpers) is null;
+
     private static string? FindFileMismatch(
         IReadOnlyDictionary<string, string> observed, (string FileName, string Sha256)[] expected)
     {

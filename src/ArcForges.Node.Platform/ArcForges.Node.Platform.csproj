@@ -15,10 +15,15 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="ArcForges.Contracts.Node" />
+    <InternalsVisibleTo Include="ArcForges.Node.Core" />
     <InternalsVisibleTo Include="ArcForges.Node.Platform.Windows" />
     <InternalsVisibleTo Include="ArcForges.Node.Platform.Linux" />
     <InternalsVisibleTo Include="ArcForges.Node.Platform.Linux.Tests" />
     <InternalsVisibleTo Include="ArcForges.Node.Platform.Windows.Tests" />
     <InternalsVisibleTo Include="ArcForges.Node.Core.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="../../eng/mxc/profiles/windows-process-executor-v1.qualification.json;../../eng/mxc/profiles/linux-bubblewrap-sdk-v1.qualification.json"
+                      LogicalName="ArcForges.Mxc.%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>

@@ -76,6 +76,9 @@ internal sealed class InProcessNode : IAsyncDisposable
     /// <summary>The version directory whose digests the node verifies after startup (default: the directory of the helper executable).</summary>
     public string? VersionDirectory { get; set; }
 
+    /// <summary>Optional native MXC stage for the test node’s V2 Sandbox service.</summary>
+    public string? SandboxMxcInstallationRoot { get; set; }
+
     /// <summary>
     /// The node evaluates its budgets and pressure from the live machine (03 sections 2 and 7), with every other test's load counted as
     /// unmanaged. False (the default): it sees only itself and its attempts on the machine (<c>MachineIsolation</c>), so what runs beside the
@@ -207,6 +210,8 @@ internal sealed class InProcessNode : IAsyncDisposable
             SystemdAddress = SystemdAddress,
             LinuxControllers = LinuxControllers,
             VersionDirectory = VersionDirectory,
+            SandboxMxcInstallationRoot = SandboxMxcInstallationRoot,
+            TestMode = SandboxMxcInstallationRoot is not null,
             VersionFindingCommitting = VersionFindingCommitting,
             BeforeReady = BeforeReady,
             IsolatedFromMachineLoad = !LiveMachine,

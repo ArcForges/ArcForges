@@ -40,6 +40,12 @@ public sealed class AttemptFiles
     /// <summary>What a Linux attempt's <c>exec-stop</c> did.</summary>
     public const string Stop = "stop.json";
 
+    /// <summary>The Node's accepted Linux root SIGKILL.</summary>
+    public const string NodeRootSignal = "node-root-signal.json";
+
+    /// <summary>The guard's accepted Linux root SIGKILL.</summary>
+    public const string GuardRootSignal = "guard-root-signal.json";
+
     /// <summary>Creates the layout of <paramref name="attemptName"/> under <paramref name="dataRoot"/>.</summary>
     public AttemptFiles(string dataRoot, string attemptName)
     {
@@ -97,6 +103,12 @@ public sealed class AttemptFiles
 
     /// <summary><c>stop.json</c>.</summary>
     public string StopPath => Path.Combine(Directory, Stop);
+
+    /// <summary><c>node-root-signal.json</c>.</summary>
+    public string NodeRootSignalPath => Path.Combine(Directory, NodeRootSignal);
+
+    /// <summary><c>guard-root-signal.json</c>.</summary>
+    public string GuardRootSignalPath => Path.Combine(Directory, GuardRootSignal);
 
     /// <summary><c>run/node-heartbeat</c> of a data root (06 section 5).</summary>
     public static string HeartbeatPath(string dataRoot) => Path.Combine(dataRoot, "run", "node-heartbeat");

@@ -10,11 +10,11 @@
       },
       "ArcForges.Contracts.Foundation": {
         "type": "Direct",
-        "requested": "[1.0.0-ci.450.1, )",
-        "resolved": "1.0.0-ci.450.1",
-        "contentHash": "AWRMQxEnO/decghJo5+2ItOxoLbsJKRvAHxpDasx0P7WhqLYDd3d4ahK7uRJDUhuX4jTpRfLYryGTb1DVtSEUg==",
+        "requested": "[1.0.0-ci.481.1, )",
+        "resolved": "1.0.0-ci.481.1",
+        "contentHash": "zlCOSkAQ9zI1BlIVhOxcbkm1QPRQ2RK5xhvtEmZwUSMORkvOUDZZwRkKNK7X6gd7NPI804rRuzuP9RGHRqJQIQ==",
         "dependencies": {
-          "Google.Protobuf": "3.36.1"
+          "Google.Protobuf": "3.36.2"
         }
       },
       "ArcForges.Contracts.Node": {
@@ -26,6 +26,17 @@
           "ArcForges.Contracts.Foundation": "1.0.0-ci.450.1",
           "Google.Protobuf": "3.36.1",
           "Grpc.Core.Api": "2.84.0"
+        }
+      },
+      "ArcForges.Contracts.Sandbox.V2": {
+        "type": "Direct",
+        "requested": "[1.0.0-ci.481.1, )",
+        "resolved": "1.0.0-ci.481.1",
+        "contentHash": "vubbF2IFhAQuvSPQ6FTRA7uTy0CH5DSM2IPV33P1vbQcw+XxVL+CPnOa+lC5+ZXYmQ5in3ITm7MJuJfe7sof7A==",
+        "dependencies": {
+          "ArcForges.Contracts.Foundation": "1.0.0-ci.481.1",
+          "Google.Protobuf": "3.36.2",
+          "Grpc.Core.Api": "2.85.0"
         }
       },
       "ArcForges.Observability": {
@@ -102,7 +113,7 @@
       "arcforges.client": {
         "type": "Project",
         "dependencies": {
-          "ArcForges.Contracts.Foundation": "[1.0.0-ci.450.1, )",
+          "ArcForges.Contracts.Foundation": "[1.0.0-ci.481.1, )",
           "ArcForges.Contracts.Node": "[1.0.0-ci.450.1, )",
           "ArcForges.LocalRpc": "[1.0.0-ci.150.1, )"
         }
@@ -116,7 +127,7 @@
       "arcforges.node.store": {
         "type": "Project",
         "dependencies": {
-          "ArcForges.Contracts.Foundation": "[1.0.0-ci.450.1, )",
+          "ArcForges.Contracts.Foundation": "[1.0.0-ci.481.1, )",
           "ArcForges.Contracts.Node": "[1.0.0-ci.450.1, )",
           "ArcForges.Security.Secrets": "[1.0.0-ci.150.1, )",
           "Microsoft.Data.Sqlite": "[11.0.0, )"

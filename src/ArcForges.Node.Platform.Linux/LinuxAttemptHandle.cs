@@ -722,7 +722,17 @@ public sealed class LinuxAttemptHandle : IAttemptHandle
     /// <summary>The forced phase and limit stops: freeze, kill every process (the main process last), thaw (see the class remarks).</summary>
     private void FreezeAndKill()
     {
-        LastLimitStop = UnitControl.FreezeAndKill(_platform.Manager, Unit, Resolve(), Root?.Pid ?? 0);
+        LastLimitStop = UnitControl.FreezeAndKill(_platform.Manager, Unit, Resolve(), Root?.Pid ?? 0,
+            (pid, start, at) => UnitControl.RecordRootSignal(Files.NodeRootSignalPath, new LinuxRootSignalRecord
+            {
+                AttemptId = Files.AttemptName,
+                Actor = "NODE",
+                RootPid = pid,
+                RootStartTicks = start,
+                RootStartedAt = ProcFs.StartInstant(start),
+                Signal = Libc.SigKill,
+                At = at,
+            }));
         Changed?.Invoke();
     }
 

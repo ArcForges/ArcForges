@@ -4,6 +4,7 @@ using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Node.Core.Events;
 using ArcForges.Node.Core.Files;
+using ArcForges.Node.Core.Sandboxes;
 using ArcForges.Node.Store;
 using Google.Protobuf;
 
@@ -128,8 +129,14 @@ public sealed class NodeRuntime : IDisposable
         _stop.Cancel();
     }
 
-    /// <summary>Releases the stop token.</summary>
-    public void Dispose() => _stop.Dispose();
+    internal SandboxManager? Sandboxes { get; init; }
+
+    /// <summary>Releases the Sandbox authority and stop token.</summary>
+    public void Dispose()
+    {
+        Sandboxes?.Dispose();
+        _stop.Dispose();
+    }
 
     /// <summary>Re-runs the capability evaluation (<c>GetCapabilities</c> with <c>reevaluate</c>).</summary>
     public CapabilityReport Reevaluate()

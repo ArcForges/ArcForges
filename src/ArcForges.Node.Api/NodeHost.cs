@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Globalization;
 using System.Runtime.InteropServices;
 using ArcForges.Client;
 using ArcForges.Contracts.Fleet.V1;
@@ -10,6 +11,7 @@ using ArcForges.Node.Core.Events;
 using ArcForges.Node.Core.Execution;
 using ArcForges.Node.Core.Files;
 using ArcForges.Node.Core.Platform;
+using ArcForges.Node.Core.Sandboxes;
 using ArcForges.Node.Core.Security;
 using ArcForges.Node.Platform;
 using ArcForges.Node.Store;
@@ -82,6 +84,9 @@ public sealed record NodeHostOptions
     /// (16-testing-strategy section 2; ArcForges.Repository.Tests checks this).
     /// </summary>
     internal Func<string, NodeSecretStore>? SecretStore { get; init; }
+
+    // A native test may point at its protected official fixture installation.
+    internal string? SandboxMxcInstallationRoot { get; init; }
 
     /// <summary>
     /// The node key store for a data root (AF-CTR-04). Null (the executable): <see cref="NodeKeyStores.ForNode(string, bool)"/>, a CNG user
@@ -361,6 +366,8 @@ public static class NodeHost
         using var node = new NodeRuntime(store, journal, hub, processor, log, settings, dataRoot, endpoint.Address, clock, recovery, capabilities)
         {
             Execution = execution,
+            Sandboxes = CreateSandboxManager(store, dataRoot, secretStore, clock, log, journal.Generation,
+                options.TestMode ? options.SandboxMxcInstallationRoot : null),
 
             // AD-0021 section 5 (Plan decision Q8): a local SCRIPT submission only on a --test-mode node with the allowance; never in production.
             LocalScriptSubmit = options.AllowLocalScriptSubmit
@@ -820,6 +827,30 @@ public static class NodeHost
             // After the finding's commit, never before it; and always, so a failed commit never loses the fact.
             node.SetFact(VersionIntegrity.FactName, report.Fact);
         }
+    }
+
+    private static SandboxManager? CreateSandboxManager(NodeStore store, string dataRoot, NodeSecretStore secrets, TimeProvider clock, NodeLog log,
+        ulong journalGeneration, string? installationRoot)
+    {
+        try
+        {
+            if (SandboxLocalOwner.Current() is { } owner)
+            {
+                return new SandboxManager(store, dataRoot, owner, secrets, clock,
+                    journalGeneration.ToString(CultureInfo.InvariantCulture), installationRoot);
+            }
+
+            log.Warning("sandbox.store.unavailable", new LogField("reason", "local_owner_unavailable"));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+            or DurableStoreMaintenanceException or Microsoft.Data.Sqlite.SqliteException
+            or System.Security.Cryptography.CryptographicException)
+        {
+            // Only the type is logged because a native or protected-store error may contain private material.
+            log.Warning("sandbox.store.unavailable", new LogField("reason", exception.GetType().Name));
+        }
+
+        return null;
     }
 
     private static IExecutionPlatform? StartPlatform(NodeHostOptions options, NodeStore store, NodeLog log)

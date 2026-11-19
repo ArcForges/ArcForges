@@ -1,13 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using System.Text;
 using Tmds.DBus.Protocol;
 
 namespace ArcForges.Node.Platform.Linux;
 
 /// <summary>The stop of an attempt unit shared by the node and the guard (04 section 6 steps 3 and 4; 06 section 5).</summary>
 [SupportedOSPlatform("linux")]
-public static class UnitControl
+public static partial class UnitControl
 {
+    private const int AlreadyExists = 17;
     /// <summary>
     /// Freezes the unit (<c>FreezeUnit</c>), sends SIGKILL to every process of its cgroup (the main process last), and thaws the cgroup
     /// directly through its <c>cgroup.freeze</c> file before asking the user manager to thaw it: once the main process is gone the manager
@@ -17,7 +21,11 @@ public static class UnitControl
     /// If the freeze fails, known workload members are killed in bounded passes, and a timed-out freeze is still thawed directly.
     /// <c>ExecStop</c> and <c>ExecStopPost</c> then run as after any exit, so <c>exit.json</c> is written.
     /// </summary>
-    public static LimitStop FreezeAndKill(SystemdManager manager, string unit, string? cgroupDirectory, int mainPid)
+    public static LimitStop FreezeAndKill(SystemdManager manager, string unit, string? cgroupDirectory, int mainPid) =>
+        FreezeAndKill(manager, unit, cgroupDirectory, mainPid, null);
+
+    internal static LimitStop FreezeAndKill(SystemdManager manager, string unit, string? cgroupDirectory, int mainPid,
+        Action<int, long, DateTimeOffset>? onRootSignal, Action? onRootSignalFallback = null)
     {
         ArgumentNullException.ThrowIfNull(manager);
         // Once the main command has exited, systemd owns the bounded end steps and exit-record. Killing the unit's
@@ -28,9 +36,62 @@ public static class UnitControl
             return new LimitStop(false, 0, null, DateTimeOffset.UtcNow);
         }
 
+        var observedRootPid = (int)state.MainPid;
+        var observedRootStart = 0L;
+        var rootObserved = false;
+        bool SignalMember(int pid, long start)
+        {
+            if (onRootSignal is null || pid != observedRootPid || start <= 0 || start != observedRootStart)
+            {
+                return KillCheckedProcess(pid, start);
+            }
+
+            var process = Libc.PidfdOpen(pid);
+            if (process >= 0)
+            {
+                try
+                {
+                    // Bind the opened pidfd to the original root and never qualify a numeric kill as positive evidence.
+                    if (!IsLiveProcess(pid, start))
+                    {
+                        return false;
+                    }
+
+                    if (Libc.PidfdSendSignal(process, Libc.SigKill) == 0)
+                    {
+                        if (!rootObserved)
+                        {
+                            rootObserved = true;
+                            onRootSignal(pid, start, DateTimeOffset.UtcNow);
+                        }
+
+                        return true;
+                    }
+                }
+                finally
+                {
+                    Libc.Close(process);
+                }
+            }
+
+            var accepted = KillCheckedProcess(pid, start);
+            if (accepted)
+            {
+                onRootSignalFallback?.Invoke();
+            }
+
+            return accepted;
+        }
+
         if (state.MainPid == 0 || state.ControlPid != 0)
         {
-            return KillOutsideControls(manager, unit, cgroupDirectory, mainPid);
+            if (onRootSignal is not null && observedRootPid > 0 &&
+                ProcFs.Stat(observedRootPid) is { State: not ('Z' or 'X') } observed)
+            {
+                observedRootStart = observed.StartTicks;
+            }
+
+            return KillOutsideControls(manager, unit, cgroupDirectory, mainPid, SignalMember);
         }
 
         mainPid = (int)state.MainPid;
@@ -45,6 +106,7 @@ public static class UnitControl
             return KillOutsideControls(manager, unit, cgroupDirectory, mainPid);
         }
 
+        observedRootStart = root.StartTicks;
         DateTimeOffset? frozenAt = null;
         var killed = 0;
         var killedAt = DateTimeOffset.UtcNow;
@@ -75,7 +137,7 @@ public static class UnitControl
 
                 foreach (var (pid, start) in members.OrderBy(member => member.Key == mainPid))
                 {
-                    if (ProcFs.Stat(pid) is { State: not ('Z' or 'X') } live && live.StartTicks == start && Libc.Kill(pid, Libc.SigKill) == 0)
+                    if (SignalMember(pid, start))
                     {
                         killed++;
                     }
@@ -109,7 +171,7 @@ public static class UnitControl
         if (frozenAt is null)
         {
             // A failed freeze can race the root's exit and later forks. Recheck workload membership while leaving new controls alone.
-            var remaining = KillOutsideControls(manager, unit, cgroupDirectory, mainPid);
+            var remaining = KillOutsideControls(manager, unit, cgroupDirectory, mainPid, SignalMember);
             killed += remaining.Killed;
             if (remaining.Killed > 0)
             {
@@ -127,7 +189,8 @@ public static class UnitControl
     }
 
     /// <summary>Kills remaining workload members after the root exits, without freezing or killing systemd's bounded control tree.</summary>
-    private static LimitStop KillOutsideControls(SystemdManager manager, string unit, string? directory, int mainPid)
+    private static LimitStop KillOutsideControls(SystemdManager manager, string unit, string? directory, int mainPid,
+        Func<int, long, bool>? signalMember = null)
     {
         var killed = 0;
         for (var pass = 0; directory is not null && pass < 5; pass++)
@@ -178,7 +241,10 @@ public static class UnitControl
 
             foreach (var (pid, identity) in workload)
             {
-                if (ProcFs.Stat(pid) is { State: not ('Z' or 'X') } live && live.StartTicks == identity.Start && Libc.Kill(pid, Libc.SigKill) == 0)
+                var stopped = signalMember is not null && before.MainPid == pid && after.MainPid == pid
+                    ? signalMember(pid, identity.Start)
+                    : KillCheckedProcess(pid, identity.Start);
+                if (stopped)
                 {
                     killed++;
                 }
@@ -189,6 +255,75 @@ public static class UnitControl
 
         return new LimitStop(false, killed, null, DateTimeOffset.UtcNow);
     }
+
+    private static bool IsLiveProcess(int pid, long start) =>
+        ProcFs.Stat(pid) is { State: not ('Z' or 'X') } live && live.StartTicks == start;
+
+    private static bool KillCheckedProcess(int pid, long start) => IsLiveProcess(pid, start) && Libc.Kill(pid, Libc.SigKill) == 0;
+
+    internal static void RecordRootSignal(string path, LinuxRootSignalRecord record)
+    {
+        var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        var created = false;
+        try
+        {
+            using (var stream = new FileStream(temporary, new FileStreamOptions
+            {
+                Mode = FileMode.CreateNew,
+                Access = FileAccess.Write,
+                Share = FileShare.None,
+                UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite,
+            }))
+            {
+                created = true;
+                stream.Write(Encoding.UTF8.GetBytes(record.ToJson()));
+                stream.Flush(flushToDisk: true);
+            }
+
+            // Publish this inode atomically without replacing an earlier receipt from the same actor.
+            if (Link(temporary, path) != 0)
+            {
+                var error = Marshal.GetLastPInvokeError();
+                if (error != AlreadyExists)
+                {
+                    ReceiptFailure(record, "publish_errno_" + error.ToString(CultureInfo.InvariantCulture));
+                }
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            ReceiptFailure(record, exception.GetType().Name);
+        }
+        finally
+        {
+            if (created)
+            {
+                try
+                {
+                    File.Delete(temporary);
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
+                    ReceiptFailure(record, "temporary_cleanup_" + exception.GetType().Name);
+                }
+            }
+        }
+    }
+
+    private static void ReceiptFailure(LinuxRootSignalRecord record, string detail)
+    {
+        try
+        {
+            Console.Error.WriteLine($"arcforges {record.Actor}: root signal receipt failed for {record.AttemptId}: {detail}");
+        }
+        catch (Exception exception) when (exception is IOException or ObjectDisposedException)
+        {
+            // A closed diagnostics stream cannot interrupt termination or thaw.
+        }
+    }
+
+    [LibraryImport("libc", EntryPoint = "link", StringMarshalling = StringMarshalling.Utf8, SetLastError = true)]
+    private static partial int Link(string existing, string path);
 
     /// <summary>
     /// Thaws attempt cgroups left frozen with nothing but the user manager's own spawn in them, without the user manager (it may be blocked

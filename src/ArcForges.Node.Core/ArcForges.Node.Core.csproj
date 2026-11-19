@@ -18,10 +18,11 @@
     <ProjectReference Include="../ArcForges.Client/ArcForges.Client.csproj" />
     <ProjectReference Include="../ArcForges.Node.Platform/ArcForges.Node.Platform.csproj" />
     <PackageReference Include="ArcForges.Contracts.Node" />
+    <PackageReference Include="ArcForges.Contracts.Sandbox.V2" />
     <!--
-      ArcForges.Observability 1.0.0-ci.141.1 and its ArcForges.Capabilities and ArcForges.Foundation pin
-      ArcForges.Contracts.Foundation to exactly 1.0.0-ci.216.1, as Security.Secrets does in the store; the node contracts need
-      1.0.0-ci.375.1. NU1608 is accepted for this package's graph only (recorded in eng/policy/dependency-admissions.json).
+      DesktopPlatform 1.0.0-ci.150.1 retains an exact 1.0.0-ci.216.1 Foundation constraint. The published Sandbox
+      V2 contract requires Foundation 1.0.0-ci.481.1. NU1608 remains attached to this package reference only,
+      with compatibility evidence in eng/policy/dependency-admissions.json.
     -->
     <PackageReference Include="ArcForges.Observability" />
     <PackageReference Include="ArcForges.Contracts.Foundation" NoWarn="NU1608" />

@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Win32.SafeHandles;
 
 namespace ArcForges.Node.Platform;
 
@@ -234,6 +236,9 @@ public static class GuardEventKinds
     /// <summary>The guard stopped the attempt at once (TERMINATE).</summary>
     public const string Terminate = "terminate";
 
+    /// <summary>The Linux guard acted without an accepted signal to the checked root.</summary>
+    public const string TerminateUnconfirmed = "terminate_unconfirmed";
+
     /// <summary>The guard recorded a limit crossing and left the attempt running (NOTIFY).</summary>
     public const string Notify = "notify";
 }
@@ -271,6 +276,12 @@ public sealed class GuardEvent
 
     /// <summary>The heartbeat instance the guard saw last (empty when none).</summary>
     public string? HeartbeatInstance { get; set; }
+
+    /// <summary>Whether this Linux terminate action observed an accepted SIGKILL to the checked root.</summary>
+    public bool? RootSignalObserved { get; set; }
+
+    /// <summary>Whether an unconfirmed Linux terminate action got a numeric SIGKILL accepted for the checked root.</summary>
+    public bool? RootSignalFallbackAccepted { get; set; }
 
     /// <summary>Serializes the event as one line (no line break).</summary>
     public string ToJson() => JsonSerializer.Serialize(this, HelperJsonContext.Default.GuardEvent);
@@ -567,6 +578,110 @@ public sealed class HolderReport
     }
 }
 
+/// <summary>The first accepted Linux root SIGKILL observed by one stop actor.</summary>
+public sealed class LinuxRootSignalRecord
+{
+    private const int MaximumBytes = 1024;
+    private const int NonBlocking = 1 << 11;
+    private const int CloseOnExec = 1 << 19;
+    private const int NoControllingTerminal = 1 << 8;
+    private const int EmptyPath = 0x1000;
+    private const uint TypeMask = 0x0001;
+    private const ushort FileTypeMask = 0xF000;
+    private const ushort RegularFile = 0x8000;
+    private static readonly byte[] s_emptyNativePath = [0];
+
+    /// <summary>The format version.</summary>
+    [JsonRequired]
+    public int Schema { get; init; } = 1;
+
+    /// <summary>The attempt ID.</summary>
+    public string AttemptId { get; init; } = string.Empty;
+
+    /// <summary>The actor that sent the signal.</summary>
+    public string Actor { get; init; } = string.Empty;
+
+    /// <summary>The PID of the checked workload root.</summary>
+    public int RootPid { get; init; }
+
+    /// <summary>The checked workload root's native start ticks.</summary>
+    public long RootStartTicks { get; init; }
+
+    /// <summary>The workload root's UTC start time derived from its native ticks.</summary>
+    public DateTimeOffset RootStartedAt { get; init; }
+
+    /// <summary>The accepted native signal.</summary>
+    [JsonRequired]
+    public int Signal { get; init; } = 9;
+
+    /// <summary>When the kernel accepted the signal, in UTC.</summary>
+    public DateTimeOffset At { get; init; }
+
+    /// <summary>Serializes the receipt as one JSON object.</summary>
+    public string ToJson() => JsonSerializer.Serialize(this, HelperJsonContext.Default.LinuxRootSignalRecord);
+
+    /// <summary>Reads positive evidence for the specified attempt and actor.</summary>
+    public static LinuxRootSignalRecord? TryRead(string path, string expectedAttemptId, string expectedActor)
+    {
+        if (!OperatingSystem.IsLinux() || path.Contains('\0') || string.IsNullOrEmpty(expectedAttemptId) || expectedActor is not ("NODE" or "GUARD"))
+        {
+            return null;
+        }
+
+        try
+        {
+            // ARM64 defines O_NOFOLLOW at bit 15 instead of the generic bit 17.
+            var noFollow = RuntimeInformation.ProcessArchitecture == Architecture.Arm64 ? 1 << 15 : 1 << 17;
+            var descriptor = OpenReceipt(Encoding.UTF8.GetBytes(path + "\0"), NoControllingTerminal | NonBlocking | CloseOnExec | noFollow);
+            if (descriptor < 0)
+            {
+                return null;
+            }
+
+            using var handle = new SafeFileHandle(descriptor, ownsHandle: true);
+            if (ReadFileStatus(handle, s_emptyNativePath, EmptyPath, TypeMask, out var status) != 0 ||
+                (status.Mask & TypeMask) == 0 || (status.Mode & FileTypeMask) != RegularFile)
+            {
+                return null;
+            }
+
+            using var stream = new FileStream(handle, FileAccess.Read);
+            Span<byte> bytes = stackalloc byte[MaximumBytes + 1];
+            var count = stream.ReadAtLeast(bytes, bytes.Length, false);
+            if (count is <= 0 or > MaximumBytes)
+            {
+                return null;
+            }
+
+            var record = JsonSerializer.Deserialize(bytes[..count], HelperJsonContext.Default.LinuxRootSignalRecord);
+            return record is { Schema: 1, RootPid: > 0, RootStartTicks: > 0, Signal: 9 } &&
+                record.AttemptId == expectedAttemptId && record.Actor == expectedActor &&
+                record.RootStartedAt != default && record.RootStartedAt.Offset == TimeSpan.Zero &&
+                record.At != default && record.At.Offset == TimeSpan.Zero && record.At >= record.RootStartedAt ? record : null;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or EntryPointNotFoundException)
+        {
+            return null;
+        }
+    }
+
+#pragma warning disable SYSLIB1054 // This shared project compiles without unsafe code.
+    [DllImport("libc", EntryPoint = "open", ExactSpelling = true)]
+    private static extern int OpenReceipt([In] byte[] path, int flags);
+
+    [DllImport("libc", EntryPoint = "statx", ExactSpelling = true)]
+    private static extern int ReadFileStatus(SafeFileHandle fd, [In] byte[] path,
+        int flags, uint mask, out LinuxFileStatus status);
+#pragma warning restore SYSLIB1054
+
+    [StructLayout(LayoutKind.Explicit, Size = 256)]
+    private struct LinuxFileStatus
+    {
+        [FieldOffset(0)] public uint Mask;
+        [FieldOffset(28)] public ushort Mode;
+    }
+}
+
 /// <summary>Atomic writes and tolerant reads of the helper files.</summary>
 public static class HelperFiles
 {
@@ -613,6 +728,7 @@ public static class HelperFiles
 [JsonSerializable(typeof(StartedRecord))]
 [JsonSerializable(typeof(GuardSpec))]
 [JsonSerializable(typeof(GuardEvent))]
+[JsonSerializable(typeof(LinuxRootSignalRecord))]
 [JsonSerializable(typeof(NodeHeartbeat))]
 [JsonSerializable(typeof(HolderSpec))]
 [JsonSerializable(typeof(HolderReport))]
