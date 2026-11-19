@@ -50,16 +50,38 @@ internal sealed class RunTerminalBroker(string epoch, RunTerminalMode mode)
         {
             _retired = true;
             _session = null;
-            if (_writer is { } writer)
-            {
-                RemoveAttachment(writer);
-            }
+            ClearControllerAuthority();
+        }
+    }
 
-            _observers.Clear();
-            while (_acknowledgments.First is { } first)
-            {
-                Remove(first);
-            }
+    /// <summary>Invalidates the lost controller's authority while preserving the actual terminal and input state.</summary>
+    internal void InvalidateController()
+    {
+        lock (_gate)
+        {
+            checked { _generation++; }
+            ClearControllerAuthority();
+        }
+    }
+
+    private void ClearControllerAuthority()
+    {
+        if (_writer is { } writer)
+        {
+            _ = Seen('c', writer.Caller.ConnectionId, remember: true);
+            RemoveAttachment(writer);
+        }
+
+        foreach (var observer in _observers.Values)
+        {
+            _ = Seen('c', observer.Caller.ConnectionId, remember: true);
+        }
+
+        _observers.Clear();
+        while (_acknowledgments.First is { } first)
+        {
+            _ = Seen('c', first.Value.Intent.Caller.ConnectionId, remember: true);
+            Remove(first);
         }
     }
 

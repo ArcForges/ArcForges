@@ -419,7 +419,27 @@ internal sealed partial class SandboxManager : IDisposable
 
         try
         {
+            if (repair && row.RootRelative != SandboxPrivateRoots.RelativePath(id))
+            {
+                return Fail(Error(request.Meta, ErrorCategory.Conflict, "identity_changed", "private_root_location_changed"));
+            }
+
             using var root = _roots.Inspect(id, row.RootIdentity);
+            var revision = checked(row.Revision + 1);
+            string result = ResultBody(revision, name, capabilities: SandboxPolicyAdmission.Capabilities(policy.Admission));
+            if (repair)
+            {
+                // This mode only revalidates known-owned setup. Its single effect is the SQLite revision.
+                return Resolve(receipts.AdmitObserved(intent, "SUCCEEDED", (int)EffectCertainty.Happened, result, transaction =>
+                {
+                    var currentRoot = SandboxRecords.Get(transaction, OwnerId, id);
+                    RequireChanged(currentRoot is not null && currentRoot.RootIdentity == row.RootIdentity
+                        && currentRoot.RootRelative == row.RootRelative && currentRoot.RootGeneration == row.RootGeneration
+                        && !SandboxRecords.HasUnresolvedUse(transaction, OwnerId, id, intent.OwnerEpoch, ToHex(request.Meta.CommandId))
+                        && SandboxRecords.AppendRevision(transaction, OwnerId, id, expected, name, normalized, config, repairError: true));
+                }), request.Meta);
+            }
+
             if (remote is not null)
             {
                 now = ObserveGrantTime();
@@ -435,8 +455,7 @@ internal sealed partial class SandboxManager : IDisposable
                 return Resolve(admitted, request.Meta);
             }
 
-            var revision = checked(row.Revision + 1);
-            receipts.SetResult(command, "SUCCEEDED", (int)EffectCertainty.Happened, ResultBody(revision, name, capabilities: SandboxPolicyAdmission.Capabilities(policy.Admission)),
+            receipts.SetResult(command, "SUCCEEDED", (int)EffectCertainty.Happened, result,
                 transaction =>
                 {
                     RequireChanged(SandboxRecords.AppendRevision(transaction, OwnerId, id, expected,

@@ -30,6 +30,7 @@ public sealed partial class WindowsMxcJob : IDisposable
     private WindowsMxcJob(JobObject job) => _job = job;
 
     internal SafeKernelHandle Handle => _job.Handle;
+    internal long RecoveryToken => Handle.DangerousGetHandle().ToInt64();
 
     /// <summary>Creates the whole Run's resource scope or its separately terminable payload scope.</summary>
     public static WindowsMxcJob Create(WindowsMxcJobLimits? limits)
@@ -64,30 +65,11 @@ public sealed partial class WindowsMxcJob : IDisposable
         var job = new WindowsMxcJob(JobObject.FromHandle(checked((nint)value), null));
         try
         {
-            if (!GetHandleInformation(job.Handle, out var handleFlags))
-            {
-                throw Error("Read the transferred Run Job handle flags");
-            }
-
-            if ((handleFlags & Native.HandleFlagInherit) != 0)
-            {
-                throw new InvalidDataException("The transferred Run Job capability is inheritable.");
-            }
-
+            job.RequireNoninheritable();
             job.RequireLimits(limits);
             using var current = ProcessInfo.Open(Environment.ProcessId)
                 ?? throw Error("Open the current supervisor process");
-            if (!Native.IsProcessInJob(current,
-                job.Handle.DangerousGetHandle(), out var contains))
-            {
-                throw Error("Read supervisor membership in the received Run Job");
-            }
-
-            if (!contains)
-            {
-                throw new InvalidDataException("The supervisor is outside the received Run Job.");
-            }
-
+            job.RequireMember(current);
             job.RequireOnly(Environment.ProcessId);
             return job;
         }
@@ -95,6 +77,63 @@ public sealed partial class WindowsMxcJob : IDisposable
         {
             job.Dispose();
             throw;
+        }
+    }
+
+    internal static WindowsMxcJob AcceptStandby(long value, WindowsMxcJob witness)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(value);
+        if (value == witness.RecoveryToken)
+        {
+            throw new InvalidDataException("The Windows standby Job capability reused the witness handle.");
+        }
+
+        var standby = new WindowsMxcJob(JobObject.FromHandle(checked((nint)value), null));
+        try
+        {
+            standby.RequireNoninheritable();
+            if (!Native.CompareObjectHandles(witness.Handle, standby.Handle))
+            {
+                throw Error("Verify the standby and original Run Job are the same object");
+            }
+
+            return standby;
+        }
+        catch
+        {
+            standby.Dispose();
+            throw;
+        }
+    }
+
+    internal static WindowsMxcJob Rebind(SafeKernelHandle owner, long remoteHandle)
+    {
+        var value = WindowsMxcProcess.DuplicateJobFromOwner(owner, remoteHandle);
+        var job = new WindowsMxcJob(JobObject.FromHandle(value, null));
+        try
+        {
+            job.RequireNoninheritable();
+            _ = job.ReadResourceLimits();
+            job.RequireMember(owner);
+            return job;
+        }
+        catch
+        {
+            job.Dispose();
+            throw;
+        }
+    }
+
+    private void RequireNoninheritable()
+    {
+        if (!GetHandleInformation(Handle, out var handleFlags))
+        {
+            throw Error("Read the transferred Run Job handle flags");
+        }
+
+        if ((handleFlags & Native.HandleFlagInherit) != 0)
+        {
+            throw new InvalidDataException("The transferred Run Job capability is inheritable.");
         }
     }
 
@@ -182,7 +221,12 @@ public sealed partial class WindowsMxcJob : IDisposable
     public void RequireMember(LaunchedProcess process)
     {
         ArgumentNullException.ThrowIfNull(process);
-        if (!Native.IsProcessInJob(process.Process, Handle.DangerousGetHandle(), out var contains))
+        RequireMember(process.Process);
+    }
+
+    internal void RequireMember(SafeKernelHandle process)
+    {
+        if (!Native.IsProcessInJob(process, Handle.DangerousGetHandle(), out var contains))
         {
             throw Error("Read process membership in the Run Job");
         }

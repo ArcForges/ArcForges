@@ -2,6 +2,7 @@
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using ArcForges.Node.Store.Migrations;
 
 namespace ArcForges.Node.Store;
 
@@ -13,6 +14,23 @@ internal sealed partial class DurableBackupJsonContext : JsonSerializerContext;
 
 internal sealed partial class DurableCommandStore
 {
+    private static string RestorePendingPath(string dataRoot) =>
+        Path.TrimEndingDirectorySeparator(Path.GetFullPath(dataRoot)) + ".v2-restore.pending";
+
+    internal static void VerifyRestorePublication(string dataRoot)
+    {
+        try
+        {
+            _ = File.GetAttributes(RestorePendingPath(dataRoot));
+        }
+        catch (Exception failure) when (failure is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return;
+        }
+
+        throw new DurableStoreMaintenanceException();
+    }
+
     // A complete snapshot is a DB, every referenced epoch key, and an authenticated manifest.
     // A legacy pre-migration DB-only backup is intentionally not a ready V2 restore package.
     internal void CreateBackup(string backupRoot, NodeSecretStore backupSecrets)
@@ -52,7 +70,7 @@ internal sealed partial class DurableCommandStore
                     fence.Write(DurableEpochFence.PathFor(backupRoot, entry.Owner), keys[entry.KeyReference]);
                 }
                 using var stream = File.OpenRead(database);
-                var manifest = new DurableBackupManifest(16, Convert.ToHexStringLower(SHA256.HashData(stream)),
+                var manifest = new DurableBackupManifest(_store.Metadata.SchemaVersion, Convert.ToHexStringLower(SHA256.HashData(stream)),
                     _fence.KeyReference, entries);
                 byte[] body = JsonSerializer.SerializeToUtf8Bytes(manifest, DurableBackupJsonContext.Default.DurableBackupManifest);
                 DurableEpochFence.WritePrivate(Path.Combine(backupRoot, "v2-backup.manifest"),
@@ -80,6 +98,7 @@ internal sealed partial class DurableCommandStore
             throw new DurableStoreMaintenanceException();
         backupRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(backupRoot));
         latestAuthorityRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(latestAuthorityRoot));
+        destinationRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(destinationRoot));
         var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         if (latestAuthorityRoot.Equals(backupRoot, comparison)
             || latestAuthorityRoot.StartsWith(backupRoot + Path.DirectorySeparatorChar, comparison))
@@ -88,15 +107,25 @@ internal sealed partial class DurableCommandStore
         var keys = new Dictionary<string, byte[]>(StringComparer.Ordinal);
         try
         {
+            RequireUnaliasedAuthorityRoot(Path.GetDirectoryName(StorePaths.Database(backupRoot))!);
+            RequireUnaliasedAuthorityRoot(Path.GetDirectoryName(StorePaths.Database(latestAuthorityRoot))!);
             using var catalogue = DurableEpochFence.OpenCatalogueLock(latestAuthorityRoot);
-            byte[] signed = File.ReadAllBytes(Path.Combine(backupRoot, "v2-backup.manifest"));
-            if (signed.Length is < 33 or > 1048576) throw new DurableStoreMaintenanceException();
+            byte[] signed;
+            using (var manifestFile = File.OpenRead(Path.Combine(backupRoot, "v2-backup.manifest")))
+            {
+                if (manifestFile.Length is < 33 or > 1048576) throw new DurableStoreMaintenanceException();
+                signed = new byte[checked((int)manifestFile.Length)];
+                manifestFile.ReadExactly(signed);
+            }
             byte[] body = signed[..^32];
             var manifest = JsonSerializer.Deserialize(body, DurableBackupJsonContext.Default.DurableBackupManifest)
                 ?? throw new DurableStoreMaintenanceException();
+            if (manifest.Schema < 16 || manifest.Schema > StoreMigrations.Released.LatestVersion
+                || manifest.Epochs is not { Length: > 0 } || string.IsNullOrEmpty(manifest.SigningKeyReference))
+                throw new DurableStoreMaintenanceException();
             byte[] signingKey = ReadProtectedKey(backupSecrets, manifest.SigningKeyReference);
             keys.Add(manifest.SigningKeyReference, signingKey);
-            if (manifest.Schema != 16 || manifest.Epochs.Length == 0 || !CryptographicOperations.FixedTimeEquals(
+            if (!CryptographicOperations.FixedTimeEquals(
                 HMACSHA256.HashData(signingKey, body), signed.AsSpan(signed.Length - 32)))
                 throw new DurableStoreMaintenanceException();
             foreach (string owner in manifest.Epochs.Select(entry => entry.Owner).Distinct(StringComparer.Ordinal))
@@ -107,7 +136,9 @@ internal sealed partial class DurableCommandStore
                 latest.Open();
                 // The independent latest catalogue must be complete/readable. Never substitute
                 // the backup's old owner list when it is missing, corrupt or contains new owners.
-                if (!ReadBackupEntries(new StoreReader(latest, null, TimeProvider.System)).SequenceEqual(manifest.Epochs))
+                var reader = new StoreReader(latest, null, TimeProvider.System);
+                if (!ReadBackupEntries(reader).SequenceEqual(manifest.Epochs)
+                    || !Equals(reader.Scalar("SELECT schema_version FROM store_meta;"), (long)manifest.Schema))
                     throw new DurableStoreMaintenanceException();
             }
             VerifyFenceCatalogue(latestAuthorityRoot, manifest.Epochs);
@@ -128,25 +159,11 @@ internal sealed partial class DurableCommandStore
                 finally { CryptographicOperations.ZeroMemory(currentKey); }
             }
             string database = StorePaths.Database(backupRoot);
-            using (var stream = File.OpenRead(database))
-                if (Convert.ToHexStringLower(SHA256.HashData(stream)) != manifest.DatabaseSha256)
-                    throw new DurableStoreMaintenanceException();
-            // Read the actual snapshot and its complete key/identity closure before writing a destination.
-            using (var copy = new Microsoft.Data.Sqlite.SqliteConnection(StorePaths.ConnectionString(database, Microsoft.Data.Sqlite.SqliteOpenMode.ReadOnly)))
-            {
-                copy.Open();
-                var reader = new StoreReader(copy, null, TimeProvider.System);
-                if (!ReadBackupEntries(reader).SequenceEqual(manifest.Epochs)
-                    || !Equals(reader.Scalar("PRAGMA integrity_check;"), "ok")) throw new DurableStoreMaintenanceException();
-            }
-            StorePaths.CreatePrivateDirectory(Path.GetDirectoryName(StorePaths.Database(destinationRoot))!);
-            File.Copy(database, StorePaths.Database(destinationRoot), overwrite: false);
-            foreach (var entry in manifest.Epochs)
-            {
-                destinationSecrets.Store.Write(Target(entry.KeyReference), keys[entry.KeyReference]);
-                new DurableEpochFence(entry.Owner, Convert.FromHexString(entry.Epoch), entry.KeyReference, entry.Sequence,
-                    Convert.FromHexString(entry.History)).Write(DurableEpochFence.PathFor(destinationRoot, entry.Owner), keys[entry.KeyReference]);
-            }
+            using var source = File.OpenRead(database);
+            if (Convert.ToHexStringLower(SHA256.HashData(source)) != manifest.DatabaseSha256)
+                throw new DurableStoreMaintenanceException();
+            source.Position = 0;
+            PublishRestore(destinationRoot, destinationSecrets, manifest, keys, source);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or ArgumentException or Microsoft.Data.Sqlite.SqliteException)
         {
@@ -156,6 +173,76 @@ internal sealed partial class DurableCommandStore
         {
             foreach (var key in keys.Values) CryptographicOperations.ZeroMemory(key);
             foreach (var lease in locks) lease.Dispose();
+        }
+    }
+
+    private static void PublishRestore(string destinationRoot, NodeSecretStore destinationSecrets,
+        DurableBackupManifest manifest, Dictionary<string, byte[]> keys, FileStream source)
+    {
+        string parent = Path.GetDirectoryName(destinationRoot) ?? throw new DurableStoreMaintenanceException();
+        StorePaths.CreatePrivateDirectory(parent);
+        RequireUnaliasedAuthorityRoot(parent);
+        string pending = RestorePendingPath(destinationRoot);
+        var guard = DurableEpochFence.OpenPrivate(pending, FileMode.CreateNew);
+        try
+        {
+            if (Directory.Exists(destinationRoot) || File.Exists(destinationRoot))
+            {
+                guard.Dispose();
+                File.Delete(pending);
+                throw new DurableStoreMaintenanceException();
+            }
+
+            guard.Write("restore pending\n"u8);
+            guard.Flush(flushToDisk: true);
+            string database = StorePaths.Database(destinationRoot);
+            StorePaths.CreatePrivateDirectory(Path.GetDirectoryName(database)!);
+            string staged = database + ".restore.partial";
+            using (var copy = DurableEpochFence.OpenPrivate(staged, FileMode.CreateNew))
+            {
+                source.CopyTo(copy);
+                copy.Flush(flushToDisk: true);
+                copy.Position = 0;
+                if (Convert.ToHexStringLower(SHA256.HashData(copy)) != manifest.DatabaseSha256)
+                    throw new DurableStoreMaintenanceException();
+            }
+
+            // Validate the exact staged bytes without any WAL beside the source backup.
+            using (var connection = new Microsoft.Data.Sqlite.SqliteConnection(StorePaths.ConnectionString(
+                staged, Microsoft.Data.Sqlite.SqliteOpenMode.ReadOnly)))
+            {
+                connection.Open();
+                var reader = new StoreReader(connection, null, TimeProvider.System);
+                if (!ReadBackupEntries(reader).SequenceEqual(manifest.Epochs)
+                    || !Equals(reader.Scalar("SELECT schema_version FROM store_meta;"), (long)manifest.Schema)
+                    || !Equals(reader.Scalar("PRAGMA integrity_check;"), "ok"))
+                    throw new DurableStoreMaintenanceException();
+            }
+
+            foreach (var entry in manifest.Epochs)
+            {
+                destinationSecrets.Store.Write(Target(entry.KeyReference), keys[entry.KeyReference]);
+                new DurableEpochFence(entry.Owner, Convert.FromHexString(entry.Epoch), entry.KeyReference, entry.Sequence,
+                    Convert.FromHexString(entry.History)).Write(DurableEpochFence.PathFor(destinationRoot, entry.Owner), keys[entry.KeyReference]);
+            }
+
+            File.Move(staged, database, overwrite: false);
+        }
+        finally
+        {
+            guard.Dispose();
+        }
+
+        // An interrupted publication leaves the marker and all partial evidence in place.
+        File.Delete(pending);
+    }
+
+    private static void RequireUnaliasedAuthorityRoot(string root)
+    {
+        for (DirectoryInfo? path = new(root); path is not null; path = path.Parent)
+        {
+            if ((path.Attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != FileAttributes.Directory)
+                throw new DurableStoreMaintenanceException();
         }
     }
 
@@ -172,7 +259,12 @@ internal sealed partial class DurableCommandStore
     {
         var expected = entries.Select(entry => Path.GetFileName(DurableEpochFence.PathFor(root, entry.Owner))).ToHashSet(StringComparer.Ordinal);
         var actual = Directory.EnumerateFiles(Path.Combine(root, "store"), "v2-owner-*.fence")
-            .Select(path => Path.GetFileName(path) ?? throw new DurableStoreMaintenanceException()).ToHashSet(StringComparer.Ordinal);
+            .Select(path =>
+            {
+                if ((File.GetAttributes(path) & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
+                    throw new DurableStoreMaintenanceException();
+                return Path.GetFileName(path) ?? throw new DurableStoreMaintenanceException();
+            }).ToHashSet(StringComparer.Ordinal);
         if (!expected.SetEquals(actual)) throw new DurableStoreMaintenanceException();
     }
 

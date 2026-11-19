@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.Globalization;
 using System.IO.Pipes;
 using System.Runtime.Versioning;
+using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text.Json;
 using ArcForges.RunSupervisor.Protocol;
@@ -12,9 +13,13 @@ namespace ArcForges.Node.Platform.Windows.Mxc;
 
 /// <summary>Creates and authenticates a durable Windows supervisor without giving its Job to the workload.</summary>
 [SupportedOSPlatform("windows")]
-public sealed class WindowsRunLauncher : IRunLauncher
+public sealed class WindowsRunLauncher : IRunLauncher, IRunRecoveryLauncher
 {
+    private const string BoundaryPrefix = "windows-anonymous-job:";
+    private const string PipePrefix = "arcforges-run-";
+    private const long MaximumSupervisorBytes = 128L * 1024 * 1024;
     private static readonly TimeSpan BootDeadline = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan RecoveryDeadline = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan DrainDeadline = TimeSpan.FromSeconds(10);
 
     /// <summary>Computes the initial Job limits shared by the launcher and its trusted owner.</summary>
@@ -61,13 +66,13 @@ public sealed class WindowsRunLauncher : IRunLauncher
                 LauncherProcessId = Environment.ProcessId,
                 LauncherCreationIdentity = WindowsMxcProcess.CurrentCreationFileTime().ToString(CultureInfo.InvariantCulture),
                 LauncherPath = WindowsMxcProcess.CurrentImagePath(),
-                ControlEndpoint = "arcforges-run-" + Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture),
-                BoundaryDescriptor = "windows-anonymous-job:" + spec.OwnerId,
+                ControlEndpoint = PipePrefix + Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture),
+                BoundaryDescriptor = BoundaryPrefix + spec.OwnerId,
             };
 
             phase = "windows_supervisor_installation";
             using var image = WindowsMxcPathLease.Open(spec.SupervisorPath, directory: false);
-            if (image.Hash(128L * 1024 * 1024) != spec.SupervisorSha256)
+            if (image.Hash(MaximumSupervisorBytes) != spec.SupervisorSha256)
             {
                 throw new InvalidDataException("The held Windows supervisor image differs from its admitted release digest.");
             }
@@ -92,8 +97,7 @@ public sealed class WindowsRunLauncher : IRunLauncher
             WindowsMxcProcess.Resume(process);
 
             phase = "windows_supervisor_authenticate";
-            pipe = new NamedPipeClientStream(".", spec.ControlEndpoint, PipeDirection.InOut,
-                PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly, TokenImpersonationLevel.Identification);
+            pipe = OpenControlPipe(spec.ControlEndpoint);
             await pipe.ConnectAsync(budget.Token).ConfigureAwait(false);
             WindowsMxcProcess.RequirePeer(pipe.SafePipeHandle, localIsServer: false, process.ProcessId, birth, image.Path);
             client = await RunControlClient.ConnectAsync(pipe, spec, launchBinding, budget.Token).ConfigureAwait(false);
@@ -106,7 +110,7 @@ public sealed class WindowsRunLauncher : IRunLauncher
                 throw new InvalidDataException("The authenticated supervisor identity differs from its held process or Run.");
             }
 
-            return new Lease(spec, client, process, job, processors, birth);
+            return new Lease(() => RunWire.TryReadObservation(spec, identity), client, process.Process, job, processors, birth);
         }
         catch (Exception error) when (error is IOException or InvalidDataException or Win32Exception or OperationCanceledException
             or UnauthorizedAccessException or ArgumentException or OverflowException)
@@ -159,13 +163,135 @@ public sealed class WindowsRunLauncher : IRunLauncher
         }
     }
 
+    /// <inheritdoc />
+    public async ValueTask<RunRecoveryResult> RecoverAsync(RunRecoverySpec spec, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(spec);
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        budget.CancelAfter(RecoveryDeadline);
+        WindowsMxcPathLease? control = null;
+        SafeKernelHandle? ownerProcess = null;
+        WindowsMxcJob? aggregate = null;
+        NamedPipeClientStream? pipe = null;
+        RunControlClient? client = null;
+        var phase = "windows_recovery_binding";
+        try
+        {
+            budget.Token.ThrowIfCancellationRequested();
+            var owner = spec.Owner;
+            if (spec.ControlKey.Length != RunWire.KeyLength || spec.Generation <= 0 || owner.ProcessId <= 0
+                || owner.BoundaryIdentity != BoundaryPrefix + owner.InstanceId || owner.ControlEpoch != spec.Epoch
+                || !owner.Endpoint.StartsWith(PipePrefix, StringComparison.Ordinal)
+                || !Guid.TryParseExact(owner.Endpoint.AsSpan(PipePrefix.Length), "N", out _)
+                || !long.TryParse(owner.CreationIdentity, NumberStyles.None, CultureInfo.InvariantCulture, out var birth) || birth <= 0)
+            {
+                throw new InvalidDataException("The Windows recovery owner identity is invalid.");
+            }
+
+            control = WindowsMxcPathLease.Open(spec.ControlDirectory, directory: true, privateObject: true);
+            var boot = WindowsMxcProcess.BootIdentity();
+            if (!string.Equals(owner.BootId, boot, StringComparison.Ordinal))
+            {
+                return new(null, ObserveBootChange(spec, boot));
+            }
+
+            phase = "windows_recovery_supervisor";
+            using var image = WindowsMxcPathLease.Open(spec.SupervisorPath, directory: false);
+            if (image.Hash(MaximumSupervisorBytes) != spec.SupervisorSha256)
+            {
+                throw new InvalidDataException("The held Windows recovery supervisor image differs from its admitted digest.");
+            }
+
+            ownerProcess = WindowsMxcProcess.OpenRecoveryOwner(owner.ProcessId, birth, image.Path);
+            phase = "windows_recovery_authenticate";
+            pipe = OpenControlPipe(owner.Endpoint);
+            await pipe.ConnectAsync(budget.Token).ConfigureAwait(false);
+            WindowsMxcProcess.RequireRecoveryOwnerPipe(pipe.SafePipeHandle, ownerProcess, owner.ProcessId, birth, image.Path);
+            var requester = WindowsMxcProcess.CurrentCreationFileTime().ToString(CultureInfo.InvariantCulture);
+            client = await RunControlClient.ReconnectAsync(pipe, spec, requester, budget.Token).ConfigureAwait(false);
+            if (client.Identity != owner || client.RecoveryBoundaryHandle is not { } remoteHandle)
+            {
+                throw new InvalidDataException("The authenticated Windows Run owner or its standby capability differs.");
+            }
+
+            phase = "windows_recovery_job";
+            aggregate = WindowsMxcJob.Rebind(ownerProcess, remoteHandle);
+            var processors = WindowsMxcProcess.ResourceProcessorCount();
+            var receiptSpec = spec with { ControlDirectory = control.Path, ControlKey = spec.ControlKey.ToArray() };
+            var lease = new Lease(() => RunWire.TryReadObservation(receiptSpec), client, ownerProcess, aggregate, processors, birth,
+                receiptSpec.ControlKey);
+            client = null;
+            pipe = null;
+            ownerProcess = null;
+            aggregate = null;
+            return new(lease, null);
+        }
+        catch (Exception error) when (error is IOException or InvalidDataException or Win32Exception or UnauthorizedAccessException
+            or ArgumentException or OverflowException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+        {
+            return new(null, UnknownBoundaryObservation(control is null ? null : RunWire.TryReadObservation(spec),
+                phase + "/" + NativeCode(error)));
+        }
+        finally
+        {
+            try
+            {
+                if (client is not null) await client.DisposeAsync().ConfigureAwait(false);
+                else if (pipe is not null) await pipe.DisposeAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                aggregate?.Dispose();
+                ownerProcess?.Dispose();
+                control?.Dispose();
+            }
+        }
+    }
+
+    private static RunOwnerObservation ObserveBootChange(RunRecoverySpec spec, string boot)
+    {
+        var receipt = RunWire.TryReadObservation(spec);
+        var machinePrefix = boot.AsSpan(0, boot.LastIndexOf(':') + 1);
+        if (!spec.Owner.BootId.AsSpan().StartsWith(machinePrefix, StringComparison.Ordinal)
+            || !long.TryParse(spec.Owner.BootId.AsSpan(machinePrefix.Length), NumberStyles.None, CultureInfo.InvariantCulture,
+                out var previousBoot) || previousBoot <= 0
+            || !long.TryParse(boot.AsSpan(machinePrefix.Length), NumberStyles.None, CultureInfo.InvariantCulture,
+                out var currentBoot) || currentBoot <= 0 || previousBoot == currentBoot)
+        {
+            return UnknownBoundaryObservation(receipt, "windows_recovery_boot_identity_unverified");
+        }
+
+        // A verified same-machine reboot establishes scope emptiness even if the Node never observed the final drain.
+        if (receipt is { IsTerminal: true }) return receipt with { GroupEmptyVerified = true };
+
+        return new(RunOwnerState.Exited, receipt?.PayloadStarted ?? RunPayloadStart.Unknown, true,
+            receipt?.RawExitCode, receipt?.RawExitCode is null ? RunExitSources.Unknown : receipt.ExitSource ?? RunExitSources.Unknown,
+            TerminationReason: "host_reboot", NativeError: receipt?.NativeError);
+    }
+
+    private static NamedPipeClientStream OpenControlPipe(string endpoint) => new(".", endpoint, PipeDirection.InOut,
+        PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly, TokenImpersonationLevel.Identification);
+
+    private static RunOwnerObservation UnknownBoundaryObservation(RunOwnerObservation? known, string diagnostic) =>
+        known is not null
+            ? known with
+            {
+                State = RunOwnerState.RecoveryRequired,
+                GroupEmptyVerified = false,
+                TerminationReason = known.TerminationReason ?? "owner_failure",
+                NativeError = known.NativeError ?? diagnostic,
+            }
+            : new(RunOwnerState.RecoveryRequired, RunPayloadStart.Unknown, false,
+                TerminationReason: "owner_failure", NativeError: diagnostic);
+
     /// <summary>Reports a bounded native code without including paths, configuration or payload output.</summary>
     public static string NativeCode(Exception error) => error is Win32Exception native
         ? "win32:" + native.NativeErrorCode.ToString(CultureInfo.InvariantCulture)
         : error.GetType().Name;
 
-    private sealed class Lease(RunLaunchSpec spec, RunControlClient client, LaunchedProcess process, WindowsMxcJob aggregate,
-        uint processors, long ownerBirth) : IRunOwnerLease, IRunResourceSource, IRunResourceControl
+    private sealed class Lease(Func<RunOwnerObservation?> readObservation, RunControlClient client, SafeKernelHandle process,
+        WindowsMxcJob aggregate, uint processors, long ownerBirth, byte[]? recoveryKey = null)
+        : IRunOwnerLease, IRunResourceSource, IRunResourceControl
     {
         private readonly SemaphoreSlim _boundaryGate = new(1, 1);
         private readonly Lock _resourceGate = new();
@@ -259,7 +385,7 @@ public sealed class WindowsRunLauncher : IRunLauncher
         private bool HasResourceOwner()
         {
             if (Volatile.Read(ref _disposed) != 0 || WindowsMxcProcess.PollExit(process) is not null
-                || ProcessInfo.CreationFileTime(process.Process) != ownerBirth)
+                || ProcessInfo.CreationFileTime(process) != ownerBirth)
             {
                 return false;
             }
@@ -280,14 +406,14 @@ public sealed class WindowsRunLauncher : IRunLauncher
 
         public ValueTask ActivateAsync(CancellationToken cancellationToken)
         {
-            if (Interlocked.Exchange(ref _releaseAttempted, 1) != 0)
+            if (recoveryKey is not null || Interlocked.Exchange(ref _releaseAttempted, 1) != 0)
             {
                 throw new InvalidOperationException("The Windows Run boundary handoff already occurred.");
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            var remoteHandle = WindowsMxcProcess.DuplicateJobToOwner(aggregate, process);
-            return client.ActivateAsync(new RunRelease(remoteHandle), cancellationToken);
+            var handles = WindowsMxcProcess.DuplicateJobsToOwner(aggregate, process);
+            return client.ActivateAsync(new RunRelease(handles.Query, RecoveryBoundaryHandle: handles.Recovery), cancellationToken);
         }
 
         public async ValueTask StopAsync(TimeSpan grace, CancellationToken cancellationToken)
@@ -301,7 +427,7 @@ public sealed class WindowsRunLauncher : IRunLauncher
                 }
 
                 if (_explicitStopOutcome is not null) return;
-                var prior = RunWire.TryReadObservation(spec);
+                var prior = readObservation();
                 if (WindowsMxcProcess.PollExit(process) is not null || prior is { State: RunOwnerState.RecoveryRequired })
                 {
                     await StopAtBoundaryAsync(prior).ConfigureAwait(false);
@@ -358,7 +484,7 @@ public sealed class WindowsRunLauncher : IRunLauncher
                 _ = await aggregate.WaitForDrainAsync(null, DrainDeadline, CancellationToken.None).ConfigureAwait(false);
             }
 
-            var settled = RunWire.TryReadObservation(spec);
+            var settled = readObservation();
             var terminal = SettledOwnerResult(settled) ?? SettledOwnerResult(prior) ?? SettledOwnerResult(_lastOwnerObservation);
             if (terminal is not null)
             {
@@ -369,11 +495,13 @@ public sealed class WindowsRunLauncher : IRunLauncher
             var latest = settled ?? prior ?? _lastOwnerObservation;
             var observedExit = latest?.RawExitCode is not null ? latest
                 : _lastOwnerObservation?.RawExitCode is not null ? _lastOwnerObservation : prior;
+            // The held Job proves cleanup. Only an authenticated terminal report can attribute it to the Stop.
             _explicitStopOutcome = new(RunOwnerState.Exited,
-                latest?.PayloadStarted == RunPayloadStart.Confirmed ? RunPayloadStart.Confirmed : RunPayloadStart.Unknown,
+                latest?.PayloadStarted == RunPayloadStart.Confirmed || prior?.PayloadStarted == RunPayloadStart.Confirmed
+                    || _lastOwnerObservation?.PayloadStarted == RunPayloadStart.Confirmed ? RunPayloadStart.Confirmed : RunPayloadStart.Unknown,
                 true, observedExit?.RawExitCode,
                 observedExit?.RawExitCode is not null ? observedExit.ExitSource ?? RunExitSources.Unknown : RunExitSources.Unknown,
-                TerminationReason: "user_stop",
+                TerminationReason: "owned_scope_drained",
                 NativeError: latest?.NativeError ?? (observedExit?.RawExitCode is null ? "windows_official_exit_unobserved" : null));
         }
 
@@ -394,7 +522,7 @@ public sealed class WindowsRunLauncher : IRunLauncher
                     {
                         // The owner commits its final receipt before closing its control pipe.
                         // A terminating owner can therefore still be alive while the pipe returns EOF.
-                        if (RunWire.TryReadObservation(spec) is { IsTerminal: true, GroupEmptyVerified: true } pending)
+                        if (readObservation() is { IsTerminal: true, GroupEmptyVerified: true } pending)
                         {
                             RememberOwnerObservation(pending);
                             return DeferTerminalObservation(pending);
@@ -414,14 +542,20 @@ public sealed class WindowsRunLauncher : IRunLauncher
                 }
                 catch (TimeoutException)
                 {
-                    return UnknownBoundaryObservation(RunWire.TryReadObservation(spec) ?? _lastOwnerObservation,
+                    return UnknownBoundaryObservation(readObservation() ?? _lastOwnerObservation,
                         "windows_aggregate_drain_unverified");
                 }
             }
 
-            var settled = RunWire.TryReadObservation(spec) ?? _lastOwnerObservation;
+            var settled = readObservation() ?? _lastOwnerObservation;
             if (settled is { IsTerminal: true, GroupEmptyVerified: true }) return settled;
-            return UnknownBoundaryObservation(settled, "windows_settled_owner_record_missing");
+            var observedExit = settled?.RawExitCode is not null ? settled : _lastOwnerObservation;
+            return new(RunOwnerState.Exited,
+                settled?.PayloadStarted == RunPayloadStart.Confirmed || _lastOwnerObservation?.PayloadStarted == RunPayloadStart.Confirmed
+                    ? RunPayloadStart.Confirmed : RunPayloadStart.Unknown,
+                true, observedExit?.RawExitCode,
+                observedExit?.RawExitCode is null ? RunExitSources.Unknown : observedExit.ExitSource ?? RunExitSources.Unknown,
+                TerminationReason: "owner_failure", NativeError: settled?.NativeError ?? "windows_settled_owner_record_missing");
         }
 
         private void RememberOwnerObservation(RunOwnerObservation reported)
@@ -434,18 +568,6 @@ public sealed class WindowsRunLauncher : IRunLauncher
 
         private static RunOwnerObservation? SettledOwnerResult(RunOwnerObservation? reported) =>
             reported is { IsTerminal: true, GroupEmptyVerified: true } ? reported : null;
-
-        private static RunOwnerObservation UnknownBoundaryObservation(RunOwnerObservation? known, string diagnostic) =>
-            known is not null
-                ? known with
-                {
-                    State = RunOwnerState.RecoveryRequired,
-                    GroupEmptyVerified = false,
-                    TerminationReason = known.TerminationReason ?? "owner_failure",
-                    NativeError = known.NativeError ?? diagnostic,
-                }
-                : new(RunOwnerState.RecoveryRequired, RunPayloadStart.Unknown, false,
-                    TerminationReason: "owner_failure", NativeError: diagnostic);
 
         private static RunOwnerObservation DeferTerminalObservation(RunOwnerObservation observation) => observation with
         {
@@ -466,6 +588,7 @@ public sealed class WindowsRunLauncher : IRunLauncher
                 {
                     process.Dispose();
                     aggregate.Dispose();
+                    if (recoveryKey is not null) CryptographicOperations.ZeroMemory(recoveryKey);
                 }
 
                 _boundaryGate.Dispose();

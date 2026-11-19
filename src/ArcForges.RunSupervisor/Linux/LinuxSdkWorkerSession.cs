@@ -11,6 +11,8 @@ namespace ArcForges.RunSupervisor;
 [SupportedOSPlatform("linux")]
 internal sealed class LinuxSdkWorkerSession : IRunWorkerSession
 {
+    // The pinned Bubblewrap SDK reports a signaled executor with no numeric exit status as -1.
+    private const int SignalExitStatus = -1;
     private static readonly TimeSpan s_nativeDeadline = TimeSpan.FromSeconds(10);
     private readonly LinuxRunServiceState _owner;
     private readonly LinuxRunCgroup _scope;
@@ -25,7 +27,7 @@ internal sealed class LinuxSdkWorkerSession : IRunWorkerSession
     private readonly Lock _nativeGate = new();
     private readonly SemaphoreSlim _terminalIo = new(1, 1);
     private Task? _stop;
-    private Task? _nativeKill;
+    private Task<bool>? _nativeKill;
     private Task? _nativeDisposal;
     private RunOwnerObservation _latest = new(RunOwnerState.Running, RunPayloadStart.Unknown, false);
     private InputState _inputState;
@@ -305,7 +307,7 @@ internal sealed class LinuxSdkWorkerSession : IRunWorkerSession
             // the genuine SDK handle while disposal has not taken custody of it.
             if (_nativeDisposal is null)
             {
-                _nativeKill ??= Task.Run(() => _process.Kill(), CancellationToken.None);
+                _nativeKill ??= Task.Run(KillOfficial, CancellationToken.None);
             }
 
             kill = _nativeKill;
@@ -322,6 +324,22 @@ internal sealed class LinuxSdkWorkerSession : IRunWorkerSession
                 throw new RunNativeException("linux_mxc_native_stop", NativeCode(error));
             }
         }
+    }
+
+    private bool KillOfficial()
+    {
+        bool running = false;
+        try
+        {
+            running = !_nativeWait.IsCompleted && !_process.TryGetExitCode(out _);
+        }
+        catch (MxcException)
+        {
+            // A refused status probe leaves attribution unknown but must not prevent the authorized Stop.
+        }
+
+        _process.Kill();
+        return running;
     }
 
     private Task DisposeOfficialAsync()
@@ -357,12 +375,16 @@ internal sealed class LinuxSdkWorkerSession : IRunWorkerSession
         {
             var exit = await _nativeWait.ConfigureAwait(false);
             exitCode = exit.ExitCode;
-            reason = exit.TimedOut ? "timeout" : Volatile.Read(ref _stopping) != 0 ? "stopped" : "exited";
+            reason = exit.TimedOut ? "timeout" : null;
             Volatile.Write(ref _latest, new(RunOwnerState.Draining, RunPayloadStart.Unknown, false,
                 exitCode, RunExitSources.OfficialExecutor, reason));
             await WaitForOutputAsync().ConfigureAwait(false);
             await CloseInputForExitAsync().WaitAsync(s_nativeDeadline).ConfigureAwait(false);
             await DisposeOfficialAsync().WaitAsync(s_nativeDeadline).ConfigureAwait(false);
+            var kill = Volatile.Read(ref _nativeKill);
+            // Kill can return success after native reaping. Require a live native probe, accepted Kill and signaled wait result.
+            reason ??= exit.ExitCode == SignalExitStatus && kill is { IsCompletedSuccessfully: true } && kill.Result
+                ? "stopped" : "exited";
             using var clean = new CancellationTokenSource(s_nativeDeadline);
             while (!_scope.ContainsOnlyOwner(_owner.OwnerPid, _owner.OwnerStartTicks))
             {

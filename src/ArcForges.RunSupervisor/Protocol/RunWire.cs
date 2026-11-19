@@ -16,6 +16,7 @@ public enum RunControlCommand
     Observe,
     TerminalBegin,
     TerminalPoll,
+    Rebind,
 }
 
 public sealed record RunControlFrame(
@@ -23,12 +24,18 @@ public sealed record RunControlFrame(
     RunOwnerIdentity? Identity = null, RunOwnerObservation? Observation = null, string? Error = null, string? LaunchBinding = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] RunTerminalRequest? TerminalRequest = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] RunTerminalPoll? TerminalPoll = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] RunTerminalReply? TerminalReply = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] RunTerminalReply? TerminalReply = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] RunReconnectRequest? Reconnect = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? RecoveryBoundaryHandle = null);
 
 public sealed record RunTerminalPoll(RunTerminalCaller Caller, string CommandId);
 
+public sealed record RunReconnectRequest(string RunId, string Epoch, string LaunchSha256, RunOwnerIdentity Owner,
+    long Generation, int ProcessId, string CreationIdentity);
+
 internal sealed record RunObservationReceipt(
-    string RunId, string Epoch, string LaunchSha256, RunOwnerObservation Observation);
+    string RunId, string Epoch, string LaunchSha256, RunOwnerObservation Observation,
+    RunOwnerIdentity? Owner = null, long Generation = 0);
 
 [JsonSourceGenerationOptions(UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow)]
 [JsonSerializable(typeof(RunLaunchSpec))]
@@ -52,7 +59,7 @@ public static partial class RunWire
 
     public static string LaunchPath(RunLaunchSpec spec) => Path.Combine(spec.ControlDirectory, "launch.json");
 
-    private static string ObservationPath(RunLaunchSpec spec) => Path.Combine(spec.ControlDirectory, "observed.bin");
+    private static string ObservationPath(string controlDirectory) => Path.Combine(controlDirectory, "observed.bin");
 
     public static string WriteLaunch(RunLaunchSpec spec, Action<SafeFileHandle>? captureCreatedFile = null)
     {
@@ -106,7 +113,7 @@ public static partial class RunWire
         }
 
         // Reserve the exact header overhead of the largest sequence and a Windows Job capability.
-        var frame = new RunControlFrame(long.MaxValue, RunControlCommand.Activate, new RunRelease(long.MaxValue, inputs));
+        var frame = new RunControlFrame(long.MaxValue, RunControlCommand.Activate, new RunRelease(long.MaxValue, inputs, long.MaxValue));
         var bytes = JsonSerializer.SerializeToUtf8Bytes(frame, RunJson.Default.RunControlFrame);
         try
         {
@@ -157,11 +164,12 @@ public static partial class RunWire
         }
     }
 
-    public static void WriteObservation(RunLaunchSpec spec, RunOwnerObservation observation)
+    public static void WriteObservation(RunLaunchSpec spec, RunOwnerObservation observation,
+        RunOwnerIdentity? owner = null, long generation = 0)
     {
-        var path = ObservationPath(spec);
+        var path = ObservationPath(spec.ControlDirectory);
         var temp = Path.Combine(spec.ControlDirectory, $".observed-{Guid.NewGuid():N}.tmp");
-        var receipt = new RunObservationReceipt(spec.RunId, spec.Epoch, spec.LaunchSha256, observation);
+        var receipt = new RunObservationReceipt(spec.RunId, spec.Epoch, spec.LaunchSha256, observation, owner, generation);
         var message = JsonSerializer.SerializeToUtf8Bytes(receipt, RunJson.Default.RunObservationReceipt);
         if (message.Length > ObservationLimit)
         {
@@ -182,24 +190,35 @@ public static partial class RunWire
         }
     }
 
-    public static RunOwnerObservation? TryReadObservation(RunLaunchSpec spec)
+    public static RunOwnerObservation? TryReadObservation(RunLaunchSpec spec) =>
+        TryReadObservation(spec.ControlDirectory, spec.RunId, spec.Epoch, spec.LaunchSha256, spec.ControlKey, null, long.MaxValue);
+
+    public static RunOwnerObservation? TryReadObservation(RunLaunchSpec spec, RunOwnerIdentity owner) =>
+        TryReadObservation(spec.ControlDirectory, spec.RunId, spec.Epoch, spec.LaunchSha256, spec.ControlKey, owner, 0);
+
+    public static RunOwnerObservation? TryReadObservation(RunRecoverySpec spec) =>
+        TryReadObservation(spec.ControlDirectory, spec.RunId, spec.Epoch, spec.LaunchSha256, spec.ControlKey, spec.Owner, spec.Generation);
+
+    private static RunOwnerObservation? TryReadObservation(string controlDirectory, string runId, string epoch,
+        string launchSha256, byte[] controlKey, RunOwnerIdentity? owner, long maxGeneration)
     {
         try
         {
-            var bytes = ReadPrivate(ObservationPath(spec), ObservationLimit + KeyLength);
+            var bytes = ReadPrivate(ObservationPath(controlDirectory), ObservationLimit + KeyLength);
             if (bytes.Length <= KeyLength)
             {
                 return null;
             }
 
             var message = bytes.AsSpan(0, bytes.Length - KeyLength);
-            if (!CryptographicOperations.FixedTimeEquals(bytes.AsSpan(bytes.Length - KeyLength), Authenticate(spec.ControlKey, 3, [], message)))
+            if (!CryptographicOperations.FixedTimeEquals(bytes.AsSpan(bytes.Length - KeyLength), Authenticate(controlKey, 3, [], message)))
             {
                 return null;
             }
 
             var receipt = JsonSerializer.Deserialize(message, RunJson.Default.RunObservationReceipt);
-            return receipt is not null && receipt.RunId == spec.RunId && receipt.Epoch == spec.Epoch && receipt.LaunchSha256 == spec.LaunchSha256
+            return receipt is not null && receipt.RunId == runId && receipt.Epoch == epoch && receipt.LaunchSha256 == launchSha256
+                && (owner is null || receipt.Owner == owner) && receipt.Generation >= 0 && receipt.Generation <= maxGeneration
                 ? receipt.Observation
                 : null;
         }
@@ -209,7 +228,10 @@ public static partial class RunWire
         }
     }
 
-    public static async ValueTask WriteFrameAsync(Stream stream, RunLaunchSpec spec, byte[] challenge, bool response, RunControlFrame frame,
+    public static ValueTask WriteFrameAsync(Stream stream, RunLaunchSpec spec, byte[] challenge, bool response, RunControlFrame frame,
+        CancellationToken cancellationToken) => WriteFrameAsync(stream, spec.ControlKey, challenge, response, frame, cancellationToken);
+
+    public static async ValueTask WriteFrameAsync(Stream stream, byte[] controlKey, byte[] challenge, bool response, RunControlFrame frame,
         CancellationToken cancellationToken)
     {
         var body = JsonSerializer.SerializeToUtf8Bytes(frame, RunJson.Default.RunControlFrame);
@@ -224,7 +246,7 @@ public static partial class RunWire
             data = new byte[sizeof(int) + body.Length + KeyLength];
             BinaryPrimitives.WriteInt32BigEndian(data, body.Length);
             body.CopyTo(data, sizeof(int));
-            Authenticate(spec.ControlKey, response ? (byte)2 : (byte)1, challenge, body).CopyTo(data, sizeof(int) + body.Length);
+            Authenticate(controlKey, response ? (byte)2 : (byte)1, challenge, body).CopyTo(data, sizeof(int) + body.Length);
             await stream.WriteAsync(data, cancellationToken).ConfigureAwait(false);
             await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
         }
@@ -241,13 +263,20 @@ public static partial class RunWire
         }
     }
 
-    public static async ValueTask<RunControlFrame> ReadFrameAsync(Stream stream, RunLaunchSpec spec, byte[] challenge, bool response,
-        CancellationToken cancellationToken)
+    public static ValueTask<RunControlFrame> ReadFrameAsync(Stream stream, RunLaunchSpec spec, byte[] challenge, bool response,
+        CancellationToken cancellationToken) => ReadFrameAsync(stream, spec.ControlKey, challenge, response, spec, cancellationToken);
+
+    public static ValueTask<RunControlFrame> ReadFrameAsync(Stream stream, byte[] controlKey, byte[] challenge, bool response,
+        CancellationToken cancellationToken) => ReadFrameAsync(stream, controlKey, challenge, response, null, cancellationToken);
+
+    private static async ValueTask<RunControlFrame> ReadFrameAsync(Stream stream, byte[] controlKey, byte[] challenge, bool response,
+        RunLaunchSpec? launch, CancellationToken cancellationToken)
     {
         var header = new byte[sizeof(int)];
         await stream.ReadExactlyAsync(header, cancellationToken).ConfigureAwait(false);
         var length = BinaryPrimitives.ReadInt32BigEndian(header);
-        if (length < 1 || length > (response ? FrameLimit : LaunchInputsLimit))
+        int frameLimit = response ? FrameLimit : launch is null ? TerminalRequestLimit : LaunchInputsLimit;
+        if (length < 1 || length > frameLimit)
         {
             throw new InvalidDataException("run_control_frame_length_invalid");
         }
@@ -257,7 +286,7 @@ public static partial class RunWire
         {
             await stream.ReadExactlyAsync(bytes, cancellationToken).ConfigureAwait(false);
             var body = bytes.AsSpan(0, length);
-            if (!CryptographicOperations.FixedTimeEquals(bytes.AsSpan(length), Authenticate(spec.ControlKey, response ? (byte)2 : (byte)1, challenge, body)))
+            if (!CryptographicOperations.FixedTimeEquals(bytes.AsSpan(length), Authenticate(controlKey, response ? (byte)2 : (byte)1, challenge, body)))
             {
                 throw new InvalidDataException("run_control_authentication_failed");
             }
@@ -277,9 +306,9 @@ public static partial class RunWire
                     throw new InvalidDataException("run_release_unexpected");
                 }
             }
-            else if (frame.Release?.Inputs is not { } inputs || !ValidLaunchInputs(spec, inputs)
-                || spec.InputBinding is null || !CryptographicOperations.FixedTimeEquals(
-                    Convert.FromHexString(spec.InputBinding), BindInputs(spec, inputs)))
+            else if (launch is null || frame.Release?.Inputs is not { } inputs || !ValidLaunchInputs(launch, inputs)
+                || launch.InputBinding is null || !CryptographicOperations.FixedTimeEquals(
+                    Convert.FromHexString(launch.InputBinding), BindInputs(launch, inputs)))
             {
                 frame.Release?.Inputs?.Clear();
                 throw new InvalidDataException("run_launch_inputs_mismatch");

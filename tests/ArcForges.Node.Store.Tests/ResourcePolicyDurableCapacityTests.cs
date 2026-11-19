@@ -15,7 +15,7 @@ public sealed class ResourcePolicyDurableCapacityTests
 
     [Theory]
     [InlineData(5, 32768, 3)]
-    [InlineData(20, 9000, 1)]
+    [InlineData(20, 9500, 1)]
     public void RepeatedPolicyEditsUseOrdinaryReceiptCapacityAndKeepTheOwningRunsStopReserve(
         int maximumReceipts, int maximumJournalBytes, int permittedEdits)
     {

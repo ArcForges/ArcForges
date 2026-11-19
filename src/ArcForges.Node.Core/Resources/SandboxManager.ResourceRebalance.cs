@@ -136,7 +136,7 @@ internal sealed partial class SandboxManager
         var run = entry.Run;
         if (!entry.Authoritative || run.State != StoredRunState.Running
             || entry.Actual is not { CpuMillicores: ulong current } reading || current == 0
-            || !_liveRuns.TryGetValue(run.RunId, out var live) || live.Spec.Epoch != run.Epoch
+            || !_liveRuns.TryGetValue(run.RunId, out var live) || live.Epoch != run.Epoch
             || live.OwnerLease is not IRunResourceControl control || !ReferenceEquals(live.OwnerLease, sample.Target.Source)
             || live.OwnerLease.Identity.ControlEpoch != run.Epoch)
         {

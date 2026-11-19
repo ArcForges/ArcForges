@@ -15,6 +15,7 @@ internal static class LinuxRunWorker
 {
     private static PreparedOwner? s_prepared;
     private static SafeFileHandle? s_controlDirectory;
+    private static string? s_launcherImageHash;
 
     internal static Socket BindControl(RunLaunchSpec spec)
     {
@@ -49,6 +50,7 @@ internal static class LinuxRunWorker
         s_controlDirectory = null;
         s_prepared?.Scope.Dispose();
         s_prepared = null;
+        s_launcherImageHash = null;
     }
 
     internal static void RequireControlPeer(RunLaunchSpec spec, Socket socket)
@@ -60,6 +62,22 @@ internal static class LinuxRunWorker
         }
 
         LinuxRunNativePeer.Require(socket, spec.LauncherProcessId, creation, spec.LauncherPath);
+        s_launcherImageHash ??= LinuxRunMxcAssets.ReadRunningImageHash(spec.LauncherProcessId, creation);
+    }
+
+    internal static void RequireRecoveryPeer(RunLaunchSpec spec, Socket socket, int processId, string creationIdentity)
+    {
+        if (s_launcherImageHash is not { } expectedImage || string.IsNullOrEmpty(spec.LauncherPath)
+            || !long.TryParse(creationIdentity, NumberStyles.None, CultureInfo.InvariantCulture, out var creation) || creation <= 0)
+        {
+            throw new IOException("The Node recovery peer's native identity is unavailable.");
+        }
+
+        LinuxRunNativePeer.Require(socket, processId, creation, spec.LauncherPath);
+        if (LinuxRunMxcAssets.ReadRunningImageHash(processId, creation) != expectedImage)
+        {
+            throw new IOException("The Node recovery peer's executable differs from the original launcher.");
+        }
     }
 
     internal static async ValueTask<RunOwnerIdentity> ReadyAsync(RunLaunchSpec spec, CancellationToken cancellationToken)

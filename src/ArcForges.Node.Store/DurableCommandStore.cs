@@ -39,6 +39,9 @@ internal sealed partial class DurableCommandStore : IDisposable
     private const string RevokeGrantMethod = "NodeService.RevokeRemoteGrant";
     private const string SandboxCreateMethod = "SandboxService.Create";
     private const string ResourcePolicyMethod = "ResourceService.SetPolicy";
+    private const int ReceiptIdentityBytes = 2048;
+    private const int PendingReceiptBodyBytes = 2;
+    private const int ReservedSafetyIdentityBytes = ReceiptIdentityBytes + PendingReceiptBodyBytes;
 
     private readonly NodeStore _store;
     private readonly string _owner;
@@ -54,6 +57,78 @@ internal sealed partial class DurableCommandStore : IDisposable
 
     internal bool MaintenanceRequired { get; private set; }
     internal ReadOnlyMemory<byte> OwnerEpoch => _fence.Epoch;
+
+    internal static bool HasExistingAuthority(NodeStore store, string owner)
+    {
+        VerifyRestorePublication(store.DataRoot);
+        string fence = DurableEpochFence.PathFor(store.DataRoot, owner);
+        bool hasFence = File.Exists(fence);
+        var (hasEpoch, hasAnyEpoch) = store.Read(reader => (
+            Equals(reader.Scalar("SELECT EXISTS(SELECT 1 FROM owner_epoch WHERE owner_id=$o);", ("$o", owner)), 1L),
+            Equals(reader.Scalar("SELECT EXISTS(SELECT 1 FROM owner_epoch);"), 1L)));
+        if (hasFence != hasEpoch)
+        {
+            throw new DurableStoreMaintenanceException();
+        }
+
+        if (!hasEpoch && (hasAnyEpoch || Directory.EnumerateFiles(Path.GetDirectoryName(fence)!, "v2-owner-*.fence").Any()))
+        {
+            throw new DurableStoreMaintenanceException();
+        }
+
+        return hasEpoch;
+    }
+
+    internal byte[] DeriveRunControlKey(string runId, string launchSha256)
+    {
+        if (!IsGrantIdentity(runId) || launchSha256.Length != 64 || !launchSha256.All(char.IsAsciiHexDigitLower))
+        {
+            throw new ArgumentException("Run control derivation requires a canonical Run ID and launch digest.");
+        }
+
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (MaintenanceRequired) throw new DurableStoreMaintenanceException();
+            ReadOnlySpan<byte> domain = "ArcForges.V2.RunControlKey.v1\0"u8;
+            Span<byte> material = stackalloc byte[domain.Length + 16 + 16 + 32];
+            domain.CopyTo(material);
+            _fence.Epoch.CopyTo(material[domain.Length..]);
+            Convert.FromHexString(runId).CopyTo(material[(domain.Length + 16)..]);
+            Convert.FromHexString(launchSha256).CopyTo(material[(domain.Length + 32)..]);
+            return HMACSHA256.HashData(_key, material);
+        }
+    }
+
+    internal void RecordRunPreparing(byte[] startCommand, string runId, string runEpoch)
+    {
+        StoreIds.Validate(startCommand, nameof(startCommand));
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (MaintenanceRequired) throw new DurableStoreMaintenanceException();
+            string id = Convert.ToHexStringLower(startCommand);
+            var run = _store.Read(reader =>
+            {
+                var receipt = ReadReceipt(reader, id);
+                var candidate = RunRecords.Get(reader, _owner, runId);
+                return receipt is { Method: "RunService.Start", AggregateKind: "run", State: "ACCEPTED", Effect: 3 }
+                    && receipt.AggregateId == runId && candidate is { State: StoredRunState.Starting }
+                    && candidate.Epoch == runEpoch && RunRecoveryRecords.Read(reader, _owner, candidate) is { PrepareStarted: false }
+                    ? candidate : null;
+            });
+            if (run is null)
+                throw new InvalidOperationException("Preparation requires the exact still-accepted original Run Start.");
+
+            // Publish the independent witness before the SQL marker and any native launch attempt.
+            byte[] identity = Encoding.UTF8.GetBytes(run.RunId + "|" + run.Epoch + "|" + run.LaunchSha256);
+            Advance("run_preparing", id, identity, transaction =>
+            {
+                if (!RunRecoveryRecords.MarkPreparing(transaction, _owner, run.RunId, run.Epoch))
+                    throw new DurableStoreMaintenanceException();
+            });
+        }
+    }
 
     internal DurableCommandStore(NodeStore store, string owner, NodeSecretStore secrets, DurableCapacity? capacity = null)
     {
@@ -71,6 +146,7 @@ internal sealed partial class DurableCommandStore : IDisposable
             || _capacity.MaximumJournalBytes < (long)(_capacity.SafetyReceipts + 2) * _capacity.MaximumResponseBytes)
             throw new ArgumentOutOfRangeException(nameof(capacity));
         if (store.Metadata.SchemaVersion < 16) throw new StoreIncompatibleException("V2 commands require schema16.");
+        VerifyRestorePublication(store.DataRoot);
         _fencePath = DurableEpochFence.PathFor(store.DataRoot, owner);
         _ownerLock = DurableEpochFence.OpenPrivate(_fencePath + ".lock", FileMode.OpenOrCreate);
         try
@@ -188,8 +264,9 @@ internal sealed partial class DurableCommandStore : IDisposable
             if (intent.AdditionalSafetyReservations != 0 && (observed is not null || intent.Provision is null))
                 throw new ArgumentException("New provisioning must persist its exact derived grant reservation before native work.", nameof(intent));
             string? provisionBody = intent.Provision is { } provision ? WriteProvisionReservation(null, provision) : null;
+            int pendingBodyBytes = provisionBody is null ? PendingReceiptBodyBytes : Encoding.UTF8.GetByteCount(provisionBody);
             var admittedAt = _store.Clock.GetUtcNow();
-            var precondition = _store.Read(reader => CanAdmit(reader, intent, admittedAt, provisionBody?.Length ?? 0));
+            var precondition = _store.Read(reader => CanAdmit(reader, intent, admittedAt, pendingBodyBytes, observed));
             if (precondition != DurableDecision.Execute) return new(precondition, null);
             // The server-generated child ID participates in the owner fence, while the original caller
             // intent digest remains verifiable even after the response/reservation has been compacted.
@@ -207,7 +284,7 @@ internal sealed partial class DurableCommandStore : IDisposable
 
             Advance(observed is null ? "admit" : "admit_observed", id, proof, tx =>
             {
-                if (CanAdmit(tx, intent, admittedAt, provisionBody?.Length ?? 0) != DurableDecision.Execute)
+                if (CanAdmit(tx, intent, admittedAt, pendingBodyBytes, observed) != DurableDecision.Execute)
                     throw new DurableStoreMaintenanceException();
                 string? parent = intent.SafetyParent is null ? null : Convert.ToHexStringLower(intent.SafetyParent);
                 bool grantRevoke = intent.Grant?.Action == DurableGrantAction.Revoke;
@@ -243,7 +320,8 @@ internal sealed partial class DurableCommandStore : IDisposable
 
     private sealed record InitialResult(string State, int Effect, string Json);
 
-    private DurableDecision CanAdmit(StoreReader reader, DurableIntent intent, DateTimeOffset admittedAt, int provisionBodyBytes)
+    private DurableDecision CanAdmit(StoreReader reader, DurableIntent intent, DateTimeOffset admittedAt, int pendingBodyBytes,
+        InitialResult? observed)
     {
         if (intent.ExpectedSandboxRevision is { } revision &&
             !Equals(reader.Scalar("SELECT revision FROM sandbox WHERE owner_id=$o AND sandbox_id=$id;",
@@ -268,24 +346,13 @@ internal sealed partial class DurableCommandStore : IDisposable
         long reserve = (long)reader.Scalar("SELECT length(reserve_storage) FROM owner_epoch_capacity WHERE owner_id=$o AND owner_epoch=$e;",
             ("$o", _owner), ("$e", _fence.Epoch))!;
         if (reserve < _capacity.MaximumResponseBytes) return DurableDecision.Capacity;
+        long futureSafety = 0;
         if (!safety)
         {
-            long active = (long)reader.Scalar("""
-                SELECT count(*) FROM command_receipt p WHERE p.owner_id=$o AND p.owner_epoch=$e AND p.safety_parent_command_id IS NULL
-                  AND p.aggregate_kind IS NOT 'grant' AND p.method<>$resourcePolicy
-                  AND NOT(p.state IN ('SUCCEEDED','FAILED') AND p.effect_certainty=1)
-                  AND NOT EXISTS(SELECT 1 FROM command_receipt s WHERE s.owner_id=p.owner_id AND s.owner_epoch=p.owner_epoch AND s.safety_parent_command_id=p.command_id);
-                """, ("$o", _owner), ("$e", _fence.Epoch), ("$resourcePolicy", ResourcePolicyMethod))!;
-            long pendingGrants = (long)reader.Scalar("""
-                SELECT count(*) FROM command_receipt p WHERE p.owner_id=$o AND p.owner_epoch=$e
-                  AND p.method=$create AND p.aggregate_kind='sandbox' AND p.state IN ('ACCEPTED','UNKNOWN')
-                  AND json_extract(p.response_json,$field)=1;
-                """, ("$o", _owner), ("$e", _fence.Epoch), ("$create", SandboxCreateMethod), ("$field", GrantReservationPath))!;
-            // An edit of an existing resource policy creates no additional linked safety operation.
-            // Its own receipt still counts against both ordinary journal limits.
-            int newSafety = intent.Grant?.Action == DurableGrantAction.Replace || intent.Method == ResourcePolicyMethod ? 0 : 1;
-            long futureSafety = active + RemoteGrantRecords.CountActive(reader, _owner) + pendingGrants
-                + newSafety + intent.AdditionalSafetyReservations;
+            // A known effect with no remaining owned boundary does not promise a new safety operation.
+            int newSafety = intent.Method == ResourcePolicyMethod || intent.Grant?.Action == DurableGrantAction.Replace
+                || observed is { State: not "UNKNOWN" } && !IsGrantMutation(intent) ? 0 : 1;
+            futureSafety = CountOutstandingSafetyPromises(reader) + newSafety + intent.AdditionalSafetyReservations;
             if (futureSafety * _capacity.MaximumResponseBytes > reserve) return DurableDecision.Capacity;
             if (count + futureSafety + 1 > _capacity.MaximumReceipts) return DurableDecision.Capacity;
         }
@@ -298,12 +365,50 @@ internal sealed partial class DurableCommandStore : IDisposable
             if (!Equals(reader.Scalar("SELECT count(*) FROM command_receipt WHERE owner_id=$o AND owner_epoch=$e AND safety_parent_command_id=$p;",
                 ("$o", _owner), ("$e", _fence.Epoch), ("$p", parent)), 0L)) return DurableDecision.Conflict;
         }
-        long bytes = (long)reader.Scalar("SELECT coalesce(sum(coalesce(length(CAST(response_json AS BLOB)),0)+length(reserved_response)+2048),0) FROM command_receipt WHERE owner_id=$o AND owner_epoch=$e;",
-            ("$o", _owner), ("$e", _fence.Epoch))!;
+        long bytes = (long)reader.Scalar("SELECT coalesce(sum(coalesce(length(CAST(response_json AS BLOB)),0)+length(reserved_response)+$identity),0) FROM command_receipt WHERE owner_id=$o AND owner_epoch=$e;",
+            ("$o", _owner), ("$e", _fence.Epoch), ("$identity", ReceiptIdentityBytes))!;
         return count >= _capacity.MaximumReceipts
-            || bytes + reserve + (safety ? 0 : _capacity.MaximumResponseBytes) + 2048
-                + provisionBodyBytes > _capacity.MaximumJournalBytes
+            || bytes + reserve + (safety ? 0 : _capacity.MaximumResponseBytes) + ReceiptIdentityBytes
+                + futureSafety * ReservedSafetyIdentityBytes + pendingBodyBytes > _capacity.MaximumJournalBytes
             ? DurableDecision.Capacity : DurableDecision.Execute;
+    }
+
+    private long CountOutstandingSafetyPromises(StoreReader reader)
+    {
+        // A settled remote provision keeps its owned-root reconciliation promise while
+        // the exact derived authority is still active. That grant also owns its revoke.
+        long active = (long)reader.Scalar("""
+            SELECT count(*) FROM command_receipt p WHERE p.owner_id=$o AND p.owner_epoch=$e AND p.safety_parent_command_id IS NULL
+              AND p.aggregate_kind IS NOT 'grant' AND p.method<>$resourcePolicy
+              AND (
+                p.state IN ('ACCEPTED','UNKNOWN')
+                OR (p.method='RunService.Start' AND EXISTS(
+                  SELECT 1 FROM run r JOIN sandbox b ON b.sandbox_id=r.sandbox_id
+                  WHERE r.run_id=p.aggregate_id AND b.owner_id=p.owner_id AND r.state IN (1,2,3,4,7)))
+                OR (p.method=$create AND p.aggregate_kind='sandbox' AND p.state='SUCCEEDED' AND EXISTS(
+                  SELECT 1 FROM remote_grant g JOIN sandbox b ON b.sandbox_id=g.sandbox_id
+                  WHERE b.sandbox_id=p.aggregate_id AND b.owner_id=p.owner_id AND b.state<>$deleted
+                    AND g.scope_kind='sandbox' AND g.parent_grant_id IS NOT NULL AND g.state=$grantActive
+                    AND json_extract(g.policy_json,'$.ownerId')=p.owner_id
+                    AND json_extract(g.policy_json,'$.revocationAnchorCommandId')=p.command_id))
+                OR EXISTS(SELECT 1 FROM transfer t
+                  WHERE t.owner_id=p.owner_id AND t.owner_epoch=p.owner_epoch AND t.command_id=p.command_id
+                    AND (t.state IN (1,2,5) OR t.effect_certainty=3 OR
+                      (t.direction='export' AND t.state=3 AND t.closed_utc IS NULL)))
+                OR EXISTS(SELECT 1 FROM deletion_journal d
+                  WHERE d.owner_id=p.owner_id AND d.owner_epoch=p.owner_epoch AND d.command_id=p.command_id
+                    AND (d.phase<>'complete' OR d.effect_certainty=3))
+              )
+              AND NOT EXISTS(SELECT 1 FROM command_receipt s WHERE s.owner_id=p.owner_id AND s.owner_epoch=p.owner_epoch AND s.safety_parent_command_id=p.command_id);
+            """, ("$o", _owner), ("$e", _fence.Epoch), ("$resourcePolicy", ResourcePolicyMethod),
+            ("$create", SandboxCreateMethod), ("$deleted", (int)StoredSandboxState.Deleted),
+            ("$grantActive", (int)StoredRemoteGrantState.Active))!;
+        long pendingGrants = (long)reader.Scalar("""
+            SELECT count(*) FROM command_receipt p WHERE p.owner_id=$o AND p.owner_epoch=$e
+              AND p.method=$create AND p.aggregate_kind='sandbox' AND p.state IN ('ACCEPTED','UNKNOWN')
+              AND json_extract(p.response_json,$field)=1;
+            """, ("$o", _owner), ("$e", _fence.Epoch), ("$create", SandboxCreateMethod), ("$field", GrantReservationPath))!;
+        return active + RemoteGrantRecords.CountActive(reader, _owner) + pendingGrants;
     }
 
     private static bool IsGrantMutation(DurableIntent intent) => intent.Method is SetGrantMethod or RevokeGrantMethod;

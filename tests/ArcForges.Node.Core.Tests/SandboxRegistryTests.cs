@@ -13,7 +13,7 @@ using Google.Protobuf;
 
 namespace ArcForges.Node.Core.Tests;
 
-public sealed class SandboxRegistryTests
+public sealed partial class SandboxRegistryTests
 {
     private const string StageVariable = "ARCFORGES_SANDBOX_TEST_MXC_STAGE";
 

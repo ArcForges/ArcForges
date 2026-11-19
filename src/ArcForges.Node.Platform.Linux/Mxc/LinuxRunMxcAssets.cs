@@ -15,16 +15,26 @@ internal static class LinuxRunMxcAssets
     internal static void VerifySupervisor(RunLaunchSpec spec) =>
         RequireSupervisorHash(spec, Hash(spec.SupervisorPath, rootOnly: false, executable: true));
 
-    internal static void VerifyRunningSupervisor(RunLaunchSpec spec, int pid, long startTicks)
+    internal static void VerifyRunningSupervisor(string expectedHash, int pid, long startTicks)
     {
-        // The caller already checked the socket's native UID, PID and executable path.
-        // This descriptor identifies the actual image, even if the installed name changes.
+        if (ReadRunningImageHash(pid, startTicks) != expectedHash)
+        {
+            throw new RunNativeException("verify_linux_supervisor", "linux_supervisor_image_hash_mismatch", payloadNotStarted: true);
+        }
+    }
+
+    /// <summary>Reads the actual executable of the already verified native peer.</summary>
+    internal static string ReadRunningImageHash(int pid, long startTicks)
+    {
+        // The executable descriptor refers to the live image even if its installed name changes.
         using var image = File.OpenRead("/proc/" + pid.ToString(CultureInfo.InvariantCulture) + "/exe");
-        RequireSupervisorHash(spec, Hash(image));
+        var observed = Hash(image);
         if (ProcFs.Stat(pid) is not { State: not ('Z' or 'X') } current || current.StartTicks != startTicks)
         {
-            throw new RunNativeException("verify_linux_supervisor", "linux_supervisor_image_owner_changed", payloadNotStarted: true);
+            throw new IOException("The native peer changed while its executable was hashed.");
         }
+
+        return observed;
     }
 
     private static void RequireSupervisorHash(RunLaunchSpec spec, string observed)

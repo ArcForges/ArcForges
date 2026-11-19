@@ -129,7 +129,7 @@ internal sealed partial class SandboxManager
         }
 
         if (row.State != StoredRunState.Running || !_liveRuns.TryGetValue(runId, out var live)
-            || live.Spec.Epoch != row.Epoch || live.OwnerLease is not IRunResourceControl control
+            || live.Epoch != row.Epoch || live.OwnerLease is not IRunResourceControl control
             || live.OwnerLease.Identity.ControlEpoch != row.Epoch)
         {
             return ResourceEditError(meta, Error(meta, ErrorCategory.State, "busy", "run_resource_scope_not_live"));
@@ -143,17 +143,18 @@ internal sealed partial class SandboxManager
 
         var policy = request.Policy;
         var oldPolicy = DecodeResourcePolicy(previous);
+        var launch = ReadRunSnapshot(row);
         var admittedPolicy = policy.Clone();
         var changes = new List<RunLimitEdit>(2);
         if (policy.HasCpuMaxMillicores || oldPolicy?.HasCpuMaxMillicores == true)
         {
-            admittedPolicy.CpuMaxMillicores = policy.HasCpuMaxMillicores ? policy.CpuMaxMillicores : live.Spec.CpuMillicores;
+            admittedPolicy.CpuMaxMillicores = policy.HasCpuMaxMillicores ? policy.CpuMaxMillicores : launch.CpuMillicores;
             AddRunLimitEdit(changes, limits, initial, control, RunResourceDimension.Cpu, "cpu", admittedPolicy.CpuMaxMillicores);
         }
 
         if (policy.HasMemoryMaxBytes || oldPolicy?.HasMemoryMaxBytes == true)
         {
-            admittedPolicy.MemoryMaxBytes = policy.HasMemoryMaxBytes ? policy.MemoryMaxBytes : live.Spec.MemoryMaxBytes;
+            admittedPolicy.MemoryMaxBytes = policy.HasMemoryMaxBytes ? policy.MemoryMaxBytes : launch.MemoryMaxBytes;
             AddRunLimitEdit(changes, limits, initial, control, RunResourceDimension.Memory, "memory", admittedPolicy.MemoryMaxBytes);
         }
 

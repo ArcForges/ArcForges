@@ -14,6 +14,15 @@ namespace ArcForges.RunSupervisor;
 [SupportedOSPlatform("windows")]
 internal static class WindowsRunWorker
 {
+    private const long MaximumLauncherBytes = 128L * 1024 * 1024;
+    private static WindowsMxcJob? _recoveryBoundary;
+    private static string? _launcherImageSha256;
+
+    // The owner retains this handle until the control server and all recovery exchanges have ended.
+    internal static long? RecoveryBoundaryHandle => Volatile.Read(ref _recoveryBoundary)?.RecoveryToken;
+
+    internal static void ReleaseRecoveryBoundary() => Interlocked.Exchange(ref _recoveryBoundary, null)?.Dispose();
+
     internal static void RequireControlPeer(RunLaunchSpec spec, SafePipeHandle pipe)
     {
         if (spec.LauncherPath is null || !Path.IsPathFullyQualified(spec.LauncherPath)
@@ -23,6 +32,23 @@ internal static class WindowsRunWorker
         }
 
         WindowsMxcProcess.RequirePeer(pipe, localIsServer: true, spec.LauncherProcessId, creation, spec.LauncherPath);
+    }
+
+    internal static void RequireRecoveryPeer(RunLaunchSpec spec, SafePipeHandle pipe, int processId, string creationIdentity)
+    {
+        if (spec.LauncherPath is null || _launcherImageSha256 is not { } expected
+            || !long.TryParse(creationIdentity, NumberStyles.None, CultureInfo.InvariantCulture, out var creation))
+        {
+            throw new InvalidDataException("The Windows recovery requester identity is unavailable.");
+        }
+
+        using var image = WindowsMxcPathLease.Open(spec.LauncherPath, directory: false);
+        if (!string.Equals(image.Hash(MaximumLauncherBytes), expected, StringComparison.Ordinal))
+        {
+            throw new InvalidDataException("The Windows recovery requester uses a different Node image.");
+        }
+
+        WindowsMxcProcess.RequireRecoveryPeer(pipe, processId, creation, image.Path);
     }
 
     internal static ValueTask<RunOwnerIdentity> ReadyAsync(RunLaunchSpec spec, CancellationToken cancellationToken)
@@ -37,6 +63,9 @@ internal static class WindowsRunWorker
 
         using var control = WindowsMxcPathLease.Open(spec.ControlDirectory, directory: true, privateObject: true);
         using var launch = WindowsMxcPathLease.Open(RunWire.LaunchPath(spec), directory: false, privateObject: true);
+        using var launcher = WindowsMxcPathLease.Open(spec.LauncherPath
+            ?? throw new InvalidDataException("The Windows Run manifest lacks its trusted Node image."), directory: false);
+        _launcherImageSha256 = launcher.Hash(MaximumLauncherBytes);
         return ValueTask.FromResult(new RunOwnerIdentity(spec.OwnerId, WindowsMxcProcess.BootIdentity(), Environment.ProcessId,
             WindowsMxcProcess.CurrentCreationFileTime().ToString(CultureInfo.InvariantCulture), spec.ControlEndpoint,
             spec.BoundaryDescriptor, spec.ProfileId, spec.ProfileVersion, spec.Epoch));
@@ -62,6 +91,14 @@ internal static class WindowsRunWorker
         {
             aggregate = WindowsMxcJob.Accept(release.NativeBoundaryHandle
                 ?? throw new InvalidDataException("The Windows owner received no Job capability."), WindowsRunLauncher.Limits(spec));
+            var standby = WindowsMxcJob.AcceptStandby(release.RecoveryBoundaryHandle
+                ?? throw new InvalidDataException("The Windows owner received no standby Job capability."), aggregate);
+            if (Interlocked.CompareExchange(ref _recoveryBoundary, standby, null) is not null)
+            {
+                standby.Dispose();
+                throw new InvalidDataException("The Windows owner already holds its standby Job capability.");
+            }
+
             phase = "windows_mxc_installation";
             installed = WindowsMxcStage.Open(spec);
             phase = "windows_mxc_bound_paths";

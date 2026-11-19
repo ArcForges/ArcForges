@@ -136,7 +136,7 @@ internal sealed partial class SandboxManager
         {
             if (run.State != StoredRunState.Running
                 || !_liveRuns.TryGetValue(run.RunId, out var live)
-                || live.Spec.Epoch != run.Epoch
+                || live.Epoch != run.Epoch
                 || live.StopRequest.Task.IsCompleted
                 || live.OwnerLease is not IRunResourceSource source
                 || live.OwnerLease.Identity.ControlEpoch != run.Epoch

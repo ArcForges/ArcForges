@@ -3,6 +3,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.Versioning;
+using System.Security.Cryptography;
 using ArcForges.Node.Platform.Windows;
 using ArcForges.Node.Platform.Windows.Mxc;
 using ArcForges.RunSupervisor.Protocol;
@@ -28,7 +29,10 @@ internal sealed class WindowsRunSession : IRunWorkerSession
     private RunOwnerObservation _observation = new(RunOwnerState.Running, RunPayloadStart.Unknown, false);
     private StopPlan? _stop;
     private bool _stopObserved;
+    private bool _interruptAttempted;
     private long? _forcedAt;
+    private uint? _forcedCode;
+    private SafeKernelHandle? _forceWitness;
 
     internal WindowsRunSession(WindowsMxcJob aggregate, WindowsMxcJob payload, LaunchedProcess executor,
         WindowsRunIo io, WindowsMxcStage installed, WindowsMxcPathLease control, WindowsMxcPathLease policy,
@@ -96,13 +100,13 @@ internal sealed class WindowsRunSession : IRunWorkerSession
             }
 
             rawExit = unchecked((int)exit.Value);
-            reason = _stopObserved ? "user_stop" : "natural_exit";
+            reason = ExitReason(rawExit.Value);
             Volatile.Write(ref _observation, new(RunOwnerState.Draining, RunPayloadStart.Unknown, false,
                 rawExit, RunExitSources.OfficialExecutor, reason));
 
             // The pinned executor's own completion is independent of the outer Run drain proof.
             var payload = await DrainPayloadAsync().ConfigureAwait(false);
-            reason = _stopObserved ? "user_stop" : reason;
+            reason = ExitReason(rawExit.Value);
             _io.CloseInput();
             await Task.WhenAll(_io.CloseConsoleAsync(), output, error).WaitAsync(DrainDeadline).ConfigureAwait(false);
             var aggregate = await _aggregate.WaitForDrainAsync(Environment.ProcessId, DrainDeadline, CancellationToken.None).ConfigureAwait(false);
@@ -117,8 +121,25 @@ internal sealed class WindowsRunSession : IRunWorkerSession
             _capture.Dispose();
             Volatile.Write(ref _observation, new(RunOwnerState.RecoveryRequired, RunPayloadStart.Unknown, false,
                 rawExit, rawExit.HasValue ? RunExitSources.OfficialExecutor : RunExitSources.Unknown,
-                _stopObserved ? "user_stop" : reason ?? "owner_failure", WindowsRunLauncher.NativeCode(exception)));
+                reason ?? "owner_failure", WindowsRunLauncher.NativeCode(exception)));
         }
+        finally
+        {
+            _forceWitness?.Dispose();
+        }
+    }
+
+    private string ExitReason(int rawExit)
+    {
+        if (_forcedCode is uint forced && (unchecked((uint)rawExit) == forced
+            || _forceWitness is { } process && Native.WaitForSingleObject(process, 0) == Native.WaitObject0
+                && Native.GetExitCodeProcess(process, out var observed) && observed == forced))
+        {
+            return "user_stop";
+        }
+
+        // Terminal input can be accepted without the workload processing it or exiting because of it.
+        return _interruptAttempted || _forcedAt.HasValue ? "stop_effect_unconfirmed" : "natural_exit";
     }
 
     private async Task DrainOutputAsync(Stream source, RunOutputStream kind)
@@ -176,20 +197,68 @@ internal sealed class WindowsRunSession : IRunWorkerSession
             if (executorRunning)
             {
                 Volatile.Write(ref _observation, new(RunOwnerState.Stopping, RunPayloadStart.Unknown, false,
-                    TerminationReason: "user_stop"));
+                    TerminationReason: "stop_requested"));
             }
 
             var remaining = plan.Grace - Stopwatch.GetElapsedTime(plan.RequestedAt);
-            if (remaining > TimeSpan.Zero) await _io.InterruptAsync(remaining).ConfigureAwait(false);
+            if (remaining > TimeSpan.Zero && _io.ConsoleHandle != 0 && !_payload.Observe().Empty)
+            {
+                _interruptAttempted = true;
+                await _io.InterruptAsync(remaining).ConfigureAwait(false);
+            }
         }
 
         if (_forcedAt is null && Stopwatch.GetElapsedTime(plan.RequestedAt) >= plan.Grace)
         {
-            _payload.Terminate();
-            _forcedAt = Stopwatch.GetTimestamp();
+            ForceOwnedPayload();
         }
 
         return true;
+    }
+
+    private void ForceOwnedPayload()
+    {
+        var members = _payload.Observe();
+        if (members.Empty) return;
+
+        _forceWitness = HoldLiveDescendant(members);
+        // A fresh application exit status distinguishes this action from an independent Ctrl+C or natural exit.
+        uint? code = null;
+        try
+        {
+            code = 0xe0000000u | (uint)RandomNumberGenerator.GetInt32(1 << 29);
+        }
+        catch (CryptographicException)
+        {
+            // Terminate the scope even when corroboration is unavailable.
+        }
+
+        if (code is null) _payload.Terminate();
+        else if (!Native.TerminateJobObject(_payload.Handle, code.Value))
+        {
+            throw WindowsMxcJob.Error("Terminate the exact Windows payload Job");
+        }
+
+        _forcedCode = code;
+        _forcedAt = Stopwatch.GetTimestamp();
+    }
+
+    private SafeKernelHandle? HoldLiveDescendant(WindowsMxcJobObservation members)
+    {
+        foreach (var pid in members.ProcessIds)
+        {
+            if (pid == _executor.ProcessId || ProcessInfo.Open(pid) is not { } process) continue;
+            if (ProcessInfo.CreationFileTime(process) > 0
+                && Native.IsProcessInJob(process, _payload.Handle.DangerousGetHandle(), out var member) && member
+                && ProcessInfo.IsRunning(process))
+            {
+                return process;
+            }
+
+            process.Dispose();
+        }
+
+        return null;
     }
 
     private void RequireForcedStopBound()
