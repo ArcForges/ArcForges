@@ -90,6 +90,7 @@ internal sealed partial class SandboxManager
 
             // Keep the checked Sandbox root held through the release handoff.
             live.Root.Dispose();
+            bool refusedStartConflictsWithPayload = false;
             while (!token.IsCancellationRequested)
             {
                 RunOwnerObservation observed;
@@ -107,22 +108,41 @@ internal sealed partial class SandboxManager
                     continue;
                 }
 
-                if (!verifiedLimits && !releaseAttempted && observed.IsTerminal && observed.GroupEmptyVerified)
+                bool drained = observed.IsTerminal && observed.GroupEmptyVerified;
+                if (!verifiedLimits && !releaseAttempted)
                 {
-                    // No activation was issued. The held boundary supplies the missing cleanup proof
-                    // when the owner reply is gone. Contradictory launch evidence still needs recovery.
-                    observed = observed.PayloadStarted == RunPayloadStart.Confirmed
-                        ? UncertainRun("prepared_resource_refusal_conflicts_with_payload")
-                        : observed with
+                    if (!refusedStartConflictsWithPayload && (observed.PayloadStarted == RunPayloadStart.Confirmed
+                        || observed.State == RunOwnerState.Running
+                        || observed.ExitSource is RunExitSources.Payload or RunExitSources.OfficialExecutor))
+                    {
+                        refusedStartConflictsWithPayload = true;
+                        ReportRun(live.Spec.RunId, "prepared_resource_refusal_conflicts_with_payload", observed.NativeError);
+                    }
+
+                    if (refusedStartConflictsWithPayload)
+                    {
+                        observed = UncertainRun("prepared_resource_refusal_conflicts_with_payload");
+                    }
+                    else if (drained)
+                    {
+                        // No activation was issued, and the original held boundary is now empty.
+                        observed = observed with
                         {
                             State = RunOwnerState.Failed,
                             PayloadStarted = RunPayloadStart.NotStarted,
                             TerminationReason = "required_run_limit_unconfirmed",
                         };
+                    }
+                    else if (observed.IsTerminal || observed.State is RunOwnerState.Stopping or RunOwnerState.Draining)
+                    {
+                        // The safety Stop has not yet proved the outer boundary empty. Keep
+                        // the stored state eligible to record a failed Start once it does.
+                        observed = observed with { State = RunOwnerState.Starting };
+                    }
                 }
 
                 ObserveRun(live, observed);
-                if (observed.IsTerminal && observed.GroupEmptyVerified)
+                if (drained)
                 {
                     return;
                 }
