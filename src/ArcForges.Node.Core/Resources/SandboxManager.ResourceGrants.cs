@@ -3,6 +3,7 @@ using System.Globalization;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Sandbox.V2;
+using ArcForges.Node.Core.Resources;
 using ArcForges.Node.Platform;
 using ArcForges.Node.Store;
 using ArcForges.RunSupervisor.Protocol;
@@ -37,10 +38,10 @@ internal sealed partial class SandboxManager
         RunResourceLimitReading? Actual, bool Authoritative);
 
     private (RunLaunchSpec? Spec, ArcError? Error) AuthorizeRunResourceGrant(RunServiceStartRequest request,
-        StoredSandbox sandbox, RunLaunchSpec spec)
+        StoredSandbox sandbox, RunLaunchSpec spec, SandboxResourceFrame? frame)
     {
         var nodePolicy = DecodeResourcePolicy(ReadResourcePolicy("node", null));
-        if (CurrentNodeGrantBudget(nodePolicy) is not { } nodeCeiling)
+        if (CurrentNodeGrantBudget(nodePolicy, frame) is not { } nodeCeiling)
         {
             return (null, Error(request.Meta, ErrorCategory.Resource, "budget_unavailable", "resource_sample_unavailable"));
         }
@@ -92,8 +93,9 @@ internal sealed partial class SandboxManager
         {
             HardGrant used = SumGrants(active, null);
             string? dimension = used.Exceeded(node);
-            if (dimension is null && CurrentNodeGrantBudget(nodePolicy) is { } prior
-                && CurrentNodeGrantBudget(policy) is { } changed && changed.TighterThan(prior))
+            var frame = _resourceMonitor?.Latest;
+            if (dimension is null && CurrentNodeGrantBudget(nodePolicy, frame) is { } prior
+                && CurrentNodeGrantBudget(policy, frame) is { } changed && changed.TighterThan(prior))
             {
                 dimension = used.Exceeded(changed);
             }
@@ -144,9 +146,12 @@ internal sealed partial class SandboxManager
     private static ArcError ResourcePolicyBusy(RequestMeta? meta, string reason) =>
         Error(meta, ErrorCategory.State, "busy", reason);
 
-    private HardGrant? CurrentNodeGrantBudget(ResourcePolicy? policy)
+    private HardGrant? CurrentNodeGrantBudget(ResourcePolicy? policy) =>
+        CurrentNodeGrantBudget(policy, _resourceMonitor?.Latest);
+
+    private HardGrant? CurrentNodeGrantBudget(ResourcePolicy? policy, SandboxResourceFrame? frame)
     {
-        if (_resourceMonitor?.Latest is not { Stale: false } frame)
+        if (frame is not { HasFreshBudget: true })
         {
             return null;
         }

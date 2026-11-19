@@ -107,10 +107,18 @@ internal sealed partial class SandboxManager
                     continue;
                 }
 
-                if (!verifiedLimits && observed.IsTerminal && observed.GroupEmptyVerified
-                    && observed.PayloadStarted == RunPayloadStart.NotStarted)
+                if (!verifiedLimits && !releaseAttempted && observed.IsTerminal && observed.GroupEmptyVerified)
                 {
-                    observed = observed with { State = RunOwnerState.Failed, TerminationReason = "required_run_limit_unconfirmed" };
+                    // No activation was issued. The held boundary supplies the missing cleanup proof
+                    // when the owner reply is gone. Contradictory launch evidence still needs recovery.
+                    observed = observed.PayloadStarted == RunPayloadStart.Confirmed
+                        ? UncertainRun("prepared_resource_refusal_conflicts_with_payload")
+                        : observed with
+                        {
+                            State = RunOwnerState.Failed,
+                            PayloadStarted = RunPayloadStart.NotStarted,
+                            TerminationReason = "required_run_limit_unconfirmed",
+                        };
                 }
 
                 ObserveRun(live, observed);

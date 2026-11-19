@@ -75,9 +75,7 @@ internal sealed partial class SandboxManager
         long current = previous?.Revision ?? 1;
         if (current != expected)
         {
-            var conflict = RevisionError(meta, expected, current);
-            conflict.Details.State.Reason = "resource_policy_revision_changed";
-            return ResourceEditError(meta, conflict);
+            return ResourceEditError(meta, RevisionError(meta, expected, current));
         }
 
         var policy = request.Policy;

@@ -28,31 +28,7 @@ internal sealed partial class SandboxManager
     {
         try
         {
-            if (_resourceMonitor is { NeedsInitialBudget: true } monitor)
-            {
-                bool newIntent;
-                lock (OwnershipGate)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    newIntent = ValidId(request.Meta?.CommandId) && ValidId(request.OwnerEpoch) && ValidId(request.SandboxId)
-                        && request.Meta?.ExpectedRev is { Value: > 0 } && EpochMatches(request.OwnerEpoch)
-                        && Receipts.Inspect(request.Meta.CommandId.Value.Span) is null;
-                }
-
-                if (newIntent)
-                {
-                    // The first native CPU budget needs two samples. The sampler
-                    // snapshots managed scopes under OwnershipGate.
-                    monitor.WaitForInitialBudget(cancellationToken);
-                }
-            }
-
-            RunMutationResult result;
-            lock (OwnershipGate)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                result = StartRunLocked(request, secrets: null);
-            }
+            var result = StartWithResourceBudget(request, secrets: null, cancellationToken);
 
             if (result.SecretReferences is { } references)
             {
@@ -72,11 +48,7 @@ internal sealed partial class SandboxManager
                         secrets.Add(reference, value);
                     }
 
-                    lock (OwnershipGate)
-                    {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        result = StartRunLocked(request, secrets);
-                    }
+                    result = StartWithResourceBudget(request, secrets, cancellationToken);
                 }
                 finally
                 {
@@ -98,7 +70,32 @@ internal sealed partial class SandboxManager
         }
     }
 
-    private RunMutationResult StartRunLocked(RunServiceStartRequest request, IReadOnlyDictionary<string, string>? secrets)
+    private RunMutationResult StartWithResourceBudget(RunServiceStartRequest request,
+        IReadOnlyDictionary<string, string>? secrets, CancellationToken cancellationToken)
+    {
+        var monitor = _resourceMonitor;
+        lock (OwnershipGate)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var result = StartRunLocked(request, secrets, allowBudgetWait: monitor is not null);
+            if (!result.AwaitingResourceBudget)
+            {
+                return result;
+            }
+        }
+
+        // The sampler also uses OwnershipGate to capture its Run inventory. A new
+        // scope needs two CPU counter observations before a complete budget exists.
+        monitor!.WaitForBudget(cancellationToken);
+        lock (OwnershipGate)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return StartRunLocked(request, secrets, allowBudgetWait: false);
+        }
+    }
+
+    private RunMutationResult StartRunLocked(RunServiceStartRequest request, IReadOnlyDictionary<string, string>? secrets,
+        bool allowBudgetWait)
     {
         var meta = request.Meta;
         if (!ValidId(meta?.CommandId) || !ValidId(request.OwnerEpoch) || !ValidId(request.SandboxId) || meta?.ExpectedRev is not { Value: > 0 } expected)
@@ -122,7 +119,8 @@ internal sealed partial class SandboxManager
         var canonical = body.ToByteArray();
         try
         {
-            return AdmitStartRunLocked(request, expected.Value, command, epoch, sandboxId, previous, runId, canonical, secrets);
+            return AdmitStartRunLocked(request, expected.Value, command, epoch, sandboxId, previous, runId, canonical,
+                secrets, allowBudgetWait);
         }
         finally
         {
@@ -132,7 +130,7 @@ internal sealed partial class SandboxManager
 
     private RunMutationResult AdmitStartRunLocked(RunServiceStartRequest request, long expected, byte[] command,
         byte[] epoch, string sandboxId, DurableReceipt? previous, string runId, byte[] canonical,
-        IReadOnlyDictionary<string, string>? secrets)
+        IReadOnlyDictionary<string, string>? secrets, bool allowBudgetWait)
     {
         var meta = request.Meta;
         var intent = new DurableIntent(command, epoch, StartRunMethod, RunAggregate, runId, canonical, expected,
@@ -185,7 +183,13 @@ internal sealed partial class SandboxManager
                 return RejectStart(policy.Error);
             }
 
-            var authorization = AuthorizeRunResourceGrant(request, row, spec);
+            var budgetFrame = _resourceMonitor?.Latest;
+            if (allowBudgetWait && budgetFrame is not { HasFreshBudget: true })
+            {
+                return new(null, null, AwaitingResourceBudget: true);
+            }
+
+            var authorization = AuthorizeRunResourceGrant(request, row, spec, budgetFrame);
             if (authorization.Spec is not { } granted)
             {
                 return RejectStart(authorization.Error);
@@ -297,9 +301,7 @@ internal sealed partial class SandboxManager
 
         if (run.Revision != expected.Value)
         {
-            var error = RevisionError(meta, expected.Value, run.Revision);
-            error.Details.State.Reason = "run_revision_changed";
-            return RunFailure(error);
+            return RunFailure(RevisionError(meta, expected.Value, run.Revision));
         }
 
         if (run.State is StoredRunState.Exited or StoredRunState.Failed)
@@ -431,7 +433,8 @@ internal sealed partial class SandboxManager
 
     private static RunMutationResult RunFailure(ArcError error) => new(null, null, error);
 
-    private sealed record RunMutationResult(Run? Run, Operation? Operation, ArcError? Error = null, string[]? SecretReferences = null);
+    private sealed record RunMutationResult(Run? Run, Operation? Operation, ArcError? Error = null,
+        string[]? SecretReferences = null, bool AwaitingResourceBudget = false);
 
     private sealed class LiveRun(RunLaunchSpec spec, IRunLauncher launcher, SandboxPrivateRootLease root, byte[] startCommand,
         CancellationToken cancellationToken)

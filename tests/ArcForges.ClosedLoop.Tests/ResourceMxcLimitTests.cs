@@ -79,7 +79,7 @@ public sealed partial class MxcRunServiceTests
             // This request fits by itself. The first Run's existing hard grant makes the combination too large.
             var refusedRequest = Request(sandbox, BusyRunCpu, LiveRunMemoryMiB,
                 [payload, "hold", "--hold-ms", "1000", "--marker", refusedMarker]);
-            await RequireRefusedStartAsync(refusedRequest, refusedMarker);
+            await RequireRefusedStartAsync(refusedRequest, refusedMarker, "sandbox_cpu_grant_unavailable");
             Assert.Equal(cpuRun.RunId, Assert.Single(await ListAsync(runs, sandbox.SandboxId)).RunId);
 
             var memoryRun = await StartHeldAsync(Request(sandbox, SpareRunCpu, LiveRunMemoryMiB,
@@ -94,7 +94,7 @@ public sealed partial class MxcRunServiceTests
             _ = RequireEffectiveRunLimit(memoryBefore, "memory", ResourceBytes(LiveRunMemoryMiB));
             var nodeDenied = Request(independent, 200, LiveRunMemoryMiB,
                 [independentPayload, "hold", "--hold-ms", "1000", "--marker", nodeRefusalMarker]);
-            await RequireRefusedStartAsync(nodeDenied, nodeRefusalMarker);
+            await RequireRefusedStartAsync(nodeDenied, nodeRefusalMarker, "node_cpu_grant_unavailable");
             Assert.Empty(await ListAsync(runs, independent.SandboxId));
 
             await ObserveCpuGrantUnderLoadAsync(resources, cpuRun, cpuGroup, cpuBefore, cancellation);
@@ -141,9 +141,31 @@ public sealed partial class MxcRunServiceTests
             Assert.Equal("command_id_reused", mismatch.Error?.Code);
             var stale = reduce.Clone();
             stale.Meta.CommandId = CommandIds.New();
+            stale.Policy.CpuMaxMillicores = SpareRunCpu - 10;
             var conflicted = await resources.SetPolicyAsync(stale, deadline: Deadline, cancellationToken: cancellation);
-            Assert.Equal("revision_mismatch", conflicted.Error?.Code);
-            Assert.Equal(EffectCertainty.DidNotHappen, conflicted.Error!.Effect);
+            Assert.Null(conflicted.Value);
+            var conflict = Assert.IsType<ArcError>(conflicted.Error);
+            Assert.Equal(ErrorCategory.Conflict, conflict.Category);
+            Assert.Equal("revision_mismatch", conflict.Code);
+            Assert.Equal(EffectCertainty.DidNotHappen, conflict.Effect);
+            var revision = Assert.IsType<RevisionConflict>(conflict.Details?.Revision);
+            Assert.Equal(cpuBefore.PolicyRevision, revision.Expected);
+            Assert.Equal(cpuAfter.PolicyRevision, revision.Actual);
+            var afterConflict = await ReadInstalledBudgetAsync(resources, "run", cpuRun.RunId, cancellation);
+            Assert.Equal(cpuAfter.PolicyRevision, afterConflict.PolicyRevision);
+            Assert.Equal(cpuAfter.Limits.Count, afterConflict.Limits.Count);
+            foreach (var beforeLimit in cpuAfter.Limits)
+            {
+                var afterLimit = Assert.Single(afterConflict.Limits, limit => limit.Dimension == beforeLimit.Dimension);
+                // GetBudget performs a fresh native read, which advances only the observation timestamp.
+                var expected = beforeLimit.Clone();
+                expected.ReadbackAt = afterLimit.ReadbackAt;
+                Assert.Equal(expected, afterLimit);
+                var previousReadback = ProtoTime.ToDateTimeOffset(beforeLimit.ReadbackAt);
+                var currentReadback = ProtoTime.ToDateTimeOffset(afterLimit.ReadbackAt);
+                Assert.Equal(previousReadback.HasValue, currentReadback.HasValue);
+                if (previousReadback is { } observed) Assert.True(currentReadback >= observed);
+            }
 
             var increase = earlyIncrease.Clone();
             increase.Meta = Mutation((await ReadEffectiveRunBudgetAsync(resources, memoryRun, SpareRunCpu, LiveRunMemoryMiB)).PolicyRevision);
@@ -292,18 +314,19 @@ public sealed partial class MxcRunServiceTests
             return await WaitForStateAsync(fixture, runs, id, RunState.Running, cancellation);
         }
 
-        async Task RequireRefusedStartAsync(RunServiceStartRequest request, string marker)
+        async Task RequireRefusedStartAsync(RunServiceStartRequest request, string marker, string reason)
         {
             var refused = await runs.StartAsync(request, deadline: Deadline, cancellationToken: cancellation);
             if (refused.Value?.Run?.RunId is { } unexpected) active.Add(unexpected);
-            AssertResourceRefusal(refused.Error);
+            AssertResourceRefusal(refused.Error, reason);
             Assert.Null(refused.Value);
             var rejectedReceipt = await OperationAsync(node, epoch, request.Meta.CommandId);
             Assert.Equal(OperationState.Failed, rejectedReceipt.State);
             Assert.Equal(EffectCertainty.DidNotHappen, rejectedReceipt.Effect);
             var replay = await runs.StartAsync(request, deadline: Deadline, cancellationToken: cancellation);
-            Assert.Equal(refused.Error!.Code, replay.Error?.Code);
-            Assert.Equal(refused.Error.Effect, replay.Error!.Effect);
+            if (replay.Value?.Run?.RunId is { } unexpectedReplay) active.Add(unexpectedReplay);
+            Assert.Null(replay.Value);
+            AssertResourceRefusal(replay.Error, reason);
             Assert.False(File.Exists(marker));
         }
     }
@@ -388,12 +411,13 @@ public sealed partial class MxcRunServiceTests
 
     private static ulong ReadNumericLimit(string value) => ulong.Parse(value, NumberStyles.None, CultureInfo.InvariantCulture);
 
-    private static void AssertResourceRefusal(ArcError? error)
+    private static void AssertResourceRefusal(ArcError? error, string reason)
     {
         Assert.NotNull(error);
         Assert.Equal(ErrorCategory.Resource, error.Category);
         Assert.Equal("budget_unavailable", error.Code);
         Assert.Equal(EffectCertainty.DidNotHappen, error.Effect);
+        Assert.Equal(reason, error.Details?.State?.Reason);
     }
 
     private static async Task ObserveCpuGrantUnderLoadAsync(ResourceService.ResourceServiceClient resources, Run run,

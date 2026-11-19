@@ -23,6 +23,7 @@ internal sealed record SandboxResourceFrame(long Timestamp, long? LastCompleteTi
     ResourceSnapshot Host, IReadOnlyDictionary<string, RunResourceMeasurement> Runs)
 {
     internal bool Stale => LastCompleteTimestamp is not { } time || Stopwatch.GetElapsedTime(time) >= TimeSpan.FromSeconds(3);
+    internal bool HasFreshBudget => !Stale && Host.HasBudgetCpuMillicores && Host.HasBudgetMemoryBytes;
 }
 
 /// <summary>Collects the host and its active V2 Run scopes without holding the Sandbox mutation lock during native reads.</summary>
@@ -35,7 +36,6 @@ internal sealed class SandboxResourceMonitor : IAsyncDisposable
     private readonly Func<StoredPolicy> _policy;
     private readonly NodeLog _log;
     private readonly CancellationTokenSource _stop = new();
-    private readonly TaskCompletionSource _firstBudget = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Task _loop;
     private readonly AsymmetricSmoother _cpu = new();
     private readonly AsymmetricSmoother _memory = new();
@@ -49,6 +49,7 @@ internal sealed class SandboxResourceMonitor : IAsyncDisposable
     private bool? _lastAvailability;
     private long? _lastPolicyRevision;
     private SandboxResourceFrame? _latest;
+    private TaskCompletionSource _nextCompleteBudget = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     internal SandboxResourceMonitor(TimeProvider clock, IHostResourceSource host, Func<RunResourceInventory?> inventory,
         Func<StoredPolicy> policy, NodeLog log)
@@ -65,17 +66,22 @@ internal sealed class SandboxResourceMonitor : IAsyncDisposable
 
     internal SandboxResourceFrame? Latest => Volatile.Read(ref _latest);
 
-    internal bool NeedsInitialBudget => !_firstBudget.Task.IsCompleted;
-
-    internal void WaitForInitialBudget(CancellationToken cancellationToken)
+    internal void WaitForBudget(CancellationToken cancellationToken)
     {
+        // Subscribe before checking the frame so a concurrent publication cannot be missed.
+        var next = Volatile.Read(ref _nextCompleteBudget).Task;
+        if (Latest is { HasFreshBudget: true })
+        {
+            return;
+        }
+
         try
         {
-            _firstBudget.Task.WaitAsync(TimeSpan.FromSeconds(3), cancellationToken).GetAwaiter().GetResult();
+            next.WaitAsync(TimeSpan.FromSeconds(3), cancellationToken).GetAwaiter().GetResult();
         }
         catch (TimeoutException)
         {
-            // Admission validates freshness and presence after leaving this bounded startup wait.
+            // Admission rechecks both freshness and completeness after the bounded wait.
         }
     }
 
@@ -186,7 +192,8 @@ internal sealed class SandboxResourceMonitor : IAsyncDisposable
         Volatile.Write(ref _latest, frame);
         if (complete)
         {
-            _firstBudget.TrySetResult();
+            Interlocked.Exchange(ref _nextCompleteBudget,
+                new(TaskCreationOptions.RunContinuationsAsynchronously)).SetResult();
         }
 
         if (_lastAvailability != !snapshot.Stale)
