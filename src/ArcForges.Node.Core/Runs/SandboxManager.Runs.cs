@@ -352,5 +352,6 @@ internal sealed partial class SandboxManager
         internal CancellationToken CancellationToken { get; } = cancellationToken;
         internal TaskCompletionSource<TimeSpan> StopRequest { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal byte[]? StopCommand { get; set; }
+        internal IRunOwnerLease? OwnerLease { get; set; }
     }
 }

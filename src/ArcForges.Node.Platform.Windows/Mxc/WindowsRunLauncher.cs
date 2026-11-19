@@ -5,6 +5,7 @@ using System.Globalization;
 using System.IO.Pipes;
 using System.Runtime.Versioning;
 using System.Security.Principal;
+using System.Text.Json;
 using ArcForges.RunSupervisor.Protocol;
 
 namespace ArcForges.Node.Platform.Windows.Mxc;
@@ -166,6 +167,9 @@ public sealed class WindowsRunLauncher : IRunLauncher
 
         public RunOwnerIdentity Identity => client.Identity;
 
+        public ValueTask<RunTerminalReply> TerminalAsync(RunTerminalRequest request, CancellationToken cancellationToken) =>
+            client.TerminalAsync(request, cancellationToken);
+
         public ValueTask ActivateAsync(CancellationToken cancellationToken)
         {
             if (Interlocked.Exchange(ref _releaseAttempted, 1) != 0)
@@ -192,14 +196,10 @@ public sealed class WindowsRunLauncher : IRunLauncher
                 }
 
                 try { await client.StopAsync(grace, cancellationToken).ConfigureAwait(false); }
-                catch (IOException) when (WindowsMxcProcess.PollExit(process) is not null
-                    || RunWire.TryReadObservation(spec) is { IsTerminal: true, GroupEmptyVerified: true })
+                catch (Exception error) when (error is IOException and not RunNativeException or InvalidDataException or JsonException)
                 {
-                    if (WindowsMxcProcess.PollExit(process) is not null)
-                    {
-                        await StopAtBoundaryAsync(prior).ConfigureAwait(false);
-                    }
-                    // A live owner that already committed its authenticated terminal result is finishing its own drain.
+                    // This is an accepted Stop. Lost private control does not invalidate the original held Job.
+                    await StopAtBoundaryAsync(prior).ConfigureAwait(false);
                 }
             }
             catch (Exception error) when (error is Win32Exception or TimeoutException)

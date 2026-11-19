@@ -40,6 +40,10 @@ internal static class Program
         probes:
           args      [anything...]  prints {"argv": [...], "cwd": "..."} (the arguments it received)
           echo      copies standard input to standard output until end-of-file
+          terminal  tui|signal|quiet <marker> [quiet-byte-count [linger-ms]]
+                    checks native terminal input, geometry and mode restoration; quiet emits no terminal output
+          terminal  slow-output <marker> <prefix-gate> <tail-gate>
+                    writes a fixed binary burst after each of two file gates for transport back-pressure tests
 
         Every scenario accepts --report <file>. The JSON report goes to that file; without it,
         cpu, mem-ramp, fork and `output --stream none` print it on standard output.
@@ -67,6 +71,11 @@ internal static class Program
 
         try
         {
+            if (args[0] == "terminal")
+            {
+                return await TerminalScenario.RunAsync(args[1..]).ConfigureAwait(false);
+            }
+
             var options = ScenarioOptions.Parse(args[1..]);
             var report = args[0] switch
             {

@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 using System.ComponentModel;
+using System.Globalization;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Security.Principal;
 using ArcForges.Node.Platform.Windows.Mxc;
+using ArcForges.RunSupervisor.Protocol;
 using Microsoft.Win32.SafeHandles;
 
 namespace ArcForges.RunSupervisor;
@@ -16,7 +18,10 @@ internal sealed partial class WindowsRunIo : IDisposable
     private readonly PipePair _input;
     private readonly PipePair _output;
     private readonly PipePair? _error;
+    private readonly SemaphoreSlim _inputGate = new(1, 1);
+    private readonly object _consoleGate = new();
     private nint _console;
+    private int _inputClosed;
 
     private WindowsRunIo(PipePair input, PipePair output, PipePair? error)
     {
@@ -46,13 +51,8 @@ internal sealed partial class WindowsRunIo : IDisposable
                 return new(input, output, error);
             }
 
-            if (columns is 0 or > (uint)short.MaxValue || rows is 0 or > (uint)short.MaxValue)
-            {
-                throw new ArgumentOutOfRangeException(nameof(columns), "ConPTY coordinates must be in the native short range.");
-            }
-
             var result = new WindowsRunIo(input, output, null);
-            var status = CreatePseudoConsole(new((short)columns, (short)rows), input.Remote.SafePipeHandle,
+            var status = CreatePseudoConsole(Dimensions(rows, columns), input.Remote.SafePipeHandle,
                 output.Remote.SafePipeHandle, 0, out result._console);
             if (status < 0 || result._console == 0)
             {
@@ -80,11 +80,76 @@ internal sealed partial class WindowsRunIo : IDisposable
         _error?.Remote.Dispose();
     }
 
-    internal void CloseInput() => _input.Local.Dispose();
+    internal void CloseInput()
+    {
+        if (Interlocked.Exchange(ref _inputClosed, 1) == 0)
+        {
+            _input.Local.Dispose();
+        }
+    }
+
+    internal async ValueTask<int> WriteTerminalAsync(ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken)
+    {
+        await _inputGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (Volatile.Read(ref _inputClosed) != 0)
+            {
+                throw new IOException("The Windows Run input is closed.");
+            }
+
+            await _input.Local.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
+            return bytes.Length;
+        }
+        finally
+        {
+            _inputGate.Release();
+        }
+    }
+
+    internal async ValueTask CloseTerminalInputAsync(CancellationToken cancellationToken)
+    {
+        if (_error is null)
+        {
+            throw new InvalidOperationException("Explicit stdin EOF requires Windows pipe mode.");
+        }
+
+        await _inputGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            CloseInput();
+        }
+        finally
+        {
+            _inputGate.Release();
+        }
+    }
+
+    internal ValueTask ResizeTerminalAsync(uint rows, uint columns, CancellationToken cancellationToken)
+    {
+        var dimensions = Dimensions(rows, columns);
+        lock (_consoleGate)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_console == 0)
+            {
+                throw new InvalidOperationException("The Windows Run has no live pseudoconsole.");
+            }
+
+            var status = ResizePseudoConsole(_console, dimensions);
+            if (status != 0)
+            {
+                throw new RunNativeException("windows_terminal_resize", "hresult:" + status.ToString("x8", CultureInfo.InvariantCulture));
+            }
+        }
+
+        return ValueTask.CompletedTask;
+    }
 
     internal async ValueTask InterruptAsync(TimeSpan remaining)
     {
-        if (_console == 0)
+        if (Volatile.Read(ref _console) == 0)
         {
             return;
         }
@@ -93,7 +158,7 @@ internal sealed partial class WindowsRunIo : IDisposable
         using var timeout = new CancellationTokenSource(remaining < interruptBound ? remaining : interruptBound);
         try
         {
-            await _input.Local.WriteAsync(new byte[] { 3 }, timeout.Token).ConfigureAwait(false);
+            _ = await WriteTerminalAsync(new byte[] { 3 }, timeout.Token).ConfigureAwait(false);
         }
         catch (Exception error) when (error is IOException or OperationCanceledException or ObjectDisposedException)
         {
@@ -103,18 +168,41 @@ internal sealed partial class WindowsRunIo : IDisposable
 
     internal Task CloseConsoleAsync()
     {
-        var console = Interlocked.Exchange(ref _console, 0);
         // On Windows builds where ClosePseudoConsole blocks, the output reader stays active independently.
-        return console == 0 ? Task.CompletedTask : Task.Run(() => ClosePseudoConsole(console));
+        return Volatile.Read(ref _console) == 0 ? Task.CompletedTask : Task.Run(() =>
+        {
+            var console = TakeConsole();
+            if (console != 0) ClosePseudoConsole(console);
+        });
     }
 
     public void Dispose()
     {
-        var console = Interlocked.Exchange(ref _console, 0);
+        var console = TakeConsole();
+        CloseInput();
         _input.Dispose();
         _output.Dispose();
         _error?.Dispose();
         if (console != 0) ClosePseudoConsole(console);
+    }
+
+    private nint TakeConsole()
+    {
+        lock (_consoleGate)
+        {
+            var console = _console;
+            _console = 0;
+            return console;
+        }
+    }
+
+    private static Coordinate Dimensions(uint rows, uint columns)
+    {
+        ArgumentOutOfRangeException.ThrowIfZero(rows);
+        ArgumentOutOfRangeException.ThrowIfZero(columns);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(rows, (uint)short.MaxValue);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(columns, (uint)short.MaxValue);
+        return new((short)columns, (short)rows);
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -122,6 +210,9 @@ internal sealed partial class WindowsRunIo : IDisposable
 
     [LibraryImport("kernel32.dll")]
     private static partial int CreatePseudoConsole(Coordinate size, SafePipeHandle input, SafePipeHandle output, uint flags, out nint console);
+
+    [LibraryImport("kernel32.dll")]
+    private static partial int ResizePseudoConsole(nint console, Coordinate size);
 
     [LibraryImport("kernel32.dll")]
     private static partial void ClosePseudoConsole(nint console);

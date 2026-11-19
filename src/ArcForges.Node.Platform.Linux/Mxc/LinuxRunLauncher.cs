@@ -173,6 +173,9 @@ public sealed class LinuxRunLauncher : IRunLauncher
 
         public RunOwnerIdentity Identity { get; } = identity;
 
+        public ValueTask<RunTerminalReply> TerminalAsync(RunTerminalRequest request, CancellationToken cancellationToken) =>
+            controller.TerminalAsync(request, cancellationToken);
+
         public async ValueTask ActivateAsync(CancellationToken cancellationToken)
         {
             var current = await LinuxRunSystemd.ReadAsync(native.Name, cancellationToken).ConfigureAwait(false);
@@ -191,6 +194,9 @@ public sealed class LinuxRunLauncher : IRunLauncher
         {
             if (scope.IsEmpty())
             {
+                // The supervisor may have died and systemd may already have
+                // cleaned up. This explicit Stop still proves the held scope empty.
+                Volatile.Write(ref _boundaryStopVerified, 1);
                 return;
             }
 
@@ -217,8 +223,9 @@ public sealed class LinuxRunLauncher : IRunLauncher
             if (!scope.IsEmpty())
             {
                 await LinuxRunSystemd.StopAsync(native, scope, cancellationToken).ConfigureAwait(false);
-                Volatile.Write(ref _boundaryStopVerified, 1);
             }
+
+            Volatile.Write(ref _boundaryStopVerified, 1);
         }
 
         public async ValueTask<RunOwnerObservation> ObserveAsync(CancellationToken cancellationToken)

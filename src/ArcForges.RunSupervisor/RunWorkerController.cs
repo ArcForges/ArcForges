@@ -18,6 +18,7 @@ internal sealed class RunWorkerController(
     private readonly object _gate = new();
     private readonly TaskCompletionSource<RunRelease?> _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource<TimeSpan> _stop = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly RunTerminalBroker _terminal = new(launch.Epoch, launch.TerminalMode);
     private RunOwnerObservation _observation = new(RunOwnerState.Ready, RunPayloadStart.NotStarted, false);
     private bool _authorized;
 
@@ -71,7 +72,15 @@ internal sealed class RunWorkerController(
                 }
 
                 await using var session = await starting.ConfigureAwait(false);
-                return await OwnAsync(session).ConfigureAwait(false);
+                _terminal.Bind(session);
+                try
+                {
+                    return await OwnAsync(session).ConfigureAwait(false);
+                }
+                finally
+                {
+                    _terminal.RevokeAll();
+                }
             }
             catch (RunNativeException error) when (error.BoundaryEmptyVerified && error.PayloadNotStarted)
             {
@@ -99,6 +108,7 @@ internal sealed class RunWorkerController(
         var stopApplied = false;
         while (true)
         {
+            _terminal.Tick();
             try
             {
                 if (!stopApplied && _stop.Task.IsCompletedSuccessfully)
@@ -177,13 +187,25 @@ internal sealed class RunWorkerController(
             while (!cancellationToken.IsCancellationRequested)
             {
                 var request = await RunWire.ReadFrameAsync(stream, launch, challenge, false, cancellationToken).ConfigureAwait(false);
-                if (request.Sequence != checked(++sequence) || request.Identity is not null || request.Observation is not null
-                    || request.Error is not null || request.LaunchBinding is not null)
+                RunControlFrame reply;
+                try
                 {
-                    throw new InvalidDataException("run_owner_request_invalid");
+                    if (request.Sequence != checked(++sequence) || request.Identity is not null || request.Observation is not null
+                        || request.Error is not null || request.LaunchBinding is not null || request.TerminalReply is not null)
+                    {
+                        throw new InvalidDataException("run_owner_request_invalid");
+                    }
+
+                    reply = Execute(request);
+                }
+                finally
+                {
+                    if (request.TerminalRequest?.Input is { } input)
+                    {
+                        CryptographicOperations.ZeroMemory(input);
+                    }
                 }
 
-                var reply = Execute(request);
                 await RunWire.WriteFrameAsync(stream, launch, challenge, true, reply, cancellationToken).ConfigureAwait(false);
             }
         }
@@ -199,6 +221,11 @@ internal sealed class RunWorkerController(
                 }
             }
         }
+        finally
+        {
+            // Losing the Node control connection destroys terminal authority, not the Run or its native handles.
+            _terminal.RevokeAll();
+        }
     }
 
     private RunControlFrame Execute(RunControlFrame request)
@@ -206,7 +233,8 @@ internal sealed class RunWorkerController(
         var reply = new RunControlFrame(request.Sequence, request.Command);
         switch (request.Command)
         {
-            case RunControlCommand.Activate when request is { Release: { } release, GraceMilliseconds: 0 }:
+            case RunControlCommand.Activate when request is
+            { Release: { } release, GraceMilliseconds: 0, TerminalRequest: null, TerminalPoll: null }:
                 lock (_gate)
                 {
                     if (_release.TrySetResult(release))
@@ -217,7 +245,8 @@ internal sealed class RunWorkerController(
                 }
 
                 return reply with { Error = "activation_closed" };
-            case RunControlCommand.Stop when request is { Release: null, GraceMilliseconds: >= 0 and <= 60000 }:
+            case RunControlCommand.Stop when request is
+            { Release: null, GraceMilliseconds: >= 0 and <= 60000, TerminalRequest: null, TerminalPoll: null }:
                 lock (_gate)
                 {
                     _stop.TrySetResult(TimeSpan.FromMilliseconds(request.GraceMilliseconds));
@@ -227,9 +256,17 @@ internal sealed class RunWorkerController(
                     }
                 }
 
+                _terminal.RevokeAll();
                 return reply;
-            case RunControlCommand.Observe when request is { Release: null, GraceMilliseconds: 0 }:
+            case RunControlCommand.Observe when request is
+            { Release: null, GraceMilliseconds: 0, TerminalRequest: null, TerminalPoll: null }:
                 return reply with { Observation = Volatile.Read(ref _observation) };
+            case RunControlCommand.TerminalBegin when request is
+            { Release: null, GraceMilliseconds: 0, TerminalRequest: { } terminal, TerminalPoll: null }:
+                return reply with { TerminalReply = _terminal.Begin(terminal) };
+            case RunControlCommand.TerminalPoll when request is
+            { Release: null, GraceMilliseconds: 0, TerminalRequest: null, TerminalPoll: { } poll }:
+                return reply with { TerminalReply = _terminal.Poll(poll) };
             default:
                 return reply with { Error = "invalid_control_request" };
         }

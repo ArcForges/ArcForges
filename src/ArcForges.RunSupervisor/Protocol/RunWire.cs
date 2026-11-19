@@ -14,11 +14,18 @@ public enum RunControlCommand
     Activate,
     Stop,
     Observe,
+    TerminalBegin,
+    TerminalPoll,
 }
 
 public sealed record RunControlFrame(
     long Sequence, RunControlCommand Command, RunRelease? Release = null, int GraceMilliseconds = 0,
-    RunOwnerIdentity? Identity = null, RunOwnerObservation? Observation = null, string? Error = null, string? LaunchBinding = null);
+    RunOwnerIdentity? Identity = null, RunOwnerObservation? Observation = null, string? Error = null, string? LaunchBinding = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] RunTerminalRequest? TerminalRequest = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] RunTerminalPoll? TerminalPoll = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] RunTerminalReply? TerminalReply = null);
+
+public sealed record RunTerminalPoll(RunTerminalCaller Caller, string CommandId);
 
 internal sealed record RunObservationReceipt(
     string RunId, string Epoch, string LaunchSha256, RunOwnerObservation Observation);
@@ -36,6 +43,10 @@ public static partial class RunWire
     public const int ChallengeLength = 32;
     private const int LaunchLimit = 2 * 1024 * 1024;
     private const int FrameLimit = 64 * 1024;
+    private const int ObservationLimit = 64 * 1024;
+    // JSON base64 expands the 64 KiB terminal input. Only Begin may carry that payload.
+    private const int TerminalRequestLimit = 96 * 1024;
+    private const int TerminalReplyLimit = 8 * 1024;
 
     public static string LaunchPath(RunLaunchSpec spec) => Path.Combine(spec.ControlDirectory, "launch.json");
 
@@ -84,7 +95,7 @@ public static partial class RunWire
         var temp = Path.Combine(spec.ControlDirectory, $".observed-{Guid.NewGuid():N}.tmp");
         var receipt = new RunObservationReceipt(spec.RunId, spec.Epoch, spec.LaunchSha256, observation);
         var message = JsonSerializer.SerializeToUtf8Bytes(receipt, RunJson.Default.RunObservationReceipt);
-        if (message.Length > FrameLimit)
+        if (message.Length > ObservationLimit)
         {
             throw new InvalidDataException("run_observation_too_large");
         }
@@ -95,7 +106,7 @@ public static partial class RunWire
         try
         {
             WritePrivateNew(temp, bytes);
-            CommitObservation(temp, path, spec.ControlDirectory);
+            CommitPrivateReplace(temp, path, spec.ControlDirectory, "run_receipt");
         }
         finally
         {
@@ -107,7 +118,7 @@ public static partial class RunWire
     {
         try
         {
-            var bytes = ReadPrivate(ObservationPath(spec), FrameLimit + KeyLength);
+            var bytes = ReadPrivate(ObservationPath(spec), ObservationLimit + KeyLength);
             if (bytes.Length <= KeyLength)
             {
                 return null;
@@ -134,17 +145,32 @@ public static partial class RunWire
         CancellationToken cancellationToken)
     {
         var body = JsonSerializer.SerializeToUtf8Bytes(frame, RunJson.Default.RunControlFrame);
-        if (body.Length is < 1 or > FrameLimit)
+        byte[]? data = null;
+        try
         {
-            throw new InvalidDataException("run_control_frame_too_large");
-        }
+            if (body.Length < 1 || body.Length > ControlFrameLimit(frame.Command, response))
+            {
+                throw new InvalidDataException("run_control_frame_too_large");
+            }
 
-        var data = new byte[sizeof(int) + body.Length + KeyLength];
-        BinaryPrimitives.WriteInt32BigEndian(data, body.Length);
-        body.CopyTo(data, sizeof(int));
-        Authenticate(spec.ControlKey, response ? (byte)2 : (byte)1, challenge, body).CopyTo(data, sizeof(int) + body.Length);
-        await stream.WriteAsync(data, cancellationToken).ConfigureAwait(false);
-        await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+            data = new byte[sizeof(int) + body.Length + KeyLength];
+            BinaryPrimitives.WriteInt32BigEndian(data, body.Length);
+            body.CopyTo(data, sizeof(int));
+            Authenticate(spec.ControlKey, response ? (byte)2 : (byte)1, challenge, body).CopyTo(data, sizeof(int) + body.Length);
+            await stream.WriteAsync(data, cancellationToken).ConfigureAwait(false);
+            await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (frame.TerminalRequest?.Input is not null)
+            {
+                CryptographicOperations.ZeroMemory(body);
+                if (data is not null)
+                {
+                    CryptographicOperations.ZeroMemory(data);
+                }
+            }
+        }
     }
 
     public static async ValueTask<RunControlFrame> ReadFrameAsync(Stream stream, RunLaunchSpec spec, byte[] challenge, bool response,
@@ -153,22 +179,42 @@ public static partial class RunWire
         var header = new byte[sizeof(int)];
         await stream.ReadExactlyAsync(header, cancellationToken).ConfigureAwait(false);
         var length = BinaryPrimitives.ReadInt32BigEndian(header);
-        if (length is < 1 or > FrameLimit)
+        if (length < 1 || length > (response ? FrameLimit : TerminalRequestLimit))
         {
             throw new InvalidDataException("run_control_frame_length_invalid");
         }
 
         var bytes = new byte[length + KeyLength];
-        await stream.ReadExactlyAsync(bytes, cancellationToken).ConfigureAwait(false);
-        var body = bytes.AsSpan(0, length);
-        if (!CryptographicOperations.FixedTimeEquals(bytes.AsSpan(length), Authenticate(spec.ControlKey, response ? (byte)2 : (byte)1, challenge, body)))
+        try
         {
-            throw new InvalidDataException("run_control_authentication_failed");
-        }
+            await stream.ReadExactlyAsync(bytes, cancellationToken).ConfigureAwait(false);
+            var body = bytes.AsSpan(0, length);
+            if (!CryptographicOperations.FixedTimeEquals(bytes.AsSpan(length), Authenticate(spec.ControlKey, response ? (byte)2 : (byte)1, challenge, body)))
+            {
+                throw new InvalidDataException("run_control_authentication_failed");
+            }
 
-        return JsonSerializer.Deserialize(body, RunJson.Default.RunControlFrame)
-            ?? throw new InvalidDataException("run_control_frame_invalid");
+            var frame = JsonSerializer.Deserialize(body, RunJson.Default.RunControlFrame)
+                ?? throw new InvalidDataException("run_control_frame_invalid");
+            if (length > ControlFrameLimit(frame.Command, response))
+            {
+                throw new InvalidDataException("run_control_frame_too_large");
+            }
+
+            return frame;
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(bytes);
+        }
     }
+
+    private static int ControlFrameLimit(RunControlCommand command, bool response) => command switch
+    {
+        RunControlCommand.TerminalBegin when !response => TerminalRequestLimit,
+        RunControlCommand.TerminalBegin or RunControlCommand.TerminalPoll => TerminalReplyLimit,
+        _ => FrameLimit,
+    };
 
     private static byte[] Authenticate(byte[] key, byte direction, ReadOnlySpan<byte> challenge, ReadOnlySpan<byte> bytes)
     {
@@ -219,7 +265,7 @@ public static partial class RunWire
         return bytes;
     }
 
-    private static void WritePrivateNew(string path, ReadOnlySpan<byte> bytes, Action<SafeFileHandle>? captureCreatedFile = null)
+    internal static void WritePrivateNew(string path, ReadOnlySpan<byte> bytes, Action<SafeFileHandle>? captureCreatedFile = null)
     {
         var options = new FileStreamOptions
         {
@@ -238,13 +284,13 @@ public static partial class RunWire
         stream.Write(bytes);
         stream.Flush(flushToDisk: true);
     }
-    private static void CommitObservation(string temp, string path, string directory)
+    internal static void CommitPrivateReplace(string temp, string path, string directory, string errorSubject = "run_private")
     {
         if (OperatingSystem.IsWindows())
         {
             if (!MoveFileEx(temp, path, 1 | 8)) // replace existing, write through
             {
-                throw new IOException("run_receipt_commit_failed:" + Marshal.GetLastPInvokeError());
+                throw new IOException(errorSubject + "_commit_failed:" + Marshal.GetLastPInvokeError());
             }
 
             return;
@@ -256,13 +302,13 @@ public static partial class RunWire
             int fileDescriptor = OpenDirectory(directory, 0x10000 | 0x20000 | 0x80000); // directory, nofollow, cloexec
             if (fileDescriptor < 0)
             {
-                throw new IOException("run_receipt_directory_open_failed:" + Marshal.GetLastPInvokeError());
+                throw new IOException(errorSubject + "_directory_open_failed:" + Marshal.GetLastPInvokeError());
             }
 
             using var descriptor = new SafeFileHandle(new IntPtr(fileDescriptor), ownsHandle: true);
             if (Sync(descriptor) != 0)
             {
-                throw new IOException("run_receipt_directory_sync_failed:" + Marshal.GetLastPInvokeError());
+                throw new IOException(errorSubject + "_directory_sync_failed:" + Marshal.GetLastPInvokeError());
             }
         }
     }

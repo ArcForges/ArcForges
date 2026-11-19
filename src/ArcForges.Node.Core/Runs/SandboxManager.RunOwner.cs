@@ -47,7 +47,7 @@ internal sealed partial class SandboxManager
             startup.CancelAfter(TimeSpan.FromSeconds(30));
             preparing = true;
             lease = await live.Launcher.PrepareAsync(live.Spec, startup.Token).ConfigureAwait(false);
-            BindRunOwner(live, lease.Identity);
+            BindRunOwner(live, lease);
             stop = ForwardRunStopAsync(live, lease, operations.Token);
 
             try
@@ -122,6 +122,11 @@ internal sealed partial class SandboxManager
         }
         finally
         {
+            lock (OwnershipGate)
+            {
+                live.OwnerLease = null;
+            }
+
             await operations.CancelAsync().ConfigureAwait(false);
             if (stop is not null)
             {
@@ -166,11 +171,12 @@ internal sealed partial class SandboxManager
         _roots.ValidateControlPaths();
     }
 
-    private void BindRunOwner(LiveRun live, RunOwnerIdentity identity)
+    private void BindRunOwner(LiveRun live, IRunOwnerLease lease)
     {
         lock (OwnershipGate)
         {
             live.CancellationToken.ThrowIfCancellationRequested();
+            var identity = lease.Identity;
             if (identity.ControlEpoch != live.Spec.Epoch || identity.ProcessId <= 0
                 || string.IsNullOrWhiteSpace(identity.InstanceId) || string.IsNullOrWhiteSpace(identity.BootId)
                 || string.IsNullOrWhiteSpace(identity.CreationIdentity) || string.IsNullOrWhiteSpace(identity.BoundaryIdentity)
@@ -185,6 +191,7 @@ internal sealed partial class SandboxManager
                 identity.BackendId, identity.Cohort, identity.ControlEpoch, _clock.GetUtcNow());
             _store.Write(transaction => RequireChanged(RunRecords.InsertSupervisor(transaction, OwnerId, live.Spec.Epoch, stored)),
                 CommitDurability.Full);
+            live.OwnerLease = lease;
         }
     }
 

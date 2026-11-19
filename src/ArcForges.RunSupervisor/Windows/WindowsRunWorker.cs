@@ -51,6 +51,7 @@ internal static class WindowsRunWorker
         WindowsMxcPathLease? control = null;
         WindowsMxcPathLease? policy = null;
         WindowsRunIo? io = null;
+        RunOutputCapture? capture = null;
         LaunchedProcess? executor = null;
         var phase = "windows_aggregate_accept";
         var mayHaveResumed = false;
@@ -80,6 +81,8 @@ internal static class WindowsRunWorker
             cancellationToken.ThrowIfCancellationRequested();
             phase = "windows_terminal_or_pipes";
             io = WindowsRunIo.Create(spec.TerminalMode == RunTerminalMode.Interactive, spec.Columns, spec.Rows);
+            phase = "windows_output_spool";
+            capture = RunOutputCapture.Create(spec);
             paths.RequireStable();
             phase = "windows_mxc_create";
             executor = WindowsMxcProcess.CreateSuspended(installed.Executor, ["--config", policy.Path], installed.Directory,
@@ -111,7 +114,7 @@ internal static class WindowsRunWorker
             phase = "windows_mxc_resume";
             mayHaveResumed = true;
             WindowsMxcProcess.Resume(executor);
-            var session = new WindowsRunSession(aggregate, payload, executor, io, installed, control, policy, paths, evidence);
+            var session = new WindowsRunSession(aggregate, payload, executor, io, installed, control, policy, paths, evidence, capture);
             handedOff = true;
             return session;
         }
@@ -120,6 +123,8 @@ internal static class WindowsRunWorker
         {
             var native = error is RunNativeException backend ? backend.NativeCode : WindowsRunLauncher.NativeCode(error);
             var empty = false;
+            capture?.Dispose();
+
             try
             {
                 if (payload is not null && !payload.Observe().Empty)
@@ -157,6 +162,7 @@ internal static class WindowsRunWorker
             if (!handedOff)
             {
                 io?.Dispose();
+                capture?.Dispose();
                 executor?.Dispose();
                 payload?.Dispose();
                 aggregate?.Dispose();
