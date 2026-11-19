@@ -259,7 +259,14 @@ public sealed partial class MxcRunServiceTests
             if (!afterOwnerBinding) Assert.Equal("recovered_before_owner_prepare", run.Exit.TerminationReason);
         }
 
-        var command = await OperationAsync(node, request.OwnerEpoch, request.Meta.CommandId);
+        var lookup = new NodeServiceGetOperationRequest
+        {
+            Meta = Query(),
+            OwnerEpoch = request.OwnerEpoch,
+            CommandId = request.Meta.CommandId,
+        };
+        var receipt = await node.GetOperationAsync(lookup, deadline: Deadline, cancellationToken: cancellationToken);
+        var command = Value(receipt.Value, receipt.Error).Operation;
         Assert.Equal(original.RunId, command.AggregateId);
         Assert.Equal(request.OwnerEpoch, command.OwnerEpoch);
         Assert.Equal(request.Meta.CommandId, command.CommandId);
@@ -271,7 +278,8 @@ public sealed partial class MxcRunServiceTests
         var replay = await runs.StartAsync(request, deadline: Deadline, cancellationToken: cancellationToken);
         Assert.Null(replay.Value);
         Assert.Equal(failed ? "launch_failed" : "outcome_unknown", replay.Error?.Code);
-        Assert.Equal(command, await OperationAsync(node, request.OwnerEpoch, request.Meta.CommandId));
+        var afterReplay = await node.GetOperationAsync(lookup, deadline: Deadline, cancellationToken: cancellationToken);
+        Assert.Equal(command, Value(afterReplay.Value, afterReplay.Error).Operation);
         Assert.Equal(run, Assert.Single(await ListAsync(runs, request.SandboxId)));
     }
 

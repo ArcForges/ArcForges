@@ -88,7 +88,22 @@ public sealed partial class MxcRunServiceTests
         Assert.Equal(binding, ReadRecoveryBinding(fixture.Node.DataRoot, continued));
 
         // A new, short Run requires a fresh user-manager service creation from this same Node.
-        var probeSandbox = await CreateSandboxAsync(sandboxes, hello.OwnerEpoch);
+        var originalSandboxReply = await sandboxes.InspectAsync(new SandboxServiceInspectRequest
+        {
+            Meta = Query(),
+            SandboxId = original.SandboxId,
+        }, deadline: Deadline, cancellationToken: cancellationToken);
+        var originalSandbox = Value(originalSandboxReply.Value, originalSandboxReply.Error).Sandbox;
+        Assert.Equal(original.SandboxRevision, originalSandbox.Revision);
+        var probeSandboxReply = await sandboxes.CreateAsync(new SandboxServiceCreateRequest
+        {
+            Meta = Mutation(),
+            OwnerEpoch = hello.OwnerEpoch,
+            DisplayName = "Linux user manager reconnect probe",
+            Config = originalSandbox.Config.Clone(),
+        }, deadline: Deadline, cancellationToken: cancellationToken);
+        var probeSandbox = Value(probeSandboxReply.Value, probeSandboxReply.Error).Sandbox;
+        Assert.Equal(SandboxState.Ready, probeSandbox.State);
         var probeWorkdir = Path.Combine(probeSandbox.DataLocation, RelativeWorkdir);
         Directory.CreateDirectory(probeWorkdir);
         var probe = BuildStart(probeSandbox, hello.OwnerEpoch, ["/bin/sh", "-c", "printf '%s\\n' manager-reconnected > manager-probe.log"]);

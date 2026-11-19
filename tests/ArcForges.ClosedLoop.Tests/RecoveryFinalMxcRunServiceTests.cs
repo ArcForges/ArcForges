@@ -10,6 +10,7 @@ using ArcForges.Node.Core.Platform;
 using ArcForges.Node.Platform.Linux;
 using ArcForges.Node.Platform.Linux.Mxc;
 using ArcForges.Node.Platform.Windows;
+using ArcForges.Node.Platform.Windows.Mxc;
 using ArcForges.Node.Store;
 using ArcForges.RunSupervisor.Protocol;
 using ArcForges.Tests;
@@ -68,12 +69,8 @@ public sealed partial class MxcRunServiceTests
             Assert.True(process.HasExited);
             Assert.Equal(1, CountFinalRecoveryMarkers(marker, "ready"));
             Assert.Equal(1, CountFinalRecoveryMarkers(marker, "end"));
-            var (priorState, final) = ReadAuthenticatedFinalRecoveryObservation(fixture.DataRoot, running, binding);
-            Assert.Equal(StoredRunState.Running, priorState);
-            Assert.Equal(RunOwnerState.Exited, final.State);
-            Assert.True(final.GroupEmptyVerified);
-            Assert.Equal(RunExitSources.OfficialExecutor, final.ExitSource);
-            Assert.Equal(0, final.RawExitCode);
+            Assert.Equal(StoredRunState.Running, ReadCrashedFinalRecoveryState(fixture.DataRoot, running));
+            var originalFinalHash = HashFinalRecoveryObservationBytes(fixture.DataRoot, running);
             AssertFinalWindowsEvidence(fixture, running, binding);
 
             process = await fixture.StartNodeAsync();
@@ -92,6 +89,13 @@ public sealed partial class MxcRunServiceTests
             Assert.Equal(inspected.RunId, Assert.Single(await ListAsync(recoveredRuns, inspected.SandboxId)).RunId);
             Assert.Equal(1, CountFinalRecoveryMarkers(marker, "ready"));
             Assert.Equal(1, CountFinalRecoveryMarkers(marker, "end"));
+            await StopNodeAsync(fixture, process);
+            Assert.Equal(originalFinalHash, HashFinalRecoveryObservationBytes(fixture.DataRoot, running));
+            var (_, final) = ReadAuthenticatedFinalRecoveryObservation(fixture.DataRoot, running, binding);
+            Assert.Equal(RunOwnerState.Exited, final.State);
+            Assert.True(final.GroupEmptyVerified);
+            Assert.Equal(RunExitSources.OfficialExecutor, final.ExitSource);
+            Assert.Equal(0, final.RawExitCode);
             TestContext.Current.TestOutputHelper?.WriteLine(
                 "The authenticated worker final existed while the original durable Run was still Running. Restart preserved the original Start and reported RecoveryRequired when it could no longer verify the boundary independently.");
         }
@@ -157,10 +161,8 @@ public sealed partial class MxcRunServiceTests
             await CrashFinalRecoveryNodeAsync(process, native.Owner, cancellationToken);
             bool descendantAfterLoss = child.IsRunning();
             await TestNode.WaitAsync(native.IsEmpty, NativeBound, "the original native boundary and all observed members to drain");
-            var (priorState, signed) = ReadAuthenticatedFinalRecoveryObservation(fixture.DataRoot, running, binding);
-            Assert.Equal(RunOwnerState.Exited, signed.State);
-            Assert.True(signed.GroupEmptyVerified);
-            Assert.Equal(RunExitSources.OfficialExecutor, signed.ExitSource);
+            var priorState = ReadCrashedFinalRecoveryState(fixture.DataRoot, running);
+            var originalFinalHash = HashFinalRecoveryObservationBytes(fixture.DataRoot, running);
             AssertFinalWindowsEvidence(fixture, running, binding);
 
             process = await fixture.StartNodeAsync();
@@ -184,6 +186,12 @@ public sealed partial class MxcRunServiceTests
             Assert.Equal(running.RunId, Assert.Single(await ListAsync(recoveredRuns, running.SandboxId)).RunId);
             int count = OperatingSystem.IsWindows() ? 2 : 1;
             Assert.Equal(count, CountFinalRecoveryMarkers(marker, "ready"));
+            await StopNodeAsync(fixture, process);
+            Assert.Equal(originalFinalHash, HashFinalRecoveryObservationBytes(fixture.DataRoot, running));
+            var (_, signed) = ReadAuthenticatedFinalRecoveryObservation(fixture.DataRoot, running, binding);
+            Assert.Equal(RunOwnerState.Exited, signed.State);
+            Assert.True(signed.GroupEmptyVerified);
+            Assert.Equal(RunExitSources.OfficialExecutor, signed.ExitSource);
             TestContext.Current.TestOutputHelper?.WriteLine(FormattableString.Invariant(
                 $"Original payload root exited with a previously verified background descendant. Live descendant after root: {descendantAfterRoot}. Live descendant after Node loss: {descendantAfterLoss}. Original native scope drained; cold state was {state}."));
         }
@@ -279,6 +287,62 @@ public sealed partial class MxcRunServiceTests
         Assert.NotEqual(owner.Pid, node.Id);
         node.Kill();
         await node.WaitForExitAsync(token).WaitAsync(NativeBound, token);
+    }
+
+    private static StoredRunState ReadCrashedFinalRecoveryState(string dataRoot, Run run)
+    {
+        // The production SQLite writer must first reopen this store as part of the actual Node restart.
+        using var database = ReadDatabase(dataRoot);
+        using var command = database.CreateCommand();
+        command.CommandText = """
+            SELECT r.state, r.ended_utc, r.raw_exit_code, m.clean_shutdown_at FROM run AS r
+              JOIN store_meta AS m ON m.singleton = 1
+             WHERE r.run_id = $run AND r.epoch = $epoch AND r.launch_sha256 = $digest;
+            """;
+        command.Parameters.AddWithValue("$run", Hex(run.RunId));
+        command.Parameters.AddWithValue("$epoch", run.Epoch);
+        command.Parameters.AddWithValue("$digest", run.LaunchSha256);
+        using var row = command.ExecuteReader();
+        Assert.True(row.Read());
+        Assert.True(row.IsDBNull(3), "The original crash must remain unclean until the real Node restarts.");
+        var state = (StoredRunState)row.GetInt32(0);
+        if (state != StoredRunState.Exited)
+        {
+            Assert.True(row.IsDBNull(1));
+            Assert.True(row.IsDBNull(2));
+        }
+
+        Assert.False(row.Read());
+        return state;
+    }
+
+    private static string HashFinalRecoveryObservationBytes(string dataRoot, Run run)
+    {
+        var control = Path.Combine(dataRoot, "control", "run-" + Hex(run.RunId));
+        var path = Path.Combine(control, "observed.bin");
+        if (OperatingSystem.IsWindows())
+        {
+            using var heldControl = WindowsMxcPathLease.Open(control, directory: true, privateObject: true);
+            using var heldObservation = WindowsMxcPathLease.Open(path, directory: false, privateObject: true);
+            return Hash();
+        }
+
+        if (OperatingSystem.IsLinux())
+        {
+            using var heldControl = LinuxRunCgroup.OpenPrivateDirectory(control);
+            using var heldObservation = LinuxRunCgroup.OpenTrustedFile(path, rootOnly: false, executable: false);
+            Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(path));
+            return Hash();
+        }
+
+        throw new PlatformNotSupportedException();
+
+        string Hash()
+        {
+            using var stream = File.OpenRead(path);
+            Assert.InRange(stream.Length, RunWire.KeyLength + 1L, RunWire.KeyLength + 65_536L);
+            return Convert.ToHexStringLower(SHA256.HashData(stream));
+        }
     }
 
     private static (StoredRunState State, RunOwnerObservation Observation) ReadAuthenticatedFinalRecoveryObservation(
