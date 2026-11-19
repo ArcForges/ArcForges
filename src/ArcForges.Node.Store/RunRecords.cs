@@ -104,11 +104,19 @@ internal static class RunRecords
         return result;
     }
 
-    internal static long CountNonterminal(StoreReader reader, string ownerId, string sandboxId) =>
-        (long)reader.Scalar("""
-            SELECT COUNT(*) FROM run AS r JOIN sandbox AS s ON s.sandbox_id=r.sandbox_id
-            WHERE s.owner_id=$owner AND r.sandbox_id=$sandbox AND r.state IN (1,2,3,4,7);
-            """, ("$owner", ownerId), ("$sandbox", sandboxId))!;
+    internal static IReadOnlyList<StoredRun> ListNonterminal(StoreReader reader, string ownerId)
+    {
+        using var command = reader.CreateCommand(OwnedRuns + " AND r.state IN (1,2,3,4,7) ORDER BY r.run_id;");
+        StoreReader.Bind(command, [("$owner", ownerId)]);
+        using var rows = command.ExecuteReader();
+        var runs = new List<StoredRun>();
+        while (rows.Read())
+        {
+            runs.Add(Read(rows));
+        }
+
+        return runs;
+    }
 
     /// <summary>Inserts revision one in the same FULL admission transaction as the Start receipt.</summary>
     internal static bool InsertStarting(StoreTransaction transaction, string ownerId, StoredRun run)

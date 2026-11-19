@@ -76,6 +76,7 @@ public static class NodeApiServer
         });
 
         builder.RegisterMethod(SandboxResources, "GetBudget", sandboxDeadline);
+        builder.RegisterMethod(SandboxResources, "SetPolicy", sandboxDeadline);
         builder.RegisterStream(SandboxResources, "WatchUsage", new LocalRpcStreamProfile
         {
             MaxBufferedMessages = SandboxResourceServiceHandler.WatchBuffer,

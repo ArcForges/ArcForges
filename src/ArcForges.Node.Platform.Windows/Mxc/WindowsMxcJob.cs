@@ -22,6 +22,8 @@ public sealed record WindowsMxcJobObservation(int ActiveProcesses, int[] Process
 public sealed partial class WindowsMxcJob : IDisposable
 {
     private const int BasicUiRestrictions = 4;
+    private const uint ScopedLimitFlags = Native.JobObjectLimitJobMemory | Native.JobObjectLimitActiveProcess | Native.JobObjectLimitKillOnJobClose;
+    private const uint HardCpuFlags = Native.CpuRateControlEnable | Native.CpuRateControlHardCap;
     private const uint ForcedExitCode = 0xc000013a;
     private readonly JobObject _job;
 
@@ -97,27 +99,83 @@ public sealed partial class WindowsMxcJob : IDisposable
     }
 
     /// <summary>Verifies the exact current limit values, including no UI or breakaway flags.</summary>
-    public unsafe void RequireLimits(WindowsMxcJobLimits? limits)
+    public void RequireLimits(WindowsMxcJobLimits? limits)
     {
-        var ui = 0u;
-        if (!Native.QueryInformationJobObject(Handle, BasicUiRestrictions, &ui, sizeof(uint), out _))
-        {
-            throw Error("Read Run Job UI restrictions");
-        }
-
-        var flags = Native.JobObjectLimitKillOnJobClose;
-        var cpuFlags = 0u;
-        if (limits is not null)
-        {
-            flags |= Native.JobObjectLimitJobMemory | Native.JobObjectLimitActiveProcess;
-            cpuFlags = Native.CpuRateControlEnable | Native.CpuRateControlHardCap;
-        }
-
-        if (ui != 0 || _job.Limits() != (flags, limits?.CommitBytes ?? 0, limits?.MaxProcesses ?? 0)
+        var flags = limits is null ? Native.JobObjectLimitKillOnJobClose : ScopedLimitFlags;
+        var cpuFlags = limits is null ? 0 : HardCpuFlags;
+        if (ReadUiRestrictions() != 0 || _job.Limits() != (flags, limits?.CommitBytes ?? 0, limits?.MaxProcesses ?? 0)
             || _job.CpuRateControl() != (cpuFlags, (uint)(limits?.CpuRate ?? 0)))
         {
             throw new InvalidDataException("Run Job resource, UI or lifetime readback differs from its admitted settings.");
         }
+    }
+
+    internal WindowsMxcJobLimits ReadResourceLimits()
+    {
+        var extended = _job.Limits();
+        var cpu = _job.CpuRateControl();
+        if (ReadUiRestrictions() != 0 || extended.Flags != ScopedLimitFlags || extended.JobMemoryLimit <= 0 || extended.ActiveProcessLimit <= 0
+            || cpu.Flags != HardCpuFlags || cpu.Value is < 1 or > 10_000)
+        {
+            throw new InvalidDataException("windows_run_job_limits_unverified");
+        }
+
+        return new WindowsMxcJobLimits((int)cpu.Value, extended.JobMemoryLimit, extended.ActiveProcessLimit);
+    }
+
+    internal static ulong? NormalizeResourceLimit(RunResourceDimension dimension, ulong value, uint processors) => dimension switch
+    {
+        RunResourceDimension.Cpu when WindowsMxcProcess.ResourceCpuRate(value, processors) is int rate =>
+            WindowsMxcProcess.ResourceCpuMillicores(rate, processors),
+        RunResourceDimension.Memory when value is > 0 and <= long.MaxValue && value >= (ulong)Environment.SystemPageSize =>
+            value - (value % (ulong)Environment.SystemPageSize),
+        _ => null,
+    };
+
+    internal RunResourceWriteResult ApplyResourceLimit(RunResourceDimension dimension, ulong value, uint processors)
+    {
+        if (dimension is not (RunResourceDimension.Cpu or RunResourceDimension.Memory))
+        {
+            return new(RunResourceWriteStatus.Unsupported, Reason: "windows_run_limit_dimension_unsupported");
+        }
+
+        if (NormalizeResourceLimit(dimension, value, processors) is not { } normalized)
+        {
+            return new(RunResourceWriteStatus.Unsupported, Reason: "windows_run_limit_unrepresentable");
+        }
+
+        var previous = ReadResourceLimits();
+        if (dimension == RunResourceDimension.Cpu)
+        {
+            var rate = WindowsMxcProcess.ResourceCpuRate(value, processors)!.Value;
+            if (rate != previous.CpuRate)
+            {
+                _job.SetCpuHardCap(rate);
+            }
+        }
+        else
+        {
+            if (normalized < (ulong)previous.CommitBytes)
+            {
+                // Live committed usage is unproved. A working set or historic peak cannot authorize tightening.
+                return new(RunResourceWriteStatus.Unsupported, Reason: "windows_commit_reduction_unverified");
+            }
+
+            if (normalized != (ulong)previous.CommitBytes)
+            {
+                _job.SetLimits((long)normalized, previous.MaxProcesses, killOnClose: true);
+            }
+        }
+
+        return new(RunResourceWriteStatus.Applied, normalized);
+    }
+
+    private unsafe uint ReadUiRestrictions()
+    {
+        var restrictions = 0u;
+        return Native.QueryInformationJobObject(Handle, BasicUiRestrictions, &restrictions, sizeof(uint), out _)
+            ? restrictions
+            : throw Error("Read Run Job UI restrictions");
     }
 
     /// <summary>Requires membership from the exact held native process handle.</summary>

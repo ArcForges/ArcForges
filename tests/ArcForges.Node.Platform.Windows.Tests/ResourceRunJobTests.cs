@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.Versioning;
 using System.Text.Json;
@@ -86,6 +87,8 @@ public sealed class ResourceRunJobTests
                 output?.WriteLine(FormattableString.Invariant(
                     $"Live Job peak {current.PeakMemoryBytes} bytes, CPU {current.CumulativeCpuUsec} usec, resident {resident} bytes, native process resident {residentBefore}/{residentAfter} bytes."));
 
+                VerifyNativeLimitUpdates(job);
+
                 File.WriteAllText(release, "release");
                 Assert.True(process.WaitForExit(bound));
                 Assert.Equal(0u, process.ExitCode);
@@ -121,6 +124,44 @@ public sealed class ResourceRunJobTests
 
         job.Dispose();
         Assert.Null(job.ObserveResources());
+    }
+
+    private static void VerifyNativeLimitUpdates(WindowsMxcJob job)
+    {
+        var processors = WindowsMxcProcess.ResourceProcessorCount();
+        var previous = job.ReadResourceLimits();
+        const ulong requestedCpu = 501;
+        var rate = Assert.IsType<int>(WindowsMxcProcess.ResourceCpuRate(requestedCpu, processors));
+        var normalizedCpu = Assert.IsType<ulong>(WindowsMxcJob.NormalizeResourceLimit(RunResourceDimension.Cpu, requestedCpu, processors));
+        Assert.InRange(normalizedCpu, 1ul, requestedCpu);
+        Assert.Equal(normalizedCpu, WindowsMxcJob.NormalizeResourceLimit(RunResourceDimension.Cpu, normalizedCpu, processors));
+        Assert.Null(WindowsMxcProcess.ResourceCpuRate(1, 18));
+        Assert.Null(WindowsMxcProcess.ResourceCpuRate(18_001, 18));
+        Assert.Equal(new RunResourceWriteResult(RunResourceWriteStatus.Applied, normalizedCpu),
+            job.ApplyResourceLimit(RunResourceDimension.Cpu, requestedCpu, processors));
+        var cpuChanged = previous with { CpuRate = rate };
+        Assert.Equal(cpuChanged, job.ReadResourceLimits());
+
+        const ulong commit = 640UL << 20;
+        Assert.Equal(new RunResourceWriteResult(RunResourceWriteStatus.Applied, commit),
+            job.ApplyResourceLimit(RunResourceDimension.Memory, commit + 1, processors));
+        var enlarged = cpuChanged with { CommitBytes = (long)commit };
+        Assert.Equal(enlarged, job.ReadResourceLimits());
+        Assert.Equal(new RunResourceWriteResult(RunResourceWriteStatus.Unsupported, Reason: "windows_commit_reduction_unverified"),
+            job.ApplyResourceLimit(RunResourceDimension.Memory, (ulong)previous.CommitBytes, processors));
+        Assert.Equal(RunResourceWriteStatus.Unsupported,
+            job.ApplyResourceLimit(RunResourceDimension.ProcessCount, 1, processors).Status);
+
+        // Match the supervisor's actual query-only Job authority and exercise a real denied setter.
+        const uint jobQuery = 4;
+        var current = Native.GetCurrentProcess();
+        Assert.True(Native.DuplicateHandle(current, job.Handle, current, out var query, jobQuery, inherit: false, options: 0));
+        using var queryOnly = JobObject.FromHandle(query, null);
+        Assert.Equal((uint)rate, queryOnly.CpuRateControl().Value);
+        var refused = Assert.Throws<Win32Exception>(() => queryOnly.SetCpuHardCap(rate + 1));
+        Assert.Equal("win32:5", WindowsRunLauncher.NativeCode(refused));
+        Assert.Equal(enlarged, job.ReadResourceLimits());
+        job.RequireLimits(enlarged);
     }
 
     private static ulong CpuUsec(WindowsMxcJobObservation value) =>

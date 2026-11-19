@@ -47,24 +47,32 @@ internal sealed partial class SandboxManager
             startup.CancelAfter(TimeSpan.FromSeconds(30));
             preparing = true;
             lease = await live.Launcher.PrepareAsync(live.Spec, startup.Token).ConfigureAwait(false);
-            BindRunOwner(live, lease);
+            bool verifiedLimits = BindRunOwner(live, lease);
             stop = ForwardRunStopAsync(live, lease, operations.Token);
 
             try
             {
-                ValueTask activation = default;
-                lock (OwnershipGate)
+                if (!verifiedLimits)
                 {
-                    token.ThrowIfCancellationRequested();
-                    // Initiating release and admitting Stop are ordered by the same Owner gate.
-                    if (!live.StopRequest.Task.IsCompletedSuccessfully)
-                    {
-                        releaseAttempted = true;
-                        activation = lease.ActivateAsync(startup.Token);
-                    }
+                    ReportRun(live.Spec.RunId, "prepared_resource_readback", "required_run_limit_unconfirmed");
+                    await lease.StopAsync(TimeSpan.Zero, startup.Token).ConfigureAwait(false);
                 }
+                else
+                {
+                    ValueTask activation = default;
+                    lock (OwnershipGate)
+                    {
+                        token.ThrowIfCancellationRequested();
+                        // Initiating release and admitting Stop are ordered by the same Owner gate.
+                        if (!live.StopRequest.Task.IsCompletedSuccessfully)
+                        {
+                            releaseAttempted = true;
+                            activation = lease.ActivateAsync(startup.Token);
+                        }
+                    }
 
-                await activation.ConfigureAwait(false);
+                    await activation.ConfigureAwait(false);
+                }
             }
             catch (RunNativeException error) when (live.StopRequest.Task.IsCompletedSuccessfully && error.NativeCode == "activation_closed")
             {
@@ -82,6 +90,7 @@ internal sealed partial class SandboxManager
 
             // Keep the checked Sandbox root held through the release handoff.
             live.Root.Dispose();
+            bool refusedStartConflictsWithPayload = false;
             while (!token.IsCancellationRequested)
             {
                 RunOwnerObservation observed;
@@ -99,8 +108,41 @@ internal sealed partial class SandboxManager
                     continue;
                 }
 
+                bool drained = observed.IsTerminal && observed.GroupEmptyVerified;
+                if (!verifiedLimits && !releaseAttempted)
+                {
+                    if (!refusedStartConflictsWithPayload && (observed.PayloadStarted == RunPayloadStart.Confirmed
+                        || observed.State == RunOwnerState.Running
+                        || observed.ExitSource is RunExitSources.Payload or RunExitSources.OfficialExecutor))
+                    {
+                        refusedStartConflictsWithPayload = true;
+                        ReportRun(live.Spec.RunId, "prepared_resource_refusal_conflicts_with_payload", observed.NativeError);
+                    }
+
+                    if (refusedStartConflictsWithPayload)
+                    {
+                        observed = UncertainRun("prepared_resource_refusal_conflicts_with_payload");
+                    }
+                    else if (drained)
+                    {
+                        // No activation was issued, and the original held boundary is now empty.
+                        observed = observed with
+                        {
+                            State = RunOwnerState.Failed,
+                            PayloadStarted = RunPayloadStart.NotStarted,
+                            TerminationReason = "required_run_limit_unconfirmed",
+                        };
+                    }
+                    else if (observed.IsTerminal || observed.State is RunOwnerState.Stopping or RunOwnerState.Draining)
+                    {
+                        // The safety Stop has not yet proved the outer boundary empty. Keep
+                        // the stored state eligible to record a failed Start once it does.
+                        observed = observed with { State = RunOwnerState.Starting };
+                    }
+                }
+
                 ObserveRun(live, observed);
-                if (observed.IsTerminal && observed.GroupEmptyVerified)
+                if (drained)
                 {
                     return;
                 }
@@ -176,7 +218,7 @@ internal sealed partial class SandboxManager
         _roots.ValidateControlPaths();
     }
 
-    private void BindRunOwner(LiveRun live, IRunOwnerLease lease)
+    private bool BindRunOwner(LiveRun live, IRunOwnerLease lease)
     {
         lock (OwnershipGate)
         {
@@ -194,9 +236,28 @@ internal sealed partial class SandboxManager
             var stored = new StoredSupervisorIdentity(live.Spec.RunId, identity.InstanceId, identity.BootId,
                 identity.ProcessId, identity.CreationIdentity, identity.Endpoint, identity.BoundaryIdentity,
                 identity.BackendId, identity.Cohort, identity.ControlEpoch, _clock.GetUtcNow());
-            _store.Write(transaction => RequireChanged(RunRecords.InsertSupervisor(transaction, OwnerId, live.Spec.Epoch, stored)),
-                CommitDurability.Full);
+            var readback = PrepareRunGrantReadback(live.Spec, lease, stored.LastSeenAt);
+            bool releaseAllowed = live.StopRequest.Task.IsCompletedSuccessfully || readback.All(fact =>
+                fact.Observation.Status == StoredRunLimitStatus.Effective);
+            _store.Write(transaction =>
+            {
+                RequireChanged(RunRecords.InsertSupervisor(transaction, OwnerId, live.Spec.Epoch, stored));
+                int bound = ResourceStateRecords.BindPendingLimits(transaction, OwnerId, live.Spec.RunId,
+                    live.Spec.Epoch, identity.BoundaryIdentity);
+                RequireChanged(bound == readback.Length);
+                if (live.StopRequest.Task.IsCompletedSuccessfully)
+                {
+                    return;
+                }
+
+                foreach (var fact in readback)
+                {
+                    RequireChanged(ResourceStateRecords.TryObserveLimit(transaction, OwnerId, live.Spec.RunId,
+                        live.Spec.Epoch, identity.BoundaryIdentity, fact.Dimension, 1, fact.Observation));
+                }
+            }, CommitDurability.Full);
             live.OwnerLease = lease;
+            return releaseAllowed;
         }
     }
 

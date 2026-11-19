@@ -39,7 +39,10 @@ internal static class LinuxRunSystemd
         ValidateServicePath(executable);
         ValidateServicePath(installation);
         ValidateServicePath(manifest);
-        if (cpu == 0 || memory == 0 || maxProcesses == 0)
+        if (LinuxRunCgroup.NormalizeRunLimit(RunResourceDimension.Cpu, cpu) != cpu
+            || LinuxRunCgroup.NormalizeRunLimit(RunResourceDimension.Memory, memory) != memory
+            || LinuxRunCgroup.NormalizeRunLimit(RunResourceDimension.ProcessCount, maxProcesses) != maxProcesses
+            || (cpuWeight.HasValue && LinuxRunCgroup.NormalizeRunLimit(RunResourceDimension.CpuWeight, cpuWeight.Value) != cpuWeight))
         {
             throw new IOException("Required finite Run resource limits are unavailable.");
         }

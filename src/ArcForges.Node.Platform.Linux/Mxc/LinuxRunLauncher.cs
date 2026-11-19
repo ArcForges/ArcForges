@@ -166,7 +166,7 @@ public sealed class LinuxRunLauncher : IRunLauncher
     };
 
     private sealed class LinuxRunLease(RunLaunchSpec spec, LinuxRunServiceState native, LinuxRunCgroup scope,
-        RunControlClient controller, RunOwnerIdentity identity, SafeFileHandle controlDirectory) : IRunOwnerLease, IRunResourceSource
+        RunControlClient controller, RunOwnerIdentity identity, SafeFileHandle controlDirectory) : IRunOwnerLease, IRunResourceSource, IRunResourceControl
     {
         private bool _releaseSent;
         private int _boundaryStopVerified;
@@ -174,6 +174,15 @@ public sealed class LinuxRunLauncher : IRunLauncher
         public RunOwnerIdentity Identity { get; } = identity;
 
         public RunResourceObservation? ObserveRunResources() => scope.ObserveResources();
+
+        public RunResourceLimitReading? ReadRunLimits() =>
+            scope.ReadOwnedLimits(Identity.BoundaryIdentity, native.OwnerPid, native.OwnerStartTicks);
+
+        public ulong? NormalizeRunLimit(RunResourceDimension dimension, ulong value) => LinuxRunCgroup.NormalizeRunLimit(dimension, value);
+
+        public RunResourceWriteResult ApplyRunLimit(RunResourceDimension dimension, ulong value) =>
+            Volatile.Read(ref _releaseSent) ? scope.ApplyOwnedLimit(dimension, value, native.OwnerPid, native.OwnerStartTicks)
+                : new(RunResourceWriteStatus.Unsupported, Reason: "linux_resource_scope_not_released");
 
         public ValueTask<RunTerminalReply> TerminalAsync(RunTerminalRequest request, CancellationToken cancellationToken) =>
             controller.TerminalAsync(request, cancellationToken);
@@ -188,7 +197,7 @@ public sealed class LinuxRunLauncher : IRunLauncher
             }
 
             RequireReadback(spec, current, scope);
-            _releaseSent = true;
+            Volatile.Write(ref _releaseSent, true);
             await controller.ActivateAsync(new RunRelease(), cancellationToken).ConfigureAwait(false);
         }
 

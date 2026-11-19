@@ -64,15 +64,32 @@ public static partial class WindowsMxcProcess
     }
 
     /// <summary>Converts millicores into a Job hard cap using the machine's native scheduler topology.</summary>
-    public static int CpuRate(uint millicores)
+    public static int CpuRate(uint millicores) => CpuRate(millicores, ResourceProcessorCount());
+
+    internal static int CpuRate(uint millicores, uint processors) =>
+        ResourceCpuRate(millicores, processors)
+        ?? throw new ArgumentOutOfRangeException(nameof(millicores), "The Windows Job cannot represent this CPU hard cap.");
+
+    internal static uint ResourceProcessorCount()
     {
         var total = GetActiveProcessorCount(ushort.MaxValue);
-        if (total == 0) throw WindowsMxcJob.Error("Read native Windows processor capacity");
-        var rate = (10L * millicores) / total;
-        return rate is >= 1 and <= 10_000
-            ? (int)rate
-            : throw new ArgumentOutOfRangeException(nameof(millicores), "The Windows Job cannot represent this CPU hard cap.");
+        return total != 0 ? total : throw WindowsMxcJob.Error("Read native Windows processor capacity");
     }
+
+    internal static int? ResourceCpuRate(ulong millicores, uint processors)
+    {
+        if (millicores == 0 || millicores > (ulong)processors * 1000)
+        {
+            return null;
+        }
+
+        var rate = (10 * millicores) / processors;
+        return rate is >= 1 and <= 10_000 ? (int)rate : null;
+    }
+
+    internal static ulong ResourceCpuMillicores(int rate, uint processors) =>
+        // The grant ledger needs an integer upper bound on the exact fractional native cap.
+        ((ulong)rate * processors + 9) / 10;
 
     /// <summary>Grants the exact held supervisor a noninheritable query and lifetime reference.</summary>
     public static long DuplicateJobToOwner(WindowsMxcJob job, LaunchedProcess owner)

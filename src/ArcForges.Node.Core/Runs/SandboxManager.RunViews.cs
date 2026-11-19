@@ -94,7 +94,7 @@ internal sealed partial class SandboxManager
         }
     }
 
-    private static Run RunView(StoredRun run)
+    private Run RunView(StoredRun run)
     {
         var launch = ReadRunSnapshot(run);
         var value = new Run
@@ -114,12 +114,20 @@ internal sealed partial class SandboxManager
             ProfileVersion = launch.ProfileVersion,
         };
 
-        value.Limits.Add(DesiredRunLimit("cpu", "millicores", launch.CpuMillicores));
-        value.Limits.Add(DesiredRunLimit("memory", "bytes", launch.MemoryMaxBytes));
-        value.Limits.Add(DesiredRunLimit("pids", "count", launch.MaxProcesses));
-        if (launch.CpuWeight is { } weight)
+        var limits = ReadProjectedRunLimits(run);
+        if (limits.Length == 0)
         {
-            value.Limits.Add(DesiredRunLimit("cpu_weight", "weight", weight));
+            value.Limits.Add(DesiredRunLimit("cpu", "millicores", launch.CpuMillicores));
+            value.Limits.Add(DesiredRunLimit("memory", "bytes", launch.MemoryMaxBytes));
+            value.Limits.Add(DesiredRunLimit("pids", "count", launch.MaxProcesses));
+            if (launch.CpuWeight is { } weight)
+            {
+                value.Limits.Add(DesiredRunLimit("cpu_weight", "weight", weight));
+            }
+        }
+        else
+        {
+            value.Limits.AddRange(limits);
         }
 
         if (run.State is StoredRunState.Exited or StoredRunState.Failed)

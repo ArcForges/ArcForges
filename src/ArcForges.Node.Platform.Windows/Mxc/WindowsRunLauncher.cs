@@ -18,7 +18,10 @@ public sealed class WindowsRunLauncher : IRunLauncher
     private static readonly TimeSpan DrainDeadline = TimeSpan.FromSeconds(10);
 
     /// <summary>Computes the initial Job limits shared by the launcher and its trusted owner.</summary>
-    public static WindowsMxcJobLimits Limits(RunLaunchSpec spec)
+    public static WindowsMxcJobLimits Limits(RunLaunchSpec spec) =>
+        Limits(spec, WindowsMxcProcess.ResourceProcessorCount());
+
+    private static WindowsMxcJobLimits Limits(RunLaunchSpec spec, uint processors)
     {
         ArgumentNullException.ThrowIfNull(spec);
         if (spec.CpuWeight.HasValue)
@@ -27,8 +30,11 @@ public sealed class WindowsRunLauncher : IRunLauncher
                 boundaryEmptyVerified: true, payloadNotStarted: true);
         }
 
-        return new(WindowsMxcProcess.CpuRate(spec.CpuMillicores),
-            checked((long)spec.MemoryMaxBytes), checked((int)spec.MaxProcesses));
+        var commitBytes = WindowsMxcJob.NormalizeResourceLimit(RunResourceDimension.Memory, spec.MemoryMaxBytes, processors)
+            ?? throw new RunNativeException("windows_job_commit_limit", "windows_run_limit_unrepresentable",
+                boundaryEmptyVerified: true, payloadNotStarted: true);
+        return new(WindowsMxcProcess.CpuRate(spec.CpuMillicores, processors),
+            checked((long)commitBytes), checked((int)spec.MaxProcesses));
     }
 
     /// <inheritdoc />
@@ -47,7 +53,8 @@ public sealed class WindowsRunLauncher : IRunLauncher
         var phase = "windows_supervisor_limits";
         try
         {
-            var limits = Limits(spec);
+            var processors = WindowsMxcProcess.ResourceProcessorCount();
+            var limits = Limits(spec, processors);
             phase = "windows_supervisor_launcher_identity";
             spec = spec with
             {
@@ -99,7 +106,7 @@ public sealed class WindowsRunLauncher : IRunLauncher
                 throw new InvalidDataException("The authenticated supervisor identity differs from its held process or Run.");
             }
 
-            return new Lease(spec, client, process, job);
+            return new Lease(spec, client, process, job, processors, birth);
         }
         catch (Exception error) when (error is IOException or InvalidDataException or Win32Exception or OperationCanceledException
             or UnauthorizedAccessException or ArgumentException or OverflowException)
@@ -157,12 +164,15 @@ public sealed class WindowsRunLauncher : IRunLauncher
         ? "win32:" + native.NativeErrorCode.ToString(CultureInfo.InvariantCulture)
         : error.GetType().Name;
 
-    private sealed class Lease(RunLaunchSpec spec, RunControlClient client, LaunchedProcess process, WindowsMxcJob aggregate)
-        : IRunOwnerLease, IRunResourceSource
+    private sealed class Lease(RunLaunchSpec spec, RunControlClient client, LaunchedProcess process, WindowsMxcJob aggregate,
+        uint processors, long ownerBirth) : IRunOwnerLease, IRunResourceSource, IRunResourceControl
     {
         private readonly SemaphoreSlim _boundaryGate = new(1, 1);
+        private readonly Lock _resourceGate = new();
         private int _releaseAttempted;
         private int _disposed;
+        private bool _resourceOwnerRunning;
+        private bool _resourceStopRequested;
         private RunOwnerObservation? _lastOwnerObservation;
         private RunOwnerObservation? _explicitStopOutcome;
 
@@ -172,6 +182,97 @@ public sealed class WindowsRunLauncher : IRunLauncher
         {
             var observation = Volatile.Read(ref _disposed) == 0 ? aggregate.ObserveResources() : null;
             return Volatile.Read(ref _disposed) == 0 ? observation : null;
+        }
+
+        public RunResourceLimitReading? ReadRunLimits()
+        {
+            lock (_resourceGate)
+            {
+                try
+                {
+                    if (!HasResourceOwner()) return null;
+                    var limits = aggregate.ReadResourceLimits();
+                    var normalizedCpu = WindowsMxcProcess.ResourceProcessorCount() == processors
+                        ? (ulong?)WindowsMxcProcess.ResourceCpuMillicores(limits.CpuRate, processors) : null;
+                    return new(Identity.BoundaryIdentity, normalizedCpu, (ulong)limits.CommitBytes, (uint)limits.MaxProcesses, null, null);
+                }
+                catch (Exception error) when (error is Win32Exception or InvalidDataException or ObjectDisposedException)
+                {
+                    return null;
+                }
+            }
+        }
+
+        public ulong? NormalizeRunLimit(RunResourceDimension dimension, ulong value)
+        {
+            try
+            {
+                return dimension == RunResourceDimension.Cpu && WindowsMxcProcess.ResourceProcessorCount() != processors
+                    ? null : WindowsMxcJob.NormalizeResourceLimit(dimension, value, processors);
+            }
+            catch (Win32Exception)
+            {
+                return null;
+            }
+        }
+
+        public RunResourceWriteResult ApplyRunLimit(RunResourceDimension dimension, ulong value)
+        {
+            lock (_resourceGate)
+            {
+                try
+                {
+                    if (!HasResourceOwner())
+                    {
+                        return new(RunResourceWriteStatus.ScopeLost, Reason: "windows_run_resource_scope_lost");
+                    }
+
+                    if (!_resourceOwnerRunning || _resourceStopRequested)
+                    {
+                        return new(RunResourceWriteStatus.Failed, Reason: "windows_run_resource_owner_not_running");
+                    }
+
+                    if (dimension == RunResourceDimension.Cpu && WindowsMxcProcess.ResourceProcessorCount() != processors)
+                    {
+                        return new(RunResourceWriteStatus.Failed, Reason: "windows_cpu_topology_changed");
+                    }
+
+                    return aggregate.ApplyResourceLimit(dimension, value, processors);
+                }
+                catch (Win32Exception error)
+                {
+                    const int invalidHandle = 6;
+                    return new(error.NativeErrorCode == invalidHandle ? RunResourceWriteStatus.ScopeLost : RunResourceWriteStatus.Failed,
+                        Reason: NativeCode(error));
+                }
+                catch (ObjectDisposedException)
+                {
+                    return new(RunResourceWriteStatus.ScopeLost, Reason: "windows_run_resource_scope_lost");
+                }
+                catch (InvalidDataException)
+                {
+                    return new(RunResourceWriteStatus.Failed, Reason: "windows_run_job_limits_unverified");
+                }
+            }
+        }
+
+        private bool HasResourceOwner()
+        {
+            if (Volatile.Read(ref _disposed) != 0 || WindowsMxcProcess.PollExit(process) is not null
+                || ProcessInfo.CreationFileTime(process.Process) != ownerBirth)
+            {
+                return false;
+            }
+
+            try
+            {
+                aggregate.RequireMember(process);
+                return true;
+            }
+            catch (InvalidDataException)
+            {
+                return false;
+            }
         }
 
         public ValueTask<RunTerminalReply> TerminalAsync(RunTerminalRequest request, CancellationToken cancellationToken) =>
@@ -194,6 +295,11 @@ public sealed class WindowsRunLauncher : IRunLauncher
             await _boundaryGate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
+                lock (_resourceGate)
+                {
+                    _resourceStopRequested = true;
+                }
+
                 if (_explicitStopOutcome is not null) return;
                 var prior = RunWire.TryReadObservation(spec);
                 if (WindowsMxcProcess.PollExit(process) is not null || prior is { State: RunOwnerState.RecoveryRequired })
@@ -222,9 +328,11 @@ public sealed class WindowsRunLauncher : IRunLauncher
         public async ValueTask<RunOwnerObservation> ObserveAsync(CancellationToken cancellationToken)
         {
             await _boundaryGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            RunOwnerObservation? observed = null;
             try
             {
-                return _explicitStopOutcome ?? await ObserveBoundaryAsync(cancellationToken).ConfigureAwait(false);
+                observed = _explicitStopOutcome ?? await ObserveBoundaryAsync(cancellationToken).ConfigureAwait(false);
+                return observed;
             }
             catch (Win32Exception error)
             {
@@ -232,6 +340,11 @@ public sealed class WindowsRunLauncher : IRunLauncher
             }
             finally
             {
+                lock (_resourceGate)
+                {
+                    _resourceOwnerRunning = observed?.State == RunOwnerState.Running;
+                }
+
                 _boundaryGate.Release();
             }
         }
@@ -349,8 +462,12 @@ public sealed class WindowsRunLauncher : IRunLauncher
             try { await client.DisposeAsync().ConfigureAwait(false); }
             finally
             {
-                process.Dispose();
-                aggregate.Dispose();
+                lock (_resourceGate)
+                {
+                    process.Dispose();
+                    aggregate.Dispose();
+                }
+
                 _boundaryGate.Dispose();
             }
         }

@@ -238,7 +238,9 @@ public sealed partial class MxcRunServiceTests
         const uint writes = 257;
         var count = canary.Length + (int)writes;
         var marker = Path.Combine(installed.Working, "quiet.log");
-        var run = await installed.RunAsync(TerminalMode.Interactive, "terminal", "quiet", marker, (count + 2).ToString(CultureInfo.InvariantCulture));
+        // Keep the foreground alive after the final byte so the client can poll its acknowledgment.
+        var run = await installed.RunAsync(TerminalMode.Interactive, "terminal", "quiet", marker,
+            (count + 2).ToString(CultureInfo.InvariantCulture), "1000");
         await WaitMarkerAsync(marker, "ready 24 80");
         await using var second = OpenChannel(installed.Fixture);
         var other = new RunService.RunServiceClient(second.CallInvoker);

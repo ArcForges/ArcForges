@@ -179,3 +179,53 @@ public interface IRunResourceSource
 {
     RunResourceObservation? ObserveRunResources();
 }
+
+/// <summary>The independently readable dimensions of a platform-owned Run scope.</summary>
+public enum RunResourceDimension
+{
+    Cpu,
+    Memory,
+    ProcessCount,
+    CpuWeight,
+    Swap,
+}
+
+/// <summary>Current finite limits queried from the original owned scope.</summary>
+public sealed record RunResourceLimitReading(string BoundaryIdentity, ulong? CpuMillicores, ulong? MemoryBytes,
+    ulong? MaxProcesses, ulong? CpuWeight, ulong? SwapMaxBytes)
+{
+    public ulong? Value(RunResourceDimension dimension) => dimension switch
+    {
+        RunResourceDimension.Cpu => CpuMillicores,
+        RunResourceDimension.Memory => MemoryBytes,
+        RunResourceDimension.ProcessCount => MaxProcesses,
+        RunResourceDimension.CpuWeight => CpuWeight,
+        RunResourceDimension.Swap => SwapMaxBytes,
+        _ => null,
+    };
+}
+
+/// <summary>The outcome of a native setter, independent of its subsequent readback.</summary>
+public enum RunResourceWriteStatus
+{
+    Applied,
+    Unsupported,
+    Failed,
+    ScopeLost,
+}
+
+public readonly record struct RunResourceWriteResult(RunResourceWriteStatus Status, ulong? AppliedValue = null,
+    string? Reason = null);
+
+/// <summary>Controls only the original ArcForges-owned resource scope of a Run.</summary>
+public interface IRunResourceControl
+{
+    /// <summary>Queries the actual limits. An unavailable scope has no readback.</summary>
+    RunResourceLimitReading? ReadRunLimits();
+
+    /// <summary>Normalizes a requested bound to the platform's conservative representable value.</summary>
+    ulong? NormalizeRunLimit(RunResourceDimension dimension, ulong value);
+
+    /// <summary>Applies one limit. Query the same scope separately to confirm enforcement.</summary>
+    RunResourceWriteResult ApplyRunLimit(RunResourceDimension dimension, ulong value);
+}
