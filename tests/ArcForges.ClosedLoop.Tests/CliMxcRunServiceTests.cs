@@ -479,7 +479,7 @@ public sealed partial class MxcRunServiceTests
         }
 
         const string line = "arcforges ";
-        using var completion = fixture.StartProduct([$"[suggest:{line.Length}]", line, NodeLocations.TestModeOption]);
+        using var completion = fixture.StartProduct([$"[suggest:{line.Length}]", NodeLocations.TestModeOption, line]);
         var result = await TestNode.CompleteAsync(completion, NativeBound);
         Assert.Equal(0, result.ExitCode);
         var suggestions = result.Output.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
