@@ -54,8 +54,9 @@ public sealed partial class MxcRunServiceTests
         var refusedRequest = requests[loser];
         var scopes = new[] { first, second };
         var names = new[] { "concurrent-first", "concurrent-second" };
-        var refusal = AssertInstalledBudgetRefusal(refused, "node_concurrency_grant_unavailable");
-        var storedRefusal = await OperationAsync(package.Node, package.Epoch, refusedRequest.Meta.CommandId);
+        const string reason = "node_concurrency_grant_unavailable";
+        var refusal = AssertInstalledBudgetRefusal(refused, reason, refusedRequest.Meta.CorrelationId);
+        var storedRefusal = await QueryAdmissionRefusalAsync(package, refusedRequest.Meta.CommandId, reason, cancellation);
         Assert.Equal(OperationState.Failed, storedRefusal.State);
         Assert.Equal(EffectCertainty.DidNotHappen, storedRefusal.Effect);
 
@@ -72,16 +73,17 @@ public sealed partial class MxcRunServiceTests
             sample => sample.HasReservedRunMemoryBytes && sample.ReservedRunMemoryBytes == nodeReservation.ReservedRunMemoryBytes);
         Assert.True(sandboxReservation.ReservedRunMemoryBytes >= ResourceBytes(128));
 
-        var sameWinner = await package.StartAsync(requests[winner], cancellation);
+        var winnerReplay = requests[winner].Clone();
+        winnerReplay.Meta.CorrelationId = CommandIds.New();
+        var sameWinner = await package.StartAsync(winnerReplay, cancellation);
+        Assert.Equal(winnerReplay.Meta.CorrelationId, sameWinner.Meta.CorrelationId);
         Assert.Equal(run.RunId, Value(sameWinner.Value, sameWinner.Error).Run.RunId);
         Assert.Single(ReadLines(AdmissionMarker(scopes[winner], names[winner])), line => line.StartsWith("start ", StringComparison.Ordinal));
         Assert.True((await package.DrainAsync(run.RunId, cancellation)).Exit.GroupEmptyVerified);
         await WaitForResourceBudgetAsync(package.Resources, "node", null,
             sample => sample.HasReservedRunMemoryBytes && sample.ReservedRunMemoryBytes == 0);
 
-        var replay = AssertInstalledBudgetRefusal(await package.StartAsync(refusedRequest, cancellation), "node_concurrency_grant_unavailable");
-        Assert.Equal(refusal.Details, replay.Details);
-        Assert.Equal(storedRefusal, await OperationAsync(package.Node, package.Epoch, refusedRequest.Meta.CommandId));
+        await VerifyReplayedAdmissionRefusalAsync(package, refusedRequest, reason, refusal, storedRefusal, cancellation);
         Assert.Empty(await ListAsync(package.Runs, scopes[loser].Sandbox.SandboxId));
         Assert.False(File.Exists(AdmissionMarker(scopes[loser], names[loser])));
 
@@ -135,8 +137,8 @@ public sealed partial class MxcRunServiceTests
 
         // Both configured native hard caps and concurrency slots fit; the measured resident reservation is the limiting dimension.
         const string reason = "node_resident_memory_unavailable";
-        var refused = AssertInstalledBudgetRefusal(await package.StartAsync(blocked, cancellation), reason);
-        var receipt = await OperationAsync(package.Node, package.Epoch, blocked.Meta.CommandId);
+        var refused = AssertInstalledBudgetRefusal(await package.StartAsync(blocked, cancellation), reason, blocked.Meta.CorrelationId);
+        var receipt = await QueryAdmissionRefusalAsync(package, blocked.Meta.CommandId, reason, cancellation);
         Assert.Equal(OperationState.Failed, receipt.State);
         Assert.Equal(EffectCertainty.DidNotHappen, receipt.Effect);
         var retainedBody = ReadAdmissionRefusalReceipt(package, blocked.Meta.CommandId);
@@ -158,9 +160,7 @@ public sealed partial class MxcRunServiceTests
         Assert.True((await package.DrainAsync(incumbent.RunId, cancellation)).Exit.GroupEmptyVerified);
         await WaitForResourceBudgetAsync(package.Resources, "node", null,
             sample => sample.HasReservedRunMemoryBytes && sample.ReservedRunMemoryBytes == 0 && sample.BudgetMemoryBytes >= estimated);
-        var replay = AssertInstalledBudgetRefusal(await package.StartAsync(blocked, cancellation), reason);
-        Assert.Equal(refused.Details, replay.Details);
-        Assert.Equal(receipt, await OperationAsync(package.Node, package.Epoch, blocked.Meta.CommandId));
+        await VerifyReplayedAdmissionRefusalAsync(package, blocked, reason, refused, receipt, cancellation);
         Assert.Equal(retainedBody, ReadAdmissionRefusalReceipt(package, blocked.Meta.CommandId));
         Assert.False(File.Exists(AdmissionMarker(second, "resident-refused")));
         var retried = blocked.Clone();
@@ -443,12 +443,52 @@ public sealed partial class MxcRunServiceTests
         () => ReadLines(AdmissionMarker(scope, marker)).Any(line => line.StartsWith("ready ", StringComparison.Ordinal)), NativeBound,
         $"the {marker} payload marker");
 
-    private static ArcError AssertInstalledBudgetRefusal(RunServiceStartResponse response, string reason)
+    private static ArcError AssertInstalledBudgetRefusal(RunServiceStartResponse response, string reason, Id? correlationId = null)
     {
         Assert.Null(response.Value);
         var error = Assert.IsType<ArcError>(response.Error);
         AssertResourceRefusal(error, reason);
+        if (correlationId is not null)
+        {
+            Assert.Equal(correlationId, response.Meta.CorrelationId);
+            Assert.Equal(correlationId, error.CorrelationId);
+        }
         return error;
+    }
+
+    private static async Task<Operation> QueryAdmissionRefusalAsync(ResourcePackage package, Id commandId, string reason,
+        CancellationToken cancellation)
+    {
+        var meta = Query();
+        var reply = await package.Node.GetOperationAsync(new NodeServiceGetOperationRequest
+        {
+            Meta = meta,
+            OwnerEpoch = package.Epoch,
+            CommandId = commandId,
+        }, deadline: Deadline, cancellationToken: cancellation);
+        var operation = Value(reply.Value, reply.Error).Operation;
+        Assert.Equal(meta.CorrelationId, reply.Meta.CorrelationId);
+        Assert.Equal(meta.CorrelationId, operation.Error.CorrelationId);
+        AssertResourceRefusal(operation.Error, reason);
+        return operation;
+    }
+
+    private static async Task VerifyReplayedAdmissionRefusalAsync(ResourcePackage package, RunServiceStartRequest original,
+        string reason, ArcError refusal, Operation stored, CancellationToken cancellation)
+    {
+        var retry = original.Clone();
+        retry.Meta.CorrelationId = CommandIds.New();
+        var replay = AssertInstalledBudgetRefusal(await package.StartAsync(retry, cancellation), reason, retry.Meta.CorrelationId);
+        Assert.NotEqual(refusal.CorrelationId, replay.CorrelationId);
+        var expectedError = refusal.Clone();
+        expectedError.CorrelationId = replay.CorrelationId.Clone();
+        Assert.Equal(expectedError, replay);
+
+        var reconciled = await QueryAdmissionRefusalAsync(package, original.Meta.CommandId, reason, cancellation);
+        Assert.NotEqual(stored.Error.CorrelationId, reconciled.Error.CorrelationId);
+        var expectedOperation = stored.Clone();
+        expectedOperation.Error.CorrelationId = reconciled.Error.CorrelationId.Clone();
+        Assert.Equal(expectedOperation, reconciled);
     }
 
     private sealed record ResourcePackageScope(Sandbox Sandbox, string Working, string Payload);

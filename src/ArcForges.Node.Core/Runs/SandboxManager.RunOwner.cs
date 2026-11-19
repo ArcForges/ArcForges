@@ -316,7 +316,7 @@ internal sealed partial class SandboxManager
             }
 
             if (run.TerminationReason == "pressure_stop_requested" && observation is
-                { State: RunOwnerState.Exited, GroupEmptyVerified: true, TerminationReason: "user_stop" })
+                { State: RunOwnerState.Exited, GroupEmptyVerified: true, TerminationReason: "user_stop" or "stopped" })
             {
                 observation = observation with { TerminationReason = "pressure_preempted" };
             }

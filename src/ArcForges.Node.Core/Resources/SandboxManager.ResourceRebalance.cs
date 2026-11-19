@@ -39,7 +39,7 @@ internal sealed partial class SandboxManager
         _lastCpuRebalanceFrame = frame.Timestamp;
         if (active.Count == 0)
         {
-            _cpuBudgetForRebalance = measured.Cpu;
+            _cpuBudgetForRebalance = null;
             _cpuRebalanceCohortObservedAt = null;
             return;
         }
@@ -49,10 +49,9 @@ internal sealed partial class SandboxManager
         _cpuRebalanceCohortObservedAt ??= frame.Timestamp;
         long anchor = Math.Max(_cpuRebalanceCohortObservedAt.Value, _lastCpuRebalanceAppliedAt ?? 0);
         var sinceApply = Stopwatch.GetElapsedTime(anchor, frame.Timestamp);
-        ulong planned = _cpuBudgetForRebalance is { } prior
-            ? WeightedCpuAllocation.SelectBudget(prior, measured.Cpu, NodeHardGrant(nodePolicy).Cpu,
-                frame.Host.HostCpuMillicores, sinceApply, force)
-            : measured.Cpu;
+        ulong prior = _cpuBudgetForRebalance ?? (active.All(entry => entry.Authoritative) ? SumGrants(active, null).Cpu : measured.Cpu);
+        ulong planned = WeightedCpuAllocation.SelectBudget(prior, measured.Cpu, NodeHardGrant(nodePolicy).Cpu,
+            frame.Host.HostCpuMillicores, sinceApply, force);
         _cpuBudgetForRebalance = planned;
 
         var candidates = new Dictionary<string, CpuRebalanceCandidate>(StringComparer.Ordinal);
@@ -309,10 +308,28 @@ internal sealed partial class SandboxManager
             active = ReadActiveHardGrants();
         }
 
-        return plan.Frame.HasFreshBudget && ReferenceEquals(_resourceMonitor?.Latest, plan.Frame)
-            && MatchesReservation(active) && SumGrants(active, null).Cpu <= plan.NodeCpuCeiling
-            && active.GroupBy(entry => entry.Run.SandboxId, StringComparer.Ordinal).All(group =>
-                !plan.SandboxCpuCeilings.TryGetValue(group.Key, out var limit) || SumGrants(group, null).Cpu <= limit);
+        ulong reservedCpu = SumGrants(active, null).Cpu;
+        if (!plan.Frame.HasFreshBudget || !ReferenceEquals(_resourceMonitor?.Latest, plan.Frame)
+            || !MatchesReservation(active) || reservedCpu > plan.NodeCpuCeiling
+            || active.GroupBy(entry => entry.Run.SandboxId, StringComparer.Ordinal).Any(group =>
+                plan.SandboxCpuCeilings.TryGetValue(group.Key, out var limit) && SumGrants(group, null).Cpu > limit))
+        {
+            return false;
+        }
+
+        // A confirmed admission can reserve CPU above the previous scheduler plan. The threshold
+        // for reducing that reservation must start at the newly authorized total.
+        if (plan.IncumbentEpochs.Count == 0)
+        {
+            _cpuBudgetForRebalance = reservedCpu;
+            _cpuRebalanceCohortObservedAt = null;
+        }
+        else
+        {
+            _cpuBudgetForRebalance = Math.Max(_cpuBudgetForRebalance ?? 0, reservedCpu);
+        }
+
+        return true;
 
         bool MatchesReservation(IReadOnlyList<ActiveHardGrant> grants) => grants.Count == plan.IncumbentEpochs.Count + 1
             && grants.All(entry => entry.Run.RunId == plan.RunId
