@@ -600,7 +600,7 @@ public sealed partial class MxcRunServiceTests
         {
             InstallWindowsTestLoad(working);
             var imageName = "arcforges-recovery-" + Guid.NewGuid().ToString("N") + ".exe";
-            _windowsBreakawayImage = Path.Combine(working, imageName);
+            _windowsBreakawayImage = Path.GetFullPath(Path.Combine(working, imageName));
             File.Move(Path.Combine(working, "arcforges-testload.exe"), _windowsBreakawayImage);
             const string script = """
                 @echo off
