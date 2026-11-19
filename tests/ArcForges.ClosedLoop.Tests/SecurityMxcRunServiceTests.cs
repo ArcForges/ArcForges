@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Globalization;
 using System.Runtime.Versioning;
 using System.Security.AccessControl;
 using System.Security.Cryptography;
@@ -91,6 +92,24 @@ public sealed partial class MxcRunServiceTests
             var markerPath = Path.Combine(working, "security-verified.log");
             await TestNode.WaitAsync(() => ReadLines(markerPath).Length >= 4, NativeBound, "the full contained security witness");
             var markers = ReadLines(markerPath);
+
+            // The same exact endpoint remains live for its owner after the contained attempt.
+            await using (var sameOwner = OpenChannel(fixture))
+            {
+                var healthy = await HandshakeAsync(new NodeService.NodeServiceClient(sameOwner.CallInvoker));
+                Assert.Equal(epoch, healthy.OwnerEpoch);
+            }
+
+            Assert.Equal(protectedSentinel, await File.ReadAllTextAsync(guarded, Ct));
+            if (OperatingSystem.IsLinux())
+            {
+                var nativeError = Assert.Single(ReadLines(Path.Combine(working, "security-ipc-native.log")));
+                var errno = int.Parse(nativeError, NumberStyles.None, CultureInfo.InvariantCulture);
+                TestContext.Current.TestOutputHelper?.WriteLine(FormattableString.Invariant($"Contained Unix IPC errno {errno}."));
+                Assert.True(errno is 1 or 2 or 13, FormattableString.Invariant($"Contained Unix IPC returned inconclusive errno {errno}."));
+                Assert.Equal(errno == 2 ? "ipc-not-visible" : "ipc-access-denied", markers[2]);
+            }
+
             Assert.Collection(markers,
                 line => Assert.Equal("argument-verified", line),
                 line => Assert.Equal("secret-verified", line),
@@ -112,14 +131,6 @@ public sealed partial class MxcRunServiceTests
                 Assert.True(File.Exists(liveOfficialRequest), "The exact official request must still exist when the payload's refusal is observed.");
             }
 
-            // Independently verify that both protected targets stayed live. AppContainer/namespace refusal is not a second-account result.
-            await using (var sameOwner = OpenChannel(fixture))
-            {
-                var healthy = await HandshakeAsync(new NodeService.NodeServiceClient(sameOwner.CallInvoker));
-                Assert.Equal(epoch, healthy.OwnerEpoch);
-            }
-
-            Assert.Equal(protectedSentinel, await File.ReadAllTextAsync(guarded, Ct));
             // The isolated test secret backing file is the intentional cleartext fixture input.
             Assert.True(secrets.Delete(secretTarget));
             secretTarget = null;

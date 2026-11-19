@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Buffers;
+using System.Globalization;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
@@ -30,7 +31,17 @@ internal static partial class SecurityScenario
         var secret = Environment.GetEnvironmentVariable(SecretEnvironmentName);
         var argvMatched = MatchesDigest(value, argumentDigest);
         var secretMatched = secret is not null && MatchesDigest(secret, secretDigest);
-        var ipc = OperatingSystem.IsWindows() ? CheckWindowsPipe(endpoint) : await CheckUnixSocketAsync(endpoint).ConfigureAwait(false);
+        string ipc;
+        if (OperatingSystem.IsWindows())
+        {
+            ipc = CheckWindowsPipe(endpoint);
+        }
+        else
+        {
+            var (observation, errno) = CheckUnixSocket(endpoint);
+            ipc = observation;
+            await File.WriteAllTextAsync("security-ipc-native.log", errno.ToString(CultureInfo.InvariantCulture)).ConfigureAwait(false);
+        }
         var metadata = CheckGuardedPath(guarded);
         await File.WriteAllLinesAsync(marker,
             [argvMatched ? "argument-verified" : "argument-mismatch", secretMatched ? "secret-verified" : "secret-mismatch", ipc, metadata])
@@ -126,26 +137,24 @@ internal static partial class SecurityScenario
         }
     }
 
-    private static async Task<string> CheckUnixSocketAsync(string endpoint)
+    private static unsafe (string Observation, int Errno) CheckUnixSocket(string endpoint)
     {
-        using var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-        try
+        using var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified) { Blocking = false };
+        var nativeAddress = new UnixDomainSocketEndPoint(endpoint).Serialize();
+        fixed (byte* address = nativeAddress.Buffer.Span)
         {
-            await socket.ConnectAsync(new UnixDomainSocketEndPoint(endpoint), deadline.Token).ConfigureAwait(false);
-            return "ipc-unexpected-open";
-        }
-        catch (SocketException error) when (error.NativeErrorCode is 1 or 13)
-        {
-            return "ipc-access-denied";
-        }
-        catch (SocketException error) when (error.NativeErrorCode == 2)
-        {
-            return "ipc-not-visible";
-        }
-        catch (Exception error) when (error is SocketException or OperationCanceledException)
-        {
-            return "ipc-inconclusive";
+            if (ConnectUnixSocket(socket.SafeHandle, address, (uint)nativeAddress.Size) == 0)
+            {
+                return ("ipc-unexpected-open", 0);
+            }
+
+            var errno = Marshal.GetLastPInvokeError();
+            return (errno switch
+            {
+                1 or 13 => "ipc-access-denied",
+                2 => "ipc-not-visible",
+                _ => "ipc-inconclusive",
+            }, errno);
         }
     }
 
@@ -163,4 +172,7 @@ internal static partial class SecurityScenario
 
     [LibraryImport("kernel32.dll", EntryPoint = "CreateFileW", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
     private static partial SafeFileHandle OpenPipe(string path, uint access, FileShare share, nint security, uint mode, uint flags, nint template);
+
+    [LibraryImport("libc", EntryPoint = "connect", SetLastError = true)]
+    private static unsafe partial int ConnectUnixSocket(SafeSocketHandle socket, byte* address, uint addressLength);
 }
