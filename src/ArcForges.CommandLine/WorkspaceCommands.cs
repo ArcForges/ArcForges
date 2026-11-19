@@ -31,15 +31,15 @@ internal static class WorkspaceCommands
         Actions.Set(command, factory, async (cli, result, cancellationToken) =>
         {
             await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
-            var (route, exit) = await TaskRoute.ResolveAsync(cli, session, result.GetValue(node), local: false, cancellationToken).ConfigureAwait(false);
+            var (route, exit) = await WorkspaceRoute.ResolveAsync(cli, session, result.GetValue(node), cancellationToken).ConfigureAwait(false);
             if (route is null) return exit;
             var request = new WorkspaceServiceRegisterWorkspaceRequest { Meta = Cli.Meta(), Path = result.GetValue(path)! };
             if (result.GetValue(name) is { } selected) request.Name = selected;
             var action = CommandIds.Begin(request, item => item.Meta, (item, meta) => item.Meta = meta);
             var response = await route.RegisterWorkspaceAsync(action.RequestForAttempt(), cancellationToken).ConfigureAwait(false);
-            if (response.Error is { } error) return TaskRoute.Fail(cli, error, request.Meta.CorrelationId, request.Meta.CommandId, workspace: true);
+            if (response.Error is { } error) return WorkspaceRoute.Fail(cli, error, request.Meta.CorrelationId, request.Meta.CommandId);
             if (response.Value?.Workspace is not { WorkspaceId.Value.Length: 16 } created)
-                return TaskRoute.Fail(cli, TaskRoute.MalformedResponse(), request.Meta.CorrelationId, request.Meta.CommandId, workspace: true);
+                return WorkspaceRoute.Fail(cli, WorkspaceRoute.MalformedResponse(), request.Meta.CorrelationId, request.Meta.CommandId);
             Render(cli, created);
             return ExitCodes.Success;
         });
@@ -54,17 +54,17 @@ internal static class WorkspaceCommands
         Actions.Set(command, factory, async (cli, result, cancellationToken) =>
         {
             await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
-            var (route, exit) = await TaskRoute.ResolveAsync(cli, session, result.GetValue(node), local: false, cancellationToken).ConfigureAwait(false);
+            var (route, exit) = await WorkspaceRoute.ResolveAsync(cli, session, result.GetValue(node), cancellationToken).ConfigureAwait(false);
             if (route is null) return exit;
             var (workspace, lookupExit) = await ResolveAsync(cli, route, result.GetValue(id)!, allowPath: false, cancellationToken).ConfigureAwait(false);
             if (workspace is null) return lookupExit;
             var request = new WorkspaceServiceUnregisterWorkspaceRequest { Meta = Cli.Meta(), WorkspaceId = workspace };
             var action = CommandIds.Begin(request, item => item.Meta, (item, meta) => item.Meta = meta);
             var response = await route.UnregisterWorkspaceAsync(action.RequestForAttempt(), cancellationToken).ConfigureAwait(false);
-            if (response.Error is { } error) return TaskRoute.Fail(cli, error, request.Meta.CorrelationId, request.Meta.CommandId, workspace: true);
+            if (response.Error is { } error) return WorkspaceRoute.Fail(cli, error, request.Meta.CorrelationId, request.Meta.CommandId);
             if (response.Value?.Receipt is not { HasEffect: true, Effect: EffectCertainty.Happened, CommandId: { } receiptCommand } ||
                 !receiptCommand.Equals(request.Meta.CommandId))
-                return TaskRoute.Fail(cli, TaskRoute.MalformedResponse(), request.Meta.CorrelationId, request.Meta.CommandId, workspace: true);
+                return WorkspaceRoute.Fail(cli, WorkspaceRoute.MalformedResponse(), request.Meta.CorrelationId, request.Meta.CommandId);
             if (cli.Output.Json) cli.Output.Document(response.Value);
             else cli.Output.Line("Unregistered " + IdText.Format(workspace));
             return ExitCodes.Success;
@@ -81,7 +81,7 @@ internal static class WorkspaceCommands
         Actions.Set(command, factory, async (cli, result, cancellationToken) =>
         {
             await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
-            var (route, exit) = await TaskRoute.ResolveAsync(cli, session, result.GetValue(node), local: false, cancellationToken).ConfigureAwait(false);
+            var (route, exit) = await WorkspaceRoute.ResolveAsync(cli, session, result.GetValue(node), cancellationToken).ConfigureAwait(false);
             if (route is null) return exit;
             var request = new WorkspaceServiceListWorkspacesRequest { Meta = Cli.Meta() };
             if (result.GetValue(limit) is not null || result.GetValue(cursor) is not null)
@@ -92,9 +92,9 @@ internal static class WorkspaceCommands
             }
 
             var response = await route.ListWorkspacesAsync(request, cancellationToken).ConfigureAwait(false);
-            if (response.Error is { } error) return TaskRoute.Fail(cli, error, request.Meta.CorrelationId, workspace: true);
+            if (response.Error is { } error) return WorkspaceRoute.Fail(cli, error, request.Meta.CorrelationId);
             if (response.Value is not { } value || !ValidPage(value.Page) || value.Workspaces.Any(item => item.WorkspaceId?.Value.Length != 16))
-                return TaskRoute.Fail(cli, TaskRoute.MalformedResponse(), request.Meta.CorrelationId, workspace: true);
+                return WorkspaceRoute.Fail(cli, WorkspaceRoute.MalformedResponse(), request.Meta.CorrelationId);
             if (cli.Output.Json)
             {
                 cli.Output.Document(value);
@@ -119,22 +119,22 @@ internal static class WorkspaceCommands
         Actions.Set(command, factory, async (cli, result, cancellationToken) =>
         {
             await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
-            var (route, exit) = await TaskRoute.ResolveAsync(cli, session, result.GetValue(node), local: false, cancellationToken).ConfigureAwait(false);
+            var (route, exit) = await WorkspaceRoute.ResolveAsync(cli, session, result.GetValue(node), cancellationToken).ConfigureAwait(false);
             if (route is null) return exit;
             var (id, lookupExit) = await ResolveAsync(cli, route, result.GetValue(selector)!, allowPath: true, cancellationToken).ConfigureAwait(false);
             if (id is null) return lookupExit;
             var request = new WorkspaceServiceGetWorkspaceRequest { Meta = Cli.Meta(), WorkspaceId = id };
             var response = await route.GetWorkspaceAsync(request, cancellationToken).ConfigureAwait(false);
-            if (response.Error is { } error) return TaskRoute.Fail(cli, error, request.Meta.CorrelationId, workspace: true);
+            if (response.Error is { } error) return WorkspaceRoute.Fail(cli, error, request.Meta.CorrelationId);
             if (response.Value?.Workspace is not { WorkspaceId.Value.Length: 16 } found || !found.WorkspaceId.Equals(id))
-                return TaskRoute.Fail(cli, TaskRoute.MalformedResponse(), request.Meta.CorrelationId, workspace: true);
+                return WorkspaceRoute.Fail(cli, WorkspaceRoute.MalformedResponse(), request.Meta.CorrelationId);
             Render(cli, found);
             return ExitCodes.Success;
         });
         return command;
     }
 
-    private static async Task<(Id? Id, int Exit)> ResolveAsync(Cli cli, TaskRoute route, string selection, bool allowPath, CancellationToken cancellationToken)
+    private static async Task<(Id? Id, int Exit)> ResolveAsync(Cli cli, WorkspaceRoute route, string selection, bool allowPath, CancellationToken cancellationToken)
     {
         if (IdText.TryParse(selection, out var bytes))
             return (new Id { Value = ByteString.CopyFrom(bytes) }, ExitCodes.Success);
@@ -155,12 +155,12 @@ internal static class WorkspaceCommands
             var request = new WorkspaceServiceListWorkspacesRequest { Meta = Cli.Meta(), Page = new PageRequest { Limit = 500 } };
             if (cursor is not null) request.Page.Cursor = cursor;
             var response = await route.ListWorkspacesAsync(request, cancellationToken).ConfigureAwait(false);
-            if (response.Error is { } error) return (null, TaskRoute.Fail(cli, error, request.Meta.CorrelationId, workspace: true));
+            if (response.Error is { } error) return (null, WorkspaceRoute.Fail(cli, error, request.Meta.CorrelationId));
             if (response.Value is not { } value || !ValidPage(value.Page))
-                return (null, TaskRoute.Fail(cli, TaskRoute.MalformedResponse(), request.Meta.CorrelationId, workspace: true));
+                return (null, WorkspaceRoute.Fail(cli, WorkspaceRoute.MalformedResponse(), request.Meta.CorrelationId));
             foreach (var workspace in value.Workspaces)
             {
-                if (workspace.WorkspaceId?.Value.Length != 16) return (null, TaskRoute.Fail(cli, TaskRoute.MalformedResponse(), request.Meta.CorrelationId, workspace: true));
+                if (workspace.WorkspaceId?.Value.Length != 16) return (null, WorkspaceRoute.Fail(cli, WorkspaceRoute.MalformedResponse(), request.Meta.CorrelationId));
                 var matchesSelection = path ? string.Equals(workspace.RootPath, selection, StringComparison.Ordinal) :
                     IdText.Format(workspace.WorkspaceId).StartsWith(prefix, StringComparison.Ordinal);
                 if (matchesSelection) matches.Add(workspace.WorkspaceId.Clone());
@@ -171,7 +171,7 @@ internal static class WorkspaceCommands
                 ? (matches[0], ExitCodes.Success)
                 : (null, cli.Output.Usage(path ? "No workspace has that exact registered root path." : "No workspace has that ID prefix."));
             if (!value.Page.HasNextCursor || string.IsNullOrEmpty(value.Page.NextCursor) || !seen.Add(value.Page.NextCursor))
-                return (null, TaskRoute.Fail(cli, TaskRoute.MalformedResponse(), request.Meta.CorrelationId, workspace: true));
+                return (null, WorkspaceRoute.Fail(cli, WorkspaceRoute.MalformedResponse(), request.Meta.CorrelationId));
             cursor = value.Page.NextCursor;
         }
 

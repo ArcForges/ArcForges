@@ -14,6 +14,7 @@ using ArcForges.Node.CloudLink;
 using ArcForges.Node.Core.Scheduling;
 using ArcForges.Node.Store.Policy;
 using Google.Protobuf;
+using TaskRoute = ArcForges.LegacyCliFixture.TaskRoute;
 
 namespace ArcForges.Node.CloudLink.Tests;
 
@@ -2126,7 +2127,7 @@ public sealed class RoutedCliTests
                 var previous = Environment.GetEnvironmentVariable(ClientImages.TestVariable);
                 try
                 {
-                    Environment.SetEnvironmentVariable(ClientImages.TestVariable, CloudNode.HelperExecutable);
+                    Environment.SetEnvironmentVariable(ClientImages.TestVariable, CloudNode.LegacyCliExecutable);
                     await node.StartAsync();
                 }
                 finally
@@ -2176,7 +2177,7 @@ public sealed class RoutedCliTests
         private async Task<(int ExitCode, string Stdout, string Stderr)> StartCliAsync(bool synthetic, bool includeMarker, string[] args,
             TaskCompletionSource<Process>? started = null, bool pty = false, TaskCompletionSource? ready = null, string? marker = null, string? endpointAddress = null)
         {
-            var start = new ProcessStartInfo(pty ? "/usr/bin/script" : CloudNode.HelperExecutable)
+            var start = new ProcessStartInfo(pty ? "/usr/bin/script" : CloudNode.LegacyCliExecutable)
             {
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
@@ -2190,7 +2191,7 @@ public sealed class RoutedCliTests
                 static string Quote(string value) => "'" + value.Replace("'", "'\\''", StringComparison.Ordinal) + "'";
                 start.ArgumentList.Add("-qefc");
                 start.ArgumentList.Add("exec env --default-signal=INT " + string.Join(" ",
-                    new[] { CloudNode.HelperExecutable, NodeLocations.TestModeOption }.Concat(args).Select(Quote)));
+                    new[] { CloudNode.LegacyCliExecutable, NodeLocations.TestModeOption }.Concat(args).Select(Quote)));
                 start.ArgumentList.Add("/dev/null");
             }
             else
@@ -2228,9 +2229,7 @@ public sealed class RoutedCliTests
                     start.Environment["PATH"] = "/usr/bin:/bin";
                 }
             }
-            start.Environment[NodeLocations.EndpointVariable] = endpointAddress ?? Node.Endpoint.Address;
-            start.Environment[NodeLocations.ConfigDirectoryVariable] = Path.GetDirectoryName(Node.ConfigPath)!;
-            start.Environment.Remove("ARCFORGES_OS_SECRET_STORE_TESTS");
+            Node.BindLegacyCli(start, endpointAddress);
             var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start the test CLI.");
             try
             {

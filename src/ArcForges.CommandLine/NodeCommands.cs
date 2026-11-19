@@ -18,7 +18,9 @@ internal static class NodeCommands
     {
         var node = new Command("node", "Run, stop and inspect the node");
         node.Subcommands.Add(Run(factory, nodeRunner));
-        node.Subcommands.Add(Stop(factory));
+        node.Subcommands.Add(V2NodeCommands.Start(factory));
+        node.Subcommands.Add(V2NodeCommands.Status(factory));
+        node.Subcommands.Add(V2NodeStopCommand.Build(factory));
         node.Subcommands.Add(WaitReady(factory));
         node.Subcommands.Add(Info(factory));
         node.Subcommands.Add(Health(factory));
@@ -299,7 +301,7 @@ internal static class NodeCommands
     }
 
     /// <summary>Waits until no node answers on the endpoint (the stop completed) or the time is up.</summary>
-    private static async Task<bool> WaitStoppedAsync(Cli cli, TimeSpan wait, CancellationToken cancellationToken)
+    internal static async Task<bool> WaitStoppedAsync(Cli cli, TimeSpan wait, CancellationToken cancellationToken)
     {
         var started = TimeProvider.System.GetTimestamp();
         while (TimeProvider.System.GetElapsedTime(started) < wait)

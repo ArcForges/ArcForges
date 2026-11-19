@@ -1,10 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.CommandLine;
+using System.CommandLine.Parsing;
 using System.Text.Json;
 using ArcForges.CommandLine;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using Google.Protobuf;
+using LegacyCliApplication = ArcForges.LegacyCliFixture.Program;
+using RunCommand = ArcForges.LegacyCliFixture.RunCommand;
+using TaskCommands = ArcForges.LegacyCliFixture.TaskCommands;
+using TaskRoute = ArcForges.LegacyCliFixture.TaskRoute;
+using TaskText = ArcForges.LegacyCliFixture.TaskText;
 
 namespace ArcForges.Client.Tests;
 
@@ -43,13 +49,13 @@ public sealed class CommandLineTests
     }
 
     [Theory]
-    [InlineData("status")]
-    [InlineData("status --json")]
-    [InlineData("--json status")]
-    [InlineData("-q -v --no-color -y --timeout 30s status")]
+    [InlineData("node start")]
+    [InlineData("node status --json")]
+    [InlineData("--json node status")]
+    [InlineData("-q -v --no-color -y --timeout 30s node status")]
     [InlineData("node run --background")]
     [InlineData("node run --systemd")]
-    [InlineData("node stop --cancel-running --timeout 2m --reason upgrade")]
+    [InlineData("node stop --stop-runs --timeout 2m")]
     [InlineData("node wait-ready --timeout 30s")]
     [InlineData("node info")]
     [InlineData("node health --json")]
@@ -58,29 +64,87 @@ public sealed class CommandLineTests
     [InlineData("config list")]
     [InlineData("config get logLevel")]
     [InlineData("config set telemetryOptIn false")]
-    [InlineData("events --topic node --topic jobs --since v1.2.40")]
+    [InlineData("events --topic node --topic notifications --since v1.2.40")]
+    [InlineData("version")]
+    [InlineData("completion bash")]
+    [InlineData("sandbox create example --file sandbox.json")]
+    [InlineData("sandbox list")]
+    [InlineData("sandbox inspect 01m4zrxnr8e7d81pn7xnwfqw14")]
+    [InlineData("sandbox configure 01m4zrxnr8e7d81pn7xnwfqw14 --file sandbox.json --expected-revision 1")]
+    [InlineData("sandbox rename 01m4zrxnr8e7d81pn7xnwfqw14 name --expected-revision 1")]
+    [InlineData("sandbox repair 01m4zrxnr8e7d81pn7xnwfqw14 --file sandbox.json --expected-revision 1")]
+    [InlineData("run start 01m4zrxnr8e7d81pn7xnwfqw14 -- /bin/echo ok")]
+    [InlineData("run list --sandbox 01m4zrxnr8e7d81pn7xnwfqw14")]
+    [InlineData("run inspect 01m4zrxnr8e7d81pn7xnwfqw14")]
+    [InlineData("run stop 01m4zrxnr8e7d81pn7xnwfqw14")]
+    [InlineData("resources show")]
+    [InlineData("resources watch --once --scope run --id 01m4zrxnr8e7d81pn7xnwfqw14")]
+    [InlineData("resources set --scope node --file policy.json --expected-revision 1")]
+    [InlineData("grant set --file grant.json")]
+    [InlineData("grant list --sandbox 01m4zrxnr8e7d81pn7xnwfqw14")]
+    [InlineData("grant revoke 01m4zrxnr8e7d81pn7xnwfqw14 --expected-revision 1")]
+    [InlineData("operation inspect 01m4zrxnr8e7d81pn7xnwfqw14 --owner-epoch 01m4zrxnr8e7d81pn7xnwfqw14")]
+    [InlineData("doctor --sandbox 01m4zrxnr8e7d81pn7xnwfqw14")]
+    [InlineData("workspace list")]
+    [InlineData("file-operation show 01m4zrxnr8e7d81pn7xnwfqw14")]
+    [InlineData("file-operation acknowledge 01m4zrxnr8e7d81pn7xnwfqw14 --digest 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")]
+    [InlineData("node status --test-mode")]
+    public void ThePublicGrammarParses(string line) =>
+        Assert.Empty(Root().Parse(line.Split(' ')).Errors);
+
+    [Theory]
     [InlineData("jobs list --state running --state pending --limit 20")]
     [InlineData("jobs show 01m4zr")]
     [InlineData("jobs cancel 01m4zrxnr8e7d81pn7xnwfqw14")]
-    [InlineData("version")]
-    [InlineData("completion bash")]
     [InlineData("run --wait -- /bin/echo ok")]
     [InlineData("run --detach --wait 3s -- /bin/echo ok")]
     [InlineData("run --node build-box -- /bin/echo ok")]
     [InlineData("run --local -- /bin/echo ok")]
     [InlineData("tasks")]
-    [InlineData("file-operation show 01m4zrxnr8e7d81pn7xnwfqw14")]
-    [InlineData("file-operation acknowledge 01m4zrxnr8e7d81pn7xnwfqw14 --digest 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")]
     [InlineData("tasks list --local")]
     [InlineData("tasks show 01m4zr --node build-box")]
     [InlineData("tasks wait 01m4zr --node build-box")]
     [InlineData("tasks cancel 01m4zr --node build-box")]
     [InlineData("output 01m4zr --from-offset 42 --follow --node build-box")]
-    [InlineData("status --test-mode")]
-    public void TheSpecifiedGrammarParses(string line)
+    public void TheRetainedFixtureGrammarParses(string line) =>
+        Assert.Empty(LegacyCliApplication.Build(TextWriter.Null, TextWriter.Null).Parse(line.Split(' ')).Errors);
+
+    [Fact]
+    public void RunStartPreservesEachArgumentAfterTheDelimiter()
     {
-        var result = Root().Parse(line.Split(' '));
-        Assert.Empty(result.Errors);
+        string[] original = ["directory with spaces/program", "--help", string.Empty, "two words", "--", "--no-color"];
+        var parsed = Root().Parse(["run", "start", "01m4zrxnr8e7d81pn7xnwfqw14", "--terminal", "off", "--", .. original]);
+        Assert.Empty(parsed.Errors);
+        var parsedProgram = Assert.Single(parsed.CommandResult.Command.Arguments.OfType<Argument<string[]>>());
+        Assert.Equal(original, parsed.GetValue(parsedProgram));
+        Assert.Equal(original, parsed.Tokens.SkipWhile(token => token.Type != TokenType.DoubleDash)
+            .Skip(1).Select(token => token.Value));
+    }
+
+    [Theory]
+    [InlineData("tasks list")]
+    [InlineData("queue list")]
+    [InlineData("jobs list")]
+    [InlineData("output 01m4zr")]
+    [InlineData("run --local -- /bin/echo ok")]
+    [InlineData("run start 01m4zrxnr8e7d81pn7xnwfqw14 --node build-box -- /bin/echo ok")]
+    [InlineData("node stop --cancel-running")]
+    public void RetiredExecutionGrammarIsRejectedByTheProduct(string line) =>
+        Assert.NotEmpty(Root().Parse(line.Split(' ')).Errors);
+
+    [Theory]
+    [InlineData("--owner-epoch")]
+    [InlineData("--command-id")]
+    public async Task TheProductRejectsAnUnpairedReplayIdentityBeforeConnecting(string option)
+    {
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        string[] args = ["--json", "resources", "set", "--scope", "node", "--file", "not-read.json",
+            "--expected-revision", "1", option, "01m4zrxnr8e7d81pn7xnwfqw14"];
+        Assert.NotEmpty(Root().Parse(args).Errors);
+        Assert.Equal(ExitCodes.Usage, await CliApplication.RunAsync(args, NoNode, output, error));
+        using var reply = JsonDocument.Parse(output.ToString());
+        Assert.Equal("invalid_argument", reply.RootElement.GetProperty("error").GetProperty("code").GetString());
     }
 
     [Theory]
@@ -88,9 +152,8 @@ public sealed class CommandLineTests
     [InlineData("node rename")]
     [InlineData("config get colour")]
     [InlineData("events --topic everything")]
-    [InlineData("jobs list --state lost")]
     [InlineData("completion tcsh")]
-    [InlineData("status --bogus")]
+    [InlineData("node status --bogus")]
     public async Task UsageErrorsExitWithTwo(string line)
     {
         using var output = new StringWriter();
@@ -103,6 +166,15 @@ public sealed class CommandLineTests
         Assert.Equal(string.Empty, output.ToString());
     }
 
+    [Fact]
+    public async Task TheRetainedFixtureStillRejectsAnUnknownJobState()
+    {
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        Assert.Equal(ExitCodes.Usage, await LegacyCliApplication.RunAsync(["jobs", "list", "--state", "lost"], output, error));
+        Assert.StartsWith("error: ", error.ToString(), StringComparison.Ordinal);
+        Assert.Equal(string.Empty, output.ToString());
+    }
     [Fact]
     public void RecoveryDisplayEscapesControlCharactersAndKeepsTheEffectUnknown()
     {
@@ -214,7 +286,9 @@ public sealed class CommandLineTests
         using var error = new StringWriter();
 
         Assert.Equal(0, await CliApplication.RunAsync(["--help"], NoNode, output, error));
-        Assert.Contains("status", output.ToString(), StringComparison.Ordinal);
+        Assert.Contains("sandbox", output.ToString(), StringComparison.Ordinal);
+        Assert.Contains("resources", output.ToString(), StringComparison.Ordinal);
+        Assert.Contains("operation", output.ToString(), StringComparison.Ordinal);
         Assert.DoesNotContain("--test-mode", output.ToString(), StringComparison.Ordinal);
         using var version = new StringWriter();
         Assert.Equal(0, await CliApplication.RunAsync(["--version"], NoNode, version, error));
@@ -229,7 +303,7 @@ public sealed class CommandLineTests
     {
         using var output = new StringWriter();
         using var error = new StringWriter();
-        Assert.Equal(0, await CliApplication.RunAsync([command, "--help"], NoNode, output, error));
+        Assert.Equal(0, await LegacyCliApplication.RunAsync([command, "--help"], output, error));
         Assert.Contains(first, output.ToString(), StringComparison.Ordinal);
         Assert.Contains(second, output.ToString(), StringComparison.Ordinal);
         Assert.Contains(third, output.ToString(), StringComparison.Ordinal);
@@ -240,7 +314,7 @@ public sealed class CommandLineTests
     {
         using var output = new StringWriter();
         using var error = new StringWriter();
-        Assert.Equal(0, await CliApplication.RunAsync(["run", "--help"], NoNode, output, error));
+        Assert.Equal(0, await LegacyCliApplication.RunAsync(["run", "--help"], output, error));
         var help = System.Text.RegularExpressions.Regex.Replace(output.ToString(), @"\s+", " ");
         Assert.Contains("routed default: node", help, StringComparison.Ordinal);
         Assert.Contains("--local default: caller", help, StringComparison.Ordinal);
@@ -552,11 +626,11 @@ public sealed class CommandLineTests
     [InlineData("arcforges config get ", "telemetryOptIn")]
     [InlineData("arcforges events --topic no", "notifications")]
     [InlineData("arcforges completion ", "pwsh")]
-    [InlineData("arcforges run --n", "--node")]
-    [InlineData("arcforges run --l", "--local")]
-    [InlineData("arcforges tasks wait --n", "--node")]
-    [InlineData("arcforges output --l", "--local")]
-    public async Task TheSuggestDirectiveCompletesTheGrammar(string line, string expected)
+    [InlineData("arcforges sandbox ", "inspect")]
+    [InlineData("arcforges run ", "start")]
+    [InlineData("arcforges resources ", "watch")]
+    [InlineData("arcforges operation ", "inspect")]
+    public async Task TheSuggestDirectiveCompletesThePublicGrammar(string line, string expected)
     {
         using var output = new StringWriter();
         using var error = new StringWriter();
@@ -565,6 +639,36 @@ public sealed class CommandLineTests
 
         Assert.Equal(0, exit);
         Assert.Contains(expected, output.ToString().Split('\n', StringSplitOptions.TrimEntries));
+    }
+
+    [Theory]
+    [InlineData("arcforges run --n", "--node")]
+    [InlineData("arcforges run --l", "--local")]
+    [InlineData("arcforges tasks wait --n", "--node")]
+    [InlineData("arcforges output --l", "--local")]
+    public async Task TheSuggestDirectiveCompletesTheRetainedFixtureGrammar(string line, string expected)
+    {
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+
+        var exit = await LegacyCliApplication.RunAsync([$"[suggest:{line.Length}]", line], output, error);
+
+        Assert.Equal(0, exit);
+        Assert.Contains(expected, output.ToString().Split('\n', StringSplitOptions.TrimEntries));
+    }
+
+    [Theory]
+    [InlineData("arcforges ta", "tasks")]
+    [InlineData("arcforges jo", "jobs")]
+    [InlineData("arcforges qu", "queue")]
+    [InlineData("arcforges run --n", "--node")]
+    [InlineData("arcforges run --l", "--local")]
+    public async Task CompletionDoesNotOfferRetiredExecutionRoutes(string line, string retired)
+    {
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        Assert.Equal(0, await CliApplication.RunAsync([$"[suggest:{line.Length}]", line], NoNode, output, error));
+        Assert.DoesNotContain(retired, output.ToString().Split('\n', StringSplitOptions.TrimEntries));
     }
 
     private static RootCommand Root()

@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using ArcForges.Client;
+using ArcForges.Node.Api;
 using ArcForges.Node.Core.Resources;
 using ArcForges.Node.Store;
 using ArcForges.Security.Secrets;
@@ -55,9 +56,8 @@ internal sealed class TestNode : IAsyncDisposable
         // A stray tier opt-in in the test process must never reach a test node (16-testing-strategy section 1, guard item 1).
         Environment[OsSecretStoreGuard.OptInVariable] = null;
 
-        // The --test-mode hook of 11 section 1's client-kind verification: this test process may present the Desktop kind, so a test acts as
-        // the HUMAN approver (HumanChannelAsync); its CLI processes stay SCRIPT callers (no terminal).
-        Environment["ARCFORGES_TEST_CLIENT_IMAGES"] = System.Environment.ProcessPath;
+        // The isolated test hook admits these exact peer images. A CLI without a terminal remains a SCRIPT caller.
+        Environment[ClientImages.TestVariable] = string.Join(Path.PathSeparator, System.Environment.ProcessPath, LegacyCli);
 
         // AD-0021 section 5 (Plan decision Q8, CTR5-NODE-14; N2-23): the closed-loop suites submit through local SCRIPT CLIs and connections,
         // which a --test-mode node admits only with this allowance; tests of the local bound clear it.
@@ -153,6 +153,10 @@ internal sealed class TestNode : IAsyncDisposable
     /// <summary>The <c>arcforges</c> binary under test: <c>ARCFORGES_HOST_PATH</c> or the JIT build next to the tests.</summary>
     public static string Host { get; } = Binary("ARCFORGES_HOST_PATH", "arcforges");
 
+    /// <summary>The test-only apphost for carried V1 CLI paths.</summary>
+    public static string LegacyCli { get; } = Path.Combine(AppContext.BaseDirectory,
+        OperatingSystem.IsWindows() ? "ArcForges.LegacyCliFixture.exe" : "ArcForges.LegacyCliFixture");
+
     /// <summary>The <c>arcforges-testload</c> workload: <c>ARCFORGES_TESTLOAD_PATH</c> or the build next to the tests.</summary>
     public static string TestLoad { get; } = Binary("ARCFORGES_TESTLOAD_PATH", "arcforges-testload");
 
@@ -166,8 +170,8 @@ internal sealed class TestNode : IAsyncDisposable
     public string NodeExecutable { get; set; } = Host;
 
     /// <summary>
-    /// Existing local execution regression tests explicitly exercise the diagnostic path. A center-routed test sets this false so its
-    /// unmodified CLI arguments use the product default. The node's separate test-mode SCRIPT allowance remains independently checked.
+    /// Existing local execution regressions exercise the V1 diagnostic path. A routed regression sets this false to exercise the
+    /// original V1 Center route. The test-mode SCRIPT allowance is checked by the Node.
     /// </summary>
     public bool UseLocalDiagnosticCli { get; set; } = true;
 
@@ -209,10 +213,24 @@ internal sealed class TestNode : IAsyncDisposable
         return node;
     }
 
-    /// <summary>Runs <c>arcforges &lt;args&gt; --test-mode</c> to completion (bounded).</summary>
+    /// <summary>Runs a CLI command to completion, using the private apphost for carried V1 commands.</summary>
     public async Task<ProcessRun> CliAsync(params string[] args)
     {
-        using var process = Start(Host, [.. args, NodeLocations.TestModeOption]);
+        using var process = Start(Host, [NodeLocations.TestModeOption, .. args]);
+        return await CompleteAsync(process, ProcessTimeout);
+    }
+
+    /// <summary>Runs a carried command through the private V1 apphost.</summary>
+    public async Task<ProcessRun> LegacyCliAsync(params string[] args)
+    {
+        using var process = StartCore(LegacyCli, [NodeLocations.TestModeOption, .. args]);
+        return await CompleteAsync(process, ProcessTimeout);
+    }
+
+    /// <summary>Runs the actual product binary with V2 command-line arguments.</summary>
+    public async Task<ProcessRun> ProductCliAsync(params string[] args)
+    {
+        using var process = StartProduct([NodeLocations.TestModeOption, .. args]);
         return await CompleteAsync(process, ProcessTimeout);
     }
 
@@ -223,6 +241,13 @@ internal sealed class TestNode : IAsyncDisposable
     public async Task<(int ExitCode, byte[] Stdout, byte[] Stderr)> CliBytesAsync(TimeSpan timeout, params string[] args)
     {
         using var process = Start(Host, [NodeLocations.TestModeOption, .. args]);
+        return await BytesAsync(process, timeout);
+    }
+
+    /// <summary>Returns the exact streams of the actual product CLI, including rejected legacy commands.</summary>
+    public async Task<(int ExitCode, byte[] Stdout, byte[] Stderr)> ProductCliBytesAsync(TimeSpan timeout, params string[] args)
+    {
+        using var process = StartProduct([NodeLocations.TestModeOption, .. args]);
         return await BytesAsync(process, timeout);
     }
 
@@ -281,7 +306,7 @@ internal sealed class TestNode : IAsyncDisposable
     /// <summary>Starts <c>arcforges node run --test-mode</c> as a child of the test and waits until it answers.</summary>
     public async Task<Process> StartNodeAsync()
     {
-        var process = Start(NodeExecutable, ["node", "run", NodeLocations.TestModeOption]);
+        var process = StartCore(NodeExecutable, ["node", "run", NodeLocations.TestModeOption]);
         _children.Add(process);
         await WaitReadyAsync(process);
         return process;
@@ -299,7 +324,7 @@ internal sealed class TestNode : IAsyncDisposable
             return;
         }
 
-        if (arguments[root] is "run" or "output")
+        if (arguments[root] == "output" || arguments[root] == "run" && !NewRunCommand(arguments, root, end))
         {
             arguments.Insert(root + 1, "--local");
         }
@@ -315,6 +340,36 @@ internal sealed class TestNode : IAsyncDisposable
                 arguments.Insert(sub + 1, "--local");
             }
         }
+    }
+
+    /// <summary>Recognizes the former commands used by the carried tests before their argument boundary.</summary>
+    internal static bool UsesLegacyCli(List<string> arguments)
+    {
+        int separator = arguments.IndexOf("--");
+        int end = separator < 0 ? arguments.Count : separator;
+        int root = CommandPosition(arguments, 0, end);
+        if (root < 0 || root == end)
+        {
+            return false;
+        }
+
+        return arguments[root] switch
+        {
+            "run" => !NewRunCommand(arguments, root, end),
+            "resources" => !HasSubcommand(arguments, root, end, "show", "watch", "set"),
+            "tasks" or "output" or "queue" or "jobs" or "ps" or "samples" or "adopt" or "terminate"
+                or "workspace" or "file-operation" or "login" => true,
+            _ => false,
+        };
+    }
+
+    private static bool NewRunCommand(List<string> arguments, int root, int end) =>
+        HasSubcommand(arguments, root, end, "start", "list", "inspect", "stop");
+
+    private static bool HasSubcommand(List<string> arguments, int root, int end, params string[] subcommands)
+    {
+        int selected = CommandPosition(arguments, root + 1, end);
+        return selected >= 0 && selected < end && subcommands.Contains(arguments[selected], StringComparer.Ordinal);
     }
 
     /// <summary>Finds the command after known global options; never searches option values for command names.</summary>
@@ -356,18 +411,33 @@ internal sealed class TestNode : IAsyncDisposable
     public Process Start(string executable, IEnumerable<string> arguments)
     {
         var argumentList = arguments.ToList();
+        return StartCore(SameExecutable(executable, Host) && UsesLegacyCli(argumentList) ? LegacyCli : executable, argumentList);
+    }
+
+    /// <summary>Starts the exact product Host for help, completion, capability and native V2 tests.</summary>
+    public Process StartProduct(IEnumerable<string> arguments) =>
+        StartCore(Host, arguments.ToList());
+
+    private static bool SameExecutable(string left, string right) => string.Equals(Path.GetFullPath(left), Path.GetFullPath(right),
+        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+
+    private Process StartCore(string executable, List<string> argumentList)
+    {
         var binary = Path.GetFileNameWithoutExtension(executable);
-        if (binary is "arcforges" or "arcforges-supervisor" && !argumentList.Contains(NodeLocations.TestModeOption, StringComparer.Ordinal))
+        bool legacy = SameExecutable(executable, LegacyCli);
+        int separator = argumentList.IndexOf("--");
+        int controlArguments = separator < 0 ? argumentList.Count : separator;
+        if ((legacy || binary is "arcforges" or "arcforges-supervisor" || SameExecutable(executable, Host))
+            && !argumentList.Take(controlArguments).Contains(NodeLocations.TestModeOption, StringComparer.Ordinal))
         {
             throw new InvalidOperationException($"{executable} must be started with {NodeLocations.TestModeOption} in a test.");
         }
 
-        if (binary == "arcforges" && UseLocalDiagnosticCli)
+        if (legacy && UseLocalDiagnosticCli)
         {
             AddLocalDiagnosticOption(argumentList);
         }
 
-        arguments = argumentList;
         var start = new ProcessStartInfo(executable)
         {
             UseShellExecute = false,
@@ -376,7 +446,7 @@ internal sealed class TestNode : IAsyncDisposable
             RedirectStandardInput = true,
             CreateNoWindow = true,
         };
-        foreach (var argument in arguments)
+        foreach (var argument in argumentList)
         {
             start.ArgumentList.Add(argument);
         }
@@ -403,7 +473,7 @@ internal sealed class TestNode : IAsyncDisposable
     /// <summary>Waits until <c>node wait-ready</c> succeeds (the node answers its hello).</summary>
     public async Task WaitReadyAsync(Process? node = null)
     {
-        var run = await CliAsync("node", "wait-ready", "--timeout", "30s");
+        var run = await ProductCliAsync("node", "wait-ready", "--timeout", "30s");
         Assert.True(run.ExitCode == 0, $"The node did not become ready: {run}" + (node is { HasExited: true } ? $" (node exited {node.ExitCode})" : string.Empty)
             + Diagnostics());
     }
@@ -411,7 +481,7 @@ internal sealed class TestNode : IAsyncDisposable
     /// <summary>Runs <c>node stop --verbose</c> (its transport attempts on stderr) and fails with <see cref="Diagnostics"/> unless it exits 0.</summary>
     public async Task<ProcessRun> StopNodeAsync()
     {
-        var run = await CliAsync("node", "stop", "--verbose");
+        var run = await ProductCliAsync("node", "stop", "--verbose");
         Assert.True(run.ExitCode == 0, run + Diagnostics());
         return run;
     }
@@ -524,7 +594,7 @@ internal sealed class TestNode : IAsyncDisposable
     /// </summary>
     public List<Process> LiveProcesses()
     {
-        var binaries = new[] { Host, NodeExecutable, Path.Combine(Path.GetDirectoryName(Host)!, OperatingSystem.IsWindows() ? "arcforges-supervisor.exe" : "arcforges-supervisor") }
+        var binaries = new[] { Host, LegacyCli, NodeExecutable, Path.Combine(Path.GetDirectoryName(Host)!, OperatingSystem.IsWindows() ? "arcforges-supervisor.exe" : "arcforges-supervisor") }
             .Select(path => Path.GetFullPath(path)).ToHashSet(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
         var live = new List<Process>();
         lock (_uninspectable)
@@ -595,7 +665,7 @@ internal sealed class TestNode : IAsyncDisposable
         {
             if (Descriptor() is { } descriptor && descriptor.ProcessIsAlive())
             {
-                await CliAsync("node", "stop", "--timeout", "15s");
+                await ProductCliAsync("node", "stop", "--timeout", "15s");
             }
 
             // Attempts outlive a stopped node under their holders: end them, release the holders, and count what was left (16 section 4).

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Diagnostics;
 using System.Text.Json;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
@@ -59,6 +60,16 @@ internal sealed class CloudNode : IAsyncDisposable
     public static string HelperExecutable => Environment.GetEnvironmentVariable("ARCFORGES_HOST_PATH") is { Length: > 0 } configured
         ? configured
         : Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "arcforges.exe" : "arcforges");
+
+    public static string LegacyCliExecutable => Path.Combine(AppContext.BaseDirectory,
+        OperatingSystem.IsWindows() ? "ArcForges.LegacyCliFixture.exe" : "ArcForges.LegacyCliFixture");
+
+    public void BindLegacyCli(ProcessStartInfo start, string? endpoint = null)
+    {
+        start.Environment[NodeLocations.EndpointVariable] = endpoint ?? Endpoint.Address;
+        start.Environment[NodeLocations.ConfigDirectoryVariable] = Path.GetDirectoryName(ConfigPath)!;
+        start.Environment.Remove("ARCFORGES_OS_SECRET_STORE_TESTS");
+    }
 
     /// <summary><c>arcforges-testload</c> next to the tests, or <c>ARCFORGES_TESTLOAD_PATH</c>.</summary>
     public static string TestLoad => Environment.GetEnvironmentVariable("ARCFORGES_TESTLOAD_PATH") is { Length: > 0 } configured
@@ -170,7 +181,7 @@ internal sealed class CloudNode : IAsyncDisposable
         {
             _stop.Dispose();
             Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-            if (OperatingSystem.IsLinux())
+            if (OperatingSystem.IsLinux() && _run is not null)
             {
                 leftovers.AddRange(SystemdTestEnvironment.Cleanup(Slice, []));
             }
