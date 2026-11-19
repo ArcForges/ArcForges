@@ -116,8 +116,8 @@ def linux_tests(*suites: str, native: bool = False) -> str:
 # ArcForges.Node.Store, so they stay in one group); measured on linux-x64 for a new commit: 85 s in sequence, 56 s in two
 # groups. On Windows each group is one eng/publish.ps1 run with its own log; the supervisor is in the host's group, whose
 # run copies it beside the host (eng/publish.ps1 copies only in a run that published one of them).
-PUBLISH_GROUPS_WIN = ("host,supervisor,bench", "testload")
-PUBLISH_GROUPS_LINUX = ("host,bench", "testload")
+PUBLISH_GROUPS_WIN = ("host,supervisor,run-supervisor,bench", "testload")
+PUBLISH_GROUPS_LINUX = ("host,run-supervisor,bench", "testload")
 WIN_PUBLISH = (
     "$root = $PWD.Path; "
     f"$results = @({', '.join(repr(group) for group in PUBLISH_GROUPS_WIN)}) | ForEach-Object -ThrottleLimit 2 -Parallel {{ "
@@ -129,6 +129,26 @@ WIN_PUBLISH = (
     "foreach ($result in $results) { Get-Content -LiteralPath $result.Log | Write-Host; "
     "Write-Host \"==> group $($result.Group): exit $($result.Exit)\" }; "
     "if (@($results | Where-Object Exit -ne 0).Count -gt 0) { throw 'Native AOT publish failed.' }; $global:LASTEXITCODE = 0"
+)
+
+# The packaged native tests require a fresh extraction and the designated hosts' admitted MXC compositions.
+MXC_PACKAGE_REQUESTS = (
+    "dotnet test --project tests/ArcForges.ClosedLoop.Tests/ArcForges.ClosedLoop.Tests.csproj -c Release --no-build "
+    "--filter-class ArcForges.ClosedLoop.Tests.MxcRunServiceTests --minimum-expected-tests 1 --fail-skips on"
+)
+WIN_PACKAGE = (
+    "$tempPath = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Temp'; "
+    "$install = Join-Path $tempPath ('verified MXC 安装 ' + [guid]::NewGuid().ToString('N')); "
+    f"./eng/package.ps1 -RuntimeIdentifier {RID_WIN} -MxcInstallRoot $install; "
+    "$env:ARCFORGES_HOST_PATH = Join-Path $install 'arcforges.exe'; $env:ARCFORGES_MXC_PACKAGE_TESTS = '1'; "
+    f"$env:ARCFORGES_TESTLOAD_PATH = Join-Path $PWD 'artifacts/publish/{RID_WIN}/testload/arcforges-testload.exe'; "
+    + MXC_PACKAGE_REQUESTS
+)
+LINUX_PACKAGE = (
+    'set -e; test_root=$(mktemp -d "$HOME/verified-mxc.XXXXXX"); install="$test_root/MXC 安装"; '
+    'python eng/verify_linux.py package --mxc-install-root "$install"; '
+    'export ARCFORGES_HOST_PATH="$install/arcforges" ARCFORGES_MXC_PACKAGE_TESTS=1; '
+    + MXC_PACKAGE_REQUESTS
 )
 
 # The merge base's host, Native AOT, built in its own persistent checkout with the base's own SDK (global.json) and
@@ -249,7 +269,7 @@ STEPS = [
         "./eng/test.ps1 -Suite tools -NoBuild"), 300),
     win("win-closed-loop-native", tests("closed-loop", native=True), 600),
     win("win-bench", pwsh(f"./eng/bench.ps1 -RuntimeIdentifier {RID_WIN}"), 600),
-    win("win-package", pwsh(f"./eng/package.ps1 -RuntimeIdentifier {RID_WIN}"), 300),
+    win("win-package", pwsh(WIN_PACKAGE), 600),
     # ci.yml, Native (linux-x64)
     linux("linux-real-os", LINUX_REAL_OS, 60),
     linux("linux-restore", "dotnet restore ArcForges.slnx --locked-mode", 600),
@@ -263,7 +283,7 @@ STEPS = [
         "bash eng/test.sh --suite tools --no-build", 300),
     linux("linux-closed-loop-native", linux_tests("closed-loop", native=True), 600),
     linux("linux-bench", "python eng/verify_linux.py bench", 600),
-    linux("linux-package", "python eng/verify_linux.py package", 300),
+    linux("linux-package", LINUX_PACKAGE, 600),
     # The merge base's host for the startup gate
     win("win-base-host", pwsh(WIN_BASE_HOST, devshell=True), 1200, lane="win-base"),
     linux("linux-base-host", LINUX_BASE_HOST, 1200, lane="linux-base"),

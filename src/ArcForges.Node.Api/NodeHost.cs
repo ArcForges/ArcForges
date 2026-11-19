@@ -14,6 +14,8 @@ using ArcForges.Node.Core.Platform;
 using ArcForges.Node.Core.Sandboxes;
 using ArcForges.Node.Core.Security;
 using ArcForges.Node.Platform;
+using ArcForges.Node.Platform.Linux.Mxc;
+using ArcForges.Node.Platform.Windows.Mxc;
 using ArcForges.Node.Store;
 
 namespace ArcForges.Node.Api;
@@ -837,7 +839,13 @@ public static class NodeHost
             if (SandboxLocalOwner.Current() is { } owner)
             {
                 return new SandboxManager(store, dataRoot, owner, secrets, clock,
-                    journalGeneration.ToString(CultureInfo.InvariantCulture), installationRoot);
+                    journalGeneration.ToString(CultureInfo.InvariantCulture), installationRoot)
+                {
+                    RunLauncher = OperatingSystem.IsWindows() ? new WindowsRunLauncher()
+                        : OperatingSystem.IsLinux() ? new LinuxRunLauncher() : null,
+                    RunDiagnostic = (id, phase, native) => log.Info("run.owner", new LogField("run", id),
+                        new LogField("phase", phase), new LogField("native", native)),
+                };
             }
 
             log.Warning("sandbox.store.unavailable", new LogField("reason", "local_owner_unavailable"));

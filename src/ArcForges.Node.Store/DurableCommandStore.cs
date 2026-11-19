@@ -10,12 +10,13 @@ internal sealed record DurableCapacity(int MaximumReceipts = 4096, int SafetyRec
     int MaximumResponseBytes = 1048576, long MaximumJournalBytes = 67108864);
 
 internal sealed record DurableIntent(byte[] CommandId, byte[] OwnerEpoch, string Method, string? AggregateKind,
-    string? AggregateId, byte[] CanonicalBody, long? ExpectedSandboxRevision = null, byte[]? SafetyParent = null);
+    string? AggregateId, byte[] CanonicalBody, long? ExpectedSandboxRevision = null, byte[]? SafetyParent = null,
+    string? ExpectedSandboxId = null);
 
 internal enum DurableDecision { Execute, Replay, InProgress, Compacted, Conflict, EpochRetired, RevisionConflict, Capacity, Maintenance }
 
 internal sealed record DurableReceipt(string CommandId, string Method, string? AggregateKind, string? AggregateId,
-    string State, int Effect, string? ResponseJson, bool Compacted);
+    string State, int Effect, string? ResponseJson, bool Compacted, string? SafetyParentCommandId = null);
 
 internal sealed record DurableAdmission(DurableDecision Decision, DurableReceipt? Receipt);
 
@@ -128,12 +129,21 @@ internal sealed partial class DurableCommandStore : IDisposable
         catch (DurableStoreMaintenanceException) { MaintenanceRequired = true; }
     }
 
-    internal DurableAdmission Admit(DurableIntent intent, Action<StoreTransaction>? metadataChanges = null)
+    internal DurableAdmission Admit(DurableIntent intent, Action<StoreTransaction>? metadataChanges = null) =>
+        Admit(intent, metadataChanges, null);
+
+    /// <summary>Atomically journals an already observed outcome without exposing an executable receipt.</summary>
+    internal DurableAdmission AdmitObserved(DurableIntent intent, string state, int effect, string redactedJson) =>
+        Admit(intent, null, new(state, effect, redactedJson));
+
+    private DurableAdmission Admit(DurableIntent intent, Action<StoreTransaction>? metadataChanges, InitialResult? observed)
     {
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             Validate(intent);
+            if (observed is not null)
+                ValidateResult(observed.State, observed.Effect, observed.Json);
             if (!intent.OwnerEpoch.AsSpan().SequenceEqual(_fence.Epoch)) return new(DurableDecision.EpochRetired, null);
             if (!Equals(_store.Read(reader => reader.Scalar("SELECT state FROM owner_epoch WHERE owner_id=$o AND owner_epoch=$e;",
                 ("$o", _owner), ("$e", _fence.Epoch))), "ACTIVE")) return new(DurableDecision.EpochRetired, null);
@@ -158,31 +168,49 @@ internal sealed partial class DurableCommandStore : IDisposable
             }
             var precondition = _store.Read(reader => CanAdmit(reader, intent));
             if (precondition != DurableDecision.Execute) return new(precondition, null);
-            Advance("admit", id, digest, tx =>
+            byte[] proof = digest;
+            if (observed is not null)
+            {
+                byte[] admissionProof = [.. digest, .. ObservationDigest(observed.State, observed.Effect, observed.Json)];
+                proof = HMACSHA256.HashData(_key, admissionProof);
+            }
+
+            Advance(observed is null ? "admit" : "admit_observed", id, proof, tx =>
             {
                 if (CanAdmit(tx, intent) != DurableDecision.Execute) throw new DurableStoreMaintenanceException();
                 string? parent = intent.SafetyParent is null ? null : Convert.ToHexStringLower(intent.SafetyParent);
                 if (parent is not null)
                     tx.Execute("UPDATE owner_epoch_capacity SET reserve_storage=substr(reserve_storage,1,length(reserve_storage)-$n) WHERE owner_id=$o AND owner_epoch=$e;",
                         ("$n", _capacity.MaximumResponseBytes), ("$o", _owner), ("$e", _fence.Epoch));
+                string now = Now();
                 tx.Execute("""
                     INSERT INTO command_receipt(owner_id,owner_epoch,command_id,method,request_hmac_sha256,aggregate_kind,aggregate_id,
                       state,effect_certainty,response_json,created_utc,updated_utc,admission_sequence,safety_parent_command_id,reserved_response)
                     VALUES($o,$e,$c,$m,$h,$ak,$ai,'ACCEPTED',3,'{}',$now,$now,$seq,$parent,zeroblob($reserve));
                     """, ("$o", _owner), ("$e", _fence.Epoch), ("$c", id), ("$m", intent.Method),
                     ("$h", Convert.ToHexStringLower(digest)), ("$ak", intent.AggregateKind), ("$ai", intent.AggregateId),
-                    ("$now", Now()), ("$seq", _fence.Sequence), ("$parent", parent), ("$reserve", _capacity.MaximumResponseBytes));
+                    ("$now", now), ("$seq", _fence.Sequence), ("$parent", parent), ("$reserve", _capacity.MaximumResponseBytes));
                 metadataChanges?.Invoke(tx);
+                if (observed is not null)
+                {
+                    bool uncertain = observed.State == "UNKNOWN";
+                    WriteResult(tx, id, observed.State, observed.Effect, observed.Json, now,
+                        uncertain ? null : now, uncertain ? null : ResultExpiry());
+                }
             });
-            return new(DurableDecision.Execute, _store.Read(reader => ReadReceipt(reader, id)));
+            var decision = observed is null ? DurableDecision.Execute
+                : observed.State == "UNKNOWN" ? DurableDecision.InProgress : DurableDecision.Replay;
+            return new(decision, _store.Read(reader => ReadReceipt(reader, id)));
         }
     }
+
+    private sealed record InitialResult(string State, int Effect, string Json);
 
     private DurableDecision CanAdmit(StoreReader reader, DurableIntent intent)
     {
         if (intent.ExpectedSandboxRevision is { } revision &&
             !Equals(reader.Scalar("SELECT revision FROM sandbox WHERE owner_id=$o AND sandbox_id=$id;",
-                ("$o", _owner), ("$id", intent.AggregateId)), revision)) return DurableDecision.RevisionConflict;
+                ("$o", _owner), ("$id", intent.ExpectedSandboxId ?? intent.AggregateId)), revision)) return DurableDecision.RevisionConflict;
         long count = (long)reader.Scalar("SELECT count(*) FROM command_receipt WHERE owner_id=$o AND owner_epoch=$e;",
             ("$o", _owner), ("$e", _fence.Epoch))!;
         bool safety = intent.SafetyParent is not null;
@@ -224,11 +252,15 @@ internal sealed partial class DurableCommandStore : IDisposable
 
     private DurableReceipt? ReadReceipt(StoreReader reader, string id)
     {
-        using var command = reader.CreateCommand("SELECT command_id,method,aggregate_kind,aggregate_id,state,effect_certainty,response_json,response_compacted_utc FROM command_receipt WHERE owner_id=$o AND owner_epoch=$e AND command_id=$c;");
+        using var command = reader.CreateCommand("""
+            SELECT command_id,method,aggregate_kind,aggregate_id,state,effect_certainty,response_json,response_compacted_utc,safety_parent_command_id
+            FROM command_receipt WHERE owner_id=$o AND owner_epoch=$e AND command_id=$c;
+            """);
         command.Parameters.AddWithValue("$o", _owner); command.Parameters.AddWithValue("$e", _fence.Epoch); command.Parameters.AddWithValue("$c", id);
         using var row = command.ExecuteReader();
         return !row.Read() ? null : new(row.GetString(0), row.GetString(1), row.IsDBNull(2) ? null : row.GetString(2),
-            row.IsDBNull(3) ? null : row.GetString(3), row.GetString(4), row.GetInt32(5), row.IsDBNull(6) ? null : row.GetString(6), !row.IsDBNull(7));
+            row.IsDBNull(3) ? null : row.GetString(3), row.GetString(4), row.GetInt32(5), row.IsDBNull(6) ? null : row.GetString(6), !row.IsDBNull(7),
+            row.IsDBNull(8) ? null : row.GetString(8));
     }
 
     private void Advance(string kind, string command, ReadOnlySpan<byte> content, Action<StoreTransaction> write)
@@ -261,6 +293,9 @@ internal sealed partial class DurableCommandStore : IDisposable
             writer.Write(intent.AggregateKind ?? ""); writer.Write(intent.AggregateId ?? "");
             writer.Write(intent.SafetyParent?.Length ?? 0); writer.Write(intent.SafetyParent ?? []);
             writer.Write(intent.ExpectedSandboxRevision ?? 0); writer.Write(intent.CanonicalBody.Length); writer.Write(intent.CanonicalBody);
+            // Preserve the exact existing digest for commands that use their aggregate ID for the Sandbox revision.
+            if (intent.ExpectedSandboxId is { } sandboxId)
+                writer.Write(sandboxId);
         }
         return HMACSHA256.HashData(_key, stream.ToArray());
     }
@@ -271,6 +306,10 @@ internal sealed partial class DurableCommandStore : IDisposable
         StoreIds.Validate(intent.CommandId, nameof(intent)); StoreIds.Validate(intent.OwnerEpoch, nameof(intent));
         ArgumentNullException.ThrowIfNull(intent.CanonicalBody);
         if (intent.SafetyParent is not null) StoreIds.Validate(intent.SafetyParent, nameof(intent));
+        if (intent.ExpectedSandboxId is { } sandboxId
+            && (intent.ExpectedSandboxRevision is not > 0 || sandboxId.Length != 32
+                || !sandboxId.All(character => character is >= '0' and <= '9' or >= 'a' and <= 'f')))
+            throw new ArgumentException("An explicit expected Sandbox ID requires its positive revision.", nameof(intent));
         ArgumentException.ThrowIfNullOrWhiteSpace(intent.Method);
         int separator = intent.Method.IndexOf('.');
         if (separator < 1 || separator != intent.Method.LastIndexOf('.') || separator == intent.Method.Length - 1

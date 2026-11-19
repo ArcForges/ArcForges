@@ -45,7 +45,7 @@ jobs:
           - os: windows-2025
             rid: win-x64
             full: true
-            components: host,supervisor,testload,bench
+            components: host,supervisor,run-supervisor,testload,bench
           - os: windows-11-arm
             rid: win-arm64
             full: false
@@ -53,7 +53,7 @@ jobs:
           - os: ubuntu-26.04
             rid: linux-x64
             full: true
-            components: host,testload,bench
+            components: host,run-supervisor,testload,bench
           - os: ubuntu-26.04-arm
             rid: linux-arm64
             full: false
@@ -168,6 +168,12 @@ jobs:
           $suffix = if ($IsWindows) { '.exe' } else { '' }
           $baseline = "artifacts/base-commit/artifacts/publish/$env:TARGET_RID/host/arcforges$suffix"
           ./eng/compare-startup.ps1 -RuntimeIdentifier $env:TARGET_RID -BaselineExecutable $baseline -BaselineSource "base commit $env:BASE_SHA, built and measured on this runner"
+      - name: Fetch the pinned official MXC release
+        if: endsWith(matrix.rid, '-x64')
+        run: |
+          $cache = New-Item -ItemType Directory -Force 'artifacts/mxc/official'
+          Invoke-WebRequest -Uri 'https://github.com/microsoft/mxc/releases/download/v1.0.1/mxc-release-binaries.zip' `
+            -OutFile (Join-Path $cache.FullName 'mxc-release-binaries.zip')
       - name: Package the complete Node and CLI directory
         env:
           TARGET_RID: ${{ matrix.rid }}

@@ -143,7 +143,8 @@
           "ArcForges.Contracts.Sandbox.V2": "[1.0.0-ci.481.1, )",
           "ArcForges.Node.Platform": "[0.1.0-dev, )",
           "ArcForges.Node.Store": "[0.1.0-dev, )",
-          "ArcForges.Observability": "[1.0.0-ci.150.1, )"
+          "ArcForges.Observability": "[1.0.0-ci.150.1, )",
+          "ArcForges.RunSupervisor.Protocol": "[0.1.0-dev, )"
         }
       },
       "arcforges.node.platform": {
@@ -160,6 +161,9 @@
           "ArcForges.Security.Secrets": "[1.0.0-ci.150.1, )",
           "Microsoft.Data.Sqlite": "[11.0.0, )"
         }
+      },
+      "arcforges.runsupervisor.protocol": {
+        "type": "Project"
       },
       "ArcForges.Contracts.Sandbox.V2": {
         "type": "CentralTransitive",

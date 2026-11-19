@@ -5,6 +5,7 @@
 .DESCRIPTION
   Output: artifacts/publish/<rid>/<component>/. Components: host (arcforges), supervisor
   (arcforges-supervisor.exe; Windows RIDs only; the install layout puts it beside arcforges.exe),
+  run-supervisor (arcforges-run-supervisor; qualified win-x64/linux-x64 only),
   testload (arcforges-testload), bench (arcforges-bench).
   Windows targets need the MSVC linker (Visual Studio C++ tools); Linux targets need clang and
   zlib1g-dev and are published on Linux.
@@ -17,7 +18,7 @@ param(
   [Parameter(Mandatory)]
   [ValidateSet('win-x64', 'win-arm64', 'linux-x64', 'linux-arm64')]
   [string] $RuntimeIdentifier,
-  [ValidateSet('host', 'supervisor', 'testload', 'bench')]
+  [ValidateSet('host', 'supervisor', 'run-supervisor', 'testload', 'bench')]
   [string[]] $Component = @('host', 'supervisor', 'testload', 'bench'),
   [string] $Configuration = 'Release',
   [switch] $NoRestore
@@ -30,8 +31,15 @@ $env:AVALONIA_TELEMETRY_OPTOUT = '1'
 $projects = @{
   host = 'src/ArcForges.Host'
   supervisor = 'src/ArcForges.Supervisor'
+  'run-supervisor' = 'src/ArcForges.RunSupervisor'
   testload = 'tools/ArcForges.TestLoad'
   bench = 'tools/ArcForges.Bench'
+}
+
+$qualifiedMxcRid = $RuntimeIdentifier -in @('win-x64', 'linux-x64')
+if (-not $PSBoundParameters.ContainsKey('Component') -and $qualifiedMxcRid) { $Component += 'run-supervisor' }
+if ($Component -contains 'run-supervisor' -and -not $qualifiedMxcRid) {
+  throw "The official Run supervisor is qualified only for win-x64 and linux-x64, not $RuntimeIdentifier."
 }
 
 foreach ($name in $Component) {

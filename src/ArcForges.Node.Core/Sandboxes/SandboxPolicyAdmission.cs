@@ -15,7 +15,10 @@ using Google.Protobuf;
 
 namespace ArcForges.Node.Core.Sandboxes;
 
-internal sealed record SandboxPolicyResult(MxcAdmissionResult Admission, SandboxConfig? Config);
+internal sealed record SandboxPolicyResult(MxcAdmissionResult Admission, SandboxConfig? Config)
+{
+    internal MxcHostFacts? Host { get; init; }
+}
 
 internal static class SandboxPolicyAdmission
 {
@@ -28,7 +31,10 @@ internal static class SandboxPolicyAdmission
     internal static SandboxPolicyResult Evaluate(SandboxConfig config, string dataRoot) =>
         Evaluate(config, dataRoot, SandboxPolicyHost.InstallationRoot);
 
-    internal static SandboxPolicyResult Evaluate(SandboxConfig config, string dataRoot, string installationRoot)
+    internal static SandboxPolicyResult Evaluate(SandboxConfig config, string dataRoot, string installationRoot) =>
+        Evaluate(config, dataRoot, installationRoot, MxcTerminalMode.Interactive);
+
+    internal static SandboxPolicyResult Evaluate(SandboxConfig config, string dataRoot, string installationRoot, MxcTerminalMode terminal)
     {
         ArgumentNullException.ThrowIfNull(config);
         if (!ContractShapeValidation.IsValid(config)
@@ -78,7 +84,7 @@ internal static class SandboxPolicyAdmission
             return Refuse(config, "files.default_workdir", "private_working_directory_required");
         }
 
-        var request = Request(config.ProfileId, config.ProfileVersion, mode);
+        var request = Request(config.ProfileId, config.ProfileVersion, mode) with { Terminal = terminal };
         var receipt = MxcQualificationReceipt.Read(config.ProfileId);
         var staticResult = MxcProfileAdmission.Evaluate(request, null, receipt);
         if (staticResult.Decision != MxcAdmissionDecision.PrerequisiteMissing)
@@ -100,7 +106,10 @@ internal static class SandboxPolicyAdmission
 
         var host = SandboxPolicyHost.Read(dataRoot, installationRoot);
         var admission = EvaluateHost(request, host, receipt, installationRoot);
-        return new SandboxPolicyResult(admission, admission.Admitted ? prepared : null);
+        return new SandboxPolicyResult(admission, admission.Admitted ? prepared : null)
+        {
+            Host = admission.Admitted ? host : null,
+        };
     }
 
     internal static IReadOnlyList<Capability> Capabilities(MxcAdmissionResult result)

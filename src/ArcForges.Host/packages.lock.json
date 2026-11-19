@@ -101,7 +101,6 @@
       "arcforges.node.api": {
         "type": "Project",
         "dependencies": {
-          "ArcForges.Contracts.Sandbox.V2": "[1.0.0-ci.481.1, )",
           "ArcForges.LocalRpc": "[1.0.0-ci.150.1, )",
           "ArcForges.Node.CloudLink": "[0.1.0-dev, )",
           "ArcForges.Node.Core": "[0.1.0-dev, )",
@@ -130,7 +129,8 @@
           "ArcForges.Contracts.Sandbox.V2": "[1.0.0-ci.481.1, )",
           "ArcForges.Node.Platform": "[0.1.0-dev, )",
           "ArcForges.Node.Store": "[0.1.0-dev, )",
-          "ArcForges.Observability": "[1.0.0-ci.150.1, )"
+          "ArcForges.Observability": "[1.0.0-ci.150.1, )",
+          "ArcForges.RunSupervisor.Protocol": "[0.1.0-dev, )"
         }
       },
       "arcforges.node.platform": {
@@ -144,6 +144,7 @@
         "dependencies": {
           "ArcForges.Contracts.Node": "[1.0.0-ci.450.1, )",
           "ArcForges.Node.Platform": "[0.1.0-dev, )",
+          "ArcForges.RunSupervisor.Protocol": "[0.1.0-dev, )",
           "Tmds.DBus.Protocol": "[0.95.2, )"
         }
       },
@@ -151,7 +152,8 @@
         "type": "Project",
         "dependencies": {
           "ArcForges.Contracts.Node": "[1.0.0-ci.450.1, )",
-          "ArcForges.Node.Platform": "[0.1.0-dev, )"
+          "ArcForges.Node.Platform": "[0.1.0-dev, )",
+          "ArcForges.RunSupervisor.Protocol": "[0.1.0-dev, )"
         }
       },
       "arcforges.node.store": {
@@ -162,6 +164,9 @@
           "ArcForges.Security.Secrets": "[1.0.0-ci.150.1, )",
           "Microsoft.Data.Sqlite": "[11.0.0, )"
         }
+      },
+      "arcforges.runsupervisor.protocol": {
+        "type": "Project"
       },
       "ArcForges.Contracts.Fleet": {
         "type": "CentralTransitive",

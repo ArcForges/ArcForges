@@ -134,6 +134,7 @@ public sealed class NodeRuntime : IDisposable
     /// <summary>Releases the Sandbox authority and stop token.</summary>
     public void Dispose()
     {
+        Sandboxes?.StopRunObservations();
         Sandboxes?.Dispose();
         _stop.Dispose();
     }

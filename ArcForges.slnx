@@ -11,6 +11,8 @@
     <Project Path="src/ArcForges.Node.Platform.Windows/ArcForges.Node.Platform.Windows.csproj" />
     <Project Path="src/ArcForges.Node.Store/ArcForges.Node.Store.csproj" />
     <Project Path="src/ArcForges.Supervisor/ArcForges.Supervisor.csproj" />
+    <Project Path="src/ArcForges.RunSupervisor/ArcForges.RunSupervisor.csproj" />
+    <Project Path="src/ArcForges.RunSupervisor/Protocol/ArcForges.RunSupervisor.Protocol.csproj" />
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/ArcForges.Bench/ArcForges.Bench.csproj" />
