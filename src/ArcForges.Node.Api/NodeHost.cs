@@ -377,6 +377,7 @@ public static class NodeHost
             LocalScriptSubmit = options.AllowLocalScriptSubmit
                 ?? LocalSubmission.ScriptAllowed(options.TestMode, Environment.GetEnvironmentVariable(LocalSubmission.Variable)),
         };
+        await using var sandboxResources = node.Sandboxes?.StartResourceSampling(sampler as IHostResourceSource, log);
 
         // AF-CTR-05 N2b: the center-routed dispatcher, bound to the TaskService once the local server builds it.
         using var routed = new RoutedDispatcher(node);

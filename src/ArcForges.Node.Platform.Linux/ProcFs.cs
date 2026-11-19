@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Buffers.Text;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
@@ -57,10 +58,122 @@ public static partial class ProcFs
     public const string CgroupRoot = "/sys/fs/cgroup";
 
     private static readonly Lazy<long> s_bootTime = new(ReadBootTime);
-    private static readonly Lazy<long> s_ticks = new(() => Math.Max(1, SysConf(2)));
+    private static readonly Lazy<long> s_ticks = new(() => SysConf(2)); // _SC_CLK_TCK
 
     /// <summary>Clock ticks per second (<c>sysconf(_SC_CLK_TCK)</c>), the unit of <c>/proc</c> times.</summary>
-    public static long TicksPerSecond => s_ticks.Value;
+    public static long TicksPerSecond => Math.Max(1, s_ticks.Value);
+
+    internal static uint? OnlineCpuCapacityMillicores()
+    {
+        var count = SysConf(84); // _SC_NPROCESSORS_ONLN, matching /proc/stat's host CPU aggregate
+        return count > 0 && count <= uint.MaxValue / 1000 ? (uint)count * 1000 : null;
+    }
+
+    internal static ulong? HostBusyUsec(ReadOnlySpan<byte> stat)
+    {
+        var end = stat.IndexOf((byte)'\n');
+        if (end < 0 || !stat.StartsWith("cpu "u8) || s_ticks.Value <= 0)
+        {
+            return null;
+        }
+
+        var aggregate = stat[4..end];
+        UInt128 busy = 0;
+        var index = 0;
+        foreach (var range in aggregate.Split((byte)' '))
+        {
+            var token = aggregate[range];
+            if (token.IsEmpty)
+            {
+                continue;
+            }
+
+            if (Unsigned(token) is not { } value)
+            {
+                return null;
+            }
+
+            // idle and iowait are not busy; guest and guest_nice are already included in user and nice.
+            if (index is not 3 and not 4 && index < 8)
+            {
+                busy += value;
+            }
+
+            index++;
+        }
+
+        var microseconds = busy * 1_000_000 / (ulong)s_ticks.Value;
+        return index >= 8 && microseconds <= ulong.MaxValue ? (ulong)microseconds : null;
+    }
+
+    internal static ulong? Unsigned(ReadOnlySpan<byte> text)
+    {
+        text = text.Trim(" \t\r\n"u8);
+        return !text.IsEmpty && text[0] is >= (byte)'0' and <= (byte)'9'
+            && Utf8Parser.TryParse(text, out ulong value, out var consumed) && consumed == text.Length ? value : null;
+    }
+
+    internal static ulong? AcceptCumulative(ulong? current, ref ulong? prior)
+    {
+        if (!current.HasValue || current < prior)
+        {
+            return null;
+        }
+
+        prior = current;
+        return current;
+    }
+
+    internal static ulong? NumericField(ReadOnlySpan<byte> text, ReadOnlySpan<byte> key, bool kibibytes = false)
+    {
+        ulong? result = null;
+        foreach (var range in text.Split((byte)'\n'))
+        {
+            var line = text[range];
+            if (!line.StartsWith(key))
+            {
+                continue;
+            }
+
+            var field = line[key.Length..].Trim(" \t\r"u8);
+            if (result.HasValue || (kibibytes && !field.EndsWith(" kB"u8))
+                || Unsigned(kibibytes ? field[..^3] : field) is not { } value
+                || (kibibytes && value > ulong.MaxValue / 1024))
+            {
+                return null;
+            }
+
+            result = kibibytes ? value * 1024 : value;
+        }
+
+        return result;
+    }
+
+    internal static double? PsiAverage(ReadOnlySpan<byte> text, ReadOnlySpan<byte> key)
+    {
+        double? result = null;
+        foreach (var range in text.Split((byte)'\n'))
+        {
+            var line = text[range];
+            if (!line.StartsWith(key))
+            {
+                continue;
+            }
+
+            var remaining = line[key.Length..];
+            var space = remaining.IndexOf((byte)' ');
+            var field = space < 0 ? remaining : remaining[..space];
+            if (result.HasValue || !Utf8Parser.TryParse(field, out double value, out var consumed)
+                || consumed != field.Length || value is not (>= 0 and <= 100))
+            {
+                return null;
+            }
+
+            result = value;
+        }
+
+        return result;
+    }
 
     /// <summary>The user ID of this process.</summary>
     public static uint UserId => GetUid();

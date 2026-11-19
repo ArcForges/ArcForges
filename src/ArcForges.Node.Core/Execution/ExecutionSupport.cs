@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Serialization;
 using ArcForges.Contracts.Node.V1;
+using ArcForges.Node.Core.Resources;
 using ArcForges.Node.Store;
 using ArcForges.Node.Store.Policy;
 
@@ -54,10 +55,12 @@ public sealed class ExecutionSettings
         var storage = policy.Storage ?? new StoragePolicy();
         CapacityCpu = Math.Max(1, logicalProcessors) * 1000L;
         CapacityMemory = Math.Max(1, physicalMemory);
-        ReserveCpu = (long)((resources.HasReserveCpuFixedMillicores ? resources.ReserveCpuFixedMillicores : 1000)
-            + ((resources.HasReserveCpuFraction ? resources.ReserveCpuFraction : 0.10) * CapacityCpu));
-        ReserveMemory = (long)((resources.HasReserveMemFixedBytes ? (long)resources.ReserveMemFixedBytes : 2 * GiB)
-            + ((resources.HasReserveMemFraction ? resources.ReserveMemFraction : 0.10) * CapacityMemory));
+        ReserveCpu = ResourceBudgetMath.ResolveReserve(CapacityCpu,
+            resources.HasReserveCpuFixedMillicores ? resources.ReserveCpuFixedMillicores : 1000,
+            resources.HasReserveCpuFraction ? resources.ReserveCpuFraction : 0.10);
+        ReserveMemory = ResourceBudgetMath.ResolveReserve(CapacityMemory,
+            resources.HasReserveMemFixedBytes ? (long)resources.ReserveMemFixedBytes : 2 * GiB,
+            resources.HasReserveMemFraction ? resources.ReserveMemFraction : 0.10);
         var minManaged = resources.HasMinManagedCpuMillicores ? resources.MinManagedCpuMillicores : 1000;
         MinManagedCpu = minManaged;
         AlphaUp = resources.HasSmoothingAlphaUp && resources.SmoothingAlphaUp is >= 0.05 and <= 1 ? resources.SmoothingAlphaUp : 0.5;
@@ -335,7 +338,7 @@ public sealed class ExecutionSettings
     /// <c>B_cpu = max(min_managed_cpu, C_cpu - R_cpu - U_cpu)</c> and <c>B_mem = max(0, C_mem - R_mem - U_mem)</c>.
     /// </summary>
     public (long Cpu, long Memory) Budgets(long unmanagedCpu, long unmanagedMemory) =>
-        (Math.Max(MinManagedCpu, CapacityCpu - ReserveCpu - Math.Max(0, unmanagedCpu)), Math.Max(0, CapacityMemory - ReserveMemory - Math.Max(0, unmanagedMemory)));
+        ResourceBudgetMath.LegacyBudgets(CapacityCpu, CapacityMemory, ReserveCpu, ReserveMemory, MinManagedCpu, unmanagedCpu, unmanagedMemory);
 
     /// <summary>The CPU weight of a priority (03 section 5.2).</summary>
     public static int Weight(Priority priority) => priority switch

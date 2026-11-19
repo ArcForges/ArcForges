@@ -1,0 +1,136 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+using System.Diagnostics;
+using System.Runtime.Versioning;
+using System.Text.Json;
+using ArcForges.Node.Platform.Windows.Mxc;
+
+namespace ArcForges.Node.Platform.Windows.Tests;
+
+[Trait("env", "windows-real")]
+[SupportedOSPlatform("windows")]
+public sealed class ResourceRunJobTests
+{
+    [Fact(Timeout = 45_000, DisableParallelization = true)]
+    [Trait("isolation", "exclusive")]
+    public async Task HeldJobReportsNativeCpuCountAndPeakCommitIndependentlyOfPrivateResidentBytes()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows Job accounting.");
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var bound = TimeSpan.FromSeconds(12);
+        const ulong allocatedBytes = 48UL << 20;
+        var root = Directory.CreateTempSubdirectory("arcforges-run-job-");
+        var release = Path.Combine(root.FullName, "release");
+        var report = Path.Combine(root.FullName, "allocation.json");
+        using var job = WindowsMxcJob.Create(new WindowsMxcJobLimits(10_000, 512L << 20, 8));
+        try
+        {
+            var empty = Assert.IsType<RunResourceObservation>(job.ObserveResources());
+            Assert.Equal(RunMemoryAccounting.WindowsCommit, empty.Accounting);
+            Assert.Equal(0u, empty.ProcessCount);
+            Assert.Equal(0ul, empty.ResidentBytes);
+            Assert.Null(empty.MemoryBytes);
+
+            var image = TestPrograms.TestLoad;
+            var explicitImage = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("ARCFORGES_TESTLOAD_PATH"));
+            var environment = WindowsMxcProcess.TrustedEnvironment(root.FullName).ToList();
+            if (!explicitImage)
+            {
+                // The adjacent framework-dependent apphost needs the test runner's .NET location.
+                environment.Add("DOTNET_DISABLE_GUI_ERRORS=1");
+                foreach (var name in new[] { "DOTNET_ROOT", "DOTNET_ROOT_X64" })
+                {
+                    if (Environment.GetEnvironmentVariable(name) is { Length: > 0 } value)
+                    {
+                        environment.Add(name + "=" + value);
+                    }
+                }
+            }
+
+            using var process = WindowsMxcProcess.CreateSuspended(image,
+                ["mem-ramp", "--target-mb", "48", "--step-mb", "16", "--hold-ms", "30000", "--until-file", release, "--report", report],
+                root.FullName, environment, job);
+            try
+            {
+                job.RequireMember(process);
+                WindowsMxcProcess.Resume(process);
+                PlatformHarness.WaitFor(() =>
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    Assert.False(process.WaitForExit(TimeSpan.Zero), $"TestLoad exited before measurement (0x{process.ExitCode:x8}).");
+                    return (ulong)job.Observe().Accounting.PeakJobMemory >= allocatedBytes
+                        && job.ObserveResources() is { ResidentBytes: > 0 };
+                }, bound, "the held TestLoad's native Job commit and resident observations");
+                var sampler = new WindowsResourceSampler();
+                var residentBefore = ReadPrivateResident(sampler, process);
+                var started = Stopwatch.GetTimestamp();
+                var before = job.Observe();
+                var current = Assert.IsType<RunResourceObservation>(job.ObserveResources());
+                var after = job.Observe();
+                var sampleElapsed = Stopwatch.GetElapsedTime(started);
+                var residentAfter = ReadPrivateResident(sampler, process);
+                Assert.Equal(process.ProcessId, Assert.Single(before.ProcessIds));
+                Assert.Equal(process.ProcessId, Assert.Single(after.ProcessIds));
+                Assert.Equal(1u, current.ProcessCount);
+                Assert.Null(current.MemoryBytes);
+                var resident = Assert.IsType<ulong>(current.ResidentBytes);
+                const long residentTolerance = 16L << 20;
+                Assert.InRange(resident, (ulong)Math.Max(1, Math.Min(residentBefore, residentAfter) - residentTolerance),
+                    (ulong)(Math.Max(residentBefore, residentAfter) + residentTolerance));
+                Assert.InRange(Assert.IsType<ulong>(current.PeakMemoryBytes),
+                    (ulong)before.Accounting.PeakJobMemory, (ulong)after.Accounting.PeakJobMemory);
+                Assert.InRange(Assert.IsType<ulong>(current.CumulativeCpuUsec), CpuUsec(before), CpuUsec(after));
+                Assert.True(current.CumulativeCpuUsec > 0);
+                var output = TestContext.Current.TestOutputHelper;
+                output?.WriteLine(FormattableString.Invariant(
+                    $"Windows held Job sample with two native references: {sampleElapsed.TotalMilliseconds:F3} ms. Selected TestLoad override {explicitImage}."));
+                output?.WriteLine(FormattableString.Invariant(
+                    $"Live Job peak {current.PeakMemoryBytes} bytes, CPU {current.CumulativeCpuUsec} usec, resident {resident} bytes, native process resident {residentBefore}/{residentAfter} bytes."));
+
+                File.WriteAllText(release, "release");
+                Assert.True(process.WaitForExit(bound));
+                Assert.Equal(0u, process.ExitCode);
+                using (var allocation = JsonDocument.Parse(File.ReadAllBytes(report)))
+                {
+                    Assert.Equal(allocatedBytes, allocation.RootElement.GetProperty("results").GetProperty("allocatedBytes").GetUInt64());
+                }
+
+                _ = await job.WaitForDrainAsync(null, bound, cancellationToken);
+
+                var drained = Assert.IsType<RunResourceObservation>(job.ObserveResources());
+                Assert.Equal(0u, drained.ProcessCount);
+                Assert.Equal(0ul, drained.ResidentBytes);
+                Assert.True(drained.CumulativeCpuUsec >= current.CumulativeCpuUsec);
+                Assert.True(drained.PeakMemoryBytes >= current.PeakMemoryBytes);
+                Assert.Null(drained.MemoryBytes);
+            }
+            finally
+            {
+                if (!process.WaitForExit(TimeSpan.Zero))
+                {
+                    job.Terminate();
+                    Assert.True(process.WaitForExit(bound));
+                }
+            }
+        }
+        finally
+        {
+            File.Delete(release);
+            File.Delete(report);
+            root.Delete();
+        }
+
+        job.Dispose();
+        Assert.Null(job.ObserveResources());
+    }
+
+    private static ulong CpuUsec(WindowsMxcJobObservation value) =>
+        (ulong)(value.Accounting.UserTime + value.Accounting.KernelTime).Ticks / 10;
+
+    private static long ReadPrivateResident(WindowsResourceSampler sampler, LaunchedProcess process)
+    {
+        var child = Assert.Single(sampler.Processes(), item =>
+            item.Pid == process.ProcessId && item.StartTime.UtcDateTime.ToFileTimeUtc() == process.CreationFileTime);
+        Assert.True(child.MemoryBytes > 0);
+        return child.MemoryBytes;
+    }
+}

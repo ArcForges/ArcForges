@@ -125,3 +125,57 @@ public interface IResourceSampler
     /// <summary>True when <paramref name="image"/> names a launcher into a virtual machine (<c>wsl.exe</c>; 03 section 9 <c>crosses_vm_boundary</c>).</summary>
     bool IsVmLauncher(string image) => false;
 }
+
+/// <summary>Native host observations used by the Sandbox resource monitor.</summary>
+public sealed record HostResourceObservation
+{
+    /// <summary>Monotonic time of the underlying host counters in Stopwatch ticks.</summary>
+    public long? MonotonicTimestamp { get; init; }
+    public uint? CpuCapacityMillicores { get; init; }
+    public ulong? CpuBusyUsec { get; init; }
+    public ulong? PhysicalTotalBytes { get; init; }
+    public ulong? PhysicalAvailableBytes { get; init; }
+    public ulong? CommitBytes { get; init; }
+    public ulong? CommitLimitBytes { get; init; }
+    public ulong? NodeCpuUsec { get; init; }
+    public ulong? NodeResidentBytes { get; init; }
+    public ulong? OomKills { get; init; }
+    public double? PsiCpuSome { get; init; }
+    public double? PsiMemorySome { get; init; }
+    public double? PsiMemoryFull { get; init; }
+}
+
+/// <summary>An observation source whose absent measurements have no numeric value.</summary>
+public interface IHostResourceSource
+{
+    HostResourceObservation ObserveHostResources();
+}
+
+/// <summary>The native memory accounting used by an owned Run scope.</summary>
+public enum RunMemoryAccounting
+{
+    WindowsCommit,
+    LinuxCgroupCurrent,
+}
+
+/// <summary>
+/// Readback from the original owned resource scope. Native controller bytes and resident estimates
+/// have separate meanings. Null fields represent unavailable measurements.
+/// </summary>
+public sealed record RunResourceObservation(RunMemoryAccounting Accounting)
+{
+    public ulong? CumulativeCpuUsec { get; init; }
+    public ulong? MemoryBytes { get; init; }
+    public ulong? PeakMemoryBytes { get; init; }
+    public ulong? ResidentBytes { get; init; }
+    public uint? ProcessCount { get; init; }
+    public double? PsiCpuSome { get; init; }
+    public double? PsiMemorySome { get; init; }
+    public double? PsiMemoryFull { get; init; }
+}
+
+/// <summary>Reads a Run through its already verified platform resource handle.</summary>
+public interface IRunResourceSource
+{
+    RunResourceObservation? ObserveRunResources();
+}

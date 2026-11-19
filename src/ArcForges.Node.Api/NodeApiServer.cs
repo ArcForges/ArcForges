@@ -24,6 +24,7 @@ public static class NodeApiServer
     private const string SandboxNode = "arcforges.sandbox.v2.NodeService";
     private const string Sandbox = "arcforges.sandbox.v2.SandboxService";
     private const string Runs = "arcforges.sandbox.v2.RunService";
+    private const string SandboxResources = "arcforges.sandbox.v2.ResourceService";
 
     /// <summary>Builds the server (not started).</summary>
     /// <param name="endpoint">The node's endpoint.</param>
@@ -49,6 +50,7 @@ public static class NodeApiServer
         builder.AddService(new SandboxNodeServiceHandler(node));
         builder.AddService(new SandboxServiceHandler(node));
         builder.AddService(new RunServiceHandler(node, sessions));
+        builder.AddService(new SandboxResourceServiceHandler(node));
         var sandboxDeadline = new LocalRpcCallProfile(TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
         builder.RegisterMethod(SandboxNode, "Handshake", sandboxDeadline);
         builder.RegisterMethod(SandboxNode, "GetOperation", sandboxDeadline);
@@ -70,6 +72,13 @@ public static class NodeApiServer
         builder.RegisterStream(Runs, "WatchOutput", new LocalRpcStreamProfile
         {
             MaxBufferedMessages = RunServiceHandler.OutputBuffer,
+            RequireReads = TimeSpan.FromSeconds(10),
+        });
+
+        builder.RegisterMethod(SandboxResources, "GetBudget", sandboxDeadline);
+        builder.RegisterStream(SandboxResources, "WatchUsage", new LocalRpcStreamProfile
+        {
+            MaxBufferedMessages = SandboxResourceServiceHandler.WatchBuffer,
             RequireReads = TimeSpan.FromSeconds(10),
         });
 

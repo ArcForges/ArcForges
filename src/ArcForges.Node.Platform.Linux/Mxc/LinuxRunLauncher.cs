@@ -166,12 +166,14 @@ public sealed class LinuxRunLauncher : IRunLauncher
     };
 
     private sealed class LinuxRunLease(RunLaunchSpec spec, LinuxRunServiceState native, LinuxRunCgroup scope,
-        RunControlClient controller, RunOwnerIdentity identity, SafeFileHandle controlDirectory) : IRunOwnerLease
+        RunControlClient controller, RunOwnerIdentity identity, SafeFileHandle controlDirectory) : IRunOwnerLease, IRunResourceSource
     {
         private bool _releaseSent;
         private int _boundaryStopVerified;
 
         public RunOwnerIdentity Identity { get; } = identity;
+
+        public RunResourceObservation? ObserveRunResources() => scope.ObserveResources();
 
         public ValueTask<RunTerminalReply> TerminalAsync(RunTerminalRequest request, CancellationToken cancellationToken) =>
             controller.TerminalAsync(request, cancellationToken);

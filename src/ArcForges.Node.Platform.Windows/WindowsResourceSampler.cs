@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 
@@ -44,8 +45,9 @@ public static class VmProcesses
 /// never opened), and the processes to detail can be chosen by CPU because the whole table has it.
 /// </summary>
 [SupportedOSPlatform("windows")]
-public sealed unsafe class WindowsResourceSampler : IResourceSampler
+public sealed unsafe partial class WindowsResourceSampler : IResourceSampler, IHostResourceSource
 {
+    private const ushort AllProcessorGroups = ushort.MaxValue;
     private const int SystemProcessInformation = 5;
     private const int StatusInfoLengthMismatch = unchecked((int)0xC0000004);
 
@@ -102,6 +104,57 @@ public sealed unsafe class WindowsResourceSampler : IResourceSampler
             CommitBytes = (long)(status.TotalPageFile - status.AvailPageFile),
             CommitLimitBytes = (long)status.TotalPageFile,
         };
+    }
+
+    /// <inheritdoc />
+    public HostResourceObservation ObserveHostResources()
+    {
+        var sampledAt = Stopwatch.GetTimestamp();
+        var processorGroups = GetActiveProcessorGroupCount();
+        var processors = GetActiveProcessorCount(AllProcessorGroups);
+        // GetSystemTimes covers only the calling thread's processor group on a multi-group host.
+        ulong? busyUsec = null;
+        if (processorGroups == 1 && processors is > 0 and <= 64
+            && Native.GetSystemTimes(out var idle, out var kernel, out var user) && idle >= 0 && kernel >= idle && user >= 0)
+        {
+            busyUsec = ((ulong)(kernel - idle) + (ulong)user) / 10;
+        }
+
+        var memory = new Native.MemoryStatusEx { Length = sizeof(Native.MemoryStatusEx) };
+        var physicalKnown = Native.GlobalMemoryStatusEx(&memory) && memory.TotalPhys > 0 && memory.AvailPhys <= memory.TotalPhys;
+
+        // MEMORYSTATUSEX page-file values can be affected by the current process's quota.
+        var performance = new PerformanceInformation { Size = (uint)sizeof(PerformanceInformation) };
+        var commitKnown = GetPerformanceInfo(ref performance, performance.Size) && performance.PageSize > 0
+            && performance.CommitTotal <= performance.CommitLimit && performance.CommitLimit <= ulong.MaxValue / performance.PageSize;
+
+        using var node = ProcessInfo.Open(Environment.ProcessId);
+        ulong? nodeCpuUsec = null;
+        if (node is not null && Native.GetProcessTimes(node, out _, out _, out var nodeKernel, out var nodeUser)
+            && nodeKernel >= 0 && nodeUser >= 0)
+        {
+            nodeCpuUsec = ((ulong)nodeKernel + (ulong)nodeUser) / 10;
+        }
+
+        return new HostResourceObservation
+        {
+            MonotonicTimestamp = sampledAt,
+            CpuCapacityMillicores = processorGroups != 0 && processors is > 0 and <= (uint.MaxValue / 1000)
+                ? processors * 1000 : null,
+            CpuBusyUsec = busyUsec,
+            PhysicalTotalBytes = physicalKnown ? memory.TotalPhys : null,
+            PhysicalAvailableBytes = physicalKnown ? memory.AvailPhys : null,
+            CommitBytes = commitKnown ? (ulong)performance.CommitTotal * performance.PageSize : null,
+            CommitLimitBytes = commitKnown ? (ulong)performance.CommitLimit * performance.PageSize : null,
+            NodeCpuUsec = nodeCpuUsec,
+            NodeResidentBytes = node is null ? null : PrivateResidentBytes(node),
+        };
+    }
+
+    internal static ulong? PrivateResidentBytes(SafeKernelHandle process)
+    {
+        var counters = new ProcessMemoryCountersEx2 { Size = (uint)sizeof(ProcessMemoryCountersEx2) };
+        return GetProcessMemoryInfo(process, ref counters, counters.Size) ? counters.PrivateWorkingSetSize : null;
     }
 
     /// <inheritdoc />
@@ -192,5 +245,60 @@ public sealed unsafe class WindowsResourceSampler : IResourceSampler
         {
             throw new PlatformNotSupportedException("The Windows resource sampler reads the 64-bit SYSTEM_PROCESS_INFORMATION layout; run a 64-bit node.");
         }
+    }
+
+    [LibraryImport("kernel32.dll")]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    private static partial ushort GetActiveProcessorGroupCount();
+
+    [LibraryImport("kernel32.dll")]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    private static partial uint GetActiveProcessorCount(ushort groupNumber);
+
+    [LibraryImport("kernel32.dll", EntryPoint = "K32GetPerformanceInfo", SetLastError = true)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool GetPerformanceInfo(ref PerformanceInformation information, uint size);
+
+    [LibraryImport("kernel32.dll", EntryPoint = "K32GetProcessMemoryInfo", SetLastError = true)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool GetProcessMemoryInfo(SafeKernelHandle process, ref ProcessMemoryCountersEx2 counters, uint size);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct PerformanceInformation
+    {
+        public uint Size;
+        public nuint CommitTotal;
+        public nuint CommitLimit;
+        public nuint CommitPeak;
+        public nuint PhysicalTotal;
+        public nuint PhysicalAvailable;
+        public nuint SystemCache;
+        public nuint KernelTotal;
+        public nuint KernelPaged;
+        public nuint KernelNonpaged;
+        public nuint PageSize;
+        public uint HandleCount;
+        public uint ProcessCount;
+        public uint ThreadCount;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ProcessMemoryCountersEx2
+    {
+        public uint Size;
+        public uint PageFaultCount;
+        public nuint PeakWorkingSetSize;
+        public nuint WorkingSetSize;
+        public nuint QuotaPeakPagedPoolUsage;
+        public nuint QuotaPagedPoolUsage;
+        public nuint QuotaPeakNonPagedPoolUsage;
+        public nuint QuotaNonPagedPoolUsage;
+        public nuint PagefileUsage;
+        public nuint PeakPagefileUsage;
+        public nuint PrivateUsage;
+        public nuint PrivateWorkingSetSize;
+        public ulong SharedCommitUsage;
     }
 }
