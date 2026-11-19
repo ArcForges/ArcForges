@@ -192,23 +192,33 @@ public sealed partial class MxcRunServiceTests
         var final = await WaitForStateAsync(installed.Fixture, installed.Runs, run.RunId, RunState.Exited, paused.Token);
         Assert.True(final.Exit.GroupEmptyVerified);
 
-        var resumed = await ReadWatchAsync(slow.ResponseStream, run, StreamKind.Stdout, first.NextOffset);
-        Assert.NotNull(resumed.Gap);
-        Assert.Equal("slow_consumer", resumed.Gap.Reason);
-        Assert.InRange(resumed.Gap.RequestedOffset, first.NextOffset, (ulong)(anchor.Length + prefix));
+        var gaps = new List<OutputGap>();
+        var resumed = await ReadWatchAsync(slow.ResponseStream, run, StreamKind.Stdout, first.NextOffset, gaps);
+        var firstBlocked = gaps.FirstOrDefault(gap => gap.Reason == "slow_consumer");
+        Assert.NotNull(firstBlocked);
+        Assert.InRange(firstBlocked.RequestedOffset, first.NextOffset, (ulong)(anchor.Length + prefix));
         Assert.Equal(produced, resumed.Offset);
 
         var fresh = await WatchAsync(installed.Runs, run, StreamKind.Stdout);
         Assert.NotNull(fresh.Gap);
         Assert.Equal("retention", fresh.Gap.Reason);
-        Assert.Equal(resumed.Gap.EarliestOffset, fresh.Gap.EarliestOffset);
+        Assert.All(gaps, gap =>
+        {
+            Assert.True(gap.Reason is "slow_consumer" or "retention", $"Unexpected advancing GAP reason {gap.Reason}.");
+            Assert.InRange(gap.EarliestOffset, first.NextOffset + 1, fresh.Gap.EarliestOffset);
+        });
         Assert.Equal(produced, fresh.Offset);
         Assert.InRange(fresh.Bytes.Length, 1, (int)retained);
         Assert.Equal(produced - fresh.Gap.EarliestOffset, (ulong)fresh.Bytes.Length);
         Assert.True(fresh.Bytes.AsSpan().IndexOfAnyExcept((byte)'T') < 0, "The retained bytes must be the final producer burst.");
+        Assert.NotNull(resumed.Gap);
+        Assert.Equal(produced - resumed.Gap.EarliestOffset, (ulong)resumed.Bytes.Length);
+        Assert.True(resumed.Bytes.Length >= fresh.Bytes.Length, "The original subscriber must recover the entire stable retained suffix.");
+        Assert.True(resumed.Bytes.AsSpan(^fresh.Bytes.Length).SequenceEqual(fresh.Bytes),
+            "The original subscriber's final suffix must match the fresh reader's stable retained bytes.");
         TestContext.Current.TestOutputHelper?.WriteLine(
-            $"Native Run exited while its viewer paused. Slow cursor {resumed.Gap.RequestedOffset} advanced to {resumed.Gap.EarliestOffset}. "
-            + $"Fresh retention recovered the same cursor and {fresh.Bytes.Length} bytes through final offset {fresh.Offset}.");
+            $"Native Run exited while its viewer paused. Slow cursor {firstBlocked.RequestedOffset} advanced to {firstBlocked.EarliestOffset}. "
+            + $"The viewer received {gaps.Count} gap frames and the stable suffix of {fresh.Bytes.Length} bytes through final offset {fresh.Offset}.");
     }
 
     private static async Task WaitSlowMarkerAsync(string path, string milestone, CancellationToken cancellationToken)
@@ -317,7 +327,30 @@ public sealed partial class MxcRunServiceTests
     public async Task InstalledTerminalLossMakesOldAcknowledgmentUncertain(bool supervisorLoss)
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        await using var installed = await InstalledTerminal.StartAsync();
+        var installed = await InstalledTerminal.StartAsync();
+        try
+        {
+            await ExerciseTerminalLossAsync(installed, supervisorLoss);
+        }
+        catch (Exception primary)
+        {
+            try
+            {
+                await installed.DisposeAsync();
+            }
+            catch (Exception cleanup)
+            {
+                throw new AggregateException("The terminal loss case and native cleanup both failed.", primary, cleanup);
+            }
+
+            throw;
+        }
+
+        await installed.DisposeAsync();
+    }
+
+    private static async Task ExerciseTerminalLossAsync(InstalledTerminal installed, bool supervisorLoss)
+    {
         var marker = Path.Combine(installed.Working, "loss.log");
         byte[] one = "x"u8.ToArray();
         var run = await installed.RunAsync(TerminalMode.Interactive, "terminal", "quiet", marker, "1", "8000");
@@ -329,6 +362,9 @@ public sealed partial class MxcRunServiceTests
         var binding = ReadSupervisor(installed.Fixture.DataRoot, run);
         var owner = Assert.IsType<ProcessIdentity>(ProcessIdentity.Capture(binding.Pid));
         Assert.NotEqual(installed.Process.Id, owner.Pid);
+        var unit = OperatingSystem.IsLinux() ? binding.Boundary.Split('|', 2)[0] : "Windows Job";
+        TestContext.Current.TestOutputHelper?.WriteLine(
+            $"Run {Hex(run.RunId)} has supervisor PID {owner.Pid} and boundary {unit}. Supervisor loss = {supervisorLoss}.");
         if (supervisorLoss)
         {
             KillExactTerminalSupervisor(owner, binding.Creation);
@@ -449,7 +485,8 @@ public sealed partial class MxcRunServiceTests
         }, deadline: Deadline, cancellationToken: Ct);
 
     private static async Task<(byte[] Bytes, ulong Offset, OutputGap? Gap)> ReadWatchAsync(
-        IAsyncStreamReader<RunServiceWatchOutputFrame> response, Run run, StreamKind kind, ulong offset)
+        IAsyncStreamReader<RunServiceWatchOutputFrame> response, Run run, StreamKind kind, ulong offset,
+        List<OutputGap>? successiveGaps = null)
     {
         using var bytes = new MemoryStream();
         OutputGap? gap = null;
@@ -461,10 +498,19 @@ public sealed partial class MxcRunServiceTests
             Assert.False(terminal, "The terminal Run frame must be last.");
             if (frame.Gap is { } missing)
             {
-                Assert.Null(gap);
                 Assert.Equal(run.Epoch, missing.Epoch);
                 Assert.Equal(offset, missing.RequestedOffset);
                 Assert.True(missing.EarliestOffset > offset);
+                if (successiveGaps is null)
+                {
+                    Assert.Null(gap);
+                }
+                else
+                {
+                    successiveGaps.Add(missing);
+                    bytes.SetLength(0); // Keep the contiguous output suffix after the latest gap.
+                }
+
                 gap = missing;
                 offset = missing.EarliestOffset;
             }
@@ -663,18 +709,28 @@ public sealed partial class MxcRunServiceTests
                     foreach (var entry in _runs.Values)
                     {
                         var current = await InspectAsync(Runs, entry.Run, CancellationToken.None);
+                        var cleanupStart = current.State;
+                        var stopState = "already settling";
                         if (current.State is RunState.Running or RunState.Starting)
                         {
                             var stop = await Runs.StopAsync(BuildStop(OwnerEpoch, current), deadline: Deadline, cancellationToken: CancellationToken.None);
                             // Loss cases deliberately keep the old owner unbound. A typed unknown does not authorize native cleanup.
                             if (stop.Error?.Code == "outcome_unknown") continue;
                             current = Value(stop.Value, stop.Error).Run;
+                            stopState = current.State.ToString();
                         }
 
                         var cleanup = Stopwatch.StartNew();
                         while (current.State is RunState.Stopping or RunState.Draining)
                         {
-                            Assert.True(cleanup.Elapsed < NativeBound, "The installed terminal fixture did not drain after cleanup Stop.");
+                            if (cleanup.Elapsed >= NativeBound)
+                            {
+                                var phases = ReadRunDiagnostics(Fixture, entry.Run);
+                                Assert.Fail($"Run {Hex(entry.Run)} did not drain after cleanup Stop. "
+                                    + $"Inspect initially reported {cleanupStart}. Stop reported {stopState}. "
+                                    + $"Last Inspect reported {current.State} at revision {current.Revision.Value}. {phases}");
+                            }
+
                             await Task.Delay(100);
                             current = await InspectAsync(Runs, entry.Run, CancellationToken.None);
                         }
