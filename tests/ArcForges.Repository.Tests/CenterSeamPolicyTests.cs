@@ -18,6 +18,7 @@ public sealed partial class CenterSeamPolicyTests
     private const string FakeCenterDirectory = "tests/ArcForges.Node.CloudLink.Tests/";
     private const string RunControllerSocket = "src/ArcForges.Node.Platform.Linux/Mxc/LinuxRunLauncher.cs";
     private const string RunWorkerSocket = "src/ArcForges.RunSupervisor/Linux/LinuxRunWorker.cs";
+    private const string NodeEndpointSocket = "src/ArcForges.Node.Core/Security/SandboxProtectedEndpoint.cs";
 
     /// <summary>The explicitly reviewed local endpoint, readiness and private worker Unix-domain socket sites.</summary>
     private static readonly HashSet<string> UnixSocketSites = new(StringComparer.Ordinal)
@@ -29,6 +30,7 @@ public sealed partial class CenterSeamPolicyTests
         "src/ArcForges.Node.Core/Platform/LinuxWorkerBootstrapSelfTest.cs",
         RunControllerSocket,
         RunWorkerSocket,
+        NodeEndpointSocket,
     };
 
     [Fact]
@@ -102,8 +104,25 @@ public sealed partial class CenterSeamPolicyTests
     [InlineData(RunWorkerSocket, "new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified)", true)]
     [InlineData(RunControllerSocket, "new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp)", false)]
     [InlineData(RunWorkerSocket, "new Socket(AddressFamily.InterNetworkV6, SocketType.Stream, ProtocolType.Tcp)", false)]
+    [InlineData(NodeEndpointSocket, "new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified)", true)]
+    [InlineData(NodeEndpointSocket, "new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp)", false)]
+    [InlineData(NodeEndpointSocket, "new Socket(AddressFamily.InterNetworkV6, SocketType.Stream, ProtocolType.Tcp)", false)]
     public void OnlyReviewedUnixSocketConstructionsAreLocal(string path, string construction, bool allowed) =>
         Assert.Equal(allowed, IsAllowedLocalSocket(path, construction));
+
+    [Fact]
+    public void TheNodeEndpointProbeUsesTheHeldDirectoryAndOwnKernelPeer()
+    {
+        var source = File.ReadAllText(Path.Combine(RepositoryFiles.Root, NodeEndpointSocket));
+        Assert.DoesNotContain("IPEndPoint", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("DnsEndPoint", source, StringComparison.Ordinal);
+        Assert.Matches(LocalUnixSocket(), Assert.Single(SocketConstruction().Matches(source).Cast<Match>()).Value);
+        Assert.Contains("var descriptorPath = \"/proc/self/fd/\" + directory.DangerousGetHandle()", source, StringComparison.Ordinal);
+        Assert.Contains("RequireOwnListener(Path.Combine(descriptorPath, _name));", source, StringComparison.Ordinal);
+        Assert.Contains("probe.Connect(new UnixDomainSocketEndPoint(endpoint));", source, StringComparison.Ordinal);
+        Assert.Contains("LinuxPeerCredentialReader.Read(probe)", source, StringComparison.Ordinal);
+        Assert.Contains("peer.ProcessId != Environment.ProcessId || peer.UserId != GetEffectiveUser()", source, StringComparison.Ordinal);
+    }
 
     [Fact]
     public void TheFileEffectSocketsUseAuthenticatedLocalPeers()

@@ -44,6 +44,8 @@ internal static class Program
                     checks native terminal input, geometry and mode restoration; quiet emits no terminal output
           terminal  slow-output <marker> <prefix-gate> <tail-gate>
                     writes a fixed binary burst after each of two file gates for transport back-pressure tests
+          security  <marker> <endpoint> <guarded-probe> <argument> <argument-sha256> <secret-sha256>
+                    checks the isolated Node fixture without sending an IPC request or reading host data
 
         Every scenario accepts --report <file>. The JSON report goes to that file; without it,
         cpu, mem-ramp, fork and `output --stream none` print it on standard output.
@@ -74,6 +76,11 @@ internal static class Program
             if (args[0] == "terminal")
             {
                 return await TerminalScenario.RunAsync(args[1..]).ConfigureAwait(false);
+            }
+
+            if (args[0] == "security")
+            {
+                return await SecurityScenario.RunAsync(args[1..]).ConfigureAwait(false);
             }
 
             var options = ScenarioOptions.Parse(args[1..]);

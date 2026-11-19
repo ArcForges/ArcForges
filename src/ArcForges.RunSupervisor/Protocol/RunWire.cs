@@ -32,6 +32,7 @@ internal sealed record RunObservationReceipt(
 
 [JsonSourceGenerationOptions(UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow)]
 [JsonSerializable(typeof(RunLaunchSpec))]
+[JsonSerializable(typeof(RunLaunchInputs))]
 [JsonSerializable(typeof(RunControlFrame))]
 [JsonSerializable(typeof(RunObservationReceipt))]
 internal sealed partial class RunJson : JsonSerializerContext;
@@ -41,6 +42,7 @@ public static partial class RunWire
 {
     public const int KeyLength = 32;
     public const int ChallengeLength = 32;
+    public const int LaunchInputsLimit = 2 * 1024 * 1024;
     private const int LaunchLimit = 2 * 1024 * 1024;
     private const int FrameLimit = 64 * 1024;
     private const int ObservationLimit = 64 * 1024;
@@ -54,15 +56,21 @@ public static partial class RunWire
 
     public static string WriteLaunch(RunLaunchSpec spec, Action<SafeFileHandle>? captureCreatedFile = null)
     {
-        ValidateLaunch(spec);
-        var bytes = JsonSerializer.SerializeToUtf8Bytes(spec, RunJson.Default.RunLaunchSpec);
+        if (!CanEncodeLaunchInputs(spec))
+        {
+            throw new InvalidDataException("run_launch_inputs_invalid");
+        }
+
+        var manifest = spec with { InputBinding = Convert.ToHexStringLower(BindInputs(spec, new(spec.Argv, spec.Environment))) };
+        ValidateLaunch(manifest);
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(manifest, RunJson.Default.RunLaunchSpec);
         if (bytes.Length > LaunchLimit)
         {
             throw new InvalidDataException("run_launch_too_large");
         }
 
-        WritePrivateNew(LaunchPath(spec), bytes, captureCreatedFile);
-        return LaunchBinding(spec, bytes);
+        WritePrivateNew(LaunchPath(manifest), bytes, captureCreatedFile);
+        return LaunchBinding(manifest, bytes);
     }
 
     public static RunLaunchSpec ReadLaunch(string path, out string launchBinding)
@@ -88,6 +96,66 @@ public static partial class RunWire
 
     private static string LaunchBinding(RunLaunchSpec spec, byte[] bytes) =>
         Convert.ToHexStringLower(Authenticate(spec.ControlKey, 4, [], bytes));
+
+    public static bool CanEncodeLaunchInputs(RunLaunchSpec spec)
+    {
+        var inputs = new RunLaunchInputs(spec.Argv, spec.Environment);
+        if (!ValidLaunchInputs(spec, inputs))
+        {
+            return false;
+        }
+
+        // Reserve the exact header overhead of the largest sequence and a Windows Job capability.
+        var frame = new RunControlFrame(long.MaxValue, RunControlCommand.Activate, new RunRelease(long.MaxValue, inputs));
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(frame, RunJson.Default.RunControlFrame);
+        try
+        {
+            return bytes.Length <= LaunchInputsLimit;
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(bytes);
+        }
+    }
+
+    private static bool ValidLaunchInputs(RunLaunchSpec spec, RunLaunchInputs? inputs)
+    {
+        if (inputs is not { Argv.Length: > 0 and <= 256, Environment: not null }
+            || !StringComparer.Ordinal.Equals(inputs.Argv[0], spec.ExecutablePath)
+            || inputs.Argv.Any(argument => argument is null || argument.Contains('\0')))
+        {
+            return false;
+        }
+
+        var names = new HashSet<string>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+        foreach (var entry in inputs.Environment)
+        {
+            if (entry is not { Name.Length: >= 1 and <= 256, Value: not null }
+                || entry.Name.AsSpan().IndexOfAny('=', '\0') >= 0 || entry.Value.Contains('\0')
+                || System.Text.Encoding.UTF8.GetByteCount(entry.Value) > 32_768 || !names.Add(entry.Name)
+                || entry.Name.StartsWith("ARCFORGES_", StringComparison.OrdinalIgnoreCase)
+                || entry.Name.StartsWith("MXC_", StringComparison.OrdinalIgnoreCase)
+                || entry.Name.StartsWith("BWRAP_", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static byte[] BindInputs(RunLaunchSpec spec, RunLaunchInputs inputs)
+    {
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(inputs, RunJson.Default.RunLaunchInputs);
+        try
+        {
+            return Authenticate(spec.ControlKey, 5, [], bytes);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(bytes);
+        }
+    }
 
     public static void WriteObservation(RunLaunchSpec spec, RunOwnerObservation observation)
     {
@@ -162,7 +230,7 @@ public static partial class RunWire
         }
         finally
         {
-            if (frame.TerminalRequest?.Input is not null)
+            if (frame.TerminalRequest?.Input is not null || frame.Release?.Inputs is not null)
             {
                 CryptographicOperations.ZeroMemory(body);
                 if (data is not null)
@@ -179,7 +247,7 @@ public static partial class RunWire
         var header = new byte[sizeof(int)];
         await stream.ReadExactlyAsync(header, cancellationToken).ConfigureAwait(false);
         var length = BinaryPrimitives.ReadInt32BigEndian(header);
-        if (length < 1 || length > (response ? FrameLimit : TerminalRequestLimit))
+        if (length < 1 || length > (response ? FrameLimit : LaunchInputsLimit))
         {
             throw new InvalidDataException("run_control_frame_length_invalid");
         }
@@ -201,6 +269,22 @@ public static partial class RunWire
                 throw new InvalidDataException("run_control_frame_too_large");
             }
 
+            if (response || frame.Command != RunControlCommand.Activate)
+            {
+                if (frame.Release is not null)
+                {
+                    frame.Release.Inputs?.Clear();
+                    throw new InvalidDataException("run_release_unexpected");
+                }
+            }
+            else if (frame.Release?.Inputs is not { } inputs || !ValidLaunchInputs(spec, inputs)
+                || spec.InputBinding is null || !CryptographicOperations.FixedTimeEquals(
+                    Convert.FromHexString(spec.InputBinding), BindInputs(spec, inputs)))
+            {
+                frame.Release?.Inputs?.Clear();
+                throw new InvalidDataException("run_launch_inputs_mismatch");
+            }
+
             return frame;
         }
         finally
@@ -212,6 +296,7 @@ public static partial class RunWire
     private static int ControlFrameLimit(RunControlCommand command, bool response) => command switch
     {
         RunControlCommand.TerminalBegin when !response => TerminalRequestLimit,
+        RunControlCommand.Activate when !response => LaunchInputsLimit,
         RunControlCommand.TerminalBegin or RunControlCommand.TerminalPoll => TerminalReplyLimit,
         _ => FrameLimit,
     };
@@ -228,7 +313,8 @@ public static partial class RunWire
 
     private static void ValidateLaunch(RunLaunchSpec spec)
     {
-        if (spec.ControlKey?.Length != KeyLength || spec.Argv is not { Length: > 0 and <= 256 }
+        if (spec.ControlKey?.Length != KeyLength || spec.InputBinding is not { Length: 64 }
+            || !spec.InputBinding.All(char.IsAsciiHexDigitLower) || !Path.IsPathFullyQualified(spec.ExecutablePath)
             || string.IsNullOrWhiteSpace(spec.RunId) || string.IsNullOrWhiteSpace(spec.SandboxId) || string.IsNullOrWhiteSpace(spec.OwnerId)
             || string.IsNullOrWhiteSpace(spec.Epoch) || spec.LaunchSha256?.Length != 64 || string.IsNullOrWhiteSpace(spec.ControlEndpoint)
             || string.IsNullOrWhiteSpace(spec.ProfileId) || string.IsNullOrWhiteSpace(spec.ProfileVersion)

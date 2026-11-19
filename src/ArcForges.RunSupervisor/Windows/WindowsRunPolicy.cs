@@ -5,8 +5,12 @@ using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.Versioning;
+using System.Security.Cryptography;
+using System.Text.Encodings.Web;
 using System.Text.Json;
+using ArcForges.Node.Platform;
 using ArcForges.Node.Platform.Windows;
+using ArcForges.Node.Platform.Windows.Mxc;
 using ArcForges.RunSupervisor.Protocol;
 
 namespace ArcForges.RunSupervisor;
@@ -14,12 +18,12 @@ namespace ArcForges.RunSupervisor;
 [SupportedOSPlatform("windows")]
 internal static class WindowsRunPolicy
 {
-    internal const int MaximumBytes = 256 * 1024;
+    private const int MaximumBytes = 256 * 1024;
     private static readonly string[] PrivateNames = ["home", "config", "cache", "tmp", "work", "data"];
 
     internal static IEnumerable<string> PrivateDirectories(string root) => PrivateNames.Select(name => Path.Combine(root, name));
 
-    internal static string Write(RunLaunchSpec spec)
+    internal static string Write(RunLaunchSpec spec, string path, Action<WindowsMxcPathLease.PrivateFileIdentity> capture)
     {
         if (spec.Argv.Length is 0 || !Path.IsPathFullyQualified(spec.Argv[0]) || !Path.IsPathFullyQualified(spec.WorkingDirectory)
             || spec.Argv.Any(arg => arg.Contains('\0')))
@@ -52,18 +56,28 @@ internal static class WindowsRunPolicy
             throw new InvalidDataException("A Windows MXC grant overlaps the private Run control path.");
         }
 
-        var environment = PayloadEnvironment(spec, root);
-        var bytes = new ArrayBufferWriter<byte>();
-        using (var json = new Utf8JsonWriter(bytes))
+        string commandLine;
+        try
         {
+            commandLine = WindowsCommandLine.Build(spec.Argv);
+        }
+        catch (CommandRefusedException)
+        {
+            throw new RunNativeException("windows_mxc_policy", "payload_command_does_not_fit_windows_command_line");
+        }
+
+        var bytes = new ArrayBufferWriter<byte>();
+        try
+        {
+            using var json = new Utf8JsonWriter(bytes, new JsonWriterOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
             json.WriteStartObject();
             json.WriteString("version", "1.0.0");
             json.WriteString("containment", "processcontainer");
             json.WriteString("containerId", "afv2-win-" + spec.RunId);
             json.WriteStartObject("process");
-            json.WriteString("commandLine", WindowsCommandLine.Build(spec.Argv));
+            json.WriteString("commandLine", commandLine);
             json.WriteString("cwd", spec.WorkingDirectory);
-            Strings(json, "env", environment);
+            Strings(json, "env", PayloadEnvironment(spec, root));
             json.WriteBoolean("inheritDefaultEnv", false);
             json.WriteNumber("timeout", 0);
             json.WriteEndObject();
@@ -97,18 +111,49 @@ internal static class WindowsRunPolicy
             json.WriteEndObject();
             json.WriteEndObject();
             json.Flush();
-        }
 
-        if (bytes.WrittenCount is 0 or > MaximumBytes)
+            if (bytes.WrittenCount is 0 or > MaximumBytes)
+            {
+                throw new InvalidDataException("The Windows MXC policy exceeds the bounded official request size.");
+            }
+
+            // Only this file is allowed to contain the native request. The caller already holds its
+            // owner-restricted ancestry, and rolls back only the exact identity reported here.
+            using var output = new FileStream(path, FileMode.CreateNew, FileAccess.ReadWrite,
+                FileShare.None, 4096, FileOptions.WriteThrough);
+            capture(WindowsMxcPathLease.CaptureCreatedPrivateFile(output.SafeFileHandle));
+            output.Write(bytes.WrittenSpan);
+            output.Flush(flushToDisk: true);
+            return PolicyBinding(spec, bytes.WrittenSpan);
+        }
+        finally
         {
-            throw new InvalidDataException("The Windows MXC policy exceeds the bounded official request size.");
+            bytes.Clear();
         }
+    }
 
-        var path = Path.Combine(control, "mxc-request.json");
-        using var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough);
-        output.Write(bytes.WrittenSpan);
-        output.Flush(flushToDisk: true);
-        return path;
+    internal static void RequireBinding(RunLaunchSpec spec, WindowsMxcPathLease file, string expected)
+    {
+        var bytes = file.Read(MaximumBytes);
+        try
+        {
+            if (PolicyBinding(spec, bytes) != expected)
+            {
+                throw new InvalidDataException("The admitted protected Windows MXC policy changed.");
+            }
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(bytes);
+        }
+    }
+
+    private static string PolicyBinding(RunLaunchSpec spec, ReadOnlySpan<byte> bytes)
+    {
+        using var proof = IncrementalHash.CreateHMAC(HashAlgorithmName.SHA256, spec.ControlKey);
+        proof.AppendData("arcforges-windows-mxc-file-policy-v1"u8);
+        proof.AppendData(bytes);
+        return Convert.ToHexStringLower(proof.GetHashAndReset());
     }
 
     private static IEnumerable<string> PayloadEnvironment(RunLaunchSpec spec, string root)

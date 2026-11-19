@@ -52,6 +52,11 @@ public static class NodeApiServer
         var sandboxDeadline = new LocalRpcCallProfile(TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
         builder.RegisterMethod(SandboxNode, "Handshake", sandboxDeadline);
         builder.RegisterMethod(SandboxNode, "GetOperation", sandboxDeadline);
+        foreach (var method in (ReadOnlySpan<string>)["SetRemoteGrant", "ListRemoteGrants", "RevokeRemoteGrant"])
+        {
+            builder.RegisterMethod(SandboxNode, method, sandboxDeadline);
+        }
+
         foreach (var method in (ReadOnlySpan<string>)["Create", "Configure", "List", "Inspect"])
         {
             builder.RegisterMethod(Sandbox, method, sandboxDeadline);

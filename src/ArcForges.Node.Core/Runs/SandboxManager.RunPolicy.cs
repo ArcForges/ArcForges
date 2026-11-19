@@ -11,6 +11,7 @@ using ArcForges.Contracts.Sandbox.V2;
 using ArcForges.Node.Core.Execution;
 using ArcForges.Node.Core.Files;
 using ArcForges.Node.Core.Platform;
+using ArcForges.Node.Core.Security;
 using ArcForges.Node.Platform.Capabilities;
 using ArcForges.Node.Store;
 using ArcForges.Node.Store.Policy;
@@ -46,8 +47,10 @@ internal sealed partial class SandboxManager
     }
 
     private (RunLaunchSpec? Spec, ArcError? Error) PrepareRunPolicy(RunServiceStartRequest request, StoredSandbox row,
-        SandboxPrivateRootLease root, string runId, string epoch, string launchDigest, byte[] controlKey)
+        SandboxPrivateRootLease root, string runId, string epoch, string launchDigest, byte[] controlKey,
+        IReadOnlyDictionary<string, string>? secrets, out string[]? requiredSecrets)
     {
+        requiredSecrets = null;
         var terminal = request.TerminalMode switch
         {
             TerminalMode.Interactive when request.TerminalSize is
@@ -74,9 +77,9 @@ internal sealed partial class SandboxManager
             return Invalid("run_environment_invalid");
         }
 
-        if (environment.Values.Any(entry => entry.HasSecretRef))
+        if (environment.Values.Any(entry => entry.HasSecretRef && !SandboxRunSecrets.IsReference(entry.SecretRef)))
         {
-            return Unsupported("run_secret_reference_unavailable");
+            return Invalid("run_secret_reference_invalid");
         }
 
         var ceiling = config.Resources;
@@ -163,7 +166,12 @@ internal sealed partial class SandboxManager
             return Invalid("run_path_unavailable_or_outside_profile");
         }
 
-        var policy = SandboxPolicyAdmission.Evaluate(config, _dataRoot, _mxcInstallationRoot, terminal);
+        if (_protectedEndpoint?.AllowsPrivateRoot(root.RootPath) == false)
+        {
+            return Invalid("run_private_root_overlaps_node_endpoint");
+        }
+
+        var policy = SandboxPolicyAdmission.Evaluate(config, _dataRoot, _mxcInstallationRoot, terminal, _protectedEndpoint);
         if (!policy.Admission.Admitted || policy.Config is null)
         {
             return (null, PolicyError(request.Meta, policy.Admission));
@@ -209,8 +217,38 @@ internal sealed partial class SandboxManager
             return Unsupported("trusted_run_supervisor_or_bubblewrap_unavailable");
         }
 
+        var inputBytes = argv.Sum(argument => (long)Encoding.UTF8.GetByteCount(argument));
+        if (inputBytes > RunWire.LaunchInputsLimit)
+        {
+            return Invalid("run_launch_inputs_too_large");
+        }
+
+        if (secrets is null && environment.Values.Any(entry => entry.HasSecretRef))
+        {
+            requiredSecrets = [.. environment.Values.Where(entry => entry.HasSecretRef).Select(entry => entry.SecretRef).Distinct(StringComparer.Ordinal)];
+            return (null, null);
+        }
+
+        var resolvedEnvironment = new List<RunEnvironment>();
+        foreach (var entry in environment.Values)
+        {
+            var value = entry.HasSecretRef ? secrets?.GetValueOrDefault(entry.SecretRef) : entry.Value;
+            if (value is null)
+            {
+                return Unsupported("run_secret_reference_unavailable");
+            }
+
+            inputBytes += Encoding.UTF8.GetByteCount(entry.Name) + Encoding.UTF8.GetByteCount(value);
+            if (inputBytes > RunWire.LaunchInputsLimit)
+            {
+                return Invalid("run_launch_inputs_too_large");
+            }
+
+            resolvedEnvironment.Add(new RunEnvironment(entry.Name, value));
+        }
+
         var control = Path.Combine(_dataRoot, "control", "run-" + runId);
-        return (new RunLaunchSpec
+        var spec = new RunLaunchSpec
         {
             RunId = runId,
             SandboxId = row.SandboxId,
@@ -230,8 +268,9 @@ internal sealed partial class SandboxManager
             WorkingDirectory = workingDirectory.Path,
             WorkingDirectoryIdentity = workingDirectory.Identity,
             Argv = argv,
+            ExecutablePath = executable.Path,
             ExecutableIdentity = executable.Identity,
-            Environment = [.. environment.Values.Select(entry => new RunEnvironment(entry.Name, entry.Value))],
+            Environment = [.. resolvedEnvironment],
             Mounts = [.. policy.Config.HostGrants.Select(grant =>
                 new RunMount(grant.HostPath, grant.SandboxPath, grant.Writable, grant.NativeIdentity))],
             Network = new RunNetwork(config.Network.Egress == NetworkMode.Allow, config.Network.Ingress == NetworkMode.Allow,
@@ -246,7 +285,14 @@ internal sealed partial class SandboxManager
             OutputLimitBytes = config.HasOutputRetentionBytes ? config.OutputRetentionBytes : SandboxPolicyAdmission.DefaultOutputRetentionBytes,
             BubblewrapPath = bubblewrap,
             BubblewrapIdentity = bubblewrapIdentity,
-        }, null);
+        };
+        if (!RunWire.CanEncodeLaunchInputs(spec))
+        {
+            spec.ClearInputs();
+            return Invalid("run_launch_inputs_too_large");
+        }
+
+        return (spec, null);
 
         (RunLaunchSpec?, ArcError?) Invalid(string reason) =>
             (null, Error(request.Meta, ErrorCategory.Validation, "invalid_argument", reason));

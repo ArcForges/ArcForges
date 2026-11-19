@@ -75,6 +75,10 @@ internal sealed partial class SandboxManager
                 ReportRun(live.Spec.RunId, "release_response_unavailable", NativeFailure(error));
                 ObserveRun(live, UncertainRun("native_release_requires_reconciliation"));
             }
+            finally
+            {
+                live.Spec.ClearInputs();
+            }
 
             // Keep the checked Sandbox root held through the release handoff.
             live.Root.Dispose();
@@ -146,6 +150,7 @@ internal sealed partial class SandboxManager
             }
 
             live.Root.Dispose();
+            live.Spec.ClearInputs();
             CryptographicOperations.ZeroMemory(live.Spec.ControlKey);
             lock (OwnershipGate)
             {

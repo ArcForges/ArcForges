@@ -26,28 +26,60 @@ internal sealed partial class SandboxManager
 
     internal RunServiceStartResponse Start(RunServiceStartRequest request, CancellationToken cancellationToken)
     {
-        lock (OwnershipGate)
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            try
+            RunMutationResult result;
+            lock (OwnershipGate)
             {
-                var result = StartRunLocked(request);
-                return result.Error is { } error
-                    ? new() { Meta = Response(request.Meta), Error = error }
-                    : new() { Meta = Response(request.Meta, result.Run!.Revision.Value), Value = new() { Run = result.Run, Operation = result.Operation } };
+                cancellationToken.ThrowIfCancellationRequested();
+                result = StartRunLocked(request, secrets: null);
             }
-            catch (SandboxPrivateRootException error)
+
+            if (result.SecretReferences is { } references)
             {
-                return new() { Meta = Response(request.Meta), Error = ControlPathFailure(request.Meta, error) };
+                // A platform credential store can wait for its desktop keyring. Keep unrelated
+                // Stop/inspect operations free, then recheck command identity and Sandbox revision.
+                var secrets = new Dictionary<string, string>(StringComparer.Ordinal);
+                try
+                {
+                    foreach (var reference in references)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        if (_runSecrets.Resolve(reference) is not { } value)
+                        {
+                            break;
+                        }
+
+                        secrets.Add(reference, value);
+                    }
+
+                    lock (OwnershipGate)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        result = StartRunLocked(request, secrets);
+                    }
+                }
+                finally
+                {
+                    secrets.Clear();
+                }
             }
-            catch (Exception error) when (IsStorageFailure(error))
-            {
-                return new() { Meta = Response(request.Meta), Error = StorageFailure(request.Meta) };
-            }
+
+            return result.Error is { } error
+                ? new() { Meta = Response(request.Meta), Error = error }
+                : new() { Meta = Response(request.Meta, result.Run!.Revision.Value), Value = new() { Run = result.Run, Operation = result.Operation } };
+        }
+        catch (SandboxPrivateRootException error)
+        {
+            return new() { Meta = Response(request.Meta), Error = ControlPathFailure(request.Meta, error) };
+        }
+        catch (Exception error) when (IsStorageFailure(error))
+        {
+            return new() { Meta = Response(request.Meta), Error = StorageFailure(request.Meta) };
         }
     }
 
-    private RunMutationResult StartRunLocked(RunServiceStartRequest request)
+    private RunMutationResult StartRunLocked(RunServiceStartRequest request, IReadOnlyDictionary<string, string>? secrets)
     {
         var meta = request.Meta;
         if (!ValidId(meta?.CommandId) || !ValidId(request.OwnerEpoch) || !ValidId(request.SandboxId) || meta?.ExpectedRev is not { Value: > 0 } expected)
@@ -69,7 +101,22 @@ internal sealed partial class SandboxManager
         body.Meta = null;
         body.OwnerEpoch = null;
         var canonical = body.ToByteArray();
-        var intent = new DurableIntent(command, epoch, StartRunMethod, RunAggregate, runId, canonical, expected.Value,
+        try
+        {
+            return AdmitStartRunLocked(request, expected.Value, command, epoch, sandboxId, previous, runId, canonical, secrets);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(canonical);
+        }
+    }
+
+    private RunMutationResult AdmitStartRunLocked(RunServiceStartRequest request, long expected, byte[] command,
+        byte[] epoch, string sandboxId, DurableReceipt? previous, string runId, byte[] canonical,
+        IReadOnlyDictionary<string, string>? secrets)
+    {
+        var meta = request.Meta;
+        var intent = new DurableIntent(command, epoch, StartRunMethod, RunAggregate, runId, canonical, expected,
             ExpectedSandboxId: sandboxId);
 
         // The original identity and keyed intent are resolved before checking today's Sandbox or host.
@@ -84,9 +131,9 @@ internal sealed partial class SandboxManager
             return RunFailure(NotFound(meta));
         }
 
-        if (row.Revision != expected.Value)
+        if (row.Revision != expected)
         {
-            return RunFailure(RevisionError(meta, expected.Value, row.Revision));
+            return RunFailure(RevisionError(meta, expected, row.Revision));
         }
 
         if (row.State != StoredSandboxState.Ready || row.RootRelative != SandboxPrivateRoots.RelativePath(sandboxId))
@@ -108,15 +155,21 @@ internal sealed partial class SandboxManager
         }
 
         SandboxPrivateRootLease? root = _roots.Inspect(sandboxId, row.RootIdentity);
+        RunLaunchSpec? unowned = null;
+        var controlKey = RandomNumberGenerator.GetBytes(RunWire.KeyLength);
         try
         {
-            var controlKey = RandomNumberGenerator.GetBytes(RunWire.KeyLength);
             var launchDigest = Convert.ToHexStringLower(HMACSHA256.HashData(controlKey, canonical));
             var generation = Guid.NewGuid().ToString("N");
-            var policy = PrepareRunPolicy(request, row, root, runId, generation, launchDigest, controlKey);
-            if (policy.Spec is not { } spec)
+            var policy = PrepareRunPolicy(request, row, root, runId, generation, launchDigest, controlKey, secrets, out var references);
+            if (references is not null)
             {
-                CryptographicOperations.ZeroMemory(controlKey);
+                return new(null, null, SecretReferences: references);
+            }
+
+            unowned = policy.Spec;
+            if (unowned is not { } spec)
+            {
                 return RunFailure(policy.Error ?? InvalidRun(meta));
             }
 
@@ -130,17 +183,20 @@ internal sealed partial class SandboxManager
                 var live = new LiveRun(spec, launcher, root, command, _runObserverStop.Token);
                 _liveRuns.Add(runId, live);
                 root = null;
+                unowned = null;
                 _ = Task.Run(() => OwnRunAsync(live), CancellationToken.None);
-            }
-            else
-            {
-                CryptographicOperations.ZeroMemory(controlKey);
             }
 
             return ResolveRunMutation(admitted, meta, request.OwnerEpoch);
         }
         finally
         {
+            if (root is not null)
+            {
+                unowned?.ClearInputs();
+                CryptographicOperations.ZeroMemory(controlKey);
+            }
+
             root?.Dispose();
         }
     }
@@ -315,7 +371,7 @@ internal sealed partial class SandboxManager
 
     private static string RunSnapshotJson(RunLaunchSpec spec, string startCommand)
     {
-        var name = spec.Argv[0].Split('/', '\\').Last();
+        var name = spec.ExecutablePath.Split('/', '\\').Last();
         name = string.Concat(name.EnumerateRunes().Where(rune => !System.Text.Rune.IsControl(rune)).Take(96));
         var snapshot = new JsonObject
         {
@@ -323,6 +379,7 @@ internal sealed partial class SandboxManager
             ["profileVersion"] = spec.ProfileVersion,
             ["terminalMode"] = (int)spec.TerminalMode,
             ["safeCommandDisplay"] = $"{name} [{spec.Argv.Length - 1} arguments redacted]",
+            ["redactedEnvironmentEntries"] = spec.Environment.Length,
             ["cpuMillicores"] = spec.CpuMillicores,
             ["memoryMaxBytes"] = spec.MemoryMaxBytes,
             ["maxProcesses"] = spec.MaxProcesses,
@@ -340,7 +397,7 @@ internal sealed partial class SandboxManager
 
     private static RunMutationResult RunFailure(ArcError error) => new(null, null, error);
 
-    private sealed record RunMutationResult(Run? Run, Operation? Operation, ArcError? Error = null);
+    private sealed record RunMutationResult(Run? Run, Operation? Operation, ArcError? Error = null, string[]? SecretReferences = null);
 
     private sealed class LiveRun(RunLaunchSpec spec, IRunLauncher launcher, SandboxPrivateRootLease root, byte[] startCommand,
         CancellationToken cancellationToken)

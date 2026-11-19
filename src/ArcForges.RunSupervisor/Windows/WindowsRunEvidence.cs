@@ -8,7 +8,7 @@ using ArcForges.RunSupervisor.Protocol;
 namespace ArcForges.RunSupervisor;
 
 [SupportedOSPlatform("windows")]
-internal sealed class WindowsRunEvidence(RunLaunchSpec spec, string policySha256, int executorPid, long executorBirth)
+internal sealed class WindowsRunEvidence(RunLaunchSpec spec, string policyHmacSha256, int executorPid, long executorBirth)
 {
     internal void WritePrepared(WindowsMxcJobLimits applied, WindowsMxcJobObservation aggregate, WindowsMxcJobObservation payload)
     {
@@ -44,7 +44,7 @@ internal sealed class WindowsRunEvidence(RunLaunchSpec spec, string policySha256
         json.WriteString("runId", spec.RunId);
         json.WriteString("ownerInstance", spec.OwnerId);
         json.WriteString("launchSha256", spec.LaunchSha256);
-        json.WriteString("policySha256", policySha256);
+        json.WriteString("policyHmacSha256", policyHmacSha256);
         json.WriteString("profileVersion", spec.ProfileVersion);
         json.WriteNumber("ownerPid", Environment.ProcessId);
         json.WriteNumber("ownerCreationFileTime", WindowsMxcProcess.CurrentCreationFileTime());

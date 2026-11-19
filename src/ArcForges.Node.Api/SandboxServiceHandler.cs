@@ -71,7 +71,7 @@ internal sealed class SandboxServiceHandler(NodeRuntime node) : V2.SandboxServic
     }
 }
 
-/// <summary>Negotiates the owner's V2 namespace and reads durable operation receipts.</summary>
+/// <summary>Negotiates the owner's V2 namespace, reads durable operations and manages local remote grants.</summary>
 internal sealed class SandboxNodeServiceHandler(NodeRuntime node) : V2.NodeService.NodeServiceBase
 {
     public override Task<V2.NodeServiceHandshakeResponse> Handshake(
@@ -85,6 +85,62 @@ internal sealed class SandboxNodeServiceHandler(NodeRuntime node) : V2.NodeServi
         SandboxLocalCalls.Execute(node, context, request, request.Meta, V2Shapes.IsValid,
             static (manager, value, cancellation) => manager.GetOperation(value, cancellation),
             static (meta, error) => new V2.NodeServiceGetOperationResponse { Meta = meta, Error = error });
+
+    public override Task<V2.NodeServiceSetRemoteGrantResponse> SetRemoteGrant(
+        V2.NodeServiceSetRemoteGrantRequest request, ServerCallContext context) =>
+        SandboxLocalCalls.Execute(node, context, request, request.Meta, ValidLocalGrantSet,
+            static (manager, value, cancellation) => manager.SetRemoteGrant(value, cancellation),
+            static (meta, error) => new V2.NodeServiceSetRemoteGrantResponse { Meta = meta, Error = error });
+
+    public override Task<V2.NodeServiceListRemoteGrantsResponse> ListRemoteGrants(
+        V2.NodeServiceListRemoteGrantsRequest request, ServerCallContext context) =>
+        SandboxLocalCalls.Execute(node, context, request, request.Meta,
+            static value => V2Shapes.IsValid(value) && HasKnownFields(value, V2.NodeServiceListRemoteGrantsRequest.Parser),
+            static (manager, value, cancellation) => manager.ListRemoteGrants(value, cancellation),
+            static (meta, error) => new V2.NodeServiceListRemoteGrantsResponse { Meta = meta, Error = error });
+
+    public override Task<V2.NodeServiceRevokeRemoteGrantResponse> RevokeRemoteGrant(
+        V2.NodeServiceRevokeRemoteGrantRequest request, ServerCallContext context) =>
+        SandboxLocalCalls.Execute(node, context, request, request.Meta,
+            static value => V2Shapes.IsValid(value) && HasKnownFields(value, V2.NodeServiceRevokeRemoteGrantRequest.Parser),
+            static (manager, value, cancellation) => manager.RevokeRemoteGrant(value, cancellation),
+            static (meta, error) => new V2.NodeServiceRevokeRemoteGrantResponse { Meta = meta, Error = error });
+
+    private static bool ValidLocalGrantSet(V2.NodeServiceSetRemoteGrantRequest request)
+    {
+        if (request.CalculateSize() > 1_048_576
+            || request.Meta is not { CommandId: not null, ExpectedNative: null } meta
+            || !V2Shapes.IsValid(meta) || !V2Shapes.IsValid(request.OwnerEpoch)
+            || request.Grant is not { ParentGrantId: null } grant
+            || (grant.HasState && grant.State != V2.GrantState.Active)
+            || (grant.GrantId is not null && !V2Shapes.IsValid(grant.GrantId)))
+        {
+            return false;
+        }
+
+        var expected = meta.ExpectedRev;
+        if (expected is not null && (expected is not { HasValue: true, Value: > 0 } || grant.GrantId is null))
+        {
+            return false;
+        }
+
+        var revision = expected?.Value ?? 1;
+        if (grant.Revision is { } supplied && (!supplied.HasValue || supplied.Value != revision))
+        {
+            return false;
+        }
+
+        // The generated Set shape requires CAS and a complete grant projection. Grant creation
+        // can omit those values, so validate a temporary projection and dispatch the original request.
+        var shape = grant.Clone();
+        shape.GrantId ??= request.OwnerEpoch;
+        shape.Revision ??= new Revision { Value = revision };
+        shape.State = V2.GrantState.Active;
+        return V2Shapes.IsValid(shape) && HasKnownFields(request, V2.NodeServiceSetRemoteGrantRequest.Parser);
+    }
+
+    private static bool HasKnownFields<T>(T value, MessageParser<T> parser) where T : class, IMessage<T> =>
+        value.Equals(parser.WithDiscardUnknownFields(true).ParseFrom(value.ToByteArray()));
 }
 
 internal static class SandboxLocalCalls

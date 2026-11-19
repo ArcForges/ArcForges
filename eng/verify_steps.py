@@ -134,7 +134,7 @@ WIN_PUBLISH = (
 # The packaged native tests require a fresh extraction and the designated hosts' admitted MXC compositions.
 MXC_PACKAGE_REQUESTS = (
     "dotnet test --project tests/ArcForges.ClosedLoop.Tests/ArcForges.ClosedLoop.Tests.csproj -c Release --no-build "
-    "--filter-class ArcForges.ClosedLoop.Tests.MxcRunServiceTests --minimum-expected-tests 9 --fail-skips on"
+    "--filter-class ArcForges.ClosedLoop.Tests.MxcRunServiceTests --minimum-expected-tests 10 --fail-skips on"
 )
 WIN_PACKAGE = (
     "$tempPath = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Temp'; "

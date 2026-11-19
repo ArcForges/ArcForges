@@ -50,6 +50,8 @@ internal static class WindowsRunWorker
         WindowsRunPathBindings? paths = null;
         WindowsMxcPathLease? control = null;
         WindowsMxcPathLease? policy = null;
+        WindowsMxcPathLease.PrivateFileIdentity? createdPolicy = null;
+        string? policyPath = null;
         WindowsRunIo? io = null;
         RunOutputCapture? capture = null;
         LaunchedProcess? executor = null;
@@ -66,17 +68,16 @@ internal static class WindowsRunWorker
             paths = WindowsRunPathBindings.Open(spec);
             phase = "windows_mxc_policy";
             control = WindowsMxcPathLease.Open(spec.ControlDirectory, directory: true, privateObject: true);
-            var policyPath = WindowsRunPolicy.Write(spec);
+            policyPath = Path.Combine(control.Path, "mxc-request.json");
+            var policyBinding = WindowsRunPolicy.Write(spec, policyPath, identity => createdPolicy = identity);
             policy = WindowsMxcPathLease.Open(policyPath, directory: false, privateObject: true);
-            var policyHash = policy.Hash(WindowsRunPolicy.MaximumBytes);
+            policy.RequirePrivateFileIdentity(createdPolicy!.Value);
+            WindowsRunPolicy.RequireBinding(spec, policy, policyBinding);
             phase = "windows_payload_boundary";
             payload = WindowsMxcJob.Create(limits: null);
             phase = "windows_mxc_preflight";
             await WindowsMxcPreflight.CheckAsync(installed, policy.Path, control.Path, aggregate, payload, cancellationToken).ConfigureAwait(false);
-            if (policy.Hash(WindowsRunPolicy.MaximumBytes) != policyHash)
-            {
-                throw new InvalidDataException("The admitted private policy bytes changed between probe and start.");
-            }
+            WindowsRunPolicy.RequireBinding(spec, policy, policyBinding);
 
             cancellationToken.ThrowIfCancellationRequested();
             phase = "windows_terminal_or_pipes";
@@ -107,7 +108,7 @@ internal static class WindowsRunWorker
             }
 
             phase = "windows_pre_resume_evidence";
-            var evidence = new WindowsRunEvidence(spec, policyHash, executor.ProcessId, executorBirth);
+            var evidence = new WindowsRunEvidence(spec, policyBinding, executor.ProcessId, executorBirth);
             evidence.WritePrepared(limits, aggregateMembers, payloadMembers);
             paths.RequireStable();
             cancellationToken.ThrowIfCancellationRequested();
@@ -146,7 +147,13 @@ internal static class WindowsRunWorker
                 if (aggregate is not null)
                 {
                     _ = await aggregate.WaitForDrainAsync(Environment.ProcessId, TimeSpan.FromSeconds(8), CancellationToken.None).ConfigureAwait(false);
-                    policy?.DeletePrivateFile();
+                    policy?.Dispose();
+                    policy = null;
+                    if (createdPolicy is { } owned)
+                    {
+                        WindowsMxcPathLease.DeleteCreatedPrivateFile(policyPath!, owned);
+                    }
+
                     empty = true;
                 }
             }

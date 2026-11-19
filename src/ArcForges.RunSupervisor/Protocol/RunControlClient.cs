@@ -12,6 +12,7 @@ public sealed class RunControlClient : IAsyncDisposable
     private readonly byte[] _challenge;
     private readonly SemaphoreSlim _messages = new(1, 1);
     private long _sequence = 1;
+    private int _activationAttempted;
     private bool _broken;
 
     private RunControlClient(Stream stream, RunLaunchSpec spec, byte[] challenge, RunOwnerIdentity identity)
@@ -46,8 +47,23 @@ public sealed class RunControlClient : IAsyncDisposable
         return new RunControlClient(stream, spec, challenge, identity);
     }
 
-    public async ValueTask ActivateAsync(RunRelease release, CancellationToken cancellationToken) =>
-        _ = await SendAsync(RunControlCommand.Activate, release, 0, cancellationToken).ConfigureAwait(false);
+    public async ValueTask ActivateAsync(RunRelease release, CancellationToken cancellationToken)
+    {
+        if (Interlocked.Exchange(ref _activationAttempted, 1) != 0)
+        {
+            throw new RunNativeException("run_owner_refused", "activation_closed");
+        }
+
+        try
+        {
+            var activation = release with { Inputs = new RunLaunchInputs(_spec.Argv, _spec.Environment) };
+            _ = await SendAsync(RunControlCommand.Activate, activation, 0, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _spec.ClearInputs();
+        }
+    }
 
     public async ValueTask StopAsync(TimeSpan grace, CancellationToken cancellationToken)
     {
@@ -152,6 +168,7 @@ public sealed class RunControlClient : IAsyncDisposable
         try
         {
             _broken = true;
+            _spec.ClearInputs();
             await _stream.DisposeAsync().ConfigureAwait(false);
         }
         finally
