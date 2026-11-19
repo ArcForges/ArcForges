@@ -16,6 +16,8 @@ public sealed partial class CenterSeamPolicyTests
     private const string ChannelSeam = "src/ArcForges.Node.CloudLink/CenterChannelClient.cs";
     private const string Official = "src/ArcForges.Node.Core/CenterEndpoint.cs";
     private const string FakeCenterDirectory = "tests/ArcForges.Node.CloudLink.Tests/";
+    private const string RunControllerSocket = "src/ArcForges.Node.Platform.Linux/Mxc/LinuxRunLauncher.cs";
+    private const string RunWorkerSocket = "src/ArcForges.RunSupervisor/Linux/LinuxRunWorker.cs";
 
     /// <summary>The explicitly reviewed local endpoint, readiness and private worker Unix-domain socket sites.</summary>
     private static readonly HashSet<string> UnixSocketSites = new(StringComparer.Ordinal)
@@ -25,6 +27,8 @@ public sealed partial class CenterSeamPolicyTests
         "src/ArcForges.Node.Core/Platform/LinuxFileEffectController.cs",
         "src/ArcForges.Node.Core/Platform/LinuxFileEffectWorker.cs",
         "src/ArcForges.Node.Core/Platform/LinuxWorkerBootstrapSelfTest.cs",
+        RunControllerSocket,
+        RunWorkerSocket,
     };
 
     [Fact]
@@ -94,6 +98,10 @@ public sealed partial class CenterSeamPolicyTests
     [InlineData("src/ArcForges.Node.Core/Platform/LinuxFileEffectWorker.cs", "new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Unspecified)", false)]
     [InlineData("src/ArcForges.Node.Core/Platform/LinuxFileEffectWorker.cs", "new Socket(AddressFamily.InterNetwork, /* AddressFamily.Unix */ SocketType.Stream, ProtocolType.Unspecified)", false)]
     [InlineData("src/other.cs", "new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified)", false)]
+    [InlineData(RunControllerSocket, "new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified)", true)]
+    [InlineData(RunWorkerSocket, "new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified)", true)]
+    [InlineData(RunControllerSocket, "new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp)", false)]
+    [InlineData(RunWorkerSocket, "new Socket(AddressFamily.InterNetworkV6, SocketType.Stream, ProtocolType.Tcp)", false)]
     public void OnlyReviewedUnixSocketConstructionsAreLocal(string path, string construction, bool allowed) =>
         Assert.Equal(allowed, IsAllowedLocalSocket(path, construction));
 
@@ -116,6 +124,29 @@ public sealed partial class CenterSeamPolicyTests
         Assert.Contains("new UnixDomainSocketEndPoint(", worker, StringComparison.Ordinal);
         Assert.Contains("LinuxPeerCredentialReader.Read(socket)", worker, StringComparison.Ordinal);
         Assert.Contains("peer.ProcessId != parent", worker, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheRunControlSocketsUseAuthenticatedLocalPeers()
+    {
+        var controller = File.ReadAllText(Path.Combine(RepositoryFiles.Root, RunControllerSocket));
+        var worker = File.ReadAllText(Path.Combine(RepositoryFiles.Root, RunWorkerSocket));
+        var entryPoint = File.ReadAllText(Path.Combine(RepositoryFiles.Root, "src/ArcForges.RunSupervisor/Program.cs"));
+        foreach (var source in new[] { controller, worker })
+        {
+            Assert.DoesNotContain("IPEndPoint", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("DnsEndPoint", source, StringComparison.Ordinal);
+            Assert.Matches(LocalUnixSocket(), Assert.Single(SocketConstruction().Matches(source).Cast<Match>()).Value);
+            Assert.Contains("LinuxRunCgroup.OpenPrivateDirectory(spec.ControlDirectory)", source, StringComparison.Ordinal);
+            Assert.Contains("LinuxRunNativePeer.ControlAddress(spec, directory)", source, StringComparison.Ordinal);
+        }
+
+        Assert.Contains("new UnixDomainSocketEndPoint(LinuxRunCgroup.DescriptorPath(directory)", controller, StringComparison.Ordinal);
+        Assert.Contains("LinuxRunNativePeer.Require(socket, state.OwnerPid, state.OwnerStartTicks, spec.SupervisorPath);", controller, StringComparison.Ordinal);
+        Assert.Contains("LinuxRunMxcAssets.VerifyRunningSupervisor(spec, state.OwnerPid, state.OwnerStartTicks);", controller, StringComparison.Ordinal);
+        Assert.Contains("RunControlClient.ConnectAsync(stream, spec, launchBinding, deadline.Token)", controller, StringComparison.Ordinal);
+        Assert.Contains("LinuxRunNativePeer.Require(socket, spec.LauncherProcessId, creation, spec.LauncherPath);", worker, StringComparison.Ordinal);
+        Assert.Contains("LinuxRunWorker.RequireControlPeer(launch, peer);", entryPoint, StringComparison.Ordinal);
     }
 
     [Theory]
