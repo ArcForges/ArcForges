@@ -94,23 +94,10 @@ internal sealed partial class SandboxManager
             return Invalid("run_resource_request_invalid");
         }
 
-        var hostMemory = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes;
-        if (hostMemory <= 0)
-        {
-            return BudgetUnavailable("run_host_capacity_unavailable");
-        }
-
-        var nodePolicy = _store.Policies.Current();
-        if (!CryptographicOperations.FixedTimeEquals(nodePolicy.Digest.Span, PolicyDocuments.Digest(nodePolicy.Document)))
-        {
-            throw new InvalidDataException("The committed Node resource policy digest did not match.");
-        }
-
-        // Preserve the configured Node reserve without the legacy Task scheduling floors.
-        var settings = new ExecutionSettings(nodePolicy.Document, Environment.ProcessorCount, hostMemory);
-        var availableCpu = settings.CapacityCpu - Math.Clamp(settings.ReserveCpu, 0, settings.CapacityCpu);
-        var cpuCeiling = (uint)Math.Min(availableCpu, uint.MaxValue);
-        var memoryCeiling = (ulong)(hostMemory - Math.Clamp(settings.ReserveMemory, 0, hostMemory));
+        var host = NodeHardGrant(DecodeResourcePolicy(ReadResourcePolicy("node", null)));
+        string? budgetFailure = host.Cpu == 0 || host.Memory == 0 ? "run_host_capacity_unavailable" : null;
+        var cpuCeiling = checked((uint)host.Cpu);
+        var memoryCeiling = host.Memory;
         if (ceiling.HasCpuMaxMillicores)
         {
             cpuCeiling = Math.Min(cpuCeiling, ceiling.CpuMaxMillicores);
@@ -134,7 +121,7 @@ internal sealed partial class SandboxManager
             || (desired?.HasPriority == true && ceiling.HasPriority && desired.Priority > ceiling.Priority)
             || (desired?.Preemptible == true && ceiling.HasPreemptible && !ceiling.Preemptible))
         {
-            return BudgetUnavailable("run_resource_ceiling_unavailable_or_exceeded");
+            budgetFailure ??= "run_resource_ceiling_unavailable_or_exceeded";
         }
 
         if (!windows && memory % pageBytes != 0)
@@ -292,6 +279,13 @@ internal sealed partial class SandboxManager
             return Invalid("run_launch_inputs_too_large");
         }
 
+        // Journal a budget refusal only after the request is well formed and supported.
+        if (budgetFailure is not null)
+        {
+            spec.ClearInputs();
+            return BudgetUnavailable(budgetFailure);
+        }
+
         return (spec, null);
 
         (RunLaunchSpec?, ArcError?) Invalid(string reason) =>
@@ -302,6 +296,27 @@ internal sealed partial class SandboxManager
 
         (RunLaunchSpec?, ArcError?) Unsupported(string reason) =>
             (null, Error(request.Meta, ErrorCategory.Execution, "unsupported_combination", reason));
+    }
+
+    private (uint Cpu, ulong Memory)? RunGrantHostCeilings()
+    {
+        var hostMemory = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes;
+        if (hostMemory <= 0)
+        {
+            return null;
+        }
+
+        var nodePolicy = _store.Policies.Current();
+        if (!CryptographicOperations.FixedTimeEquals(nodePolicy.Digest.Span, PolicyDocuments.Digest(nodePolicy.Document)))
+        {
+            throw new InvalidDataException("The committed Node resource policy digest did not match.");
+        }
+
+        // Preserve the configured Node reserve without the legacy Task scheduling floors.
+        var settings = new ExecutionSettings(nodePolicy.Document, Environment.ProcessorCount, hostMemory);
+        var availableCpu = settings.CapacityCpu - Math.Clamp(settings.ReserveCpu, 0, settings.CapacityCpu);
+        var availableMemory = hostMemory - Math.Clamp(settings.ReserveMemory, 0, hostMemory);
+        return ((uint)Math.Min(availableCpu, uint.MaxValue), (ulong)availableMemory);
     }
 
     private static bool AddRunEnvironment(Dictionary<string, EnvironmentEntry> merged, IEnumerable<EnvironmentEntry> entries)

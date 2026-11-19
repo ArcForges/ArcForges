@@ -248,6 +248,7 @@ public sealed partial class MxcRunServiceTests
 
             TestContext.Current.TestOutputHelper?.WriteLine(FormattableString.Invariant(
                 $"Run kind {runUsage.MemoryKind}, observed peak {runUsage.PeakMemoryBytes} bytes, cumulative CPU {runUsage.CumulativeCpuUsec} usec, processes {runUsage.ProcessCount}. Host unmanaged {hostUsage.UnmanagedMemoryBytes} bytes and Node overhead {hostUsage.NodeMemoryBytes} bytes."));
+            await VerifyInstalledResourceLimitsAsync(fixture, node, sandboxes, runs, resources, ownerEpoch, sandbox.Config, cancellation);
         }
         finally
         {

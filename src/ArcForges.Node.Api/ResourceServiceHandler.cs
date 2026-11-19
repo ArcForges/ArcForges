@@ -443,7 +443,7 @@ public sealed class ResourceServiceHandler : ResourceService.ResourceServiceBase
     }
 }
 
-/// <summary>The local owner's read-only V2 resource observations.</summary>
+/// <summary>The local owner's V2 resource observations and policy controls.</summary>
 internal sealed class SandboxResourceServiceHandler(NodeRuntime node) : V2.ResourceService.ResourceServiceBase
 {
     // A subscriber may have one snapshot pending. Preserve the second slot for its typed refusal.
@@ -456,6 +456,13 @@ internal sealed class SandboxResourceServiceHandler(NodeRuntime node) : V2.Resou
             static value => V2Shapes.IsValid(value) && HasKnownFields(value, V2.ResourceServiceGetBudgetRequest.Parser),
             static (manager, value, cancellation) => manager.GetResourceBudget(value, cancellation),
             static (meta, error) => new V2.ResourceServiceGetBudgetResponse { Meta = meta, Error = error });
+
+    public override Task<V2.ResourceServiceSetPolicyResponse> SetPolicy(V2.ResourceServiceSetPolicyRequest request,
+        ServerCallContext context) =>
+        SandboxLocalCalls.Execute(node, context, request, request.Meta,
+            static value => V2Shapes.IsValid(value) && HasKnownFields(value, V2.ResourceServiceSetPolicyRequest.Parser),
+            static (manager, value, cancellation) => manager.SetResourcePolicy(value, cancellation),
+            static (meta, error) => new V2.ResourceServiceSetPolicyResponse { Meta = meta, Error = error });
 
     public override async Task WatchUsage(V2.ResourceServiceWatchUsageRequest request,
         IServerStreamWriter<V2.ResourceServiceWatchUsageFrame> responseStream, ServerCallContext context)

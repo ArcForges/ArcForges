@@ -73,6 +73,8 @@ internal sealed partial class SandboxManager
                 {
                     var host = frame?.Host.Clone() ?? ResourceScopeSnapshot("node", null, null);
                     host.Stale = frame?.Stale ?? true;
+                    host.PolicyRevision = new Revision { Value = ResourcePolicyRevision("node", null) };
+                    ApplyResourceBudgetPolicy(host, DecodeResourcePolicy(ReadResourcePolicy("node", null)));
                     return new() { Meta = meta, Value = new() { Snapshot = host } };
                 }
 
@@ -126,7 +128,8 @@ internal sealed partial class SandboxManager
             return false;
         }
 
-        snapshot.PolicyRevision = new Revision { Value = row.SandboxRevision };
+        snapshot.PolicyRevision = new Revision { Value = ResourcePolicyRevision("run", id) };
+        snapshot.Limits.AddRange(ReadProjectedRunLimits(row));
         if (frame is null || !frame.Runs.TryGetValue(id, out var measurement) || measurement.Target.Epoch != row.Epoch
             || !ReferenceEquals(CurrentResourceSource(id, row.Epoch), measurement.Target.Source)
             || measurement.Reading is not { } read)
@@ -162,13 +165,13 @@ internal sealed partial class SandboxManager
             return false;
         }
 
+        snapshot.PolicyRevision = new Revision { Value = ResourcePolicyRevision("sandbox", id) };
+        ApplySandboxGrantCeiling(snapshot, row, DecodeResourcePolicy(ReadResourcePolicy("sandbox", id)));
         if (!coherent)
         {
             snapshot.Stale = true;
             return true;
         }
-
-        snapshot.PolicyRevision = new Revision { Value = row.Revision };
         if (SandboxResourceMonitor.Sum(runs, run => run.CpuMillicores) is >= 0 and <= uint.MaxValue and var cpu)
             snapshot.ManagedCpuMillicores = (uint)cpu;
         if (SandboxResourceMonitor.Sum(runs, run => run.Reading?.ProcessCount) is >= 0 and <= uint.MaxValue and var count)

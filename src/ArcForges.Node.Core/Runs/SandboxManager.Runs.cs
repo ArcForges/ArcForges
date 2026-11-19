@@ -28,6 +28,25 @@ internal sealed partial class SandboxManager
     {
         try
         {
+            if (_resourceMonitor is { NeedsInitialBudget: true } monitor)
+            {
+                bool newIntent;
+                lock (OwnershipGate)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    newIntent = ValidId(request.Meta?.CommandId) && ValidId(request.OwnerEpoch) && ValidId(request.SandboxId)
+                        && request.Meta?.ExpectedRev is { Value: > 0 } && EpochMatches(request.OwnerEpoch)
+                        && Receipts.Inspect(request.Meta.CommandId.Value.Span) is null;
+                }
+
+                if (newIntent)
+                {
+                    // The first native CPU budget needs two samples. The sampler
+                    // snapshots managed scopes under OwnershipGate.
+                    monitor.WaitForInitialBudget(cancellationToken);
+                }
+            }
+
             RunMutationResult result;
             lock (OwnershipGate)
             {
@@ -147,13 +166,6 @@ internal sealed partial class SandboxManager
             return RunFailure(Error(meta, ErrorCategory.Execution, "unsupported_combination", "run_launcher_unavailable"));
         }
 
-        var config = FromStored(row.Config);
-        var maximumRuns = config.Resources.HasMaxConcurrentRuns ? config.Resources.MaxConcurrentRuns : 1;
-        if (_store.Read(reader => RunRecords.CountNonterminal(reader, OwnerId, sandboxId)) >= maximumRuns)
-        {
-            return RunFailure(Error(meta, ErrorCategory.Resource, "budget_unavailable", "sandbox_concurrency_ceiling"));
-        }
-
         SandboxPrivateRootLease? root = _roots.Inspect(sandboxId, row.RootIdentity);
         RunLaunchSpec? unowned = null;
         var controlKey = RandomNumberGenerator.GetBytes(RunWire.KeyLength);
@@ -170,17 +182,27 @@ internal sealed partial class SandboxManager
             unowned = policy.Spec;
             if (unowned is not { } spec)
             {
-                return RunFailure(policy.Error ?? InvalidRun(meta));
+                return RejectStart(policy.Error);
             }
 
-            var snapshot = RunSnapshotJson(spec, Convert.ToHexStringLower(command));
+            var authorization = AuthorizeRunResourceGrant(request, row, spec);
+            if (authorization.Spec is not { } granted)
+            {
+                return RejectStart(authorization.Error);
+            }
+
+            unowned = granted;
+            var snapshot = RunSnapshotJson(granted, Convert.ToHexStringLower(command));
             var started = new StoredRun(runId, sandboxId, row.Revision, 1, StoredRunState.Starting, generation,
                 launchDigest, snapshot, StoredPayloadStart.Unknown, _clock.GetUtcNow());
-            var admitted = Receipts.Admit(intent,
-                transaction => RequireChanged(RunRecords.InsertStarting(transaction, OwnerId, started)));
+            var admitted = Receipts.Admit(intent, transaction =>
+            {
+                RequireChanged(RunRecords.InsertStarting(transaction, OwnerId, started));
+                RecordRunResourceGrant(transaction, started, granted);
+            });
             if (admitted.Decision == DurableDecision.Execute)
             {
-                var live = new LiveRun(spec, launcher, root, command, _runObserverStop.Token);
+                var live = new LiveRun(granted, launcher, root, command, _runObserverStop.Token);
                 _liveRuns.Add(runId, live);
                 root = null;
                 unowned = null;
@@ -198,6 +220,18 @@ internal sealed partial class SandboxManager
             }
 
             root?.Dispose();
+        }
+
+        RunMutationResult RejectStart(ArcError? error)
+        {
+            if (error is not { Category: ErrorCategory.Resource, Code: "budget_unavailable", Effect: EffectCertainty.DidNotHappen })
+            {
+                return RunFailure(error ?? InvalidRun(meta));
+            }
+
+            var refused = Receipts.AdmitObserved(intent, "FAILED", (int)error.Effect,
+                ResultBody(null, null, error.Category, error.Code, error.Details?.State?.Reason));
+            return ResolveRunMutation(refused, meta, request.OwnerEpoch);
         }
     }
 

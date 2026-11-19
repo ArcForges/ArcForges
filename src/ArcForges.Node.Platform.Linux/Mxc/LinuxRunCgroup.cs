@@ -17,6 +17,9 @@ internal sealed partial class LinuxRunCgroup : IDisposable
     private const string MountPoint = "/sys/fs/cgroup";
     private const uint RequiredMetadata = 0x1101;
     private const int CloseOnExec = 0x80000;
+    private const int NonBlockingNoTerminal = 0x900;
+    private const ulong CpuPeriodUsec = 100_000;
+    private const ulong CpuQuotaUsecPerMillicore = CpuPeriodUsec / 1000;
     private static readonly int s_noFollow = RuntimeInformation.ProcessArchitecture == Architecture.Arm64 ? 0x8000 : 0x20000;
     private static readonly int s_directory = RuntimeInformation.ProcessArchitecture == Architecture.Arm64 ? 0x4000 : 0x10000;
     private readonly SafeFileHandle _handle;
@@ -101,6 +104,183 @@ internal sealed partial class LinuxRunCgroup : IDisposable
         return limits;
     }
 
+    internal RunResourceLimitReading? ReadOwnedLimits(string boundary, int ownerPid, long ownerStart)
+    {
+        lock (_resources)
+        {
+            var retained = false;
+            try
+            {
+                _handle.DangerousAddRef(ref retained);
+                if (!HasResourceOwner(ownerPid, ownerStart))
+                {
+                    return null;
+                }
+
+                Span<byte> buffer = stackalloc byte[256];
+                var cpu = ReadCpuLimit(ReadResource("cpu.max", buffer));
+                var memory = ProcFs.Unsigned(ReadResource("memory.max", buffer));
+                var processes = ProcFs.Unsigned(ReadResource("pids.max", buffer));
+                var weight = ProcFs.Unsigned(ReadResource("cpu.weight", buffer));
+                var swap = ProcFs.Unsigned(ReadResource("memory.swap.max", buffer));
+                return HasResourceOwner(ownerPid, ownerStart)
+                    ? new RunResourceLimitReading(boundary, cpu, memory, processes, weight, swap) : null;
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or ObjectDisposedException)
+            {
+                return null;
+            }
+            finally
+            {
+                if (retained)
+                {
+                    _handle.DangerousRelease();
+                }
+            }
+        }
+    }
+
+    internal static ulong? NormalizeRunLimit(RunResourceDimension dimension, ulong value)
+    {
+        var page = (ulong)Environment.SystemPageSize;
+        return dimension switch
+        {
+            // cgroup v2's minimum quota is 1 ms per 100 ms period, i.e. ten millicores.
+            RunResourceDimension.Cpu when value is >= 10 and <= uint.MaxValue => value,
+            RunResourceDimension.Memory when value >= page && value <= long.MaxValue => value - value % page,
+            RunResourceDimension.ProcessCount when value is > 0 and <= uint.MaxValue => value,
+            RunResourceDimension.CpuWeight when value is > 0 and <= 10_000 => value,
+            RunResourceDimension.Swap when value == 0 => value,
+            _ => null,
+        };
+    }
+
+    internal RunResourceWriteResult ApplyOwnedLimit(RunResourceDimension dimension, ulong requested, int ownerPid, long ownerStart)
+    {
+        if (dimension is not (RunResourceDimension.Cpu or RunResourceDimension.Memory or RunResourceDimension.CpuWeight)
+            || NormalizeRunLimit(dimension, requested) is not { } value)
+        {
+            return new(RunResourceWriteStatus.Unsupported, Reason: "linux_limit_unavailable");
+        }
+
+        lock (_resources)
+        {
+            var retained = false;
+            try
+            {
+                _handle.DangerousAddRef(ref retained);
+                if (!HasResourceOwner(ownerPid, ownerStart))
+                {
+                    return ScopeLost();
+                }
+
+                if (dimension == RunResourceDimension.Memory)
+                {
+                    Span<byte> buffer = stackalloc byte[256];
+                    if (ProcFs.Unsigned(ReadResource("memory.max", buffer)) is not { } current)
+                    {
+                        return new(RunResourceWriteStatus.Failed, Reason: "linux_memory_limit_read_unavailable");
+                    }
+
+                    // Allocation can race a below-limit memory.current sample. Lowering the live hard
+                    // boundary could reclaim or OOM; no sample authorizes that effect.
+                    if (value < current)
+                    {
+                        return new(RunResourceWriteStatus.Unsupported, Reason: "linux_live_memory_reduction_unsafe");
+                    }
+                }
+
+                var (name, text) = dimension switch
+                {
+                    RunResourceDimension.Cpu => ("cpu.max", string.Create(CultureInfo.InvariantCulture,
+                        $"{value * CpuQuotaUsecPerMillicore} {CpuPeriodUsec}")),
+                    RunResourceDimension.Memory => ("memory.max", value.ToString(CultureInfo.InvariantCulture)),
+                    _ => ("cpu.weight", value.ToString(CultureInfo.InvariantCulture)),
+                };
+                using var file = Owned(OpenAt(_handle, name, CloseOnExec | s_noFollow | NonBlockingNoTerminal | 1), "write " + name);
+                var metadata = Metadata(file);
+                if (metadata.MountId != MountId || (metadata.Mode & 0xf000) != 0x8000 || !HasResourceOwner(ownerPid, ownerStart))
+                {
+                    return ScopeLost();
+                }
+
+                WriteLimit(file, text);
+                return HasResourceOwner(ownerPid, ownerStart)
+                    ? new(RunResourceWriteStatus.Applied, value) : ScopeLost();
+            }
+            catch (ObjectDisposedException)
+            {
+                return ScopeLost();
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                if (!CanIdentifyResourceOwner(ownerPid, ownerStart))
+                {
+                    return ScopeLost();
+                }
+
+                string reason = error.InnerException is Win32Exception native
+                    ? "linux_errno_" + native.NativeErrorCode.ToString(CultureInfo.InvariantCulture) : "linux_control_write_failed";
+                return new(RunResourceWriteStatus.Failed, Reason: reason);
+            }
+            finally
+            {
+                if (retained)
+                {
+                    _handle.DangerousRelease();
+                }
+            }
+        }
+    }
+
+    private static ulong? ReadCpuLimit(ReadOnlySpan<byte> text)
+    {
+        text = text.Trim(" \t\r\n"u8);
+        var separator = text.IndexOf((byte)' ');
+        if (separator < 0 || ProcFs.Unsigned(text[..separator]) is not { } quota || quota % CpuQuotaUsecPerMillicore != 0
+            || ProcFs.Unsigned(text[(separator + 1)..]) != CpuPeriodUsec)
+        {
+            return null;
+        }
+
+        return NormalizeRunLimit(RunResourceDimension.Cpu, quota / CpuQuotaUsecPerMillicore);
+    }
+
+    private bool HasResourceOwner(int pid, long start) => HasResourceIdentity() && MatchesProcess(pid, start, Path);
+
+    private bool CanIdentifyResourceOwner(int pid, long start)
+    {
+        try
+        {
+            return HasResourceOwner(pid, start);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ObjectDisposedException)
+        {
+            return false;
+        }
+    }
+
+    private static RunResourceWriteResult ScopeLost() => new(RunResourceWriteStatus.ScopeLost, Reason: "linux_resource_scope_lost");
+
+    private static unsafe void WriteLimit(SafeFileHandle file, string text)
+    {
+        Span<byte> buffer = stackalloc byte[64];
+        var length = Encoding.ASCII.GetBytes(text, buffer);
+        fixed (byte* data = buffer)
+        {
+            var count = Write(file, data, (nuint)length);
+            if (count < 0)
+            {
+                throw NativeError("write native cgroup limit");
+            }
+
+            if (count != length)
+            {
+                throw new IOException("The native cgroup control accepted only a partial write.");
+            }
+        }
+    }
+
     internal RunResourceObservation? ObserveResources()
     {
         lock (_resources)
@@ -180,7 +360,7 @@ internal sealed partial class LinuxRunCgroup : IDisposable
     {
         try
         {
-            using var file = Owned(OpenAt(_handle, name, CloseOnExec | s_noFollow | 0x900), "read " + name);
+            using var file = Owned(OpenAt(_handle, name, CloseOnExec | s_noFollow | NonBlockingNoTerminal), "read " + name);
             var metadata = Metadata(file);
             if (metadata.MountId != MountId || (metadata.Mode & 0xf000) != 0x8000)
             {
@@ -477,6 +657,9 @@ internal sealed partial class LinuxRunCgroup : IDisposable
 
     [LibraryImport("libc", EntryPoint = "openat", SetLastError = true, StringMarshalling = StringMarshalling.Utf8)]
     private static partial int OpenAt(SafeFileHandle directory, string path, int flags);
+
+    [LibraryImport("libc", EntryPoint = "write", SetLastError = true)]
+    private static unsafe partial nint Write(SafeFileHandle file, byte* data, nuint count);
 
     [LibraryImport("libc", EntryPoint = "statx", SetLastError = true, StringMarshalling = StringMarshalling.Utf8)]
     private static partial int Statx(SafeFileHandle handle, string path, int flags, uint mask, out FileMetadata metadata);

@@ -35,6 +35,7 @@ internal sealed class SandboxResourceMonitor : IAsyncDisposable
     private readonly Func<StoredPolicy> _policy;
     private readonly NodeLog _log;
     private readonly CancellationTokenSource _stop = new();
+    private readonly TaskCompletionSource _firstBudget = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Task _loop;
     private readonly AsymmetricSmoother _cpu = new();
     private readonly AsymmetricSmoother _memory = new();
@@ -63,6 +64,20 @@ internal sealed class SandboxResourceMonitor : IAsyncDisposable
     internal string Epoch { get; } = Guid.NewGuid().ToString("N");
 
     internal SandboxResourceFrame? Latest => Volatile.Read(ref _latest);
+
+    internal bool NeedsInitialBudget => !_firstBudget.Task.IsCompleted;
+
+    internal void WaitForInitialBudget(CancellationToken cancellationToken)
+    {
+        try
+        {
+            _firstBudget.Task.WaitAsync(TimeSpan.FromSeconds(3), cancellationToken).GetAwaiter().GetResult();
+        }
+        catch (TimeoutException)
+        {
+            // Admission validates freshness and presence after leaving this bounded startup wait.
+        }
+    }
 
     private async Task SampleLoopAsync()
     {
@@ -169,6 +184,11 @@ internal sealed class SandboxResourceMonitor : IAsyncDisposable
         var frame = new SandboxResourceFrame(timestamp, _lastComplete, inventory?.CatalogueRevision, Milliseconds(runInterval), snapshot, runs);
         snapshot.Stale = frame.Stale;
         Volatile.Write(ref _latest, frame);
+        if (complete)
+        {
+            _firstBudget.TrySetResult();
+        }
+
         if (_lastAvailability != !snapshot.Stale)
         {
             _lastAvailability = !snapshot.Stale;
