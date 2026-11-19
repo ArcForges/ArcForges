@@ -221,8 +221,17 @@ internal sealed partial class SandboxManager
 
         if (!_liveRuns.TryGetValue(runId, out var live))
         {
+            var recoveryRevision = run.State == StoredRunState.RecoveryRequired ? run.Revision : checked(run.Revision + 1);
             var unresolved = Receipts.AdmitObserved(intent, "UNKNOWN", (int)EffectCertainty.Unknown,
-                ResultBody(run.Revision, null, ErrorCategory.Execution, "outcome_unknown", "run_owner_identity_requires_recovery"));
+                ResultBody(recoveryRevision, null, ErrorCategory.Execution, "outcome_unknown", "run_owner_identity_requires_recovery"),
+                transaction =>
+                {
+                    if (run.State != StoredRunState.RecoveryRequired)
+                    {
+                        RequireChanged(RunRecords.TryAdvance(transaction, OwnerId, runId, run.Epoch, run.Revision, run.State,
+                            new StoredRunObservation(StoredRunState.RecoveryRequired, run.PayloadStarted, run.EffectCertainty)));
+                    }
+                });
             return ResolveRunMutation(unresolved, meta, request.OwnerEpoch);
         }
 

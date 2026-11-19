@@ -368,15 +368,19 @@ public sealed partial class WindowsMxcPathLease : IDisposable
             const int modifySecurityOrDelete = 0x000d0040;
             const int modifyContentOrAttributes = 0x00000116;
             var dangerous = genericWriteOrAll | modifySecurityOrDelete | (ancestor ? 0 : modifyContentOrAttributes);
+            var ownerAllowed = false;
             foreach (GenericAce ace in acl)
             {
                 if (privateObject)
                 {
+                    // Core's private roots grant only their owner and Windows' LocalSystem infrastructure.
                     if (ace is not CommonAce { AceQualifier: AceQualifier.AccessAllowed, IsCallback: false } owned
-                        || owned.SecurityIdentifier != principal)
+                        || (owned.SecurityIdentifier != principal && !owned.SecurityIdentifier.IsWellKnown(WellKnownSidType.LocalSystemSid)))
                     {
                         throw new UnauthorizedAccessException("The MXC private artifact permits an unexpected principal.");
                     }
+
+                    ownerAllowed |= owned.SecurityIdentifier == principal && (owned.AceFlags & AceFlags.InheritOnly) == 0;
                 }
                 else if ((ace.AceFlags & AceFlags.InheritOnly) == 0
                     && (ace.AceType == AceType.AccessAllowedCompound
@@ -386,6 +390,11 @@ public sealed partial class WindowsMxcPathLease : IDisposable
                 {
                     throw new UnauthorizedAccessException("The MXC installation permits untrusted modification.");
                 }
+            }
+
+            if (privateObject && !ownerAllowed)
+            {
+                throw new UnauthorizedAccessException("The MXC private artifact lacks an effective owner grant.");
             }
         }
         finally

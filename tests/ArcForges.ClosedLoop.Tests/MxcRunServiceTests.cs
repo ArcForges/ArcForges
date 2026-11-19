@@ -90,7 +90,7 @@ public sealed class MxcRunServiceTests
                 Assert.Equal(ownerEpoch, start.Operation.OwnerEpoch);
                 Assert.Equal(cleanupRun, start.Operation.AggregateId);
                 AssertRunProjection(start.Run, sandbox, original.Argv[0]);
-                var running = await WaitForStateAsync(runs, cleanupRun, RunState.Running);
+                var running = await WaitForStateAsync(fixture, runs, cleanupRun, RunState.Running);
                 await TestNode.WaitAsync(() => ChildIsReady(childMarker), NativeBound, "the real foreground workload's child marker");
                 Assert.Equal(FixtureArgument + "," + EnvironmentValue, Assert.Single(ReadLines(marker)));
                 AssertRunProjection(running, sandbox, original.Argv[0]);
@@ -100,11 +100,13 @@ public sealed class MxcRunServiceTests
                 Assert.Equal(CpuMillicores, DesiredCpu(running));
                 Assert.Equal(MemoryBytes, DesiredMemory(running));
                 Assert.False(native.IsEmpty(), "The running foreground payload must occupy its native boundary.");
-                var requested = await StopAsync(runs, ownerEpoch, running, Ct);
+                var stop = BuildStop(ownerEpoch, running);
+                var requested = await StopAsync(runs, stop, Ct);
                 Assert.Equal(running.RunId, requested.Run.RunId);
+                Assert.Equal(stop.Meta.CommandId, requested.Operation.CommandId);
                 Assert.Equal(running.RunId, requested.Operation.AggregateId);
                 Assert.Contains(requested.Run.State, new[] { RunState.Stopping, RunState.Draining, RunState.Exited });
-                settled = await WaitForStateAsync(runs, running.RunId, RunState.Exited);
+                settled = await WaitForStateAsync(fixture, runs, running.RunId, RunState.Exited);
                 Assert.True(settled.Exit.GroupEmptyVerified);
                 Assert.True(native.IsEmpty(), "The native process boundary must be empty when the Run becomes terminal.");
                 Assert.NotEqual(PayloadStartEvidence.NotStarted, settled.Exit.PayloadStarted);
@@ -112,6 +114,20 @@ public sealed class MxcRunServiceTests
                 {
                     Assert.Contains(settled.Exit.Source, new[] { ExitSource.OfficialExecutor, ExitSource.Supervisor });
                 }
+
+                var linkedReceipt = await OperationAsync(node, stop.OwnerEpoch, stop.Meta.CommandId);
+                AssertStopReceipt(linkedReceipt, stop, settled.Revision, EffectCertainty.Happened);
+
+                var terminalStop = BuildStop(ownerEpoch, settled);
+                Assert.NotEqual(stop.Meta.CommandId, terminalStop.Meta.CommandId);
+                var noOp = await StopAsync(runs, terminalStop, Ct);
+                Assert.Equal(settled, noOp.Run);
+                AssertStopReceipt(noOp.Operation, terminalStop, settled.Revision, EffectCertainty.DidNotHappen);
+                Assert.Equal(noOp, await StopAsync(runs, terminalStop, Ct));
+                var terminalReceipt = await OperationAsync(node, terminalStop.OwnerEpoch, terminalStop.Meta.CommandId);
+                AssertStopReceipt(terminalReceipt, terminalStop, settled.Revision, EffectCertainty.DidNotHappen);
+                Assert.True(native.IsEmpty());
+                Assert.Equal(FixtureArgument + "," + EnvironmentValue, Assert.Single(ReadLines(marker)));
 
                 AssertRunProjection(settled, sandbox, original.Argv[0]);
                 var renamed = await sandboxes.ConfigureAsync(new SandboxServiceConfigureRequest
@@ -121,7 +137,7 @@ public sealed class MxcRunServiceTests
                 }, deadline: Deadline, cancellationToken: Ct);
                 Assert.True(Value(renamed.Value, renamed.Error).Sandbox.Revision.Value > sandbox.Revision.Value);
                 AssertRunProjection(await InspectAsync(runs, settled.RunId, Ct), sandbox, original.Argv[0]);
-                var recorded = await OperationAsync(node, original);
+                var recorded = await OperationAsync(node, original.OwnerEpoch, original.Meta.CommandId);
                 Assert.Equal(OperationState.Succeeded, recorded.State);
                 Assert.Equal(EffectCertainty.Happened, recorded.Effect);
                 Assert.False(recorded.ResponseCompacted);
@@ -143,7 +159,7 @@ public sealed class MxcRunServiceTests
             Assert.Equal(EffectCertainty.Happened, replay.Error!.Effect);
             Assert.Equal("SUCCEEDED", replay.Error.Details.State.State);
             Assert.Equal(settled.RunId, replay.Error.Details.State.Resource.Id);
-            var retained = await OperationAsync(recoveredNode, original);
+            var retained = await OperationAsync(recoveredNode, original.OwnerEpoch, original.Meta.CommandId);
             Assert.True(retained.ResponseCompacted);
             Assert.Equal(original.Meta.CommandId, retained.CommandId);
             Assert.Equal(ownerEpoch, retained.OwnerEpoch);
@@ -178,7 +194,7 @@ public sealed class MxcRunServiceTests
                     var run = await InspectAsync(runs, cleanupRun, CancellationToken.None);
                     if (run.State is RunState.Starting or RunState.Running)
                     {
-                        await StopAsync(runs, ownerEpoch, run, CancellationToken.None);
+                        await StopAsync(runs, BuildStop(ownerEpoch, run), CancellationToken.None);
                     }
                 }
             }
@@ -226,7 +242,7 @@ public sealed class MxcRunServiceTests
                 var request = BuildStart(sandbox, ownerEpoch, PrepareSelfSettlingPayload(working));
                 Assert.Null(request.RequestedResources);
                 var submitted = await runs.StartAsync(request, deadline: Deadline, cancellationToken: cancellationToken);
-                running = await WaitForStateAsync(runs, Value(submitted.Value, submitted.Error).Run.RunId, RunState.Running);
+                running = await WaitForStateAsync(fixture, runs, Value(submitted.Value, submitted.Error).Run.RunId, RunState.Running);
                 await TestNode.WaitAsync(() => ChildIsReady(childMarker), NativeBound, "the self-settling payload's ready child");
                 Assert.Equal(ready, Assert.Single(ReadLines(marker)));
                 native = await ObserveNativeBoundaryAsync(fixture, running, childMarker);
@@ -428,7 +444,7 @@ public sealed class MxcRunServiceTests
         return Value(reply.Value, reply.Error).Run;
     }
 
-    private static async Task<Run> WaitForStateAsync(RunService.RunServiceClient runs, Id runId, RunState state)
+    private static async Task<Run> WaitForStateAsync(TestNode fixture, RunService.RunServiceClient runs, Id runId, RunState state)
     {
         var clock = Stopwatch.StartNew();
         while (true)
@@ -439,9 +455,31 @@ public sealed class MxcRunServiceTests
                 return run;
             }
 
-            Assert.True((run.State is RunState.Starting or RunState.Running or RunState.Stopping or RunState.Draining) && clock.Elapsed < NativeBound,
-                $"Run did not reach {state}. Observed {run.State} with {run.Exit?.TerminationReason ?? "no exit reason"}.");
+            if (run.State is not (RunState.Starting or RunState.Running or RunState.Stopping or RunState.Draining) || clock.Elapsed >= NativeBound)
+            {
+                var diagnostics = ReadRunDiagnostics(fixture, runId);
+                Assert.Fail($"Run did not reach {state}. Observed {run.State} with {run.Exit?.TerminationReason ?? "no exit reason"}. {diagnostics}");
+            }
+
             await Task.Delay(50, Ct);
+        }
+    }
+
+    private static string ReadRunDiagnostics(TestNode fixture, Id runId)
+    {
+        try
+        {
+            var id = Hex(runId);
+            var entries = TestNode.LogEvents(fixture.NodeLog, "run.owner")
+                .Select(entry => entry.GetProperty("fields"))
+                .Where(fields => fields.GetProperty("run").GetString() == id)
+                .TakeLast(4)
+                .Select(fields => $"{fields.GetProperty("phase").GetString()}={fields.GetProperty("native").GetString()}");
+            return string.Join(", ", entries);
+        }
+        catch (Exception error) when (error is IOException or JsonException or KeyNotFoundException)
+        {
+            return "Run owner diagnostics unavailable.";
         }
     }
 
@@ -451,14 +489,28 @@ public sealed class MxcRunServiceTests
         return Value(reply.Value, reply.Error).Runs.ToArray();
     }
 
-    private static async Task<RunServiceStopValue> StopAsync(RunService.RunServiceClient runs, Id ownerEpoch, Run run,
+    private static RunServiceStopRequest BuildStop(Id ownerEpoch, Run run) => new()
+    {
+        Meta = Mutation(run.Revision), OwnerEpoch = ownerEpoch, RunId = run.RunId, GraceMs = 0,
+    };
+
+    private static async Task<RunServiceStopValue> StopAsync(RunService.RunServiceClient runs, RunServiceStopRequest request,
         CancellationToken cancellationToken)
     {
-        var reply = await runs.StopAsync(new RunServiceStopRequest
-        {
-            Meta = Mutation(run.Revision), OwnerEpoch = ownerEpoch, RunId = run.RunId, GraceMs = 0,
-        }, deadline: Deadline, cancellationToken: cancellationToken);
+        var reply = await runs.StopAsync(request, deadline: Deadline, cancellationToken: cancellationToken);
         return Value(reply.Value, reply.Error);
+    }
+
+    private static void AssertStopReceipt(Operation operation, RunServiceStopRequest request, Revision revision, EffectCertainty effect)
+    {
+        Assert.Equal(request.Meta.CommandId, operation.CommandId);
+        Assert.Equal(request.OwnerEpoch, operation.OwnerEpoch);
+        Assert.Equal(request.RunId, operation.AggregateId);
+        Assert.Equal(revision, operation.Revision);
+        Assert.Equal("RunService.Stop", operation.Method);
+        Assert.Equal(OperationState.Succeeded, operation.State);
+        Assert.Equal(effect, operation.Effect);
+        Assert.False(operation.ResponseCompacted);
     }
 
     private static void AssertRunProjection(Run run, Sandbox sandbox, string executable)
@@ -630,11 +682,11 @@ public sealed class MxcRunServiceTests
         }
     }
 
-    private static async Task<Operation> OperationAsync(NodeService.NodeServiceClient node, RunServiceStartRequest original)
+    private static async Task<Operation> OperationAsync(NodeService.NodeServiceClient node, Id ownerEpoch, Id commandId)
     {
         var reply = await node.GetOperationAsync(new NodeServiceGetOperationRequest
         {
-            Meta = Query(), CommandId = original.Meta.CommandId, OwnerEpoch = original.OwnerEpoch,
+            Meta = Query(), CommandId = commandId, OwnerEpoch = ownerEpoch,
         }, deadline: Deadline, cancellationToken: Ct);
         return Value(reply.Value, reply.Error).Operation;
     }

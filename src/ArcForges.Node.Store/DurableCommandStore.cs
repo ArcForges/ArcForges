@@ -132,9 +132,10 @@ internal sealed partial class DurableCommandStore : IDisposable
     internal DurableAdmission Admit(DurableIntent intent, Action<StoreTransaction>? metadataChanges = null) =>
         Admit(intent, metadataChanges, null);
 
-    /// <summary>Atomically journals an already observed outcome without exposing an executable receipt.</summary>
-    internal DurableAdmission AdmitObserved(DurableIntent intent, string state, int effect, string redactedJson) =>
-        Admit(intent, null, new(state, effect, redactedJson));
+    /// <summary>Atomically journals an already observed outcome and its optional metadata on first admission.</summary>
+    internal DurableAdmission AdmitObserved(DurableIntent intent, string state, int effect, string redactedJson,
+        Action<StoreTransaction>? observedMetadata = null) =>
+        Admit(intent, observedMetadata, new(state, effect, redactedJson));
 
     private DurableAdmission Admit(DurableIntent intent, Action<StoreTransaction>? metadataChanges, InitialResult? observed)
     {

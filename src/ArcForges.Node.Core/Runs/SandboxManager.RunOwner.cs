@@ -152,21 +152,17 @@ internal sealed partial class SandboxManager
     private void PrepareRunControl(RunLaunchSpec spec)
     {
         _roots.ValidateControlPaths();
-        if (Directory.Exists(spec.ControlDirectory) || File.Exists(spec.ControlDirectory))
+        using var dataRoot = WorkspacePath.OpenRoot(_dataRoot);
+        WorkspacePath.CheckSandboxDirectory(dataRoot.RootHandle, configuredRoot: true);
+        using var parent = dataRoot.OpenSandboxDirectory("control", configuredRoot: true);
+        var name = "run-" + spec.RunId;
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        if (!string.Equals(Path.Combine(parent.RootPath, name), spec.ControlDirectory, comparison))
         {
-            throw new IOException("run_control_path_exists");
+            throw new InvalidDataException("run_control_path_mismatch");
         }
 
-        if (OperatingSystem.IsLinux())
-        {
-            Directory.CreateDirectory(spec.ControlDirectory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-        }
-        else
-        {
-            Directory.CreateDirectory(spec.ControlDirectory);
-        }
-
-        using var created = WorkspacePath.OpenRoot(spec.ControlDirectory);
+        using var created = parent.CreateSandboxDirectory(name);
         _roots.ValidateControlPaths();
     }
 
