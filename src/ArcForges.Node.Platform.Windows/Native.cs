@@ -377,7 +377,7 @@ internal static unsafe partial class Native
     public static partial bool DuplicateRemoteHandle(SafeKernelHandle sourceProcess, nint source, nint targetProcess, out nint target,
         uint access, [MarshalAs(UnmanagedType.Bool)] bool inherit, uint options);
 
-    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [LibraryImport("KernelBase.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool CompareObjectHandles(SafeKernelHandle first, SafeKernelHandle second);
 

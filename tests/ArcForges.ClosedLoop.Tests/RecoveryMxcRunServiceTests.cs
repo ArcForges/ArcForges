@@ -224,7 +224,7 @@ public sealed partial class MxcRunServiceTests
             Assert.NotEqual(fixture.Native.Supervisor.StartKey, unrelated.StartKey);
             Assert.True(unrelated.IsRunning());
             var storeBoot = previousBoot ? OtherRecoveryBoot(binding.StoreBoot) : binding.StoreBoot;
-            var ownerBoot = OperatingSystem.IsLinux() ? storeBoot["linux:".Length..] : storeBoot;
+            var ownerBoot = OperatingSystem.IsLinux() ? storeBoot.Split(':')[1] : storeBoot;
             WriteStaleRecoveryOwnerFixture(fixture.Node.DataRoot, run, binding, unrelated.Pid, ownerBoot, storeBoot);
 
             await fixture.RestartNodeAsync();
@@ -392,8 +392,12 @@ public sealed partial class MxcRunServiceTests
 
     private static string OtherRecoveryBoot(string current)
     {
-        if (OperatingSystem.IsLinux()) return "linux:" + Guid.NewGuid().ToString("D");
         var separator = current.LastIndexOf(':');
+        if (OperatingSystem.IsLinux())
+        {
+            return "linux:" + Guid.NewGuid().ToString("D") + current[separator..];
+        }
+
         var currentSeconds = long.Parse(current.AsSpan(separator + 1), NumberStyles.None, CultureInfo.InvariantCulture);
         return current[..(separator + 1)] + (currentSeconds - 1).ToString(CultureInfo.InvariantCulture);
     }
@@ -488,8 +492,21 @@ public sealed partial class MxcRunServiceTests
         var binding = new RecoveryBinding(row.GetString(0), row.GetString(1), row.GetInt32(2), row.GetString(3),
             row.GetString(4), row.GetString(5), row.GetString(6), row.GetString(7), row.GetString(8), row.GetString(9), row.GetInt64(10));
         Assert.Equal(run.Epoch, binding.RunEpoch);
-        Assert.Equal(BootIdentity.Read(), binding.StoreBoot);
-        Assert.Equal(OperatingSystem.IsLinux() ? binding.StoreBoot["linux:".Length..] : binding.StoreBoot, binding.Boot);
+        var currentBoot = BootIdentity.Read();
+        if (OperatingSystem.IsLinux())
+        {
+            var machine = Guid.ParseExact(File.ReadAllText("/etc/machine-id").TrimEnd('\n'), "N");
+            Assert.NotEqual(Guid.Empty, machine);
+            var machineHash = Convert.ToHexStringLower(SHA256.HashData(Encoding.ASCII.GetBytes(machine.ToString("N"))));
+            Assert.Equal(currentBoot + ":" + machineHash, binding.StoreBoot);
+            Assert.Equal(currentBoot["linux:".Length..], binding.Boot);
+        }
+        else
+        {
+            Assert.Equal(currentBoot, binding.StoreBoot);
+            Assert.Equal(currentBoot, binding.Boot);
+        }
+
         Assert.False(row.Read());
         return binding;
     }

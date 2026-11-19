@@ -9,6 +9,7 @@ using ArcForges.Node.CloudLink;
 using ArcForges.Node.Core.Platform;
 using ArcForges.Node.Core.Sandboxes;
 using ArcForges.Node.Core.Security;
+using ArcForges.Node.Platform.Windows.Mxc;
 using ArcForges.Node.Store;
 using Google.Protobuf;
 
@@ -30,6 +31,13 @@ public sealed partial class MxcRunServiceTests
         var cancellation = TestContext.Current.CancellationToken;
         cancellation.ThrowIfCancellationRequested();
         RequireExtractedPackage();
+        if (OperatingSystem.IsWindows() && !Path.GetFileName(WindowsMxcProcess.CurrentImagePath()).Equals("dotnet.exe", StringComparison.OrdinalIgnoreCase))
+        {
+            await RunFixtureFromTrustedRuntimeAsync(nameof(InstalledRecoveryKeepsReservedNativeStopAndGrantRevocationWhenOrdinaryAdmissionIsFull),
+                TimeSpan.FromSeconds(210));
+            return;
+        }
+
         await using var fixture = TestNode.Create();
         PrepareDataRoot(fixture.DataRoot);
         string owner = Assert.IsType<string>(SandboxLocalOwner.Current());

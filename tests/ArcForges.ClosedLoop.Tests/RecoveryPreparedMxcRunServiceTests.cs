@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Security.Cryptography;
+using System.Text.Json;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Sandbox.V2;
 using ArcForges.Node.Api;
@@ -30,7 +31,7 @@ public sealed partial class MxcRunServiceTests
         RequireExtractedPackage();
         if (OperatingSystem.IsWindows() && !Path.GetFileName(WindowsMxcProcess.CurrentImagePath()).Equals("dotnet.exe", StringComparison.OrdinalIgnoreCase))
         {
-            await RunPreparedFixtureFromTrustedRuntimeAsync();
+            await RunFixtureFromTrustedRuntimeAsync(nameof(InstalledRecoveryDoesNotReleaseAPreparedNativeOwner), TimeSpan.FromSeconds(110));
             return;
         }
 
@@ -104,11 +105,13 @@ public sealed partial class MxcRunServiceTests
     }
 
     [SupportedOSPlatform("windows")]
-    private static async Task RunPreparedFixtureFromTrustedRuntimeAsync()
+    private static async Task RunFixtureFromTrustedRuntimeAsync(string method, TimeSpan timeout)
     {
         // The workspace apphost can inherit write access for unrelated principals. The owner still validates
         // its real launcher image; use the existing native .NET muxer to run this same compiled test body.
-        var dotnet = Path.GetFullPath(Path.Combine(RuntimeEnvironment.GetRuntimeDirectory(), "..", "..", "..", "dotnet.exe"));
+        var runtimeRoot = new DirectoryInfo(Path.GetFullPath(Path.Combine(RuntimeEnvironment.GetRuntimeDirectory(), "..", "..", "..")));
+        var resolvedRoot = runtimeRoot.ResolveLinkTarget(returnFinalTarget: true) ?? runtimeRoot;
+        var dotnet = Path.Combine(resolvedRoot.FullName, "dotnet.exe");
         var start = new ProcessStartInfo(dotnet)
         {
             UseShellExecute = false,
@@ -117,17 +120,21 @@ public sealed partial class MxcRunServiceTests
             RedirectStandardError = true,
         };
         start.ArgumentList.Add(typeof(MxcRunServiceTests).Assembly.Location);
-        start.ArgumentList.Add("--filter-method");
-        start.ArgumentList.Add(typeof(MxcRunServiceTests).FullName + "." + nameof(InstalledRecoveryDoesNotReleaseAPreparedNativeOwner));
-        start.ArgumentList.Add("--minimum-expected-tests");
-        start.ArgumentList.Add("1");
-        start.ArgumentList.Add("--fail-skips");
-        start.ArgumentList.Add("on");
-        start.ArgumentList.Add("--output");
-        start.ArgumentList.Add("Detailed");
+        start.ArgumentList.Add("-method");
+        start.ArgumentList.Add(typeof(MxcRunServiceTests).FullName + "." + method);
+        start.ArgumentList.Add("-failSkips");
+        start.ArgumentList.Add("-automated");
+        start.ArgumentList.Add("async");
         using var helper = Process.Start(start) ?? throw new InvalidOperationException("The existing .NET runtime host could not start.");
-        var run = await TestNode.CompleteAsync(helper, TimeSpan.FromSeconds(110));
-        Assert.True(run.ExitCode == 0, $"The trusted-image native preparation test failed: {run}");
+        var run = await TestNode.CompleteAsync(helper, timeout);
+        Assert.True(run.ExitCode == 0, $"The trusted-image native test failed: {run}");
+        var finished = Assert.Single(run.Output.Split('\n'), line =>
+            line.StartsWith("{\"$type\":\"test-assembly-finished\",", StringComparison.Ordinal));
+        using var receipt = JsonDocument.Parse(finished);
+        Assert.Equal(1, receipt.RootElement.GetProperty("TestsTotal").GetInt32());
+        Assert.Equal(0, receipt.RootElement.GetProperty("TestsFailed").GetInt32());
+        Assert.Equal(0, receipt.RootElement.GetProperty("TestsNotRun").GetInt32());
+        Assert.Equal(0, receipt.RootElement.GetProperty("TestsSkipped").GetInt32());
         TestContext.Current.TestOutputHelper?.WriteLine(run.Output);
     }
 
