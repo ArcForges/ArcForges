@@ -142,6 +142,113 @@ public sealed partial class WindowsMxcJob : IDisposable
         return new(accounting.ActiveProcesses, _job.ProcessIds(), accounting);
     }
 
+    internal unsafe RunResourceObservation? ObserveResources()
+    {
+        var handle = Handle;
+        var retained = false;
+        try
+        {
+            // Hold the original native Job across the membership checks that take a raw HANDLE.
+            handle.DangerousAddRef(ref retained);
+            var basic = default(Native.JobObjectBasicAndIoAccountingInformation);
+            var hasBasic = Native.QueryInformationJobObject(handle, Native.JobObjectBasicAndIoAccountingInformationClass,
+                &basic, sizeof(Native.JobObjectBasicAndIoAccountingInformation), out _);
+            var extended = default(Native.JobObjectExtendedLimitInformation);
+            var hasExtended = Native.QueryInformationJobObject(handle, Native.JobObjectExtendedLimitInformationClass,
+                &extended, sizeof(Native.JobObjectExtendedLimitInformation), out _);
+            if (!hasBasic && !hasExtended)
+            {
+                return null;
+            }
+
+            var sample = new RunResourceObservation(RunMemoryAccounting.WindowsCommit)
+            {
+                CumulativeCpuUsec = hasBasic && basic.BasicInfo.TotalUserTime >= 0 && basic.BasicInfo.TotalKernelTime >= 0
+                    ? ((ulong)basic.BasicInfo.TotalUserTime + (ulong)basic.BasicInfo.TotalKernelTime) / 10 : null,
+                PeakMemoryBytes = hasExtended ? extended.PeakJobMemoryUsed : null,
+            };
+            if (!hasBasic)
+            {
+                return sample;
+            }
+
+            int[] members;
+            try
+            {
+                members = _job.ProcessIds();
+            }
+            catch (Win32Exception)
+            {
+                return sample;
+            }
+
+            var identities = new HashSet<int>(members);
+            if (members.Length != basic.BasicInfo.ActiveProcesses || identities.Count != members.Length
+                || identities.Any(pid => pid <= 0))
+            {
+                return sample;
+            }
+
+            sample = sample with { ProcessCount = basic.BasicInfo.ActiveProcesses };
+            return sample with { ResidentBytes = ResidentBytes(members, identities, handle.DangerousGetHandle()) };
+        }
+        catch (ObjectDisposedException)
+        {
+            return null;
+        }
+        finally
+        {
+            if (retained)
+            {
+                handle.DangerousRelease();
+            }
+        }
+    }
+
+    private ulong? ResidentBytes(int[] members, HashSet<int> identities, nint job)
+    {
+        var processes = new List<SafeKernelHandle>(members.Length);
+        try
+        {
+            ulong bytes = 0;
+            foreach (var pid in members)
+            {
+                var process = ProcessInfo.Open(pid);
+                if (process is null)
+                {
+                    return null;
+                }
+
+                processes.Add(process);
+                if (!Native.IsProcessInJob(process, job, out var isMember) || !isMember
+                    || ProcessInfo.CreationFileTime(process) <= 0 || !ProcessInfo.IsRunning(process)
+                    || WindowsResourceSampler.PrivateResidentBytes(process) is not { } workingSet
+                    || workingSet > ulong.MaxValue - bytes)
+                {
+                    return null;
+                }
+
+                bytes += workingSet;
+            }
+
+            // The open handles pin process identities through the second membership read.
+            var current = _job.ProcessIds();
+            return current.Length == members.Length && identities.SetEquals(current) && processes.All(ProcessInfo.IsRunning)
+                ? bytes : null;
+        }
+        catch (Win32Exception)
+        {
+            return null;
+        }
+        finally
+        {
+            foreach (var process in processes)
+            {
+                process.Dispose();
+            }
+        }
+    }
+
     /// <summary>Verifies only the exact known process IDs are in the Job.</summary>
     public WindowsMxcJobObservation RequireOnly(params int[] members)
     {

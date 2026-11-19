@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Buffers.Text;
+using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.Versioning;
 using System.Text;
@@ -15,7 +16,7 @@ namespace ArcForges.Node.Platform.Linux;
 /// allocates almost nothing.
 /// </summary>
 [SupportedOSPlatform("linux")]
-public sealed class LinuxResourceSampler : IResourceSampler
+public sealed class LinuxResourceSampler : IResourceSampler, IHostResourceSource
 {
     /// <summary>How long pressure and disk counters are reused (03 section 1: pressure every 5 s).</summary>
     public static readonly TimeSpan SlowInterval = TimeSpan.FromSeconds(5);
@@ -29,7 +30,14 @@ public sealed class LinuxResourceSampler : IResourceSampler
     private byte[] _machine = new byte[16 * 1024];
     private long _slowAt = long.MinValue;
     private PressureStall? _pressure;
+    private (double? CpuSome, double? MemorySome, double? MemoryFull) _resourcePressure;
     private (long Read, long Written) _io;
+    private HostResourceObservation? _lastHost;
+    private long? _lastReturnedHostTimestamp;
+    private long _hostAt;
+    private bool _observeNodeOverhead;
+    private ulong? _hostBusyUsec;
+    private ulong? _hostOomKills;
 
     /// <summary>Creates the sampler; the physical disks are those of <c>/sys/block</c> with a <c>device</c> link.</summary>
     public LinuxResourceSampler()
@@ -57,56 +65,128 @@ public sealed class LinuxResourceSampler : IResourceSampler
     {
         lock (_gate)
         {
-            // The first line of /proc/stat: cpu user nice system idle iowait irq softirq steal (guest time is already part of user).
-            long busy = 0, total = 0;
-            ReadOnlySpan<byte> stat = _machine.AsSpan(0, Math.Max(0, ReadFile("/proc/stat", _machine.AsSpan(0, 512))));
-            if (stat.StartsWith("cpu "u8))
+            return ReadMachine();
+        }
+    }
+
+    /// <inheritdoc />
+    public HostResourceObservation ObserveHostResources()
+    {
+        lock (_gate)
+        {
+            // A fresh V1 capture can serve V2 once. Read new raw counters when V2 already consumed it.
+            if (_lastHost is null || _lastHost.MonotonicTimestamp == _lastReturnedHostTimestamp
+                || Environment.TickCount64 - _hostAt >= 1000)
             {
-                var line = stat[4..];
-                for (var index = 0; index < 8 && NextNumber(ref line, out var value); index++)
+                _observeNodeOverhead = true;
+                _ = ReadMachine();
+            }
+
+            var host = _lastHost!;
+            _lastReturnedHostTimestamp = host.MonotonicTimestamp;
+            return host;
+        }
+    }
+
+    private MachineSample ReadMachine()
+    {
+        var stamp = _observeNodeOverhead ? Stopwatch.GetTimestamp() : 0;
+        var now = Environment.TickCount64;
+        // The first line of /proc/stat: cpu user nice system idle iowait irq softirq steal (guest time is already part of user).
+        long busy = 0, total = 0;
+        ReadOnlySpan<byte> stat = _machine.AsSpan(0, Math.Max(0, ReadFile("/proc/stat", _machine.AsSpan(0, 512))));
+        var observedBusy = _observeNodeOverhead ? ProcFs.AcceptCumulative(ProcFs.HostBusyUsec(stat), ref _hostBusyUsec) : null;
+        if (stat.StartsWith("cpu "u8))
+        {
+            var line = stat[4..];
+            for (var index = 0; index < 8 && NextNumber(ref line, out var value); index++)
+            {
+                total += value;
+                if (index is not 3 and not 4)
                 {
-                    total += value;
-                    if (index is not 3 and not 4)
-                    {
-                        busy += value;
-                    }
+                    busy += value;
                 }
             }
+        }
 
-            // ReadWhole may replace the buffer, so each span is taken after its read.
-            var length = ReadWhole("/proc/meminfo", ref _machine);
-            var meminfo = _machine.AsSpan(0, Math.Max(0, length));
-            var memTotal = Kib(meminfo, "MemTotal:"u8);
-            var available = Kib(meminfo, "MemAvailable:"u8);
-            var committed = Kib(meminfo, "Committed_AS:"u8);
-            var limit = Kib(meminfo, "CommitLimit:"u8);
-            var swap = Math.Max(0, Kib(meminfo, "SwapTotal:"u8) - Kib(meminfo, "SwapFree:"u8));
-            length = ReadWhole("/proc/vmstat", ref _machine);
-            var oom = Value(_machine.AsSpan(0, Math.Max(0, length)), "oom_kill "u8);
-            var now = Environment.TickCount64;
-            if (_slowAt == long.MinValue || now - _slowAt >= (long)SlowInterval.TotalMilliseconds)
-            {
-                _slowAt = now;
-                _pressure = ReadPressure(_machine);
-                length = ReadWhole("/proc/diskstats", ref _machine);
-                _io = DiskBytes(_machine.AsSpan(0, Math.Max(0, length)));
-            }
+        // ReadWhole may replace the buffer, so each span is taken after its read.
+        var length = ReadWhole("/proc/meminfo", ref _machine);
+        var meminfo = _machine.AsSpan(0, Math.Max(0, length));
+        ReadOnlySpan<byte> completeMeminfo = _observeNodeOverhead && length < _machine.Length ? meminfo : [];
+        var observedTotal = ProcFs.NumericField(completeMeminfo, "MemTotal:"u8, kibibytes: true);
+        var observedAvailable = ProcFs.NumericField(completeMeminfo, "MemAvailable:"u8, kibibytes: true);
+        var observedCommit = ProcFs.NumericField(completeMeminfo, "Committed_AS:"u8, kibibytes: true);
+        var observedLimit = ProcFs.NumericField(completeMeminfo, "CommitLimit:"u8, kibibytes: true);
+        var memTotal = Kib(meminfo, "MemTotal:"u8);
+        var available = Kib(meminfo, "MemAvailable:"u8);
+        var committed = Kib(meminfo, "Committed_AS:"u8);
+        var limit = Kib(meminfo, "CommitLimit:"u8);
+        var swap = Math.Max(0, Kib(meminfo, "SwapTotal:"u8) - Kib(meminfo, "SwapFree:"u8));
+        length = ReadWhole("/proc/vmstat", ref _machine);
+        var vmstat = _machine.AsSpan(0, Math.Max(0, length));
+        var oom = Value(vmstat, "oom_kill "u8);
+        var observedOom = ProcFs.AcceptCumulative(_observeNodeOverhead && length < _machine.Length ? ProcFs.NumericField(vmstat, "oom_kill "u8) : null,
+            ref _hostOomKills);
+        var nodeCpu = _observeNodeOverhead ? Environment.CpuUsage.TotalTime.Ticks : -1;
+        var nodeMemory = _observeNodeOverhead ? NodeResidentBytes() : null;
+        if (_slowAt == long.MinValue || now - _slowAt >= (long)SlowInterval.TotalMilliseconds)
+        {
+            _slowAt = now;
+            ReadPressure(_machine);
+            length = ReadWhole("/proc/diskstats", ref _machine);
+            _io = DiskBytes(_machine.AsSpan(0, Math.Max(0, length)));
+        }
 
-            return new MachineSample
+        if (_observeNodeOverhead)
+        {
+            _hostAt = now;
+            _lastHost = new HostResourceObservation
             {
-                CpuBusyMs = busy * 1000 / ProcFs.TicksPerSecond,
-                CpuTotalMs = total * 1000 / ProcFs.TicksPerSecond,
-                TotalMemoryBytes = memTotal,
-                AvailableMemoryBytes = available,
-                CommitBytes = committed,
-                CommitLimitBytes = limit,
-                SwapUsedBytes = swap,
-                IoReadBytes = _io.Read,
-                IoWriteBytes = _io.Written,
-                Pressure = _pressure,
-                OomKills = oom,
+                MonotonicTimestamp = stamp,
+                CpuCapacityMillicores = ProcFs.OnlineCpuCapacityMillicores(),
+                CpuBusyUsec = observedBusy,
+                PhysicalTotalBytes = observedTotal is > 0 ? observedTotal : null,
+                PhysicalAvailableBytes = observedAvailable > observedTotal ? null : observedAvailable,
+                CommitBytes = observedCommit,
+                CommitLimitBytes = observedLimit,
+                NodeCpuUsec = nodeCpu >= 0 ? (ulong)(nodeCpu / 10) : null,
+                NodeResidentBytes = nodeMemory,
+                OomKills = observedOom,
+                PsiCpuSome = _resourcePressure.CpuSome,
+                PsiMemorySome = _resourcePressure.MemorySome,
+                PsiMemoryFull = _resourcePressure.MemoryFull,
             };
         }
+
+        return new MachineSample
+        {
+            CpuBusyMs = busy * 1000 / ProcFs.TicksPerSecond,
+            CpuTotalMs = total * 1000 / ProcFs.TicksPerSecond,
+            TotalMemoryBytes = memTotal,
+            AvailableMemoryBytes = available,
+            CommitBytes = committed,
+            CommitLimitBytes = limit,
+            SwapUsedBytes = swap,
+            IoReadBytes = _io.Read,
+            IoWriteBytes = _io.Written,
+            Pressure = _pressure,
+            OomKills = oom,
+        };
+    }
+
+    private ulong? NodeResidentBytes()
+    {
+        var buffer = _machine.AsSpan(0, 16 * 1024);
+        var length = ReadFile("/proc/self/status", buffer);
+        if (length <= 0 || length == buffer.Length)
+        {
+            return null;
+        }
+
+        // Match the historical anonymous plus shared-memory residency measure; file cache is separate.
+        var anon = ProcFs.NumericField(buffer[..length], "RssAnon:"u8, kibibytes: true);
+        var shmem = ProcFs.NumericField(buffer[..length], "RssShmem:"u8, kibibytes: true);
+        return anon is { } a && shmem is { } s && a <= ulong.MaxValue - s ? a + s : null;
     }
 
     /// <inheritdoc />
@@ -229,17 +309,19 @@ public sealed class LinuxResourceSampler : IResourceSampler
     }
 
     /// <summary>Pressure stall information, or null when the kernel has none (<c>CONFIG_PSI</c> off or <c>psi=0</c>).</summary>
-    private static PressureStall? ReadPressure(Span<byte> buffer)
+    private void ReadPressure(Span<byte> buffer)
     {
-        var cpu = Psi("/proc/pressure/cpu", buffer);
-        var memory = Psi("/proc/pressure/memory", buffer);
-        var io = Psi("/proc/pressure/io", buffer);
-        return cpu is null || memory is null || io is null ? null : new PressureStall(cpu.Value.Some, memory.Value.Some, memory.Value.Full, io.Value.Some);
+        var cpu = Psi("/proc/pressure/cpu", buffer, out var strictCpu);
+        var memory = Psi("/proc/pressure/memory", buffer, out var strictMemory);
+        var io = Psi("/proc/pressure/io", buffer, out _);
+        _pressure = cpu is null || memory is null || io is null ? null : new PressureStall(cpu.Value.Some, memory.Value.Some, memory.Value.Full, io.Value.Some);
+        _resourcePressure = (strictCpu.Some, strictMemory.Some, strictMemory.Full);
     }
 
-    private static (double Some, double Full)? Psi(string path, Span<byte> buffer)
+    private static (double Some, double Full)? Psi(string path, Span<byte> buffer, out (double? Some, double? Full) strict)
     {
         var length = ReadFile(path, buffer);
+        strict = default;
         if (length <= 0)
         {
             return null;
@@ -248,6 +330,11 @@ public sealed class LinuxResourceSampler : IResourceSampler
         // some avg10=0.00 avg60=0.00 avg300=0.00 total=0
         // full avg10=0.00 avg60=0.00 avg300=0.00 total=0
         ReadOnlySpan<byte> text = buffer[..length];
+        if (length < buffer.Length)
+        {
+            strict = (ProcFs.PsiAverage(text, "some avg10="u8), ProcFs.PsiAverage(text, "full avg10="u8));
+        }
+
         return (Average(text, "some avg10="u8), Average(text, "full avg10="u8));
     }
 

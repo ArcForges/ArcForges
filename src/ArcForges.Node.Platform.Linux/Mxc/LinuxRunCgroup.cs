@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Buffers;
 using System.ComponentModel;
 using System.Globalization;
 using System.Runtime.InteropServices;
@@ -19,6 +20,11 @@ internal sealed partial class LinuxRunCgroup : IDisposable
     private static readonly int s_noFollow = RuntimeInformation.ProcessArchitecture == Architecture.Arm64 ? 0x8000 : 0x20000;
     private static readonly int s_directory = RuntimeInformation.ProcessArchitecture == Architecture.Arm64 ? 0x4000 : 0x10000;
     private readonly SafeFileHandle _handle;
+    private readonly Lock _resources = new();
+    private ulong? _lastCpuUsec;
+    private ulong? _lastMemoryPeak;
+    private long _pressureAt = long.MinValue;
+    private (double? CpuSome, double? MemorySome, double? MemoryFull) _pressure;
 
     private LinuxRunCgroup(string path, SafeFileHandle handle, FileMetadata metadata)
     {
@@ -93,6 +99,112 @@ internal sealed partial class LinuxRunCgroup : IDisposable
             Number(ReadControl(_handle, "cpu.weight")));
         Validate();
         return limits;
+    }
+
+    internal RunResourceObservation? ObserveResources()
+    {
+        lock (_resources)
+        {
+            var retained = false;
+            try
+            {
+                _handle.DangerousAddRef(ref retained);
+                if (!HasResourceIdentity())
+                {
+                    return null;
+                }
+
+                Span<byte> buffer = stackalloc byte[8192];
+                var cpu = ProcFs.NumericField(ReadResource("cpu.stat", buffer), "usage_usec "u8);
+                var current = ProcFs.Unsigned(ReadResource("memory.current", buffer));
+                var peak = ProcFs.Unsigned(ReadResource("memory.peak", buffer));
+                var inactive = ProcFs.NumericField(ReadResource("memory.stat", buffer), "inactive_file "u8);
+                var count = ObserveMemberCount();
+                var now = Environment.TickCount64;
+                if (_pressureAt == long.MinValue || now - _pressureAt >= (long)LinuxResourceSampler.SlowInterval.TotalMilliseconds)
+                {
+                    var cpuSome = ProcFs.PsiAverage(ReadResource("cpu.pressure", buffer), "some avg10="u8);
+                    var memory = ReadResource("memory.pressure", buffer);
+                    _pressure = (cpuSome, ProcFs.PsiAverage(memory, "some avg10="u8), ProcFs.PsiAverage(memory, "full avg10="u8));
+                    _pressureAt = now;
+                }
+
+                if (!HasResourceIdentity())
+                {
+                    return null;
+                }
+
+                return new RunResourceObservation(RunMemoryAccounting.LinuxCgroupCurrent)
+                {
+                    CumulativeCpuUsec = ProcFs.AcceptCumulative(cpu, ref _lastCpuUsec),
+                    MemoryBytes = current,
+                    PeakMemoryBytes = ProcFs.AcceptCumulative(peak < current ? null : peak, ref _lastMemoryPeak),
+                    ResidentBytes = current is { } bytes && inactive is { } cache && cache <= bytes ? bytes - cache : null,
+                    ProcessCount = count,
+                    PsiCpuSome = _pressure.CpuSome,
+                    PsiMemorySome = _pressure.MemorySome,
+                    PsiMemoryFull = _pressure.MemoryFull,
+                };
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or ObjectDisposedException)
+            {
+                return null;
+            }
+            finally
+            {
+                if (retained)
+                {
+                    _handle.DangerousRelease();
+                }
+            }
+        }
+    }
+
+    private bool HasResourceIdentity() => Validate().Links > 0 &&
+        new DirectoryInfo(DescriptorPath(_handle)).LinkTarget == MountPoint + Path;
+
+    private uint? ObserveMemberCount()
+    {
+        try
+        {
+            // pids.current includes threads. The published process count is distinct processes in the verified subtree.
+            return (uint)ReadMembers().Count;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    private ReadOnlySpan<byte> ReadResource(string name, Span<byte> buffer)
+    {
+        try
+        {
+            using var file = Owned(OpenAt(_handle, name, CloseOnExec | s_noFollow | 0x900), "read " + name);
+            var metadata = Metadata(file);
+            if (metadata.MountId != MountId || (metadata.Mode & 0xf000) != 0x8000)
+            {
+                return [];
+            }
+
+            var length = 0;
+            while (length < buffer.Length)
+            {
+                var read = RandomAccess.Read(file, buffer[length..], length);
+                if (read == 0)
+                {
+                    return buffer[..length];
+                }
+
+                length += read;
+            }
+
+            return [];
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return [];
+        }
     }
 
     internal bool ContainsOnlyOwner(int pid, long start)
@@ -299,9 +411,16 @@ internal sealed partial class LinuxRunCgroup : IDisposable
     private static string ReadText(Stream stream, int maximum)
     {
         using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: false);
-        var content = new char[maximum + 1];
-        var count = reader.ReadBlock(content);
-        return count <= maximum ? new string(content, 0, count).Trim() : throw new IOException("A native observation exceeds its bound.");
+        var content = ArrayPool<char>.Shared.Rent(maximum + 1);
+        try
+        {
+            var count = reader.ReadBlock(content.AsSpan(0, maximum + 1));
+            return count <= maximum ? new string(content, 0, count).Trim() : throw new IOException("A native observation exceeds its bound.");
+        }
+        finally
+        {
+            ArrayPool<char>.Shared.Return(content);
+        }
     }
 
     private static string[] Fields(string value) => value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);

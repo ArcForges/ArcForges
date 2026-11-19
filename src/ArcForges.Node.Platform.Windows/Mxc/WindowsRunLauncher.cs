@@ -157,7 +157,8 @@ public sealed class WindowsRunLauncher : IRunLauncher
         ? "win32:" + native.NativeErrorCode.ToString(CultureInfo.InvariantCulture)
         : error.GetType().Name;
 
-    private sealed class Lease(RunLaunchSpec spec, RunControlClient client, LaunchedProcess process, WindowsMxcJob aggregate) : IRunOwnerLease
+    private sealed class Lease(RunLaunchSpec spec, RunControlClient client, LaunchedProcess process, WindowsMxcJob aggregate)
+        : IRunOwnerLease, IRunResourceSource
     {
         private readonly SemaphoreSlim _boundaryGate = new(1, 1);
         private int _releaseAttempted;
@@ -166,6 +167,12 @@ public sealed class WindowsRunLauncher : IRunLauncher
         private RunOwnerObservation? _explicitStopOutcome;
 
         public RunOwnerIdentity Identity => client.Identity;
+
+        public RunResourceObservation? ObserveRunResources()
+        {
+            var observation = Volatile.Read(ref _disposed) == 0 ? aggregate.ObserveResources() : null;
+            return Volatile.Read(ref _disposed) == 0 ? observation : null;
+        }
 
         public ValueTask<RunTerminalReply> TerminalAsync(RunTerminalRequest request, CancellationToken cancellationToken) =>
             client.TerminalAsync(request, cancellationToken);

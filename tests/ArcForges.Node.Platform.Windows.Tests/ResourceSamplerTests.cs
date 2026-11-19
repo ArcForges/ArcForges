@@ -30,6 +30,46 @@ public sealed partial class ResourceSamplerTests
         Assert.Equal(0, sample.OomKills);
     }
 
+    [Fact]
+    public void V2ReadsNativeHostCapacityAndNodePrivateResidentMemory()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows sampler.");
+        var sampler = new WindowsResourceSampler();
+        var held = GC.AllocateUninitializedArray<byte>(32 << 20);
+        Array.Fill(held, (byte)17);
+        var privateBefore = PrivateWorkingSet();
+        var started = Stopwatch.GetTimestamp();
+        var sample = sampler.ObserveHostResources();
+        const int samples = 32;
+        for (var index = 1; index < samples; index++)
+        {
+            _ = sampler.ObserveHostResources();
+        }
+
+        var elapsed = Stopwatch.GetElapsedTime(started);
+        var privateAfter = PrivateWorkingSet();
+        Assert.InRange(Assert.IsType<long>(sample.MonotonicTimestamp), started, Stopwatch.GetTimestamp());
+        var capacity = Assert.IsType<uint>(sample.CpuCapacityMillicores);
+        Assert.Equal(0u, capacity % 1000);
+        Assert.True(capacity >= Environment.ProcessorCount * 1000L);
+        if (capacity <= 64_000)
+        {
+            Assert.True(sample.CpuBusyUsec > 0);
+        }
+
+        Assert.Equal((ulong)ProcessInfo.PhysicalMemory(), sample.PhysicalTotalBytes);
+        Assert.InRange(Assert.IsType<ulong>(sample.PhysicalAvailableBytes), 1ul, sample.PhysicalTotalBytes!.Value);
+        var limit = Assert.IsType<ulong>(sample.CommitLimitBytes);
+        Assert.InRange(Assert.IsType<ulong>(sample.CommitBytes), 1ul, limit);
+        Assert.Equal(0ul, limit % (ulong)Environment.SystemPageSize);
+        Assert.True(sample.NodeCpuUsec > 0);
+        Assert.InRange(Assert.IsType<ulong>(sample.NodeResidentBytes),
+            (ulong)Math.Max(32 << 20, Math.Min(privateBefore, privateAfter) - (16 << 20)),
+            (ulong)(Math.Max(privateBefore, privateAfter) + (16 << 20)));
+        TestContext.Current.TestOutputHelper?.WriteLine($"Windows host native sampling: {elapsed.TotalMilliseconds / samples:F3} ms per sample ({samples} reads).");
+        GC.KeepAlive(held);
+    }
+
     [Fact(DisableParallelization = true)]
     [Trait("isolation", "exclusive")]
     public void ABusyThreadShowsInTheMachineCpu()
