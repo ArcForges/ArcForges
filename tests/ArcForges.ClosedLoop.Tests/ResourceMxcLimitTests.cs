@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Globalization;
 using System.Runtime.Versioning;
+using System.Text;
 using System.Text.Json;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
@@ -26,6 +27,8 @@ public sealed partial class MxcRunServiceTests
     private const string SaturationRelease = "grant-cap-release";
     private const string SaturationMarker = "grant-cap-refused.log";
     private const string SaturationReport = "grant-cap-unexpected.json";
+    private const string WindowsSaturationStatus = "grant-cap-child-exit.txt";
+    private const int WindowsSaturationStepMiB = 8;
 
     private static async Task VerifyInstalledResourceLimitsAsync(TestNode fixture, NodeService.NodeServiceClient node,
         SandboxService.SandboxServiceClient sandboxes, RunService.RunServiceClient runs, ResourceService.ResourceServiceClient resources,
@@ -223,12 +226,15 @@ public sealed partial class MxcRunServiceTests
             var cappedRun = await StartHeldAsync(saturation);
             var cappedOwner = ReadSupervisor(fixture.DataRoot, cappedRun);
             using var cappedGroup = OperatingSystem.IsLinux() ? OpenResourceCgroup(cappedOwner) : null;
+            using var cappedWindowsOwner = OperatingSystem.IsWindows() ? HoldWindowsResourceOwner(cappedOwner) : null;
             RequireNativeStartupLimit(fixture.DataRoot, cappedRun, cappedOwner, cappedGroup, RaisedRunCpu, LiveRunMemoryMiB);
             await TestNode.WaitAsync(() => File.Exists(Path.Combine(working, SaturationMarker)), NativeBound,
                 "the native memory-capped child to refuse its fixed allocation");
             Assert.Equal("refused", Assert.Single(ReadLines(Path.Combine(working, SaturationMarker))));
             Assert.False(File.Exists(Path.Combine(working, SaturationReport)));
             ResourceSnapshot? windowsCapped = null;
+            var commitCap = ResourceBytes(LiveRunMemoryMiB);
+            var commitStep = ResourceBytes(WindowsSaturationStepMiB);
             if (OperatingSystem.IsLinux() && cappedGroup is not null)
             {
                 var memoryEvents = ReadLinuxCounters(cappedGroup, "memory.events");
@@ -237,9 +243,11 @@ public sealed partial class MxcRunServiceTests
             }
             else if (OperatingSystem.IsWindows())
             {
+                // Windows may include one refused allocation request in the Job's historical peak.
                 windowsCapped = await WaitForResourceBudgetAsync(resources, "run", cappedRun.RunId,
-                    sample => sample.HasPeakMemoryBytes && sample.PeakMemoryBytes >= ResourceBytes(96));
-                Assert.InRange(windowsCapped.PeakMemoryBytes, ResourceBytes(96), ResourceBytes(LiveRunMemoryMiB));
+                    sample => sample.HasPeakMemoryBytes && sample.PeakMemoryBytes >= commitCap - commitStep);
+                _ = RequireEffectiveRunLimit(windowsCapped, "memory", commitCap);
+                Assert.InRange(windowsCapped.PeakMemoryBytes, commitCap - commitStep, commitCap + commitStep);
             }
 
             Assert.Equal(RunState.Running, (await InspectAsync(runs, cpuRun.RunId, cancellation)).State);
@@ -249,8 +257,21 @@ public sealed partial class MxcRunServiceTests
             if (OperatingSystem.IsWindows() && windowsCapped is not null)
             {
                 var evidence = ReadWindowsJobResource(fixture.DataRoot, cappedRun, cappedOwner, "windows-drained.json");
+                Assert.Equal(cappedOwner.Pid, Assert.Single(evidence.ProcessIds));
                 Assert.Empty(evidence.PayloadProcessIds);
-                Assert.InRange(evidence.PeakCommitBytes, windowsCapped.PeakMemoryBytes, ResourceBytes(LiveRunMemoryMiB));
+                Assert.True(evidence.OutputDrainCompleted);
+                Assert.NotNull(cappedWindowsOwner);
+                Assert.True(cappedWindowsOwner.HasExited);
+                Assert.InRange(evidence.PeakCommitBytes, windowsCapped.PeakMemoryBytes, commitCap + commitStep);
+
+                var stderr = await WatchAsync(runs, cappedDrain, StreamKind.Stderr);
+                Assert.Null(stderr.Gap);
+                Assert.Contains("System.OutOfMemoryException", Encoding.UTF8.GetString(stderr.Bytes), StringComparison.Ordinal);
+                var allocatorExit = int.Parse(Assert.Single(ReadLines(Path.Combine(working, WindowsSaturationStatus))),
+                    NumberStyles.Integer, CultureInfo.InvariantCulture);
+                Assert.NotEqual(0, allocatorExit);
+                TestContext.Current.TestOutputHelper?.WriteLine(FormattableString.Invariant(
+                    $"Windows allocator exit={allocatorExit} (0x{unchecked((uint)allocatorExit):x8}), Job limit={commitCap} bytes, live peak={windowsCapped.PeakMemoryBytes} bytes, drained peak={evidence.PeakCommitBytes} bytes."));
             }
 
             active.Remove(cappedRun.RunId);
@@ -512,13 +533,15 @@ public sealed partial class MxcRunServiceTests
                 SaturationReport, SaturationMarker, SaturationRelease];
         }
 
-        const string batch = """
+        var batch = FormattableString.Invariant($"""
             @echo off
-            .\arcforges-testload.exe mem-ramp --target-mb 192 --step-mb 8 --step-ms 20 --report grant-cap-unexpected.json
-            if not errorlevel 1 exit /b 9
+            .\arcforges-testload.exe mem-ramp --target-mb 192 --step-mb {WindowsSaturationStepMiB} --step-ms 20 --report grant-cap-unexpected.json
+            set "allocator_exit=%errorlevel%"
+            if "%allocator_exit%"=="0" exit /b 9
+            >{WindowsSaturationStatus} echo %allocator_exit%
             >grant-cap-refused.log echo refused
             .\arcforges-testload.exe hold --hold-ms 40000 --until-file grant-cap-release
-            """;
+            """);
         File.WriteAllText(Path.Combine(working, "grant-memory-cap.cmd"), batch.ReplaceLineEndings("\r\n") + "\r\n");
         return [Path.Combine(Environment.SystemDirectory, "cmd.exe"), "/d", "/c", "grant-memory-cap.cmd"];
     }
