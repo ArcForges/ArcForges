@@ -99,10 +99,11 @@ public sealed partial class MxcRunServiceTests
                 secrets, restored, NodeSecretStores.ForTestDataRoot(restored));
             RequireRestoredRecoveryReceipts(restored, owner, ownerEpoch, effects);
             await RequireInstalledMaintenanceOnStaleDatabaseAsync(fixture, earlier, restored, owner, effects, cancellation);
+            await RequireFreshAuthorityRejectsSavedRequestsAsync(ownerEpoch, effects, cancellation);
 
             Assert.Equal(FixtureArgument + "," + EnvironmentValue, Assert.Single(ReadLines(effects.Marker)));
             Assert.Equal(latestFence, await File.ReadAllBytesAsync(fencePath, cancellation));
-            TestContext.Current.TestOutputHelper?.WriteLine("Live native Run and active grant exhausted ordinary admission. Their reserved Stop and revocation completed. A coherent backup restored the original receipts. The installed Node refused to serve with an older database and current authority.");
+            TestContext.Current.TestOutputHelper?.WriteLine("Live native Run and active grant exhausted ordinary admission. Their reserved Stop and revocation completed. A coherent backup restored the original receipts. The installed Node refused stale history and a fresh owner epoch rejected the saved original requests.");
         }
         finally
         {
@@ -420,6 +421,50 @@ public sealed partial class MxcRunServiceTests
         Assert.Null(commands.Inspect(effects.Start.Meta.CommandId.Value.Span));
         Assert.Null(commands.Inspect(effects.Stop.Meta.CommandId.Value.Span));
         Assert.Null(commands.Inspect(effects.Revoke.Meta.CommandId.Value.Span));
+    }
+
+    private static async Task RequireFreshAuthorityRejectsSavedRequestsAsync(Id originalEpoch,
+        ReservedRecoveryEffects effects, CancellationToken cancellation)
+    {
+        await using var fresh = TestNode.Create();
+        PrepareDataRoot(fresh.DataRoot);
+        var process = await fresh.StartNodeAsync();
+        Id? currentEpoch = null;
+        try
+        {
+            await using var channel = OpenChannel(fresh);
+            var node = new NodeService.NodeServiceClient(channel.CallInvoker);
+            var runs = new RunService.RunServiceClient(channel.CallInvoker);
+            currentEpoch = (await HandshakeAsync(node)).OwnerEpoch;
+            Assert.NotEqual(originalEpoch, currentEpoch);
+            Assert.Equal(originalEpoch, effects.Start.OwnerEpoch);
+            Assert.Equal(originalEpoch, effects.Stop.OwnerEpoch);
+
+            var start = await runs.StartAsync(effects.Start, deadline: Deadline, cancellationToken: cancellation);
+            var stop = await runs.StopAsync(effects.Stop, deadline: Deadline, cancellationToken: cancellation);
+            Assert.Null(start.Value);
+            Assert.Null(stop.Value);
+            Assert.All(new[] { start.Error, stop.Error }, error =>
+            {
+                Assert.Equal("owner_epoch_retired", error?.Code);
+                Assert.Equal(EffectCertainty.DidNotHappen, error?.Effect);
+            });
+
+            var old = await node.GetOperationAsync(new NodeServiceGetOperationRequest
+            {
+                Meta = Query(),
+                OwnerEpoch = originalEpoch,
+                CommandId = effects.Start.Meta.CommandId,
+            }, deadline: Deadline, cancellationToken: cancellation);
+            Assert.Null(old.Value);
+            Assert.Equal("not_found", old.Error?.Code);
+            Assert.Equal(0L, RecoveryReceiptCount(fresh.DataRoot));
+        }
+        finally
+        {
+            await StopNodeAsync(fresh, process);
+            if (currentEpoch is not null) RemoveFixtureOwnerKey(fresh.DataRoot, currentEpoch);
+        }
     }
 
     private sealed record ReservedRecoveryEffects(RunServiceStartRequest Start, RunServiceStopRequest Stop,

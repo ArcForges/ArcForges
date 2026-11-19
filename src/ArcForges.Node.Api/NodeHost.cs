@@ -315,7 +315,7 @@ public static class NodeHost
         // The node data key loads at startup, outside the writer (secret-store I/O must never run under the writer lock).
         var secretStore = options.SecretStore?.Invoke(dataRoot) ?? NodeSecretStores.ForNode(dataRoot, options.TestMode);
         var sandboxes = CreateSandboxManager(store, dataRoot, secretStore, clock, log, journal.Generation,
-            options.TestMode ? options.SandboxMxcInstallationRoot : null, protectedEndpoint);
+            options.TestMode ? options.SandboxMxcInstallationRoot : null, protectedEndpoint, faults);
         try
         {
             if (sandboxes is not null)
@@ -886,7 +886,7 @@ public static class NodeHost
     }
 
     private static SandboxManager? CreateSandboxManager(NodeStore store, string dataRoot, NodeSecretStore secrets, TimeProvider clock, NodeLog log,
-        ulong journalGeneration, string? installationRoot, SandboxProtectedEndpoint? protectedEndpoint)
+        ulong journalGeneration, string? installationRoot, SandboxProtectedEndpoint? protectedEndpoint, ExecutionFaults faults)
     {
         try
         {
@@ -897,6 +897,7 @@ public static class NodeHost
                 {
                     RunLauncher = OperatingSystem.IsWindows() ? new WindowsRunLauncher()
                         : OperatingSystem.IsLinux() ? new LinuxRunLauncher() : null,
+                    RunFaults = faults,
                     RunDiagnostic = (id, phase, native) => log.Info("run.owner", new LogField("run", id),
                         new LogField("phase", phase), new LogField("native", native)),
                 };

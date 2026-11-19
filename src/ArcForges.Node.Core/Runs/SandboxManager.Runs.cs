@@ -6,6 +6,7 @@ using System.Text.Json.Nodes;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Sandbox.V2;
+using ArcForges.Node.Core.Execution;
 using ArcForges.Node.Store;
 using ArcForges.RunSupervisor.Protocol;
 using Google.Protobuf;
@@ -22,7 +23,16 @@ internal sealed partial class SandboxManager
     private bool _runObservationStopped;
 
     internal IRunLauncher? RunLauncher { get; init; }
+    internal ExecutionFaults RunFaults { get; init; } = ExecutionFaults.None;
     internal Action<string, string, string?>? RunDiagnostic { get; init; }
+
+    private void HoldRunFault(string checkpoint)
+    {
+        if (RunFaults.Take(checkpoint) is { } delay)
+        {
+            RunFaults.Hold(checkpoint, delay);
+        }
+    }
 
     internal RunServiceStartResponse Start(RunServiceStartRequest request, CancellationToken cancellationToken)
     {
@@ -213,6 +223,7 @@ internal sealed partial class SandboxManager
                 launchDigest, snapshot, StoredPayloadStart.Unknown, _clock.GetUtcNow());
             var recovery = new StoredRunRecovery(RunRecoveryBootIdentity, granted.SupervisorPath,
                 granted.SupervisorSha256, granted.InstallationRoot);
+            HoldRunFault("hold-run-before-start-receipt");
             var admitted = Receipts.Admit(intent, transaction =>
             {
                 RequireChanged(RunRecords.InsertStarting(transaction, OwnerId, started));

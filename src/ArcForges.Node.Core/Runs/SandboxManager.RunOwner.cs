@@ -35,6 +35,7 @@ internal sealed partial class SandboxManager
         bool releaseAttempted = false;
         try
         {
+            HoldRunFault("hold-run-before-prepare");
             lock (OwnershipGate)
             {
                 token.ThrowIfCancellationRequested();
@@ -53,6 +54,11 @@ internal sealed partial class SandboxManager
             preparing = true;
             lease = await launcher.PrepareAsync(spec, startup.Token).ConfigureAwait(false);
             bool verifiedLimits = BindRunOwner(live, spec, lease);
+            if (verifiedLimits)
+            {
+                HoldRunFault("hold-run-before-activate");
+            }
+
             stop = ForwardRunStopAsync(live, lease, operations.Token);
 
             try
@@ -74,6 +80,11 @@ internal sealed partial class SandboxManager
                             releaseAttempted = true;
                             activation = lease.ActivateAsync(startup.Token);
                         }
+                    }
+
+                    if (releaseAttempted)
+                    {
+                        HoldRunFault("hold-run-after-release-dispatch");
                     }
 
                     await activation.ConfigureAwait(false);
@@ -277,10 +288,15 @@ internal sealed partial class SandboxManager
         try
         {
             var intent = await live.StopRequest.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            HoldRunFault("hold-run-before-stop-signal");
             var grace = intent.Remaining(_clock.GetUtcNow());
             using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             stop.CancelAfter(grace + TimeSpan.FromSeconds(15));
             await lease.StopAsync(grace, stop.Token).ConfigureAwait(false);
+            if (grace == TimeSpan.Zero)
+            {
+                HoldRunFault("hold-run-after-force-dispatch");
+            }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -353,6 +369,11 @@ internal sealed partial class SandboxManager
             {
                 target = run.State;
             }
+            if (target is StoredRunState.Exited or StoredRunState.Failed)
+            {
+                HoldRunFault("hold-run-before-exit-commit");
+            }
+
             if (target == StoredRunState.Exited && run.State != StoredRunState.Draining)
             {
                 // A short foreground process can reach its exit before the first Running poll.
