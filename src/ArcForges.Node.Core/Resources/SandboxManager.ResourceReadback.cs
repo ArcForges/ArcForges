@@ -140,14 +140,15 @@ internal sealed partial class SandboxManager
         }
     }
 
-    private void ApplySandboxGrantCeiling(ResourceSnapshot snapshot, StoredSandbox sandbox, ResourcePolicy? overlay)
+    private void ApplySandboxGrantCeiling(ResourceSnapshot snapshot, StoredSandbox sandbox, ResourcePolicy? overlay,
+        SandboxResourceFrame? frame)
     {
-        var node = CurrentNodeGrantBudget(DecodeResourcePolicy(ReadResourcePolicy("node", null)));
+        var node = CurrentResourceAdmissionBudget(DecodeResourcePolicy(ReadResourcePolicy("node", null)), frame);
         if (node is { } bounded)
         {
-            var ceiling = SandboxHardGrant(sandbox, overlay, bounded);
+            var ceiling = SandboxHardGrant(sandbox, overlay, bounded.Hard);
             snapshot.BudgetCpuMillicores = (uint)ceiling.Cpu;
-            snapshot.BudgetMemoryBytes = ceiling.Memory;
+            snapshot.BudgetMemoryBytes = Math.Min(bounded.Resident, ceiling.Memory);
         }
         else
         {

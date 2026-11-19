@@ -74,6 +74,7 @@ internal sealed partial class SandboxManager
         IReadOnlyDictionary<string, string>? secrets, CancellationToken cancellationToken)
     {
         var monitor = _resourceMonitor;
+        long? afterTimestamp;
         lock (OwnershipGate)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -82,11 +83,13 @@ internal sealed partial class SandboxManager
             {
                 return result;
             }
+
+            afterTimestamp = result.ResourceBudgetAfterTimestamp;
         }
 
         // The sampler also uses OwnershipGate to capture its Run inventory. A new
         // scope needs two CPU counter observations before a complete budget exists.
-        monitor!.WaitForBudget(cancellationToken);
+        monitor!.WaitForBudget(cancellationToken, afterTimestamp);
         lock (OwnershipGate)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -171,14 +174,15 @@ internal sealed partial class SandboxManager
         {
             var launchDigest = Convert.ToHexStringLower(HMACSHA256.HashData(controlKey, canonical));
             var generation = Guid.NewGuid().ToString("N");
-            var policy = PrepareRunPolicy(request, row, root, runId, generation, launchDigest, controlKey, secrets, out var references);
+            var policy = PrepareRunPolicy(request, row, root, runId, generation, launchDigest, controlKey, secrets,
+                out var references, out var requestedResources);
             if (references is not null)
             {
                 return new(null, null, SecretReferences: references);
             }
 
             unowned = policy.Spec;
-            if (unowned is not { } spec)
+            if (unowned is not { } spec || requestedResources is null)
             {
                 return RejectStart(policy.Error);
             }
@@ -189,23 +193,52 @@ internal sealed partial class SandboxManager
                 return new(null, null, AwaitingResourceBudget: true);
             }
 
-            var authorization = AuthorizeRunResourceGrant(request, row, spec, budgetFrame);
-            if (authorization.Spec is not { } granted)
+            var authorization = AuthorizeRunResourceGrant(request, row, spec, requestedResources, budgetFrame);
+            if (authorization.Spec is not { } granted || authorization.Commitment is not { } commitment
+                || authorization.CpuPlan is not { } cpuPlan)
             {
-                return RejectStart(authorization.Error);
+                if (allowBudgetWait && authorization.AwaitingResidentFrame)
+                {
+                    return new(null, null, AwaitingResourceBudget: true, ResourceBudgetAfterTimestamp: budgetFrame!.Timestamp);
+                }
+
+                return RejectStart(authorization.Error, authorization.Refusal);
             }
 
             unowned = granted;
-            var snapshot = RunSnapshotJson(granted, Convert.ToHexStringLower(command));
+            var snapshot = RunSnapshotJson(granted, Convert.ToHexStringLower(command), commitment);
             var started = new StoredRun(runId, sandboxId, row.Revision, 1, StoredRunState.Starting, generation,
                 launchDigest, snapshot, StoredPayloadStart.Unknown, _clock.GetUtcNow());
             var admitted = Receipts.Admit(intent, transaction =>
             {
                 RequireChanged(RunRecords.InsertStarting(transaction, OwnerId, started));
-                RecordRunResourceGrant(transaction, started, granted);
+                RecordRunResourceGrant(transaction, started, granted, commitment);
             });
             if (admitted.Decision == DurableDecision.Execute)
             {
+                bool reductionsConfirmed;
+                try
+                {
+                    reductionsConfirmed = TryApplyProspectiveCpuLocked(cpuPlan, started);
+                }
+                catch (Exception failure) when (IsStorageFailure(failure) || IsRunOwnerFailure(failure))
+                {
+                    reductionsConfirmed = false;
+                }
+
+                if (!reductionsConfirmed)
+                {
+                    const string reason = "cpu_reduction_unconfirmed";
+                    var refused = new StoredRunObservation(StoredRunState.Failed, StoredPayloadStart.NotStarted,
+                        (int)EffectCertainty.DidNotHappen, EndedAt: _clock.GetUtcNow(), ExitSource: "unknown",
+                        TerminationReason: reason, GroupEmptyVerified: true);
+                    var receipt = Receipts.SetResult(command, "FAILED", (int)EffectCertainty.DidNotHappen,
+                        ResultBody(checked(started.Revision + 1), null, ErrorCategory.Resource, "budget_unavailable", reason),
+                        transaction => RequireChanged(RunRecords.TryAdvance(transaction, OwnerId, started.RunId, started.Epoch,
+                            started.Revision, StoredRunState.Starting, refused)));
+                    return ResolveRunMutation(new(DurableDecision.Replay, receipt), meta, request.OwnerEpoch);
+                }
+
                 var live = new LiveRun(granted, launcher, root, command, _runObserverStop.Token);
                 _liveRuns.Add(runId, live);
                 root = null;
@@ -226,15 +259,34 @@ internal sealed partial class SandboxManager
             root?.Dispose();
         }
 
-        RunMutationResult RejectStart(ArcError? error)
+        RunMutationResult RejectStart(ArcError? error, RunBudgetRefusal? budget = null)
         {
             if (error is not { Category: ErrorCategory.Resource, Code: "budget_unavailable", Effect: EffectCertainty.DidNotHappen })
             {
                 return RunFailure(error ?? InvalidRun(meta));
             }
 
-            var refused = Receipts.AdmitObserved(intent, "FAILED", (int)error.Effect,
-                ResultBody(null, null, error.Category, error.Code, error.Details?.State?.Reason));
+            var body = ResultBody(null, null, error.Category, error.Code, error.Details?.State?.Reason);
+            if (budget is not null)
+            {
+                // The existing wire error keeps its stable code/reason. Bound numeric facts are
+                // retained privately with the original decision rather than recalculated on retry.
+                var envelope = JsonNode.Parse(body)!.AsObject();
+                envelope["resourceRefusal"] = new JsonObject
+                {
+                    ["scope"] = budget.Scope,
+                    ["dimension"] = budget.Dimension,
+                    ["requested"] = budget.Requested,
+                    ["available"] = budget.Available,
+                    ["policyRevision"] = budget.PolicyRevision,
+                    ["sampleEpoch"] = budget.SampleEpoch,
+                    ["sampleSequence"] = budget.SampleSequence,
+                    ["sampledUtc"] = budget.SampledAt?.UtcDateTime.ToString("O", CultureInfo.InvariantCulture),
+                };
+                body = envelope.ToJsonString();
+            }
+
+            var refused = Receipts.AdmitObserved(intent, "FAILED", (int)error.Effect, body);
             return ResolveRunMutation(refused, meta, request.OwnerEpoch);
         }
     }
@@ -258,7 +310,7 @@ internal sealed partial class SandboxManager
         }
     }
 
-    private RunMutationResult StopRunLocked(RunServiceStopRequest request)
+    private RunMutationResult StopRunLocked(RunServiceStopRequest request, bool pressureRequested = false)
     {
         var meta = request.Meta;
         if (!ValidId(meta?.CommandId) || !ValidId(request.OwnerEpoch) || !ValidId(request.RunId) || meta?.ExpectedRev is not { Value: > 0 } expected
@@ -332,7 +384,8 @@ internal sealed partial class SandboxManager
             if (run.State is not (StoredRunState.Stopping or StoredRunState.Draining or StoredRunState.RecoveryRequired))
             {
                 RequireChanged(RunRecords.TryAdvance(transaction, OwnerId, runId, run.Epoch, run.Revision, run.State,
-                    new StoredRunObservation(StoredRunState.Stopping, run.PayloadStarted, run.EffectCertainty)));
+                    new StoredRunObservation(StoredRunState.Stopping, run.PayloadStarted, run.EffectCertainty,
+                        TerminationReason: pressureRequested ? "pressure_stop_requested" : null)));
             }
         });
         if (admission.Decision == DurableDecision.Execute)
@@ -405,7 +458,7 @@ internal sealed partial class SandboxManager
         return new(RunView(run), operation);
     }
 
-    private static string RunSnapshotJson(RunLaunchSpec spec, string startCommand)
+    private static string RunSnapshotJson(RunLaunchSpec spec, string startCommand, RunResourceCommitment commitment)
     {
         var name = spec.ExecutablePath.Split('/', '\\').Last();
         name = string.Concat(name.EnumerateRunes().Where(rune => !System.Text.Rune.IsControl(rune)).Take(96));
@@ -421,6 +474,20 @@ internal sealed partial class SandboxManager
             ["maxProcesses"] = spec.MaxProcesses,
             ["cpuWeight"] = spec.CpuWeight,
             ["startCommandId"] = startCommand,
+            ["resourceAdmission"] = new JsonObject
+            {
+                ["cpuCeilingMillicores"] = commitment.CpuCeilingMillicores,
+                ["cpuWasExplicit"] = commitment.CpuWasExplicit,
+                ["logicalWeight"] = commitment.Policy.LogicalWeight,
+                ["priority"] = commitment.Policy.Priority,
+                ["preemptible"] = commitment.Policy.Preemptible,
+                ["pressureAction"] = (int)commitment.Policy.PressureAction,
+                ["expectedResidentBytes"] = commitment.ExpectedResidentBytes,
+                ["nodePolicyRevision"] = commitment.NodePolicyRevision,
+                ["sandboxPolicyRevision"] = commitment.SandboxPolicyRevision,
+                ["sampleEpoch"] = commitment.SampleEpoch,
+                ["sampleSequence"] = commitment.SampleSequence,
+            },
         };
         return snapshot.ToJsonString();
     }
@@ -434,7 +501,7 @@ internal sealed partial class SandboxManager
     private static RunMutationResult RunFailure(ArcError error) => new(null, null, error);
 
     private sealed record RunMutationResult(Run? Run, Operation? Operation, ArcError? Error = null,
-        string[]? SecretReferences = null, bool AwaitingResourceBudget = false);
+        string[]? SecretReferences = null, bool AwaitingResourceBudget = false, long? ResourceBudgetAfterTimestamp = null);
 
     private sealed class LiveRun(RunLaunchSpec spec, IRunLauncher launcher, SandboxPrivateRootLease root, byte[] startCommand,
         CancellationToken cancellationToken)

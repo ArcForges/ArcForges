@@ -26,6 +26,7 @@ internal sealed partial class LinuxRunCgroup : IDisposable
     private readonly Lock _resources = new();
     private ulong? _lastCpuUsec;
     private ulong? _lastMemoryPeak;
+    private ulong? _lastOomKills;
     private long _pressureAt = long.MinValue;
     private (double? CpuSome, double? MemorySome, double? MemoryFull) _pressure;
 
@@ -299,6 +300,7 @@ internal sealed partial class LinuxRunCgroup : IDisposable
                 var current = ProcFs.Unsigned(ReadResource("memory.current", buffer));
                 var peak = ProcFs.Unsigned(ReadResource("memory.peak", buffer));
                 var inactive = ProcFs.NumericField(ReadResource("memory.stat", buffer), "inactive_file "u8);
+                var oomKills = ProcFs.NumericField(ReadResource("memory.events", buffer), "oom_kill "u8);
                 var count = ObserveMemberCount();
                 var now = Environment.TickCount64;
                 if (_pressureAt == long.MinValue || now - _pressureAt >= (long)LinuxResourceSampler.SlowInterval.TotalMilliseconds)
@@ -320,6 +322,7 @@ internal sealed partial class LinuxRunCgroup : IDisposable
                     MemoryBytes = current,
                     PeakMemoryBytes = ProcFs.AcceptCumulative(peak < current ? null : peak, ref _lastMemoryPeak),
                     ResidentBytes = current is { } bytes && inactive is { } cache && cache <= bytes ? bytes - cache : null,
+                    OomKills = ProcFs.AcceptCumulative(oomKills, ref _lastOomKills),
                     ProcessCount = count,
                     PsiCpuSome = _pressure.CpuSome,
                     PsiMemorySome = _pressure.MemorySome,

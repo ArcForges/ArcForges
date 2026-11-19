@@ -46,11 +46,15 @@ internal sealed partial class SandboxManager
         return digest;
     }
 
+    private sealed record RunStartResourcePolicy(ulong? ExpectedResidentBytes, uint LogicalWeight, int Priority,
+        bool Preemptible, PressureAction PressureAction);
+
     private (RunLaunchSpec? Spec, ArcError? Error) PrepareRunPolicy(RunServiceStartRequest request, StoredSandbox row,
         SandboxPrivateRootLease root, string runId, string epoch, string launchDigest, byte[] controlKey,
-        IReadOnlyDictionary<string, string>? secrets, out string[]? requiredSecrets)
+        IReadOnlyDictionary<string, string>? secrets, out string[]? requiredSecrets, out RunStartResourcePolicy? resources)
     {
         requiredSecrets = null;
+        resources = null;
         var terminal = request.TerminalMode switch
         {
             TerminalMode.Interactive when request.TerminalSize is
@@ -114,12 +118,14 @@ internal sealed partial class SandboxManager
         var pageBytes = (ulong)Environment.SystemPageSize;
         ulong memory = desired?.HasMemoryMaxBytes == true ? desired.MemoryMaxBytes
             : windows ? memoryCeiling : memoryCeiling - memoryCeiling % pageBytes;
-        ulong expectedMemory = desired?.HasExpectedMemoryBytes == true ? desired.ExpectedMemoryBytes : ceiling.ExpectedMemoryBytes;
+        ulong? expectedMemory = desired?.HasExpectedMemoryBytes == true ? desired.ExpectedMemoryBytes
+            : ceiling.HasExpectedMemoryBytes ? ceiling.ExpectedMemoryBytes : null;
         if (cpu == 0 || memory == 0 || cpu > cpuCeiling || memory > memoryCeiling || expectedMemory > memory
-            || (ceiling.HasExpectedMemoryBytes && expectedMemory > ceiling.ExpectedMemoryBytes)
             || (desired?.HasWeight == true && ceiling.HasWeight && desired.Weight > ceiling.Weight)
             || (desired?.HasPriority == true && ceiling.HasPriority && desired.Priority > ceiling.Priority)
-            || (desired?.Preemptible == true && ceiling.HasPreemptible && !ceiling.Preemptible))
+            || (desired?.Preemptible == true && ceiling.HasPreemptible && !ceiling.Preemptible)
+            || (desired?.HasPressureAction == true && desired.PressureAction == PressureAction.StopPreemptible
+                && ceiling.PressureAction != PressureAction.StopPreemptible))
         {
             budgetFailure ??= "run_resource_ceiling_unavailable_or_exceeded";
         }
@@ -129,12 +135,12 @@ internal sealed partial class SandboxManager
             return Unsupported("linux_memory_limit_page_alignment_required");
         }
 
-        var priority = desired?.HasPriority == true ? desired.Priority : ceiling.Priority;
-        var preemptible = desired?.HasPreemptible == true ? desired.Preemptible : ceiling.Preemptible;
-        if ((windows && weight.HasValue) || priority != 0 || preemptible || expectedMemory != 0
-            || desired?.PressureAction == PressureAction.StopPreemptible || ceiling.PressureAction == PressureAction.StopPreemptible)
+        int priority = desired?.HasPriority == true ? desired.Priority : ceiling.Priority;
+        bool preemptible = desired?.HasPreemptible == true ? desired.Preemptible : ceiling.Preemptible;
+        var pressureAction = desired?.HasPressureAction == true ? desired.PressureAction : ceiling.PressureAction;
+        if (pressureAction is not (PressureAction.Throttle or PressureAction.StopPreemptible))
         {
-            return Unsupported("run_resource_combination_unavailable");
+            return Invalid("run_pressure_action_invalid");
         }
 
         (string Path, string Identity) workingDirectory;
@@ -268,7 +274,7 @@ internal sealed partial class SandboxManager
             CpuMillicores = cpu,
             MemoryMaxBytes = memory,
             MaxProcesses = RunProfileMaxProcesses,
-            CpuWeight = weight,
+            CpuWeight = windows ? null : weight,
             OutputLimitBytes = config.HasOutputRetentionBytes ? config.OutputRetentionBytes : SandboxPolicyAdmission.DefaultOutputRetentionBytes,
             BubblewrapPath = bubblewrap,
             BubblewrapIdentity = bubblewrapIdentity,
@@ -286,6 +292,7 @@ internal sealed partial class SandboxManager
             return BudgetUnavailable(budgetFailure);
         }
 
+        resources = new(expectedMemory, weight ?? 1U, priority, preemptible, pressureAction);
         return (spec, null);
 
         (RunLaunchSpec?, ArcError?) Invalid(string reason) =>

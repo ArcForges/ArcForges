@@ -83,6 +83,14 @@ public sealed class PressureEvaluator
     /// <summary>The OOM kills newly observed at the last evaluation (the rise of the machine-wide count since the evaluation before).</summary>
     public long NewOomKills { get; private set; }
 
+    /// <summary>Breaks continuity of incomplete inputs while retaining the last effective level and OOM watermark.</summary>
+    internal void Suspend()
+    {
+        Array.Clear(_atLeastSince);
+        Array.Clear(_atMostSince);
+        _cpu.Clear();
+    }
+
     /// <summary>Evaluates one sample at <paramref name="now"/> (monotonic) and returns the level in force.</summary>
     public PressureLevel Evaluate(TimeSpan now, PressureInputs inputs, PressureLimits limits)
     {

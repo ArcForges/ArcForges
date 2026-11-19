@@ -225,6 +225,38 @@ public sealed class ResourceModelTests
     }
 
     [Fact]
+    public void MissingSamplesPreserveEffectivePressureAndOomWatermark()
+    {
+        var limits = Settings(16, 32 * GiB).Pressure;
+        var evaluator = new PressureEvaluator();
+        PressureLevel At(int second, long available, long kills) => evaluator.Evaluate(TimeSpan.FromSeconds(second),
+            new PressureInputs(available, 32 * GiB, 16_000, 0, null, kills), limits);
+
+        for (var second = 0; second < 5; second++)
+        {
+            Assert.Equal(PressureLevel.Normal, At(second, 0, 3));
+        }
+
+        Assert.Equal(PressureLevel.Critical, At(5, 0, 3));
+        Assert.Equal(PressureLevel.Critical, At(6, 16 * GiB, 3));
+        evaluator.Suspend();
+        Assert.Equal(PressureLevel.Critical, At(20, 16 * GiB, 3));
+        Assert.Equal(PressureLevel.Normal, evaluator.Raw);
+
+        evaluator.Suspend();
+        Assert.Equal(PressureLevel.Critical, At(21, 16 * GiB, 4));
+        Assert.Equal(PressureLevel.Critical, evaluator.Raw);
+        Assert.Equal(1, evaluator.NewOomKills);
+        for (var second = 22; second < 36; second++)
+        {
+            Assert.Equal(PressureLevel.Critical, At(second, 16 * GiB, 4));
+        }
+
+        Assert.Equal(PressureLevel.Normal, At(36, 16 * GiB, 4));
+        Assert.Equal(0, evaluator.NewOomKills);
+    }
+
+    [Fact]
     public void PsiOomKillsAndRisingCpuRaiseTheirLevels()
     {
         var limits = Settings(16, 32 * GiB).Pressure;

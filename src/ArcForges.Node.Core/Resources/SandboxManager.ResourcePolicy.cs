@@ -5,6 +5,7 @@ using System.Text.Json.Nodes;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Sandbox.V2;
+using ArcForges.Node.Core.Resources;
 using ArcForges.Node.Platform;
 using ArcForges.Node.Store;
 using Google.Protobuf;
@@ -65,7 +66,8 @@ internal sealed partial class SandboxManager
             return ResourceEditAdmission(Receipts.Admit(intent), request);
         }
 
-        var view = GetResourceBudget(new() { Meta = meta, ScopeKind = scope, ScopeId = request.ScopeId }, cancellationToken);
+        var frame = _resourceMonitor?.Latest;
+        var view = GetResourceBudgetLocked(new() { Meta = meta, ScopeKind = scope, ScopeId = request.ScopeId }, frame);
         if (view.Error is { } viewError)
         {
             return ResourceEditError(meta, viewError);
@@ -83,20 +85,17 @@ internal sealed partial class SandboxManager
         var desired = new StoredResourcePolicy(scope, id, checked(current + 1), JsonFormatter.Default.Format(policy));
         if (scope == "run")
         {
-            return ApplyRunResourceEdit(request, intent, previous, desired, snapshot, cancellationToken);
+            return ApplyRunResourceEdit(request, intent, previous, desired, snapshot, frame, cancellationToken);
         }
 
-        if (CheckResourcePolicyCeiling(scope, id, policy, meta) is { } refused)
+        if (CheckResourcePolicyCeiling(scope, id, policy, meta, frame) is { } refused)
         {
             return ResourceEditError(meta, refused);
         }
 
         if (scope == "node")
         {
-            var frame = _resourceMonitor?.Latest;
-            snapshot = frame?.Host.Clone() ?? ResourceScopeSnapshot("node", null, null);
-            snapshot.Stale = frame?.Stale ?? true;
-            ApplyResourceBudgetPolicy(snapshot, policy);
+            snapshot = NodeResourceSnapshot(frame, policy);
         }
         else
         {
@@ -106,7 +105,7 @@ internal sealed partial class SandboxManager
                 return ResourceEditError(meta, NotFound(meta));
             }
 
-            ApplySandboxGrantCeiling(snapshot, sandbox, policy);
+            ApplySandboxGrantCeiling(snapshot, sandbox, policy, frame);
         }
 
         snapshot.PolicyRevision = new() { Value = desired.Revision };
@@ -117,7 +116,8 @@ internal sealed partial class SandboxManager
     }
 
     private ResourceServiceSetPolicyResponse ApplyRunResourceEdit(ResourceServiceSetPolicyRequest request, DurableIntent intent,
-        StoredResourcePolicy? previous, StoredResourcePolicy desired, ResourceSnapshot snapshot, CancellationToken cancellationToken)
+        StoredResourcePolicy? previous, StoredResourcePolicy desired, ResourceSnapshot snapshot, SandboxResourceFrame? frame,
+        CancellationToken cancellationToken)
     {
         var meta = request.Meta;
         string runId = desired.ScopeId!;
@@ -163,7 +163,7 @@ internal sealed partial class SandboxManager
             return ResourceEditError(meta, Error(meta, ErrorCategory.State, "busy", "run_limit_evidence_unavailable"));
         }
 
-        if (CheckResourcePolicyCeiling("run", runId, admittedPolicy, meta) is { } refused)
+        if (CheckResourcePolicyCeiling("run", runId, admittedPolicy, meta, frame) is { } refused)
         {
             return ResourceEditError(meta, refused);
         }

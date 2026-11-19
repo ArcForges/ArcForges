@@ -210,8 +210,53 @@ internal sealed partial class SandboxManager
             throw new InvalidDataException("The durable Run launch snapshot has invalid redacted metadata.");
         }
 
-        return new(profileId, profileVersion, (TerminalMode)terminal, display, (uint)cpu, memory, (uint)processes,
-            startCommand, weight is { } present ? (uint)present : null);
+        var launch = new RunSnapshot(profileId, profileVersion, (TerminalMode)terminal, display, (uint)cpu, memory,
+            (uint)processes, startCommand, weight is { } present ? (uint)present : null, (uint)cpu);
+        return json.TryGetProperty("resourceAdmission", out var admission) ? ReadRunResourceCommitment(launch, admission) : launch;
+    }
+
+    private static RunSnapshot ReadRunResourceCommitment(RunSnapshot launch, JsonElement admission)
+    {
+        if (admission.ValueKind != JsonValueKind.Object
+            || !admission.TryGetProperty("priority", out var priorityValue) || priorityValue.ValueKind != JsonValueKind.Number
+            || !priorityValue.TryGetInt32(out int priority) || priority is < -20 or > 20
+            || !admission.TryGetProperty("preemptible", out var preemptible) || preemptible.ValueKind is not (JsonValueKind.True or JsonValueKind.False)
+            || (admission.TryGetProperty("cpuWasExplicit", out var explicitCpu)
+                && explicitCpu.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+            || GetString(admission, "sampleEpoch") is not { Length: > 0 and <= 128 } epoch)
+        {
+            throw new InvalidDataException("The durable Run launch snapshot has invalid admission metadata.");
+        }
+
+        ulong cpuCeiling = RunSnapshotNumber(admission, "cpuCeilingMillicores");
+        ulong logicalWeight = RunSnapshotNumber(admission, "logicalWeight");
+        ulong expectedResident = RunSnapshotNumber(admission, "expectedResidentBytes");
+        ulong nodeRevision = RunSnapshotNumber(admission, "nodePolicyRevision");
+        ulong sandboxRevision = RunSnapshotNumber(admission, "sandboxPolicyRevision");
+        ulong sequence = RunSnapshotNumber(admission, "sampleSequence");
+        ulong action = RunSnapshotNumber(admission, "pressureAction");
+        if (cpuCeiling < launch.CpuMillicores || cpuCeiling > uint.MaxValue || logicalWeight is 0 or > 10_000
+            || expectedResident == 0 || expectedResident > launch.MemoryMaxBytes
+            || nodeRevision is 0 or > long.MaxValue || sandboxRevision is 0 or > long.MaxValue || sequence == 0
+            || action is not ((ulong)PressureAction.Throttle or (ulong)PressureAction.StopPreemptible))
+        {
+            throw new InvalidDataException("The durable Run resource admission is out of bounds.");
+        }
+
+        return launch with
+        {
+            CpuCeilingMillicores = (uint)cpuCeiling,
+            CpuWasExplicit = explicitCpu.ValueKind != JsonValueKind.False,
+            LogicalWeight = (uint)logicalWeight,
+            Priority = priority,
+            Preemptible = preemptible.GetBoolean(),
+            PressureAction = (PressureAction)action,
+            ExpectedResidentBytes = expectedResident,
+            AdmissionNodePolicyRevision = (long)nodeRevision,
+            AdmissionSandboxPolicyRevision = (long)sandboxRevision,
+            AdmissionSampleEpoch = epoch,
+            AdmissionSampleSequence = sequence,
+        };
     }
 
     private static ulong RunSnapshotNumber(JsonElement json, string key)
@@ -278,5 +323,16 @@ internal sealed partial class SandboxManager
         ulong MemoryMaxBytes,
         uint MaxProcesses,
         string StartCommandId,
-        uint? CpuWeight);
+        uint? CpuWeight,
+        uint CpuCeilingMillicores,
+        bool CpuWasExplicit = true,
+        uint LogicalWeight = 1,
+        int Priority = 0,
+        bool Preemptible = false,
+        PressureAction PressureAction = PressureAction.Throttle,
+        ulong? ExpectedResidentBytes = null,
+        long? AdmissionNodePolicyRevision = null,
+        long? AdmissionSandboxPolicyRevision = null,
+        string? AdmissionSampleEpoch = null,
+        ulong? AdmissionSampleSequence = null);
 }

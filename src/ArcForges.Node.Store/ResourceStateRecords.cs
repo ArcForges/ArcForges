@@ -183,6 +183,33 @@ internal static class ResourceStateRecords
             ("$state1", (int)StoredRunState.Running), ("$state2", (int)StoredRunState.Running)) == 1;
     }
 
+    /// <summary>Stages a scheduler CPU adjustment while retaining the authorized ceiling and last native facts.</summary>
+    internal static bool TryBeginCpuRebalance(StoreTransaction transaction, string ownerId, string runId, string runEpoch,
+        string boundaryIdentity, StoredRunLimit expected, ulong target)
+    {
+        RequireFull(transaction);
+        ValidateBoundary(boundaryIdentity);
+        ArgumentNullException.ThrowIfNull(expected);
+        if (expected is not { Dimension: "cpu", Unit: "millicores", DesiredRevision: > 0, Status: StoredRunLimitStatus.Effective }
+            || expected.BoundaryIdentity != boundaryIdentity || expected.AppliedValue is null || expected.AppliedValue != expected.ReadbackValue
+            || target == 0 || !ulong.TryParse(expected.DesiredValue, NumberStyles.None, CultureInfo.InvariantCulture, out var ceiling)
+            || target > ceiling)
+        {
+            return false;
+        }
+
+        // Keep the ceiling while pending so a crash before readback cannot undercharge a completed native increase.
+        return transaction.Execute("""
+            UPDATE limit_application SET state='pending',reason='resource_rebalance_pending'
+            WHERE run_id=$run AND dimension='cpu' AND unit='millicores' AND desired_revision=$revision
+              AND desired_value=$ceiling AND applied_value=$prior AND readback_value=$prior AND boundary_identity=$boundary
+              AND state='effective' AND
+            """ + " " + MatchedBoundary,
+            ("$run", runId), ("$revision", expected.DesiredRevision), ("$ceiling", expected.DesiredValue),
+            ("$prior", expected.AppliedValue), ("$boundary", boundaryIdentity), ("$owner", ownerId), ("$epoch", runEpoch),
+            ("$state1", (int)StoredRunState.Running), ("$state2", (int)StoredRunState.Running)) == 1;
+    }
+
     /// <summary>Settles one pending revision using only facts observed on the same held boundary.</summary>
     internal static bool TryObserveLimit(StoreTransaction transaction, string ownerId, string runId, string runEpoch,
         string boundaryIdentity, string dimension, long desiredRevision, StoredRunLimitObservation observation)
