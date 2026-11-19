@@ -38,6 +38,7 @@ internal sealed partial class DurableCommandStore : IDisposable
     private const string SetGrantMethod = "NodeService.SetRemoteGrant";
     private const string RevokeGrantMethod = "NodeService.RevokeRemoteGrant";
     private const string SandboxCreateMethod = "SandboxService.Create";
+    private const string ResourcePolicyMethod = "ResourceService.SetPolicy";
 
     private readonly NodeStore _store;
     private readonly string _owner;
@@ -271,17 +272,20 @@ internal sealed partial class DurableCommandStore : IDisposable
         {
             long active = (long)reader.Scalar("""
                 SELECT count(*) FROM command_receipt p WHERE p.owner_id=$o AND p.owner_epoch=$e AND p.safety_parent_command_id IS NULL
-                  AND p.aggregate_kind IS NOT 'grant'
+                  AND p.aggregate_kind IS NOT 'grant' AND p.method<>$resourcePolicy
                   AND NOT(p.state IN ('SUCCEEDED','FAILED') AND p.effect_certainty=1)
                   AND NOT EXISTS(SELECT 1 FROM command_receipt s WHERE s.owner_id=p.owner_id AND s.owner_epoch=p.owner_epoch AND s.safety_parent_command_id=p.command_id);
-                """, ("$o", _owner), ("$e", _fence.Epoch))!;
+                """, ("$o", _owner), ("$e", _fence.Epoch), ("$resourcePolicy", ResourcePolicyMethod))!;
             long pendingGrants = (long)reader.Scalar("""
                 SELECT count(*) FROM command_receipt p WHERE p.owner_id=$o AND p.owner_epoch=$e
                   AND p.method=$create AND p.aggregate_kind='sandbox' AND p.state IN ('ACCEPTED','UNKNOWN')
                   AND json_extract(p.response_json,$field)=1;
                 """, ("$o", _owner), ("$e", _fence.Epoch), ("$create", SandboxCreateMethod), ("$field", GrantReservationPath))!;
+            // An edit of an existing resource policy creates no additional linked safety operation.
+            // Its own receipt still counts against both ordinary journal limits.
+            int newSafety = intent.Grant?.Action == DurableGrantAction.Replace || intent.Method == ResourcePolicyMethod ? 0 : 1;
             long futureSafety = active + RemoteGrantRecords.CountActive(reader, _owner) + pendingGrants
-                + (intent.Grant?.Action == DurableGrantAction.Replace ? 0 : 1) + intent.AdditionalSafetyReservations;
+                + newSafety + intent.AdditionalSafetyReservations;
             if (futureSafety * _capacity.MaximumResponseBytes > reserve) return DurableDecision.Capacity;
             if (count + futureSafety + 1 > _capacity.MaximumReceipts) return DurableDecision.Capacity;
         }
