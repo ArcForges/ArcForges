@@ -277,6 +277,8 @@ public static class NodeHost
     private static async Task<int> ServeAsync(NodeHostOptions options, NodeStore store, NodeLog log, SystemdNotifier notifier, WindowsReadyEvent? ready,
         string configPath, string dataRoot, LocalRpcEndpoint endpoint, ExecutionFaults faults, CancellationToken cancellationToken)
     {
+        using var protectedEndpoint = OperatingSystem.IsLinux() && endpoint.Transport == LocalRpcTransport.UnixDomainSocket
+            ? new SandboxProtectedEndpoint(endpoint.Address) : null;
         var clock = options.Clock;
         var metadata = store.Metadata;
         var unclean = !metadata.PreviousShutdownClean;
@@ -369,7 +371,7 @@ public static class NodeHost
         {
             Execution = execution,
             Sandboxes = CreateSandboxManager(store, dataRoot, secretStore, clock, log, journal.Generation,
-                options.TestMode ? options.SandboxMxcInstallationRoot : null),
+                options.TestMode ? options.SandboxMxcInstallationRoot : null, protectedEndpoint),
 
             // AD-0021 section 5 (Plan decision Q8): a local SCRIPT submission only on a --test-mode node with the allowance; never in production.
             LocalScriptSubmit = options.AllowLocalScriptSubmit
@@ -481,6 +483,10 @@ public static class NodeHost
             try
             {
                 await server.StartAsync(node.Stopping).ConfigureAwait(false);
+                if (protectedEndpoint?.TryBind() == false)
+                {
+                    log.Warning("sandbox.node_endpoint.unavailable", new LogField("reason", "node_endpoint_identity_unavailable"));
+                }
             }
             catch (Exception exception) when (exception is IOException or InvalidOperationException or UnauthorizedAccessException)
             {
@@ -832,14 +838,14 @@ public static class NodeHost
     }
 
     private static SandboxManager? CreateSandboxManager(NodeStore store, string dataRoot, NodeSecretStore secrets, TimeProvider clock, NodeLog log,
-        ulong journalGeneration, string? installationRoot)
+        ulong journalGeneration, string? installationRoot, SandboxProtectedEndpoint? protectedEndpoint)
     {
         try
         {
             if (SandboxLocalOwner.Current() is { } owner)
             {
                 return new SandboxManager(store, dataRoot, owner, secrets, clock,
-                    journalGeneration.ToString(CultureInfo.InvariantCulture), installationRoot)
+                    journalGeneration.ToString(CultureInfo.InvariantCulture), installationRoot, protectedEndpoint)
                 {
                     RunLauncher = OperatingSystem.IsWindows() ? new WindowsRunLauncher()
                         : OperatingSystem.IsLinux() ? new LinuxRunLauncher() : null,

@@ -20,6 +20,13 @@ internal sealed partial class DurableCommandStore
             ValidateResult(state, effect, redactedJson);
             var previous = Inspect(commandId) ?? throw new InvalidOperationException("No admitted command exists.");
             string id = Convert.ToHexStringLower(commandId);
+            var provision = previous.Provision;
+            if (provision is not null && state == "UNKNOWN")
+            {
+                // Keep the future child-grant safety slot while native creation is uncertain.
+                redactedJson = WriteProvisionReservation(redactedJson, provision);
+                ValidateResult(state, effect, redactedJson);
+            }
             bool sameResult = previous.State == state && previous.Effect == effect && previous.ResponseJson == redactedJson;
             bool retainUnknown = false;
             string? safetyId = null;
@@ -75,6 +82,10 @@ internal sealed partial class DurableCommandStore
                     throw new InvalidOperationException("The linked Stop changed before atomic settlement.");
 
                 observedMetadata?.Invoke(tx);
+                if (provision is not null && state != "UNKNOWN"
+                    && !RemoteGrantRecords.MatchesProvisionSettlement(tx, _owner, previous.AggregateId!, id, provision,
+                        succeeded: state == "SUCCEEDED" && effect == 2))
+                    throw new InvalidOperationException("A provisioned Sandbox and its exact child grant must settle together.");
                 if (safetyId is not null && !Equals(tx.Scalar("""
                     SELECT EXISTS(
                         SELECT 1 FROM run AS r JOIN sandbox AS s ON s.sandbox_id=r.sandbox_id
@@ -141,13 +152,15 @@ internal sealed partial class DurableCommandStore
             throw new DurableStoreMaintenanceException();
         if (state != "UNKNOWN" && tx.Scalar("SELECT safety_parent_command_id FROM command_receipt WHERE owner_id=$o AND owner_epoch=$e AND command_id=$c;",
             ("$o", _owner), ("$e", _fence.Epoch), ("$c", id)) is string)
-            tx.Execute("""
-                UPDATE owner_epoch_capacity SET reserve_storage=zeroblob(length(reserve_storage)+$n)
-                WHERE owner_id=$o AND owner_epoch=$e AND length(reserve_storage)+$n<=safety_receipts*maximum_response_bytes
-                  AND length(reserve_storage)+$n+(SELECT coalesce(sum(coalesce(length(CAST(response_json AS BLOB)),0)+length(reserved_response)+2048),0)
-                    FROM command_receipt WHERE owner_id=$o AND owner_epoch=$e)<=maximum_journal_bytes;
-                """, ("$n", _capacity.MaximumResponseBytes), ("$o", _owner), ("$e", _fence.Epoch));
+            RestoreSafetyReserve(tx);
     }
+
+    private void RestoreSafetyReserve(StoreTransaction tx) => tx.Execute("""
+        UPDATE owner_epoch_capacity SET reserve_storage=zeroblob(length(reserve_storage)+$n)
+        WHERE owner_id=$o AND owner_epoch=$e AND length(reserve_storage)+$n<=safety_receipts*maximum_response_bytes
+          AND length(reserve_storage)+$n+(SELECT coalesce(sum(coalesce(length(CAST(response_json AS BLOB)),0)+length(reserved_response)+2048),0)
+            FROM command_receipt WHERE owner_id=$o AND owner_epoch=$e)<=maximum_journal_bytes;
+        """, ("$n", _capacity.MaximumResponseBytes), ("$o", _owner), ("$e", _fence.Epoch));
 
     private bool HasUnresolvedEffect(StoreReader reader, string id) => !Equals(reader.Scalar("""
         SELECT (SELECT count(*) FROM transfer WHERE owner_id=$o AND owner_epoch=$e AND command_id=$c

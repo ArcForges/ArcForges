@@ -9,14 +9,22 @@ namespace ArcForges.Node.Store;
 internal sealed record DurableCapacity(int MaximumReceipts = 4096, int SafetyReceipts = 8,
     int MaximumResponseBytes = 1048576, long MaximumJournalBytes = 67108864);
 
+internal enum DurableGrantAction { Replace, Revoke }
+
+internal sealed record DurableGrantPrecondition(long ExpectedRevision, DurableGrantAction Action);
+
+internal sealed record DurableProvisionBinding(string ParentGrantId, long ParentGrantRevision, string DerivedGrantId);
+
 internal sealed record DurableIntent(byte[] CommandId, byte[] OwnerEpoch, string Method, string? AggregateKind,
     string? AggregateId, byte[] CanonicalBody, long? ExpectedSandboxRevision = null, byte[]? SafetyParent = null,
-    string? ExpectedSandboxId = null);
+    string? ExpectedSandboxId = null, DurableGrantPrecondition? Grant = null, int AdditionalSafetyReservations = 0,
+    DurableProvisionBinding? Provision = null);
 
 internal enum DurableDecision { Execute, Replay, InProgress, Compacted, Conflict, EpochRetired, RevisionConflict, Capacity, Maintenance }
 
 internal sealed record DurableReceipt(string CommandId, string Method, string? AggregateKind, string? AggregateId,
-    string State, int Effect, string? ResponseJson, bool Compacted, string? SafetyParentCommandId = null);
+    string State, int Effect, string? ResponseJson, bool Compacted, string? SafetyParentCommandId = null,
+    DurableProvisionBinding? Provision = null);
 
 internal sealed record DurableAdmission(DurableDecision Decision, DurableReceipt? Receipt);
 
@@ -26,6 +34,11 @@ internal sealed record DurableAdmission(DurableDecision Decision, DurableReceipt
 /// </summary>
 internal sealed partial class DurableCommandStore : IDisposable
 {
+    private const string GrantAggregate = "grant";
+    private const string SetGrantMethod = "NodeService.SetRemoteGrant";
+    private const string RevokeGrantMethod = "NodeService.RevokeRemoteGrant";
+    private const string SandboxCreateMethod = "SandboxService.Create";
+
     private readonly NodeStore _store;
     private readonly string _owner;
     private readonly NodeSecretStore _secrets;
@@ -160,17 +173,32 @@ internal sealed partial class DurableCommandStore : IDisposable
             var existing = _store.Read(reader => ReadReceipt(reader, id));
             if (existing is not null)
             {
-                bool matches = existing.Method == intent.Method && _store.Read(reader =>
+                bool matches = existing.Method == intent.Method
+                    && (existing.Provision is null || intent.Provision is null || existing.Provision == intent.Provision)
+                    && _store.Read(reader =>
                     CryptographicOperations.FixedTimeEquals(digest, Convert.FromHexString((string)reader.Scalar(
                         "SELECT request_hmac_sha256 FROM command_receipt WHERE owner_id=$o AND owner_epoch=$e AND command_id=$c;",
                         ("$o", _owner), ("$e", _fence.Epoch), ("$c", id))!)));
                 return new(!matches ? DurableDecision.Conflict : existing.Compacted ? DurableDecision.Compacted
                     : existing.State is "ACCEPTED" or "UNKNOWN" ? DurableDecision.InProgress : DurableDecision.Replay, existing);
             }
-            var precondition = _store.Read(reader => CanAdmit(reader, intent));
+            if (IsGrantMutation(intent) && (observed is not { State: "SUCCEEDED", Effect: 2 } || metadataChanges is null))
+                throw new ArgumentException("A new grant mutation must atomically commit its observed SQLite effect.", nameof(intent));
+            if (intent.AdditionalSafetyReservations != 0 && (observed is not null || intent.Provision is null))
+                throw new ArgumentException("New provisioning must persist its exact derived grant reservation before native work.", nameof(intent));
+            string? provisionBody = intent.Provision is { } provision ? WriteProvisionReservation(null, provision) : null;
+            var admittedAt = _store.Clock.GetUtcNow();
+            var precondition = _store.Read(reader => CanAdmit(reader, intent, admittedAt, provisionBody?.Length ?? 0));
             if (precondition != DurableDecision.Execute) return new(precondition, null);
+            // The server-generated child ID participates in the owner fence, while the original caller
+            // intent digest remains verifiable even after the response/reservation has been compacted.
             byte[] proof = digest;
-            if (observed is not null)
+            if (provisionBody is not null)
+            {
+                byte[] reservationProof = [.. digest, .. Encoding.UTF8.GetBytes(provisionBody)];
+                proof = HMACSHA256.HashData(_key, reservationProof);
+            }
+            else if (observed is not null)
             {
                 byte[] admissionProof = [.. digest, .. ObservationDigest(observed.State, observed.Effect, observed.Json)];
                 proof = HMACSHA256.HashData(_key, admissionProof);
@@ -178,25 +206,32 @@ internal sealed partial class DurableCommandStore : IDisposable
 
             Advance(observed is null ? "admit" : "admit_observed", id, proof, tx =>
             {
-                if (CanAdmit(tx, intent) != DurableDecision.Execute) throw new DurableStoreMaintenanceException();
+                if (CanAdmit(tx, intent, admittedAt, provisionBody?.Length ?? 0) != DurableDecision.Execute)
+                    throw new DurableStoreMaintenanceException();
                 string? parent = intent.SafetyParent is null ? null : Convert.ToHexStringLower(intent.SafetyParent);
-                if (parent is not null)
+                bool grantRevoke = intent.Grant?.Action == DurableGrantAction.Revoke;
+                if (parent is not null || grantRevoke)
                     tx.Execute("UPDATE owner_epoch_capacity SET reserve_storage=substr(reserve_storage,1,length(reserve_storage)-$n) WHERE owner_id=$o AND owner_epoch=$e;",
                         ("$n", _capacity.MaximumResponseBytes), ("$o", _owner), ("$e", _fence.Epoch));
                 string now = Now();
                 tx.Execute("""
                     INSERT INTO command_receipt(owner_id,owner_epoch,command_id,method,request_hmac_sha256,aggregate_kind,aggregate_id,
                       state,effect_certainty,response_json,created_utc,updated_utc,admission_sequence,safety_parent_command_id,reserved_response)
-                    VALUES($o,$e,$c,$m,$h,$ak,$ai,'ACCEPTED',3,'{}',$now,$now,$seq,$parent,zeroblob($reserve));
+                    VALUES($o,$e,$c,$m,$h,$ak,$ai,'ACCEPTED',3,$body,$now,$now,$seq,$parent,zeroblob($reserve));
                     """, ("$o", _owner), ("$e", _fence.Epoch), ("$c", id), ("$m", intent.Method),
                     ("$h", Convert.ToHexStringLower(digest)), ("$ak", intent.AggregateKind), ("$ai", intent.AggregateId),
-                    ("$now", now), ("$seq", _fence.Sequence), ("$parent", parent), ("$reserve", _capacity.MaximumResponseBytes));
+                    ("$now", now), ("$seq", _fence.Sequence), ("$parent", parent), ("$reserve", _capacity.MaximumResponseBytes),
+                    ("$body", provisionBody ?? "{}"));
                 metadataChanges?.Invoke(tx);
+                if (IsGrantMutation(intent))
+                    RequireGrantMutation(tx, intent, id);
                 if (observed is not null)
                 {
                     bool uncertain = observed.State == "UNKNOWN";
                     WriteResult(tx, id, observed.State, observed.Effect, observed.Json, now,
                         uncertain ? null : now, uncertain ? null : ResultExpiry());
+                    if (grantRevoke)
+                        RestoreSafetyReserve(tx);
                 }
             });
             var decision = observed is null ? DurableDecision.Execute
@@ -207,14 +242,28 @@ internal sealed partial class DurableCommandStore : IDisposable
 
     private sealed record InitialResult(string State, int Effect, string Json);
 
-    private DurableDecision CanAdmit(StoreReader reader, DurableIntent intent)
+    private DurableDecision CanAdmit(StoreReader reader, DurableIntent intent, DateTimeOffset admittedAt, int provisionBodyBytes)
     {
         if (intent.ExpectedSandboxRevision is { } revision &&
             !Equals(reader.Scalar("SELECT revision FROM sandbox WHERE owner_id=$o AND sandbox_id=$id;",
                 ("$o", _owner), ("$id", intent.ExpectedSandboxId ?? intent.AggregateId)), revision)) return DurableDecision.RevisionConflict;
+        if (intent.Grant is { } grant
+            && !RemoteGrantRecords.IsActiveRevision(reader, _owner, intent.AggregateId!, grant.ExpectedRevision, admittedAt))
+            return DurableDecision.RevisionConflict;
+        if (IsGrantMutation(intent) && intent.Grant is null && RemoteGrantRecords.Exists(reader, intent.AggregateId!))
+            return DurableDecision.Conflict;
+        if (intent.Provision is { } provision)
+        {
+            if (RemoteGrantRecords.Get(reader, _owner, provision.ParentGrantId) is not
+                { Scope: StoredRemoteGrantScope.Provision, ParentGrantId: null, State: StoredRemoteGrantState.Active } parent
+                || parent.Revision != provision.ParentGrantRevision || parent.ExpiresAt is { } expiration && expiration <= admittedAt)
+                return DurableDecision.RevisionConflict;
+            if (RemoteGrantRecords.Exists(reader, provision.DerivedGrantId))
+                return DurableDecision.Conflict;
+        }
         long count = (long)reader.Scalar("SELECT count(*) FROM command_receipt WHERE owner_id=$o AND owner_epoch=$e;",
             ("$o", _owner), ("$e", _fence.Epoch))!;
-        bool safety = intent.SafetyParent is not null;
+        bool safety = intent.SafetyParent is not null || intent.Grant?.Action == DurableGrantAction.Revoke;
         long reserve = (long)reader.Scalar("SELECT length(reserve_storage) FROM owner_epoch_capacity WHERE owner_id=$o AND owner_epoch=$e;",
             ("$o", _owner), ("$e", _fence.Epoch))!;
         if (reserve < _capacity.MaximumResponseBytes) return DurableDecision.Capacity;
@@ -222,15 +271,23 @@ internal sealed partial class DurableCommandStore : IDisposable
         {
             long active = (long)reader.Scalar("""
                 SELECT count(*) FROM command_receipt p WHERE p.owner_id=$o AND p.owner_epoch=$e AND p.safety_parent_command_id IS NULL
+                  AND p.aggregate_kind IS NOT 'grant'
                   AND NOT(p.state IN ('SUCCEEDED','FAILED') AND p.effect_certainty=1)
                   AND NOT EXISTS(SELECT 1 FROM command_receipt s WHERE s.owner_id=p.owner_id AND s.owner_epoch=p.owner_epoch AND s.safety_parent_command_id=p.command_id);
                 """, ("$o", _owner), ("$e", _fence.Epoch))!;
-            if ((active + 1) * _capacity.MaximumResponseBytes > reserve) return DurableDecision.Capacity;
-            if (count + active + 2 > _capacity.MaximumReceipts) return DurableDecision.Capacity;
+            long pendingGrants = (long)reader.Scalar("""
+                SELECT count(*) FROM command_receipt p WHERE p.owner_id=$o AND p.owner_epoch=$e
+                  AND p.method=$create AND p.aggregate_kind='sandbox' AND p.state IN ('ACCEPTED','UNKNOWN')
+                  AND json_extract(p.response_json,$field)=1;
+                """, ("$o", _owner), ("$e", _fence.Epoch), ("$create", SandboxCreateMethod), ("$field", GrantReservationPath))!;
+            long futureSafety = active + RemoteGrantRecords.CountActive(reader, _owner) + pendingGrants
+                + (intent.Grant?.Action == DurableGrantAction.Replace ? 0 : 1) + intent.AdditionalSafetyReservations;
+            if (futureSafety * _capacity.MaximumResponseBytes > reserve) return DurableDecision.Capacity;
+            if (count + futureSafety + 1 > _capacity.MaximumReceipts) return DurableDecision.Capacity;
         }
-        if (safety)
+        if (intent.SafetyParent is not null)
         {
-            string parent = Convert.ToHexStringLower(intent.SafetyParent!);
+            string parent = Convert.ToHexStringLower(intent.SafetyParent);
             if (!Equals(reader.Scalar("SELECT count(*) FROM command_receipt WHERE owner_id=$o AND owner_epoch=$e AND command_id=$p AND aggregate_kind IS $k AND aggregate_id IS $id AND safety_parent_command_id IS NULL;",
                 ("$o", _owner), ("$e", _fence.Epoch), ("$p", parent), ("$k", intent.AggregateKind), ("$id", intent.AggregateId)), 1L))
                 return DurableDecision.Conflict;
@@ -240,8 +297,26 @@ internal sealed partial class DurableCommandStore : IDisposable
         long bytes = (long)reader.Scalar("SELECT coalesce(sum(coalesce(length(CAST(response_json AS BLOB)),0)+length(reserved_response)+2048),0) FROM command_receipt WHERE owner_id=$o AND owner_epoch=$e;",
             ("$o", _owner), ("$e", _fence.Epoch))!;
         return count >= _capacity.MaximumReceipts
-            || bytes + reserve + (safety ? 0 : _capacity.MaximumResponseBytes) + 2048 > _capacity.MaximumJournalBytes
+            || bytes + reserve + (safety ? 0 : _capacity.MaximumResponseBytes) + 2048
+                + provisionBodyBytes > _capacity.MaximumJournalBytes
             ? DurableDecision.Capacity : DurableDecision.Execute;
+    }
+
+    private static bool IsGrantMutation(DurableIntent intent) => intent.Method is SetGrantMethod or RevokeGrantMethod;
+
+    private void RequireGrantMutation(StoreTransaction transaction, DurableIntent intent, string commandId)
+    {
+        var grant = RemoteGrantRecords.Get(transaction, _owner, intent.AggregateId!);
+        var known = intent.Grant switch
+        {
+            { Action: DurableGrantAction.Revoke } revoke => grant is { State: StoredRemoteGrantState.Revoked, RevokedAt: not null }
+                && grant.Revision == revoke.ExpectedRevision + 1,
+            { Action: DurableGrantAction.Replace } replace => grant is { State: StoredRemoteGrantState.Active }
+                && grant.Revision == replace.ExpectedRevision + 1,
+            _ => grant is { State: StoredRemoteGrantState.Active, Revision: 1 } && grant.RevocationAnchorCommandId == commandId,
+        };
+        if (!known)
+            throw new InvalidOperationException("The observed receipt must commit the exact grant mutation.");
     }
 
     internal DurableReceipt? Inspect(ReadOnlySpan<byte> commandId)
@@ -259,9 +334,15 @@ internal sealed partial class DurableCommandStore : IDisposable
             """);
         command.Parameters.AddWithValue("$o", _owner); command.Parameters.AddWithValue("$e", _fence.Epoch); command.Parameters.AddWithValue("$c", id);
         using var row = command.ExecuteReader();
-        return !row.Read() ? null : new(row.GetString(0), row.GetString(1), row.IsDBNull(2) ? null : row.GetString(2),
-            row.IsDBNull(3) ? null : row.GetString(3), row.GetString(4), row.GetInt32(5), row.IsDBNull(6) ? null : row.GetString(6), !row.IsDBNull(7),
-            row.IsDBNull(8) ? null : row.GetString(8));
+        if (!row.Read()) return null;
+        string method = row.GetString(1);
+        string? kind = row.IsDBNull(2) ? null : row.GetString(2);
+        string state = row.GetString(4);
+        string? body = row.IsDBNull(6) ? null : row.GetString(6);
+        var provision = method == SandboxCreateMethod && kind == "sandbox" && state is ("ACCEPTED" or "UNKNOWN") && body is not null
+            ? ReadProvisionReservation(body) : null;
+        return new(row.GetString(0), method, kind, row.IsDBNull(3) ? null : row.GetString(3), state, row.GetInt32(5),
+            body, !row.IsDBNull(7), row.IsDBNull(8) ? null : row.GetString(8), provision);
     }
 
     private void Advance(string kind, string command, ReadOnlySpan<byte> content, Action<StoreTransaction> write)
@@ -297,6 +378,17 @@ internal sealed partial class DurableCommandStore : IDisposable
             // Preserve the exact existing digest for commands that use their aggregate ID for the Sandbox revision.
             if (intent.ExpectedSandboxId is { } sandboxId)
                 writer.Write(sandboxId);
+            if (intent.Grant is { } grant)
+            {
+                writer.Write("grant_precondition");
+                writer.Write((int)grant.Action);
+                writer.Write(grant.ExpectedRevision);
+            }
+            if (intent.AdditionalSafetyReservations != 0)
+            {
+                writer.Write("remote_grant_reservation");
+                writer.Write(intent.AdditionalSafetyReservations);
+            }
         }
         return HMACSHA256.HashData(_key, stream.ToArray());
     }
@@ -311,6 +403,23 @@ internal sealed partial class DurableCommandStore : IDisposable
             && (intent.ExpectedSandboxRevision is not > 0 || sandboxId.Length != 32
                 || !sandboxId.All(character => character is >= '0' and <= '9' or >= 'a' and <= 'f')))
             throw new ArgumentException("An explicit expected Sandbox ID requires its positive revision.", nameof(intent));
+        if (intent.Grant is { } grant
+            && (intent.SafetyParent is not null || intent.ExpectedSandboxRevision is not null
+                || grant.ExpectedRevision is < 1 or long.MaxValue
+                || (grant.Action, intent.Method) is not ((DurableGrantAction.Replace, SetGrantMethod) or (DurableGrantAction.Revoke, RevokeGrantMethod))))
+            throw new ArgumentException("A grant mutation requires its exact positive revision and typed method.", nameof(intent));
+        if (IsGrantMutation(intent) && (intent.AggregateKind != GrantAggregate || !IsGrantIdentity(intent.AggregateId)
+            || intent.SafetyParent is not null || intent.ExpectedSandboxRevision is not null
+            || intent.Method == RevokeGrantMethod && intent.Grant is null)
+            || !IsGrantMutation(intent) && intent.AggregateKind == GrantAggregate)
+            throw new ArgumentException("A grant receipt must describe its exact owned grant.", nameof(intent));
+        if (intent.AdditionalSafetyReservations != 0 && (intent.AdditionalSafetyReservations != 1
+            || intent is not { Method: SandboxCreateMethod, AggregateKind: "sandbox", SafetyParent: null, ExpectedSandboxRevision: null }
+            || !IsGrantIdentity(intent.AggregateId)))
+            throw new ArgumentException("Only provisioning may add one derived-grant safety reservation.", nameof(intent));
+        if (intent.Provision is { } provision
+            && (intent.AdditionalSafetyReservations != 1 || !ValidProvisionBinding(provision)))
+            throw new ArgumentException("A provision reservation binds its exact parent revision and preselected child grant.", nameof(intent));
         ArgumentException.ThrowIfNullOrWhiteSpace(intent.Method);
         int separator = intent.Method.IndexOf('.');
         if (separator < 1 || separator != intent.Method.LastIndexOf('.') || separator == intent.Method.Length - 1
@@ -324,6 +433,8 @@ internal sealed partial class DurableCommandStore : IDisposable
             || intent.AggregateKind is not null && (string.IsNullOrWhiteSpace(intent.AggregateKind) || string.IsNullOrWhiteSpace(intent.AggregateId)))
             throw new ArgumentException("Invalid durable command shape.", nameof(intent));
     }
+
+    private static bool IsGrantIdentity(string? id) => id is { Length: 32 } && id.All(char.IsAsciiHexDigitLower);
 
     private string Now() => _store.Clock.GetUtcNow().UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
 

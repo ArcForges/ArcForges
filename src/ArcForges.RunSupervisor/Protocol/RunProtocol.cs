@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Text.Json.Serialization;
+
 namespace ArcForges.RunSupervisor.Protocol;
 
 public enum RunTerminalMode
@@ -89,6 +91,7 @@ public sealed record RunLaunchSpec
     public required string Epoch { get; init; }
     public required string OwnerId { get; init; }
     public required string LaunchSha256 { get; init; }
+    public string? InputBinding { get; init; }
     public required string ControlDirectory { get; init; }
     public required string ControlEndpoint { get; init; }
     public required byte[] ControlKey { get; init; }
@@ -101,9 +104,12 @@ public sealed record RunLaunchSpec
     public string? PrivateRootIdentity { get; init; }
     public required string WorkingDirectory { get; init; }
     public string? WorkingDirectoryIdentity { get; init; }
+    public required string ExecutablePath { get; init; }
     public string? ExecutableIdentity { get; init; }
-    public required string[] Argv { get; init; }
-    public required RunEnvironment[] Environment { get; init; }
+    [JsonIgnore]
+    public string[] Argv { get; init; } = [];
+    [JsonIgnore]
+    public RunEnvironment[] Environment { get; init; } = [];
     public required RunMount[] Mounts { get; init; }
     public required RunNetwork Network { get; init; }
     public required RunTerminalMode TerminalMode { get; init; }
@@ -120,13 +126,33 @@ public sealed record RunLaunchSpec
     public int LauncherProcessId { get; init; }
     public string? LauncherCreationIdentity { get; init; }
     public string? LauncherPath { get; init; }
+
+    public void ClearInputs()
+    {
+        Array.Clear(Argv);
+        Array.Clear(Environment);
+    }
 }
 
 public sealed record RunOwnerIdentity(
     string InstanceId, string BootId, int ProcessId, string CreationIdentity, string Endpoint,
     string BoundaryIdentity, string BackendId, string Cohort, string ControlEpoch);
 
-public sealed record RunRelease(long? NativeBoundaryHandle = null);
+public sealed record RunRelease(long? NativeBoundaryHandle = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] RunLaunchInputs? Inputs = null);
+
+/// <summary>Payload values transferred once over the preauthenticated owner channel.</summary>
+public sealed class RunLaunchInputs(string[] argv, RunEnvironment[] environment)
+{
+    public string[] Argv { get; } = argv;
+    public RunEnvironment[] Environment { get; } = environment;
+
+    public void Clear()
+    {
+        Array.Clear(Argv);
+        Array.Clear(Environment);
+    }
+}
 
 public sealed record RunOwnerObservation(
     RunOwnerState State,

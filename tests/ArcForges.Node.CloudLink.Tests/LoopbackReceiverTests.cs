@@ -323,50 +323,71 @@ public sealed class LoopbackReceiverTests
         // N2 review FX-4 (sec B-4): every open connection counts, also one whose request line arrived; at the cap the oldest that has not
         // completed its request is closed, so a stream of stalled request lines cannot pin sockets beyond it or lock the browser out.
         await using var receiver = Start();
-        using var stop = new CancellationTokenSource();
-        var stalled = new System.Collections.Concurrent.ConcurrentQueue<TcpClient>();
-        async Task FloodAsync()
-        {
-            while (!stop.IsCancellationRequested)
-            {
-                var client = new TcpClient();
-                try
-                {
-                    await client.ConnectAsync(IPAddress.Loopback, receiver.Port, stop.Token);
-                    await client.GetStream().WriteAsync("GET / HTTP/1.1\r\n"u8.ToArray(), stop.Token);
-                    stalled.Enqueue(client);
-                }
-                catch (Exception exception) when (exception is SocketException or IOException or OperationCanceledException)
-                {
-                    client.Dispose();
-                    return;
-                }
-            }
-        }
-
-        var flood = Enumerable.Range(0, 4).Select(_ => Task.Run(FloodAsync, TestContext.Current.CancellationToken)).ToArray();
+        var cancellation = TestContext.Current.CancellationToken;
+        using var setup = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        var setupDeadline = TimeSpan.FromSeconds(3);
+        var elapsed = Stopwatch.StartNew();
+        setup.CancelAfter(setupDeadline);
+        const int Target = LoopbackReceiver.HardCapacity + 64;
+        const int MaxAttempts = Target + 16;
+        var stalled = new List<TcpClient>(Target);
+        var failures = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        var requestLine = "GET / HTTP/1.1\r\n"u8.ToArray();
         try
         {
-            var deadline = Stopwatch.StartNew();
-            while (stalled.Count < LoopbackReceiver.HardCapacity + 64 && deadline.Elapsed < TimeSpan.FromSeconds(3))
+            // Have one connection in flight and keep each completed request line open. The listener's actual open count
+            // proves saturation independently of the number of successful client writes.
+            for (var attempt = 0; attempt < MaxAttempts && stalled.Count < Target && !setup.IsCancellationRequested; attempt++)
             {
-                await Task.Delay(20, TestContext.Current.CancellationToken);
+                var client = new TcpClient(receiver.Address.AddressFamily);
+                var retained = false;
+                var phase = "connect";
+                try
+                {
+                    await client.ConnectAsync(receiver.Address, receiver.Port, setup.Token);
+                    phase = "request-line";
+                    await client.GetStream().WriteAsync(requestLine, setup.Token);
+                    stalled.Add(client);
+                    retained = true;
+                }
+                catch (SocketException failure)
+                {
+                    CountFailure(phase + "/" + failure.SocketErrorCode);
+                }
+                catch (IOException failure)
+                {
+                    CountFailure(phase + "/" + (failure.InnerException is SocketException socket ? socket.SocketErrorCode.ToString() : "io"));
+                }
+                catch (OperationCanceledException) when (!cancellation.IsCancellationRequested && setup.IsCancellationRequested)
+                {
+                    CountFailure(phase + "/deadline");
+                }
+                finally
+                {
+                    if (!retained)
+                    {
+                        client.Dispose();
+                    }
+                }
             }
 
-            Assert.True(stalled.Count > LoopbackReceiver.HardCapacity, "only " + stalled.Count + " connections were opened");
-            Assert.InRange(receiver.Peak, 1, LoopbackReceiver.HardCapacity);
-            Assert.Equal("HTTP/1.1 200 OK", await ScriptedBrowser.GetAsync("http://127.0.0.1:" + receiver.Port + "/callback?code=" + Code + "&state=" + State));
-            Assert.InRange(receiver.Peak, 1, LoopbackReceiver.HardCapacity);
+            cancellation.ThrowIfCancellationRequested();
+            var open = receiver.Open;
+            var peak = receiver.Peak;
+            var diagnostic = $"Successful request lines {stalled.Count}, receiver open {open}, peak {peak}, elapsed {elapsed.ElapsedMilliseconds} ms, failures "
+                + (failures.Count == 0 ? "none" : string.Join(", ", failures.Select(item => $"{item.Key}={item.Value}")));
+            TestContext.Current.TestOutputHelper?.WriteLine(diagnostic);
+            Assert.True(stalled.Count > LoopbackReceiver.HardCapacity, diagnostic);
+            Assert.True(open == LoopbackReceiver.HardCapacity && peak == LoopbackReceiver.HardCapacity, diagnostic);
+            Assert.Equal("HTTP/1.1 200 OK", await ScriptedBrowser.GetAsync(receiver.RedirectUri + "?code=" + Code + "&state=" + State));
+            Assert.Equal(LoopbackReceiver.HardCapacity, receiver.Peak);
         }
         finally
         {
-            await stop.CancelAsync();
-            await Task.WhenAll(flood);
-            while (stalled.TryDequeue(out var client))
-            {
-                client.Dispose();
-            }
+            stalled.ForEach(client => client.Dispose());
         }
+
+        void CountFailure(string kind) => failures[kind] = failures.GetValueOrDefault(kind) + 1;
     }
 
     [Fact]

@@ -43,7 +43,7 @@ internal sealed class RunWorkerController(
                 release = await _release.Task.ConfigureAwait(false);
             }
 
-            // The owner has consumed the handoff. The raw inputs are kept only in the private process memory.
+            // The owner consumes the manifest before handing the released input to the executor.
             try
             {
                 consumeHandoff();
@@ -65,13 +65,26 @@ internal sealed class RunWorkerController(
             try
             {
                 using var startup = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-                var starting = Task.Run(async () => await start(launch, release, startup.Token).ConfigureAwait(false));
-                if (await Task.WhenAny(starting, _stop.Task).ConfigureAwait(false) != starting)
+                var inputs = release.Inputs!;
+                IRunWorkerSession session;
+                try
                 {
-                    await startup.CancelAsync().ConfigureAwait(false);
+                    var spec = launch with { Argv = inputs.Argv, Environment = inputs.Environment };
+                    var starting = Task.Run(async () =>
+                        await start(spec, release with { Inputs = null }, startup.Token).ConfigureAwait(false));
+                    if (await Task.WhenAny(starting, _stop.Task).ConfigureAwait(false) != starting)
+                    {
+                        await startup.CancelAsync().ConfigureAwait(false);
+                    }
+
+                    session = await starting.ConfigureAwait(false);
+                }
+                finally
+                {
+                    inputs.Clear();
                 }
 
-                await using var session = await starting.ConfigureAwait(false);
+                await using var owned = session;
                 _terminal.Bind(session);
                 try
                 {
@@ -99,6 +112,11 @@ internal sealed class RunWorkerController(
         {
             await finish.CancelAsync().ConfigureAwait(false);
             await connection.ConfigureAwait(false);
+            if (_release.Task.IsCompletedSuccessfully)
+            {
+                _release.Task.Result?.Inputs?.Clear();
+            }
+
             CryptographicOperations.ZeroMemory(launch.ControlKey);
         }
     }
@@ -188,6 +206,7 @@ internal sealed class RunWorkerController(
             {
                 var request = await RunWire.ReadFrameAsync(stream, launch, challenge, false, cancellationToken).ConfigureAwait(false);
                 RunControlFrame reply;
+                var releaseAccepted = false;
                 try
                 {
                     if (request.Sequence != checked(++sequence) || request.Identity is not null || request.Observation is not null
@@ -197,12 +216,18 @@ internal sealed class RunWorkerController(
                     }
 
                     reply = Execute(request);
+                    releaseAccepted = request.Command == RunControlCommand.Activate && reply.Error is null;
                 }
                 finally
                 {
                     if (request.TerminalRequest?.Input is { } input)
                     {
                         CryptographicOperations.ZeroMemory(input);
+                    }
+
+                    if (!releaseAccepted)
+                    {
+                        request.Release?.Inputs?.Clear();
                     }
                 }
 
@@ -234,7 +259,7 @@ internal sealed class RunWorkerController(
         switch (request.Command)
         {
             case RunControlCommand.Activate when request is
-            { Release: { } release, GraceMilliseconds: 0, TerminalRequest: null, TerminalPoll: null }:
+            { Release: { Inputs: not null } release, GraceMilliseconds: 0, TerminalRequest: null, TerminalPoll: null }:
                 lock (_gate)
                 {
                     if (_release.TrySetResult(release))

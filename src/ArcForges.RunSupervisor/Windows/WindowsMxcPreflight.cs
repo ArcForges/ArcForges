@@ -16,13 +16,13 @@ internal static class WindowsMxcPreflight
         "canBlockInputMethodChanges", "canBlockExternalUiObjects", "canBlockGlobalUiNamespace", "canBlockDesktopSwitching",
         "canBlockLogoffOrShutdown", "canBlockSystemParameterChanges", "canBlockDisplaySettingsChanges"];
 
-    internal static async ValueTask CheckAsync(WindowsMxcStage stage, string policy, string control, WindowsMxcJob aggregate,
+    internal static async ValueTask CheckAsync(WindowsMxcStage stage, string policyPath, string control, WindowsMxcJob aggregate,
         WindowsMxcJob payload, CancellationToken cancellationToken)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(20));
         using var io = WindowsRunIo.Create(interactive: false);
-        using var process = WindowsMxcProcess.CreateSuspended(stage.Executor, ["--probe", "--config", policy],
+        using var process = WindowsMxcProcess.CreateSuspended(stage.Executor, ["--probe", "--config", policyPath],
             stage.Directory, WindowsMxcProcess.TrustedEnvironment(control), payload, standard: io.Standard);
         io.ReleaseRemoteEnds();
         io.CloseInput();

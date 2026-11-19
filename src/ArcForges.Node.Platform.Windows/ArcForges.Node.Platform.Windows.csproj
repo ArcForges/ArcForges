@@ -21,5 +21,6 @@
     <PackageReference Include="ArcForges.Contracts.Node" />
     <InternalsVisibleTo Include="ArcForges.Node.Platform.Windows.Tests" />
     <InternalsVisibleTo Include="ArcForges.Node.Core.Tests" />
+    <InternalsVisibleTo Include="arcforges-run-supervisor" />
   </ItemGroup>
 </Project>

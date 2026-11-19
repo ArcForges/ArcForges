@@ -10,6 +10,7 @@ using ArcForges.Contracts.Sandbox.V2.Serialization;
 using ArcForges.Contracts.Sandbox.V2.Shapes;
 using ArcForges.Node.Core.Files;
 using ArcForges.Node.Core.Platform;
+using ArcForges.Node.Core.Security;
 using ArcForges.Node.Platform.Capabilities;
 using Google.Protobuf;
 
@@ -31,10 +32,12 @@ internal static class SandboxPolicyAdmission
     internal static SandboxPolicyResult Evaluate(SandboxConfig config, string dataRoot) =>
         Evaluate(config, dataRoot, SandboxPolicyHost.InstallationRoot);
 
-    internal static SandboxPolicyResult Evaluate(SandboxConfig config, string dataRoot, string installationRoot) =>
-        Evaluate(config, dataRoot, installationRoot, MxcTerminalMode.Interactive);
+    internal static SandboxPolicyResult Evaluate(SandboxConfig config, string dataRoot, string installationRoot,
+        SandboxProtectedEndpoint? protectedEndpoint = null) =>
+        Evaluate(config, dataRoot, installationRoot, MxcTerminalMode.Interactive, protectedEndpoint);
 
-    internal static SandboxPolicyResult Evaluate(SandboxConfig config, string dataRoot, string installationRoot, MxcTerminalMode terminal)
+    internal static SandboxPolicyResult Evaluate(SandboxConfig config, string dataRoot, string installationRoot,
+        MxcTerminalMode terminal, SandboxProtectedEndpoint? protectedEndpoint = null)
     {
         ArgumentNullException.ThrowIfNull(config);
         if (!ContractShapeValidation.IsValid(config)
@@ -94,7 +97,7 @@ internal static class SandboxPolicyAdmission
 
         try
         {
-            if (!BindHostGrants(prepared, dataRoot, installationRoot))
+            if (!BindHostGrants(prepared, dataRoot, installationRoot, protectedEndpoint))
             {
                 return Refuse(config, "files.host_grants", "host_grant_unavailable_or_unsafe");
             }
@@ -377,13 +380,15 @@ internal static class SandboxPolicyAdmission
         }
     }
 
-    private static bool BindHostGrants(SandboxConfig policy, string dataRoot, string installationRoot)
+    private static bool BindHostGrants(SandboxConfig policy, string dataRoot, string installationRoot,
+        SandboxProtectedEndpoint? protectedEndpoint)
     {
         if (policy.HostGrants.Count == 0)
         {
             return true;
         }
 
+        var endpoint = protectedEndpoint?.Verify();
         var comparison = policy.ProfileId == Windows ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         using var owned = WorkspacePath.OpenRoot(CanonicalPath(dataRoot));
         using var installed = WorkspacePath.OpenRoot(CanonicalPath(installationRoot));
@@ -408,7 +413,8 @@ internal static class SandboxPolicyAdmission
             if (parent is null || !requested.Equals(grant.HostPath, comparison)
                 || !presented.Equals(grant.SandboxPath, comparison) || !requested.Equals(presented, comparison)
                 || Overlap(requested, data, comparison) || Overlap(requested, installation, comparison)
-                || Overlap(requested, application, comparison) || AtOrBelow(home, requested, comparison))
+                || Overlap(requested, application, comparison) || AtOrBelow(home, requested, comparison)
+                || endpoint?.Overlaps(requested) == true)
             {
                 return false;
             }
@@ -431,7 +437,8 @@ internal static class SandboxPolicyAdmission
                 || IsAlternateLinuxMount(observed, installed.RootIdentity)
                 || IsAlternateLinuxMount(observed, applicationDirectory.RootIdentity)
                 || Overlap(path, data, comparison) || Overlap(path, installation, comparison)
-                || Overlap(path, application, comparison) || AtOrBelow(home, path, comparison))
+                || Overlap(path, application, comparison) || AtOrBelow(home, path, comparison)
+                || (endpoint is not null && (endpoint.Overlaps(path) || endpoint.AliasesAncestor(observed))))
             {
                 return false;
             }
