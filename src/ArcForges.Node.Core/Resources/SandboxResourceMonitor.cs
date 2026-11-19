@@ -17,10 +17,14 @@ internal sealed record RunResourceTarget(string RunId, string SandboxId, string 
 
 internal sealed record RunResourceInventory(long CatalogueRevision, RunResourceTarget[] Targets);
 
-internal sealed record RunResourceMeasurement(RunResourceTarget Target, RunResourceObservation? Reading, long? CpuMillicores);
+internal sealed record RunResourceMeasurement(RunResourceTarget Target, RunResourceObservation? Reading, long? CpuMillicores,
+    ulong? ResidentPeakBytes = null);
+
+internal sealed record SandboxPressureFacts(V1.PressureLevel Level, V1.PressureLevel Raw, bool MemoryCritical,
+    long NewOomKills, string Trigger);
 
 internal sealed record SandboxResourceFrame(long Timestamp, long? LastCompleteTimestamp, long? CatalogueRevision, uint? RunIntervalMs,
-    ResourceSnapshot Host, IReadOnlyDictionary<string, RunResourceMeasurement> Runs)
+    ResourceSnapshot Host, IReadOnlyDictionary<string, RunResourceMeasurement> Runs, SandboxPressureFacts? PressureFacts = null)
 {
     internal bool Stale => LastCompleteTimestamp is not { } time || Stopwatch.GetElapsedTime(time) >= TimeSpan.FromSeconds(3);
     internal bool HasFreshBudget => !Stale && Host.HasBudgetCpuMillicores && Host.HasBudgetMemoryBytes;
@@ -35,6 +39,7 @@ internal sealed class SandboxResourceMonitor : IAsyncDisposable
     private readonly Func<RunResourceInventory?> _inventory;
     private readonly Func<StoredPolicy> _policy;
     private readonly NodeLog _log;
+    private readonly Action<SandboxResourceFrame>? _onFrame;
     private readonly CancellationTokenSource _stop = new();
     private readonly Task _loop;
     private readonly AsymmetricSmoother _cpu = new();
@@ -52,13 +57,14 @@ internal sealed class SandboxResourceMonitor : IAsyncDisposable
     private TaskCompletionSource _nextCompleteBudget = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     internal SandboxResourceMonitor(TimeProvider clock, IHostResourceSource host, Func<RunResourceInventory?> inventory,
-        Func<StoredPolicy> policy, NodeLog log)
+        Func<StoredPolicy> policy, NodeLog log, Action<SandboxResourceFrame>? onFrame = null)
     {
         _clock = clock;
         _host = host;
         _inventory = inventory;
         _policy = policy;
         _log = log;
+        _onFrame = onFrame;
         _loop = Task.Run(SampleLoopAsync);
     }
 
@@ -66,11 +72,12 @@ internal sealed class SandboxResourceMonitor : IAsyncDisposable
 
     internal SandboxResourceFrame? Latest => Volatile.Read(ref _latest);
 
-    internal void WaitForBudget(CancellationToken cancellationToken)
+    internal void WaitForBudget(CancellationToken cancellationToken, long? afterTimestamp = null)
     {
         // Subscribe before checking the frame so a concurrent publication cannot be missed.
         var next = Volatile.Read(ref _nextCompleteBudget).Task;
-        if (Latest is { HasFreshBudget: true })
+        if (Latest is { HasFreshBudget: true } current
+            && (!afterTimestamp.HasValue || current.Timestamp > afterTimestamp.Value))
         {
             return;
         }
@@ -117,14 +124,20 @@ internal sealed class SandboxResourceMonitor : IAsyncDisposable
             var read = ReadRun(target.Source);
             RunResourceMeasurement? old = null;
             if (previous is not null && previous.Runs.TryGetValue(target.RunId, out var last)
-                && last.Target.Epoch == target.Epoch && ReferenceEquals(last.Target.Source, target.Source))
+                && last.Target.Epoch == target.Epoch)
             {
                 old = last;
             }
 
-            long? rate = ResourceBudgetMath.CpuRateMillicores(AsLong(old?.Reading?.CumulativeCpuUsec),
+            var previousCpu = old is not null && ReferenceEquals(old.Target.Source, target.Source)
+                ? old.Reading?.CumulativeCpuUsec : null;
+            long? rate = ResourceBudgetMath.CpuRateMillicores(AsLong(previousCpu),
                 AsLong(read?.CumulativeCpuUsec), runInterval);
-            runs.Add(target.RunId, new(target, read, rate));
+            // The kernel Job/cgroup peak uses a different memory definition. Retain the
+            // highest resident estimate for this Run epoch even across a missing sample.
+            ulong? residentPeak = read?.ResidentBytes is ulong resident
+                ? Math.Max(resident, old?.ResidentPeakBytes ?? 0) : old?.ResidentPeakBytes;
+            runs.Add(target.RunId, new(target, read, rate, residentPeak));
         }
 
         long? nativeTime = host?.MonotonicTimestamp;
@@ -170,14 +183,15 @@ internal sealed class SandboxResourceMonitor : IAsyncDisposable
             snapshot.ProcessCount = (uint)processCount;
         SetPressureFacts(snapshot, host?.PsiCpuSome, host?.PsiMemorySome, host?.PsiMemoryFull);
 
+        SandboxPressureFacts? pressureFacts = null;
         if (stored is not null)
         {
-            PopulateBudget(snapshot, stored, host, capacityCpu, capacityMem, availableMem, usedMem, hostCpu,
+            pressureFacts = PopulateBudget(snapshot, stored, host, capacityCpu, capacityMem, availableMem, usedMem, hostCpu,
                 managedCpu, nodeCpu, managedResident, nodeResident, timestamp);
         }
         else
         {
-            _pressure = null;
+            _pressure?.Suspend();
         }
 
         var complete = nativeTime.HasValue && capacityCpu > 0 && usedMem.HasValue && snapshot.HasBudgetCpuMillicores
@@ -187,7 +201,8 @@ internal sealed class SandboxResourceMonitor : IAsyncDisposable
             _lastComplete = nativeTime;
         }
 
-        var frame = new SandboxResourceFrame(timestamp, _lastComplete, inventory?.CatalogueRevision, Milliseconds(runInterval), snapshot, runs);
+        var frame = new SandboxResourceFrame(timestamp, _lastComplete, inventory?.CatalogueRevision,
+            Milliseconds(runInterval), snapshot, runs, pressureFacts);
         snapshot.Stale = frame.Stale;
         Volatile.Write(ref _latest, frame);
         if (complete)
@@ -203,9 +218,10 @@ internal sealed class SandboxResourceMonitor : IAsyncDisposable
         }
 
         RecordTiming(timestamp, targets.Length > 0);
+        _onFrame?.Invoke(frame);
     }
 
-    private void PopulateBudget(ResourceSnapshot snapshot, StoredPolicy stored, HostResourceObservation? host,
+    private SandboxPressureFacts? PopulateBudget(ResourceSnapshot snapshot, StoredPolicy stored, HostResourceObservation? host,
         long? capacityCpu, long? capacityMem, long? availableMem, long? usedMem, long? hostCpu,
         long? managedCpu, long? nodeCpu, long? managedResident, long? nodeResident, long timestamp)
     {
@@ -214,7 +230,7 @@ internal sealed class SandboxResourceMonitor : IAsyncDisposable
         if (_lastPolicyRevision != stored.Revision)
         {
             _lastPolicyRevision = stored.Revision;
-            _pressure = null;
+            _pressure?.Suspend();
         }
 
         long? reserveCpu = capacityCpu is > 0 ? HostReserve(capacityCpu.Value,
@@ -252,11 +268,11 @@ internal sealed class SandboxResourceMonitor : IAsyncDisposable
                 new(availableMem!.Value, capacityMem.Value, capacityCpu.Value, smoothedCpu.Value,
                     host.PsiMemorySome, AsLong(host.OomKills) ?? 0), limits);
             snapshot.Pressure = level.ToString().ToLowerInvariant();
+            return new(level, _pressure.Raw, _pressure.MemoryCritical, _pressure.NewOomKills, _pressure.Trigger);
         }
-        else
-        {
-            _pressure = null;
-        }
+
+        _pressure?.Suspend();
+        return null;
     }
 
     private HostResourceObservation? ReadHost()

@@ -128,6 +128,9 @@ public sealed class PlanRemovalInputAuditHostTests
             File.WriteAllBytes(path, "changed-after-signed-plan"u8.ToArray());
             Assert.Equal(first, await Invoke(RoutedMethod.PlanNodeRemoval, request, request.Meta.CommandId, agentCaller));
             await node.StopNodeAsync();
+            // Endpoint shutdown can precede release of the original process instance lock.
+            await host.WaitForExitAsync(ct).WaitAsync(TimeSpan.FromSeconds(15), ct);
+            Assert.Equal(0, host.ExitCode);
             await node.StartNodeAsync();
             channel = await center.Channel.ProvedAsync(2);
             Assert.Equal(first, await Invoke(RoutedMethod.PlanNodeRemoval, request, request.Meta.CommandId, agentCaller));

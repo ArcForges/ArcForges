@@ -168,6 +168,7 @@ public sealed record RunResourceObservation(RunMemoryAccounting Accounting)
     public ulong? MemoryBytes { get; init; }
     public ulong? PeakMemoryBytes { get; init; }
     public ulong? ResidentBytes { get; init; }
+    public ulong? OomKills { get; init; }
     public uint? ProcessCount { get; init; }
     public double? PsiCpuSome { get; init; }
     public double? PsiMemorySome { get; init; }

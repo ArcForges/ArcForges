@@ -3,7 +3,9 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.Versioning;
 using System.Security.AccessControl;
+using System.Security.Cryptography;
 using System.Security.Principal;
+using System.Text;
 using System.Text.Json;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
@@ -245,10 +247,15 @@ public sealed partial class MxcRunServiceTests
                 var request = BuildStart(sandbox, ownerEpoch, PrepareSelfSettlingPayload(working));
                 Assert.Null(request.RequestedResources);
                 var submitted = await runs.StartAsync(request, deadline: Deadline, cancellationToken: cancellationToken);
-                running = await WaitForStateAsync(fixture, runs, Value(submitted.Value, submitted.Error).Run.RunId, RunState.Running);
+                var admitted = Value(submitted.Value, submitted.Error).Run;
+                running = await WaitForStateAsync(fixture, runs, admitted.RunId, RunState.Running);
+                Assert.Equal(admitted.Epoch, running.Epoch);
+                Assert.Equal(admitted.LaunchSha256, running.LaunchSha256);
+                Assert.Equal(DesiredCpu(admitted), DesiredCpu(running));
+                Assert.Equal(DesiredMemory(admitted), DesiredMemory(running));
                 await TestNode.WaitAsync(() => ChildIsReady(childMarker), NativeBound, "the self-settling payload's ready child");
                 Assert.Equal(ready, Assert.Single(ReadLines(marker)));
-                native = await ObserveNativeBoundaryAsync(fixture, running, childMarker);
+                native = await ObserveNativeBoundaryAsync(fixture, running, childMarker, recoveryReadback: runs);
                 Assert.True(DesiredCpu(running) > 0);
                 Assert.True(DesiredMemory(running) > 0);
             }
@@ -542,7 +549,8 @@ public sealed partial class MxcRunServiceTests
         Assert.DoesNotContain(Path.GetDirectoryName(executable)!, run.SafeCommandDisplay);
     }
 
-    private static async Task<NativeBoundary> ObserveNativeBoundaryAsync(TestNode fixture, Run run, string childMarker)
+    private static async Task<NativeBoundary> ObserveNativeBoundaryAsync(TestNode fixture, Run run, string childMarker,
+        RunService.RunServiceClient? recoveryReadback = null)
     {
         var native = ReadSupervisor(fixture.DataRoot, run);
         var owner = ProcessIdentity.Capture(native.Pid);
@@ -574,10 +582,17 @@ public sealed partial class MxcRunServiceTests
             Assert.Equal(boundary[3], group.MountId.ToString(CultureInfo.InvariantCulture));
             Assert.Equal(boundary[4], group.Inode.ToString(CultureInfo.InvariantCulture));
             Assert.True(LinuxRunCgroup.MatchesProcess(owner.Value.Pid, owner.Value.StartKey, group.Path));
-            var limits = group.ReadLimits();
-            Assert.Equal(100_000UL, limits.CpuPeriod);
-            Assert.Equal(DesiredCpu(run) * 100UL, limits.CpuQuota);
-            Assert.Equal(DesiredMemory(run), limits.MemoryBytes);
+            if (recoveryReadback is null)
+            {
+                var limits = group.ReadLimits();
+                Assert.Equal(100_000UL, limits.CpuPeriod);
+                Assert.Equal(DesiredCpu(run) * 100UL, limits.CpuQuota);
+                Assert.Equal(DesiredMemory(run), limits.MemoryBytes);
+            }
+            else
+            {
+                await RequireLiveRecoveryLimitsAsync(recoveryReadback, run, native.Boundary, group);
+            }
 
             return new NativeBoundary(owner.Value, await WaitForLinuxSleepAsync(group.Path), group);
         }
@@ -586,6 +601,62 @@ public sealed partial class MxcRunServiceTests
             group.Dispose();
             throw;
         }
+    }
+
+    [SupportedOSPlatform("linux")]
+    private static async Task RequireLiveRecoveryLimitsAsync(RunService.RunServiceClient runs, Run expected,
+        string boundary, LinuxRunCgroup group)
+    {
+        var scopeHash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(boundary)));
+        uint acceptedCpu = DesiredCpu(expected);
+        ulong acceptedMemory = DesiredMemory(expected);
+        var started = Assert.IsType<DateTimeOffset>(ProtoTime.ToDateTimeOffset(expected.StartedAt));
+        var bound = TimeSpan.FromSeconds(3);
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        budget.CancelAfter(bound);
+        await TestNode.WaitAsync(async () =>
+        {
+            var first = group.ReadLimits();
+            var current = await InspectAsync(runs, expected.RunId, budget.Token);
+            var limits = group.ReadLimits();
+            if (first != limits)
+            {
+                return false;
+            }
+
+            Assert.Equal(expected.RunId, current.RunId);
+            Assert.Equal(expected.SandboxId, current.SandboxId);
+            Assert.Equal(expected.Epoch, current.Epoch);
+            Assert.Equal(expected.LaunchSha256, current.LaunchSha256);
+            Assert.Equal(RunState.Running, current.State);
+            Assert.Equal(acceptedCpu, DesiredCpu(current));
+            Assert.Equal(acceptedMemory, DesiredMemory(current));
+            Assert.Equal(100_000UL, limits.CpuPeriod);
+            Assert.Equal(acceptedMemory, limits.MemoryBytes);
+
+            var cpu = Assert.Single(current.Limits, limit => limit.Dimension == "cpu");
+            Assert.Equal(scopeHash, cpu.Scope);
+            Assert.Equal(1, cpu.DesiredRevision.Value);
+            Assert.Equal(LimitStatus.Effective, cpu.Status);
+            Assert.Equal(cpu.AppliedValue, cpu.ReadbackValue);
+            ulong applied = ulong.Parse(cpu.ReadbackValue, NumberStyles.None, CultureInfo.InvariantCulture);
+            Assert.InRange(applied, 10UL, (ulong)acceptedCpu);
+            Assert.Equal(applied * 100, limits.CpuQuota);
+            Assert.True(cpu.Reason is "native_readback_confirmed" or "weighted_cpu_readback_confirmed", $"Unexpected CPU proof: {cpu.Reason}.");
+            var cpuAppliedAt = Assert.IsType<DateTimeOffset>(ProtoTime.ToDateTimeOffset(cpu.AppliedAt));
+            Assert.True(cpu.Reason == "native_readback_confirmed" ? cpuAppliedAt <= started : cpuAppliedAt >= started);
+
+            var memory = Assert.Single(current.Limits, limit => limit.Dimension == "memory");
+            Assert.Equal(scopeHash, memory.Scope);
+            Assert.Equal(LimitStatus.Effective, memory.Status);
+            Assert.Equal("native_readback_confirmed", memory.Reason);
+            Assert.Equal(acceptedMemory.ToString(CultureInfo.InvariantCulture), memory.ReadbackValue);
+            Assert.Equal(memory.AppliedValue, memory.ReadbackValue);
+            Assert.True(Assert.IsType<DateTimeOffset>(ProtoTime.ToDateTimeOffset(memory.AppliedAt)) <= started);
+            TestContext.Current.TestOutputHelper?.WriteLine(FormattableString.Invariant(
+                $"Start authorized up to {acceptedCpu}m; the same native boundary held {applied}m at a {limits.CpuPeriod}us period ({cpu.Reason})."));
+            return true;
+        }, bound, "a stable finite native quota matching the effective readback on the original Run boundary");
     }
 
     private static (int Pid, string Creation, string Boundary) ReadSupervisor(string dataRoot, Run run)

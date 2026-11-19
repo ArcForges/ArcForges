@@ -315,6 +315,12 @@ internal sealed partial class SandboxManager
                 observation = observation with { State = RunOwnerState.Exited, TerminationReason = "stopped_before_payload" };
             }
 
+            if (run.TerminationReason == "pressure_stop_requested" && observation is
+                { State: RunOwnerState.Exited, GroupEmptyVerified: true, TerminationReason: "user_stop" or "stopped" })
+            {
+                observation = observation with { TerminationReason = "pressure_preempted" };
+            }
+
             if (ConflictingRunEvidence(run, observation))
             {
                 ReportRun(id, "native_evidence_conflict", null);

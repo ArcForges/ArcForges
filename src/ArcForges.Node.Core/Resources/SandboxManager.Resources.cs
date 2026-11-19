@@ -19,7 +19,8 @@ internal sealed partial class SandboxManager
             return null;
         }
 
-        _resourceMonitor = new SandboxResourceMonitor(_clock, source, CaptureResourceTargets, _store.Policies.Current, log);
+        _resourceMonitor = new SandboxResourceMonitor(_clock, source, CaptureResourceTargets, _store.Policies.Current, log,
+            frame => ControlResources(frame, log));
         return _resourceMonitor;
     }
 
@@ -65,39 +66,58 @@ internal sealed partial class SandboxManager
         lock (OwnershipGate)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var meta = Response(request.Meta);
             try
             {
-                var frame = _resourceMonitor?.Latest;
-                if (request.ScopeKind == "node" && request.ScopeId is null)
-                {
-                    var host = frame?.Host.Clone() ?? ResourceScopeSnapshot("node", null, null);
-                    host.Stale = frame?.Stale ?? true;
-                    host.PolicyRevision = new Revision { Value = ResourcePolicyRevision("node", null) };
-                    ApplyResourceBudgetPolicy(host, DecodeResourcePolicy(ReadResourcePolicy("node", null)));
-                    return new() { Meta = meta, Value = new() { Snapshot = host } };
-                }
-
-                if (request.ScopeKind is not ("sandbox" or "run") || !ValidId(request.ScopeId))
-                {
-                    return new()
-                    {
-                        Meta = meta,
-                        Error = Error(request.Meta, ErrorCategory.Validation, "invalid_argument", "resource_scope_invalid")
-                    };
-                }
-
-                string id = ToHex(request.ScopeId);
-                var snapshot = ResourceScopeSnapshot(request.ScopeKind, request.ScopeId, frame);
-                bool visible = request.ScopeKind == "run" ? ApplyRunResources(id, snapshot, frame) : ApplySandboxResources(id, snapshot, frame);
-                return visible ? new() { Meta = meta, Value = new() { Snapshot = snapshot } }
-                    : new() { Meta = meta, Error = NotFound(request.Meta) };
+                return GetResourceBudgetLocked(request, _resourceMonitor?.Latest);
             }
             catch (Exception failure) when (IsStorageFailure(failure))
             {
-                return new() { Meta = meta, Error = StorageFailure(request.Meta) };
+                return new() { Meta = Response(request.Meta), Error = StorageFailure(request.Meta) };
             }
         }
+    }
+
+    private ResourceServiceGetBudgetResponse GetResourceBudgetLocked(ResourceServiceGetBudgetRequest request,
+        SandboxResourceFrame? frame)
+    {
+        var meta = Response(request.Meta);
+        if (request.ScopeKind == "node" && request.ScopeId is null)
+        {
+            var policy = ReadResourcePolicy("node", null);
+            var host = NodeResourceSnapshot(frame, DecodeResourcePolicy(policy));
+            host.PolicyRevision = new Revision { Value = policy?.Revision ?? 1 };
+            AddResourcePressureWarning(meta, frame);
+            return new() { Meta = meta, Value = new() { Snapshot = host } };
+        }
+
+        if (request.ScopeKind is not ("sandbox" or "run") || !ValidId(request.ScopeId))
+        {
+            return new()
+            {
+                Meta = meta,
+                Error = Error(request.Meta, ErrorCategory.Validation, "invalid_argument", "resource_scope_invalid")
+            };
+        }
+
+        string id = ToHex(request.ScopeId);
+        var snapshot = ResourceScopeSnapshot(request.ScopeKind, request.ScopeId, frame);
+        bool visible = request.ScopeKind == "run" ? ApplyRunResources(id, snapshot, frame) : ApplySandboxResources(id, snapshot, frame);
+        return visible ? new() { Meta = meta, Value = new() { Snapshot = snapshot } }
+            : new() { Meta = meta, Error = NotFound(request.Meta) };
+    }
+
+    private ResourceSnapshot NodeResourceSnapshot(SandboxResourceFrame? frame, ResourcePolicy? policy)
+    {
+        var snapshot = frame?.Host.Clone() ?? ResourceScopeSnapshot("node", null, null);
+        snapshot.Stale = frame?.Stale ?? true;
+        ApplyResourceBudgetPolicy(snapshot, policy);
+        var active = _store.Read(reader => RunRecords.ListNonterminal(reader, OwnerId));
+        if (TryReadResidentReservations(active, frame, null, requireFreshReading: false, out var reserved))
+        {
+            snapshot.ReservedRunMemoryBytes = reserved.Node;
+        }
+
+        return snapshot;
     }
 
     private ResourceSnapshot ResourceScopeSnapshot(string scope, Id? id, SandboxResourceFrame? frame)
@@ -129,6 +149,12 @@ internal sealed partial class SandboxManager
         }
 
         snapshot.PolicyRevision = new Revision { Value = ResourcePolicyRevision("run", id) };
+        if (ReadResidentReservation(row, frame, requireFreshReading: false) is ulong reserved)
+        {
+            snapshot.ReservedRunMemoryBytes = reserved;
+        }
+
+
         snapshot.Limits.AddRange(ReadProjectedRunLimits(row));
         if (frame is null || !frame.Runs.TryGetValue(id, out var measurement) || measurement.Target.Epoch != row.Epoch
             || !ReferenceEquals(CurrentResourceSource(id, row.Epoch), measurement.Target.Source)
@@ -166,7 +192,14 @@ internal sealed partial class SandboxManager
         }
 
         snapshot.PolicyRevision = new Revision { Value = ResourcePolicyRevision("sandbox", id) };
-        ApplySandboxGrantCeiling(snapshot, row, DecodeResourcePolicy(ReadResourcePolicy("sandbox", id)));
+        ApplySandboxGrantCeiling(snapshot, row, DecodeResourcePolicy(ReadResourcePolicy("sandbox", id)), frame);
+        var active = _store.Read(reader => RunRecords.ListNonterminal(reader, OwnerId))
+            .Where(run => run.SandboxId == id);
+        if (TryReadResidentReservations(active, frame, id, requireFreshReading: false, out var reserved))
+        {
+            snapshot.ReservedRunMemoryBytes = reserved.Sandbox;
+        }
+
         if (!coherent)
         {
             snapshot.Stale = true;
