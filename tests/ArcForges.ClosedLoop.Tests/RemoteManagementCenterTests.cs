@@ -154,10 +154,8 @@ public sealed class RemoteManagementCenterTests
         Assert.Equal(identity.NodeEpoch, fresh.NodeEpoch);
         await WriteObservationAsync(coordination, "reconnected.json", new { ownerEpoch = Hex(epoch), nodeEpoch = fresh.NodeEpoch });
 
-        await WaitForFixtureAsync(coordination, "stopped", NativeBound, "the exact remote Stop response");
-        await TestNode.WaitAsync(async () => (await InspectRunAsync(runs, held)).State == RunState.Exited,
-            NativeBound, "the remote Run and its native process tree drained");
-        Assert.Equal(held, (await OnlyRunAsync(runs, sandboxId)).RunId);
+        await WaitForFixtureAsync(coordination, "revoke-ready", NativeBound, "the original receipt was reconciled");
+        Assert.Equal(RunState.Running, (await InspectRunAsync(runs, held)).State);
         Assert.Equal(original, await InspectOperationAsync(node, epoch, command));
         var revoke = await node.RevokeRemoteGrantAsync(new()
         {
@@ -166,9 +164,35 @@ public sealed class RemoteManagementCenterTests
             GrantId = grant.GrantId,
         }, deadline: Deadline, cancellationToken: Ct);
         Assert.Equal(GrantState.Revoked, Value(revoke.Value, revoke.Error).Grant.State);
+        Assert.Equal(RunState.Running, (await InspectRunAsync(runs, held)).State);
         await WriteObservationAsync(coordination, "revoked.json", new { run = Hex(held) });
 
-        await WaitForFixtureAsync(coordination, "remote-finished", NativeBound, "the real Center's grant-refusal observations");
+        await WaitForFixtureAsync(coordination, "revocation-confirmed", NativeBound, "the real Center's grant-refusal observations");
+        var running = await OnlyRunAsync(runs, sandboxId);
+        Assert.Equal(held, running.RunId);
+        Assert.Equal(RunState.Running, running.State);
+        Assert.Equal(original, await InspectOperationAsync(node, epoch, command));
+        const string stopMethod = "/arcforges.sandbox.v2.RunService/Stop";
+        var stopGrant = await SetGrantAsync(node, epoch, new()
+        {
+            GrantId = CommandIds.New(),
+            EnrollmentId = connected.EnrollmentId,
+            ScopeKind = "sandbox",
+            SandboxId = sandboxId,
+            Methods = { stopMethod },
+        });
+        Assert.NotEqual(grant.GrantId, stopGrant.GrantId);
+        Assert.Equal(stopMethod, Assert.Single(stopGrant.Methods));
+        await WriteObservationAsync(coordination, "stop-authority.json", new
+        {
+            grant = Hex(stopGrant.GrantId),
+            revision = stopGrant.Revision.Value,
+            runRevision = running.Revision.Value,
+        });
+
+        await WaitForFixtureAsync(coordination, "stopped", NativeBound, "the exact remote Stop response under the new Stop grant");
+        await TestNode.WaitAsync(async () => (await InspectRunAsync(runs, held)).State == RunState.Exited,
+            NativeBound, "the remote Run and its native process tree drained");
         Assert.Equal(held, (await OnlyRunAsync(runs, sandboxId)).RunId);
         Assert.Equal(original, await InspectOperationAsync(node, epoch, command));
         var unrelatedRuns = await runs.ListAsync(new() { Meta = Meta(), SandboxId = unrelated.SandboxId },
