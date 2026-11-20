@@ -20,6 +20,7 @@ public sealed partial class MxcRunServiceTests
         token.ThrowIfCancellationRequested();
         await using var fixture = await TerminalCliFixture.StartAsync();
         var marker = Path.Combine(fixture.Working, "cli-tui.log");
+        var quitGate = Path.Combine(fixture.Working, "cli-tui-quit");
 
         Run tui;
         ulong cursor;
@@ -27,7 +28,7 @@ public sealed partial class MxcRunServiceTests
         tuiDeadline.CancelAfter(TimeSpan.FromSeconds(60));
         var tuiToken = tuiDeadline.Token;
         await using (var host = await fixture.OpenTerminalAsync(27, 93, tuiToken,
-            fixture.StartArguments(fixture.Payload, "terminal", "tui", marker)))
+            fixture.StartArguments(fixture.Payload, "terminal", "tui", marker, quitGate)))
         {
             await using var canvas = new TerminalCliCanvas(host.Output, tuiToken);
             tui = await fixture.OnlyNewRunAsync(null, tuiToken);
@@ -61,10 +62,19 @@ public sealed partial class MxcRunServiceTests
             host.Resize(38, 112);
             await WaitMarkerAsync(marker, "resize 38 112");
             await canvas.WaitForAsync("38x112", tuiToken);
-            Assert.False(canvas.Contains("35x107"), "Reattaching from a retained cursor replayed already delivered output.");
             await host.SendAsync(new byte[] { 29, (byte)'d' }, tuiToken);
             await WaitMarkerAsync(marker, "literal-detach");
             await host.SendAsync("q"u8.ToArray(), tuiToken);
+            await canvas.WaitForMilestoneAsync(marker, "quit-wait", tuiToken);
+            // The resize uses the same CLI mutation lane as q. Native application of the resize
+            // proves that the earlier write completed before the workload can close its terminal.
+            host.Resize(41, 119);
+            await canvas.WaitForMilestoneAsync(marker, "resize 41 119", tuiToken);
+            await canvas.WaitForAsync("41x119", tuiToken);
+            Assert.DoesNotContain("restored", ReadLines(marker));
+            Assert.Equal(RunState.Running, (await InspectAsync(fixture.Runs, tui.RunId, tuiToken)).State);
+            Assert.Equal(original, ReadSupervisor(fixture.Node.DataRoot, tui));
+            await File.WriteAllTextAsync(quitGate, "release", tuiToken);
             await WaitMarkerAsync(marker, "restored");
             await RequireUnconfirmedCliZeroAsync(await host.WaitForExitAsync(tuiToken), canvas, tuiToken);
             await host.RequireRestoredModeAsync(tuiToken);
@@ -87,14 +97,18 @@ public sealed partial class MxcRunServiceTests
         Assert.Contains("\u001b[?1049l", ownedCanvas, StringComparison.Ordinal);
         Assert.Contains("CORE03 redraw 星 35x107", ownedCanvas, StringComparison.Ordinal);
         Assert.Contains("CORE03 redraw 星 38x112", ownedCanvas, StringComparison.Ordinal);
+        Assert.Contains("CORE03 redraw 星 41x119", ownedCanvas, StringComparison.Ordinal);
         await RequireCliJsonLogStreamsAsync(fixture.Node, tui.RunId, ["terminal"]);
         var settledAttach = await RunInstalledCliAsync(fixture.Node, "run", "attach", IdText.Format(tui.RunId));
-        Assert.Equal(8, settledAttach.ExitCode);
+        RequireSettledAttachmentExit(settledAttach.ExitCode, settledAttach.Stderr);
         Assert.True(transcript.Bytes.AsSpan().SequenceEqual(settledAttach.Stdout));
-        var settledError = Encoding.UTF8.GetString(settledAttach.Stderr);
-        Assert.Contains("official executor reported exit 0", settledError, StringComparison.Ordinal);
-        Assert.Contains("trustworthy_run_exit_unavailable", settledError, StringComparison.Ordinal);
-        Assert.Contains("EXECUTION/terminal_ack_unavailable", settledError, StringComparison.Ordinal);
+        Assert.Equal((ulong)transcript.Bytes.Length, transcript.Offset);
+        Assert.InRange(cursor, 1UL, transcript.Offset - 1);
+        var settledResume = await RunInstalledCliAsync(fixture.Node, "run", "attach", IdText.Format(tui.RunId),
+            "--offset", cursor.ToString(CultureInfo.InvariantCulture));
+        RequireSettledAttachmentExit(settledResume.ExitCode, settledResume.Stderr);
+        Assert.True(transcript.Bytes.AsSpan(checked((int)cursor)).SequenceEqual(settledResume.Stdout),
+            "The CLI resume output must match the exact retained byte suffix from the saved cursor.");
 
         var signalMarker = Path.Combine(fixture.Working, "cli-signal.log");
         string[] signal = OperatingSystem.IsLinux()
@@ -129,6 +143,16 @@ public sealed partial class MxcRunServiceTests
             RequireObservedCliExit(result, 0);
             await RequireUnconfirmedCliZeroAsync(status, foregroundCanvas, token);
         }
+    }
+
+    private static void RequireSettledAttachmentExit(int status, byte[] diagnostics)
+    {
+        Assert.Equal(8, status);
+        var error = Encoding.UTF8.GetString(diagnostics);
+        Assert.Contains("official executor reported exit 0", error, StringComparison.Ordinal);
+        Assert.Contains("trustworthy_run_exit_unavailable", error, StringComparison.Ordinal);
+        Assert.Contains("EXECUTION/terminal_ack_unavailable", error, StringComparison.Ordinal);
+        Assert.Contains("effect Unknown", error, StringComparison.Ordinal);
     }
 
     private static async Task WaitForCliTerminalGeometryAsync(string marker, TerminalCliCanvas canvas, int rows, int columns,
@@ -768,24 +792,38 @@ public sealed partial class MxcRunServiceTests
             _reader = ReadAsync(output, _stop.Token);
         }
 
-        internal async Task WaitForAsync(string text, CancellationToken token)
+        internal Task WaitForAsync(string text, CancellationToken token) =>
+            WaitForObservationAsync(() => Contains(text), $"rendering '{text}'", token);
+
+        internal Task WaitForMilestoneAsync(string marker, string milestone, CancellationToken token) =>
+            WaitForObservationAsync(() => ReadLines(marker).Contains(milestone, StringComparer.Ordinal),
+                $"observing native milestone '{milestone}'", token);
+
+        private async Task WaitForObservationAsync(Func<bool> observed, string description, CancellationToken token)
         {
             var clock = Stopwatch.StartNew();
             while (clock.Elapsed < NativeBound)
             {
-                if (Contains(text)) return;
+                if (observed()) return;
 
                 if (_reader.IsCompleted)
                 {
                     await _reader;
-                    Assert.Fail($"The CLI host terminal closed before rendering '{text}'.");
+                    Assert.Fail($"The CLI host terminal closed before {description}. {ReadOutcomeIndicators()}");
                 }
 
                 await Task.Delay(30, token);
             }
 
-            Assert.Fail($"The CLI host terminal did not render '{text}' within the native test bound.");
+            Assert.Fail($"The native test bound elapsed before {description}. {ReadOutcomeIndicators()}");
         }
+
+        private string ReadOutcomeIndicators() =>
+            $"Observed executor zero={Contains("official executor reported exit 0")}, "
+            + $"unconfirmed exit={Contains("trustworthy_run_exit_unavailable")}, "
+            + $"lost mutation acknowledgment={Contains("terminal_acknowledgment_unavailable")}, "
+            + $"missing final observation={Contains("run_output_ended_before_final") || Contains("terminal_output_final_state_unobserved")}, "
+            + $"unavailable node={Contains("node_unavailable")}.";
 
         internal bool Contains(string text)
         {

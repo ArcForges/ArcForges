@@ -41,15 +41,21 @@ internal static partial class TerminalScenario
 
         var mode = args[0] switch
         {
-            "tui" when args.Length == 2 => Mode.Tui,
+            "tui" when args.Length is 2 or 3 => Mode.Tui,
             "signal" when args.Length == 2 => Mode.Signal,
             "quiet" when args.Length is 3 or 4 => Mode.Quiet,
             _ => throw new UsageException("Invalid terminal probe arguments."),
         };
         int expected = mode == Mode.Quiet ? ReadBoundedInt(args[2], 1, 4 * 1024 * 1024) : 0;
         int linger = args.Length == 4 ? ReadBoundedInt(args[3], 0, 15_000) : 0;
+        string? quitGate = mode == Mode.Tui && args.Length == 3 ? args[2] : null;
+        if (quitGate is not null && !Path.IsPathFullyQualified(quitGate))
+        {
+            throw new UsageException("The TUI quit gate must be an absolute path.");
+        }
+
         using var markers = new StreamWriter(new FileStream(args[1], FileMode.CreateNew, FileAccess.Write, FileShare.Read)) { AutoFlush = true };
-        var probe = new Probe(mode, expected, TimeSpan.FromMilliseconds(linger), markers);
+        var probe = new Probe(mode, expected, TimeSpan.FromMilliseconds(linger), quitGate, markers);
         try
         {
             if (OperatingSystem.IsWindows())
@@ -239,7 +245,7 @@ internal static partial class TerminalScenario
         int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out int result) && result >= minimum && result <= maximum
             ? result : throw new UsageException("A terminal probe count or delay is outside its bounds.");
 
-    private sealed class Probe(Mode mode, int expected, TimeSpan linger, TextWriter markers)
+    private sealed class Probe(Mode mode, int expected, TimeSpan linger, string? quitGate, TextWriter markers)
     {
         private int _consumed;
         private int _reported;
@@ -282,9 +288,10 @@ internal static partial class TerminalScenario
                 {
                     markers.WriteLine("raw-etx");
                 }
-                else if (value == 'q')
+                else if (value == 'q' && !_quit)
                 {
                     _quit = true;
+                    if (quitGate is not null) markers.WriteLine("quit-wait");
                 }
             }
         }
@@ -350,7 +357,7 @@ internal static partial class TerminalScenario
                         display(FormattableString.Invariant($"\u001b[2;1HCORE03 redraw 星 {current.Rows}x{current.Columns}\u001b[K"));
                     }
 
-                    if (_quit)
+                    if (_quit && (quitGate is null || File.Exists(quitGate)))
                     {
                         return ExitCodes.Success;
                     }
