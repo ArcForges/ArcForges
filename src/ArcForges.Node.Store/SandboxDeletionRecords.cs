@@ -58,6 +58,12 @@ internal static class SandboxDeletionRecords
         return result;
     }
 
+    internal static bool HasPendingForSandbox(StoreReader reader, string ownerId, string sandboxId) =>
+        Equals(reader.Scalar("""
+            SELECT EXISTS(SELECT 1 FROM deletion_journal
+                WHERE owner_id=$owner AND sandbox_id=$sandbox AND phase<>'complete');
+            """, ("$owner", ownerId), ("$sandbox", sandboxId)), 1L);
+
     internal static bool CanAdmitSuccessor(StoreReader reader, string ownerId, byte[] epoch, string sandboxId, DurableDeletionBinding binding) =>
         ReadOriginal(reader, ownerId, epoch, sandboxId, binding.OriginalCommandId) is { } original
         && original.DeletionId == binding.DeletionId
@@ -96,7 +102,8 @@ internal static class SandboxDeletionRecords
     }
 
     /// <summary>Consumes an owned plan in the durable Delete admission transaction.</summary>
-    internal static bool TryAdmitFresh(StoreTransaction transaction, StoredSandbox sandbox, byte[] epoch, string planId, string commandId)
+    internal static bool TryAdmitFresh(StoreTransaction transaction, StoredSandbox sandbox, byte[] epoch, string planId,
+        string commandId, StoredSandboxConfig detachedConfig)
     {
         RequireFull(transaction);
         if (!IsId(planId) || !IsId(commandId)
@@ -115,12 +122,12 @@ internal static class SandboxDeletionRecords
             VALUES($plan,$sandbox,$owner,$epoch,$command,$revision,$root,'locked',3,$updated);
             """, ("$plan", planId), ("$sandbox", sandbox.SandboxId), ("$owner", sandbox.OwnerId), ("$epoch", epoch),
             ("$command", commandId), ("$revision", sandbox.Revision), ("$root", sandbox.RootIdentity), ("$updated", updated));
-        RequireChanged(TrySetState(transaction, sandbox, StoredSandboxState.Deleting, updated));
+        RequireChanged(TrySetState(transaction, sandbox, StoredSandboxState.Deleting, updated, detachedConfig));
         return true;
     }
 
     internal static bool TryLinkSuccessor(StoreTransaction transaction, StoredSandbox sandbox, byte[] epoch,
-        StoredSandboxDeletion deletion, string successorId)
+        StoredSandboxDeletion deletion, string successorId, StoredSandboxConfig detachedConfig)
     {
         RequireFull(transaction);
         if (!MatchesPending(transaction, sandbox, epoch, deletion) || deletion.LatestSuccessorState == "ACCEPTED"
@@ -131,7 +138,7 @@ internal static class SandboxDeletionRecords
             return false;
 
         string updated = SandboxRecords.FormatTime(transaction.Clock.GetUtcNow());
-        if (!TrySetState(transaction, sandbox, StoredSandboxState.Deleting, updated))
+        if (!TrySetState(transaction, sandbox, StoredSandboxState.Deleting, updated, detachedConfig))
             return false;
 
         // A REC-01 successor could be linked by the journal before receipt metadata carried ancestry.
@@ -249,7 +256,8 @@ internal static class SandboxDeletionRecords
             """, ("$owner", sandbox.OwnerId), ("$epoch", epoch), ("$command", commandId), ("$method", Method),
             ("$sandbox", sandbox.SandboxId)), 1L);
 
-    private static bool TrySetState(StoreTransaction transaction, StoredSandbox sandbox, StoredSandboxState state, string updated)
+    private static bool TrySetState(StoreTransaction transaction, StoredSandbox sandbox, StoredSandboxState state, string updated,
+        StoredSandboxConfig? config = null)
     {
         long revision = checked(sandbox.Revision + 1);
         if (transaction.Execute("""
@@ -262,7 +270,7 @@ internal static class SandboxDeletionRecords
             ("$generation", sandbox.RootGeneration)) != 1)
             return false;
 
-        SandboxRecords.InsertConfig(transaction, sandbox.SandboxId, revision, sandbox.Config, updated);
+        SandboxRecords.InsertConfig(transaction, sandbox.SandboxId, revision, config ?? sandbox.Config, updated);
         return true;
     }
 

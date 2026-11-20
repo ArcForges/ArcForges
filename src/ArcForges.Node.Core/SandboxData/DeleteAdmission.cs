@@ -55,8 +55,9 @@ internal sealed partial class SandboxManager
 
         cancellationToken.ThrowIfCancellationRequested();
         var command = ToHex(meta.CommandId);
+        var detached = DetachDeletionGrants(row.Config);
         var admission = Receipts.Admit(intent, transaction =>
-            RequireChanged(SandboxDeletionRecords.TryAdmitFresh(transaction, row, epoch, planId, command)));
+            RequireChanged(SandboxDeletionRecords.TryAdmitFresh(transaction, row, epoch, planId, command, detached)));
         if (admission.Decision == DurableDecision.Execute)
         {
             _deletePreviews.Remove(planId);
@@ -64,6 +65,18 @@ internal sealed partial class SandboxManager
         }
 
         return ResolveDeletion(admission, request, CancellationToken.None);
+    }
+
+    private static StoredSandboxConfig DetachDeletionGrants(StoredSandboxConfig stored)
+    {
+        var config = FromStored(stored);
+        if (config.HostGrants.Count == 0)
+        {
+            return stored;
+        }
+
+        config.HostGrants.Clear();
+        return ToStored(config);
     }
 
     private bool HasDeletionUse(string sandboxId, byte[] epoch, StoredSandboxDeletion? continuation = null) =>

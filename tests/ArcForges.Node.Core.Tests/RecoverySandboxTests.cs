@@ -252,12 +252,16 @@ public sealed partial class SandboxRegistryTests
             }
             else
             {
+                var beforeRefusal = manager.Inspect(new() { Meta = Query(), SandboxId = sandbox.SandboxId }, ct).Value.Sandbox;
+                Assert.Equal(SandboxState.RecoveryRequired, beforeRefusal.State);
+                Assert.Equal(2L, beforeRefusal.Revision.Value);
                 var refusal = manager.Delete(resume, ct).Error;
                 Assert.Equal("path_rejected", refusal.Code);
                 Assert.Equal(WorkspacePath.LinuxSandboxDeletionGuardUnavailable, refusal.Details.State.Reason);
                 Assert.Equal(EffectCertainty.DidNotHappen, refusal.Effect);
-                Assert.Equal(SandboxState.Deleting,
-                    manager.Inspect(new() { Meta = Query(), SandboxId = sandbox.SandboxId }, ct).Value.Sandbox.State);
+                var afterRefusal = manager.Inspect(new() { Meta = Query(), SandboxId = sandbox.SandboxId }, ct).Value.Sandbox;
+                Assert.Equal(beforeRefusal.State, afterRefusal.State);
+                Assert.Equal(beforeRefusal.Revision, afterRefusal.Revision);
             }
 
             var after = manager.GetOperation(new() { Meta = Query(), CommandId = original, OwnerEpoch = epoch }, ct);

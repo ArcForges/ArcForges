@@ -12,6 +12,7 @@ internal sealed partial class SandboxManager
     internal SandboxServiceDeleteResponse Delete(SandboxServiceDeleteRequest request, CancellationToken cancellationToken)
     {
         SandboxServiceDeleteResponse response;
+        Exception? persistenceFailure = null;
         lock (OwnershipGate)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -21,16 +22,25 @@ internal sealed partial class SandboxManager
             }
             catch (SandboxPrivateRootException failure)
             {
-                return DeleteError(request.Meta, Error(request.Meta, ErrorCategory.Conflict, "identity_changed", failure.Reason));
+                response = DeleteError(request.Meta, Error(request.Meta, ErrorCategory.Conflict, "identity_changed", failure.Reason));
             }
             catch (WorkspacePathException failure)
             {
-                return DeleteError(request.Meta, Error(request.Meta, ErrorCategory.Validation, "path_rejected", failure.Reason));
+                response = DeleteError(request.Meta, Error(request.Meta, ErrorCategory.Validation, "path_rejected", failure.Reason));
             }
             catch (Exception failure) when (IsStorageFailure(failure))
             {
-                return DeleteError(request.Meta, StorageFailure(request.Meta));
+                persistenceFailure = failure;
+                response = DeleteError(request.Meta, StorageFailure(request.Meta));
             }
+        }
+
+        if (response.Error is { } error)
+        {
+            ReportDeletion(ValidId(request.SandboxId) ? ToHex(request.SandboxId) : null,
+                ValidId(request.Meta?.CommandId) ? ToHex(request.Meta!.CommandId) : null,
+                "request", error.Effect == EffectCertainty.DidNotHappen ? "refused" : "unavailable",
+                error.Details?.State?.Reason ?? error.Code, persistenceFailure);
         }
 
         if (response.Value?.Operation?.State == OperationState.Accepted)
@@ -110,9 +120,10 @@ internal sealed partial class SandboxManager
 
         RequireDeletionContinuation(sandbox, deletion);
         cancellationToken.ThrowIfCancellationRequested();
+        var detached = DetachDeletionGrants(sandbox.Config);
         intent = intent with { Deletion = new DurableDeletionBinding(deletion.OriginalCommandId, deletion.DeletionId) };
         var admission = receipts.Admit(intent, transaction =>
-            RequireChanged(SandboxDeletionRecords.TryLinkSuccessor(transaction, sandbox, epoch, deletion, ToHex(meta.CommandId))));
+            RequireChanged(SandboxDeletionRecords.TryLinkSuccessor(transaction, sandbox, epoch, deletion, ToHex(meta.CommandId), detached)));
         if (admission.Decision == DurableDecision.Execute)
         {
             ScheduleDeletion(sandboxId, epoch, deletion.OriginalCommandId);

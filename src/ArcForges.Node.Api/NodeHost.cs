@@ -903,6 +903,7 @@ public static class NodeHost
                     RunFaults = faults,
                     RunDiagnostic = (id, phase, native) => log.Info("run.owner", new LogField("run", id),
                         new LogField("phase", phase), new LogField("native", native)),
+                    DeletionLog = log,
                 };
             }
 

@@ -50,6 +50,7 @@ public sealed partial class MxcRunServiceTests
             Assert.NotEqual(sibling.SandboxId, sandbox.SandboxId);
             var boundGrant = Assert.Single(sandbox.Config.HostGrants);
             Assert.False(string.IsNullOrWhiteSpace(boundGrant.NativeIdentity));
+            var previousConfig = ReadInstalledDeleteConfigBytes(fixture, sandbox);
             var id = IdText.Format(sandbox.SandboxId);
             var siblingFile = Path.Combine(sibling.DataLocation, "data", "sibling-sentinel.bin");
             var externalFile = Path.Combine(externalRoot, "external-sentinel.bin");
@@ -131,6 +132,7 @@ public sealed partial class MxcRunServiceTests
             Assert.NotEqual(exportPlan.PlanId, freshId);
             Assert.NotEqual(runPlan.PlanId, freshId);
             Assert.Equal(rootDigest, fresh.GetProperty("rootIdentityDigest").GetString());
+            Assert.Equal(boundGrant.HostPath, Assert.Single(fresh.GetProperty("excludedHostGrants").EnumerateArray()).GetString());
             string[] apply = ["sandbox", "delete", id, "--plan", IdText.Format(freshId),
                 "--expected-revision", CliRevision(sandbox.Revision), "--yes"];
             if (OperatingSystem.IsLinux())
@@ -144,7 +146,9 @@ public sealed partial class MxcRunServiceTests
                 Assert.Equal(owned, await File.ReadAllBytesAsync(ownedFile, token));
                 Assert.Equal(siblingBytes, await File.ReadAllBytesAsync(siblingFile, token));
                 Assert.Equal(externalBytes, await File.ReadAllBytesAsync(externalFile, token));
+                await RequireDeleteSandboxReadyAsync(sandboxes, sandbox, token);
                 await RequireDeleteSandboxReadyAsync(sandboxes, sibling, token);
+                RequireInstalledDeleteConfigUnchanged(fixture, sandbox, previousConfig);
                 return;
             }
 
@@ -153,11 +157,15 @@ public sealed partial class MxcRunServiceTests
             Assert.Equal(epoch, InstalledCliId(accepted, "ownerEpoch"));
             Assert.Equal(command, InstalledCliId(accepted.GetProperty("operation"), "commandId"));
             Assert.Equal(sandbox.SandboxId, InstalledCliId(accepted.GetProperty("operation"), "aggregateId"));
+            var afterAdmission = await InspectInstalledCliSandboxAsync(sandboxes, sandbox.SandboxId, token);
+            Assert.Empty(afterAdmission.Config.HostGrants);
+            RequireInstalledDeleteConfigUnchanged(fixture, sandbox, previousConfig);
 
             var original = await WaitForInstalledDeleteReceiptAsync(node, epoch, command, sandbox.SandboxId, token);
             var tombstone = await InspectInstalledCliSandboxAsync(sandboxes, sandbox.SandboxId, token);
             Assert.Equal(sandbox.SandboxId, tombstone.SandboxId);
             Assert.Equal(SandboxState.Deleted, tombstone.State);
+            Assert.Empty(tombstone.Config.HostGrants);
             Assert.True(tombstone.Revision.Value > sandbox.Revision.Value);
             Assert.False(Directory.Exists(sandbox.DataLocation));
             Assert.False(File.Exists(ownedFile));
@@ -182,6 +190,7 @@ public sealed partial class MxcRunServiceTests
             Assert.Equal(original, Value(typedReplay.Value, typedReplay.Error).Operation);
             Assert.Equal(original, await OperationAsync(node, epoch, command));
             Assert.Equal(tombstone, await InspectInstalledCliSandboxAsync(sandboxes, sandbox.SandboxId, token));
+            RequireInstalledDeleteConfigUnchanged(fixture, sandbox, previousConfig);
             Assert.False(Directory.Exists(sandbox.DataLocation));
             Assert.Equal(siblingBytes, await File.ReadAllBytesAsync(siblingFile, token));
             Assert.Equal(externalBytes, await File.ReadAllBytesAsync(externalFile, token));
@@ -341,6 +350,7 @@ public sealed partial class MxcRunServiceTests
                 await WaitDispatchCheckpointAsync(fixture, checkpoint);
                 observed = ReadInstalledDeletion(fixture, sandbox.SandboxId, original.OwnerEpoch, original.Meta.CommandId);
                 RequireDeleteCheckpointJournal(checkpoint, sandbox, original, observed);
+                if (checkpoint != DeleteAfterLock) RequireInstalledDeleteNameAbsent(sandbox.DataLocation);
                 if (cancelOriginalCall)
                 {
                     Assert.False(pendingCall.ResponseAsync.IsCompleted);
@@ -364,7 +374,9 @@ public sealed partial class MxcRunServiceTests
             }
 
             var quarantine = InstalledDeleteQuarantinePath(fixture, original.PlanId);
-            RequireInterruptedDeleteTree(checkpoint, sandbox.DataLocation, quarantine, originalRoot, initialEntries);
+            Assert.True(interrupted.HasExited);
+            var interruptedEntries = await RequireInterruptedDeleteTreeAsync(checkpoint, sandbox.DataLocation, quarantine,
+                originalRoot, initialEntries, waitForClosedHandles: true, token);
             Assert.Equal(sentinel, await File.ReadAllBytesAsync(siblingFile, token));
             fixture.Environment.Remove(ExecutionFaults.Variable);
             string? alternateSentinel = null;
@@ -372,7 +384,9 @@ public sealed partial class MxcRunServiceTests
             {
                 alternateSentinel = await VerifyMismatchedInstalledQuarantineAsync(fixture, sandbox, original, quarantine,
                     originalRoot, sentinel, token);
-                RequireInterruptedDeleteTree(checkpoint, sandbox.DataLocation, quarantine, originalRoot, initialEntries);
+                var restoredEntries = await RequireInterruptedDeleteTreeAsync(checkpoint, sandbox.DataLocation, quarantine,
+                    originalRoot, initialEntries, waitForClosedHandles: false, token);
+                Assert.Equal(interruptedEntries, restoredEntries);
             }
 
             restarted = await fixture.StartNodeAsync();
@@ -404,7 +418,9 @@ public sealed partial class MxcRunServiceTests
             var replayedUnknown = Value(replay.Value, replay.Error).Operation;
             Assert.Equal(original.Meta.CorrelationId, replayedUnknown.Error?.CorrelationId);
             Assert.Equal(WithoutDeleteReceiptCorrelation(unknown), WithoutDeleteReceiptCorrelation(replayedUnknown));
-            RequireInterruptedDeleteTree(checkpoint, sandbox.DataLocation, quarantine, originalRoot, initialEntries);
+            var replayedEntries = await RequireInterruptedDeleteTreeAsync(checkpoint, sandbox.DataLocation, quarantine,
+                originalRoot, initialEntries, waitForClosedHandles: false, token);
+            Assert.Equal(interruptedEntries, replayedEntries);
             if (checkpoint == DeleteAfterLock)
             {
                 await RequireInvalidResumeAuthorityAsync(recoveredNode, recoveredSandboxes, original, after.Revision, token);
@@ -578,6 +594,19 @@ public sealed partial class MxcRunServiceTests
     private static string InstalledDeleteQuarantinePath(TestNode fixture, Id plan) =>
         Path.Combine(fixture.DataRoot, "control", SandboxPrivateRoots.DeletionQuarantineName, Hex(plan));
 
+    private static byte[] ReadInstalledDeleteConfigBytes(TestNode fixture, Sandbox sandbox)
+    {
+        using var database = ReadDatabase(fixture.DataRoot);
+        var reader = new StoreReader(database, transaction: null, clock: TimeProvider.System);
+        return Assert.IsType<byte[]>(reader.Scalar("""
+            SELECT CAST(config_json AS BLOB) FROM sandbox_config WHERE sandbox_id=$id AND revision=$revision;
+            """, ("$id", Hex(sandbox.SandboxId)), ("$revision", sandbox.Revision.Value)));
+    }
+
+    private static void RequireInstalledDeleteConfigUnchanged(TestNode fixture, Sandbox sandbox, byte[] previous) =>
+        Assert.True(previous.AsSpan().SequenceEqual(ReadInstalledDeleteConfigBytes(fixture, sandbox)),
+            "The historical Sandbox configuration revision changed.");
+
     private static InstalledDeletionDisk ReadInstalledDeletion(TestNode fixture, Id sandbox, Id epoch, Id command)
     {
         using var database = ReadDatabase(fixture.DataRoot);
@@ -681,22 +710,35 @@ public sealed partial class MxcRunServiceTests
         .EnumerateFileSystemEntries(root, "*", SearchOption.AllDirectories)
         .Select(path => Path.GetRelativePath(root, path)).Order(StringComparer.Ordinal).ToArray();
 
-    private static void RequireInterruptedDeleteTree(string checkpoint, string original, string quarantine,
-        WorkspaceObjectIdentity originalRoot, string[] initialEntries)
+    private static async Task<string[]> RequireInterruptedDeleteTreeAsync(string checkpoint, string original, string quarantine,
+        WorkspaceObjectIdentity originalRoot, string[] initialEntries, bool waitForClosedHandles, CancellationToken token)
     {
         if (checkpoint is DeleteBeforeRemovalProof or DeleteBeforeTombstone)
         {
             RequireInstalledDeleteNameAbsent(original);
             RequireInstalledDeleteNameAbsent(quarantine);
-            return;
+            return [];
         }
 
         bool locked = checkpoint == DeleteAfterLock;
         RequireInstalledDeleteNameAbsent(locked ? quarantine : original);
         var current = locked ? original : quarantine;
-        using (var opened = WorkspacePath.OpenRoot(current))
+        var elapsed = Stopwatch.StartNew();
+        while (true)
         {
-            Assert.True(originalRoot.SameObject(opened.RootIdentity));
+            token.ThrowIfCancellationRequested();
+            try
+            {
+                using var opened = WorkspacePath.OpenRoot(current);
+                Assert.True(originalRoot.SameObject(opened.RootIdentity), $"The native directory identity changed at {checkpoint}.");
+                break;
+            }
+            catch (WorkspacePathException failure) when (waitForClosedHandles && failure.Reason == "native_32")
+            {
+                Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(3),
+                    $"The directory at {checkpoint} still reports native_32 after the original Node exited.");
+                await Task.Delay(TimeSpan.FromMilliseconds(50), token);
+            }
         }
 
         var remaining = EnumerateOwnedDeleteEntries(current);
@@ -709,6 +751,8 @@ public sealed partial class MxcRunServiceTests
         {
             Assert.Equal(initialEntries, remaining);
         }
+
+        return remaining;
     }
 
     private static void RequireInstalledDeleteNameAbsent(string path)
@@ -752,6 +796,7 @@ public sealed partial class MxcRunServiceTests
         Assert.Equal(SandboxState.Ready, current.State);
         Assert.Equal(sandbox.Revision, current.Revision);
         Assert.Equal(sandbox.DataLocation, current.DataLocation);
+        Assert.True(sandbox.Config.HostGrants.Equals(current.Config.HostGrants), "Ready Sandbox host grants changed.");
         Assert.True(Directory.Exists(sandbox.DataLocation));
     }
 
@@ -789,6 +834,7 @@ public sealed partial class MxcRunServiceTests
         Sandbox sandbox, Id? expectedRun, Id? expectedTransfer, CancellationToken token)
     {
         var plan = await ReadDeletePlanAsync(sandboxes, sandbox, token);
+        Assert.Equal(sandbox.Config.HostGrants.Select(grant => grant.HostPath), plan.ExcludedHostGrants);
         if (expectedRun is null) Assert.Empty(plan.BlockingRuns);
         else Assert.Equal(expectedRun, Assert.Single(plan.BlockingRuns));
         if (expectedTransfer is null) Assert.Empty(plan.BlockingTransferIds);
