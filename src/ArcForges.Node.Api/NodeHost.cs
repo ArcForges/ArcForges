@@ -701,7 +701,11 @@ public static class NodeHost
         // starts from now on; a center call in flight runs to its answer or its own 10 s deadline and its rotation is stored; at the budget
         // a call still running is cancelled (it fails closed). The link's DisposeAsync below then flushes (CTR4-NODE-05) within one more
         // second, so it has ended by budget + 1 s (CloudLinkService.FlushReserve), before the force exit at budget + 2 s (OverrunGrace).
-        cloud?.BeginStop(ShutdownBudget);
+        if (cloud is not null)
+        {
+            cloud.BeginStop(ShutdownBudget);
+        }
+
         using var overrun = new Timer(_ =>
         {
             node.Log.Error("node.shutdown.overrun", new LogField("budgetMs", (long)ShutdownBudget.TotalMilliseconds));
