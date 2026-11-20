@@ -6,10 +6,13 @@ using System.Text.Json;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Sandbox.V2;
+using ArcForges.Node.Api;
+using ArcForges.Node.CloudLink;
 using ArcForges.Node.Core.Security;
 using ArcForges.Node.Platform.Capabilities;
 using ArcForges.Node.Store;
 using Google.Protobuf;
+using Shape = ArcForges.Contracts.Sandbox.V2.Shapes.ContractShapeValidation;
 
 namespace ArcForges.Node.Core.Tests;
 
@@ -255,6 +258,28 @@ public sealed class SandboxSecurityGrantTests
 
             var create = CreateRequest(epoch, provision.GrantId, 1, template, "denied provision");
             var call = Verified(enrollment, connection, epoch, actor, provision.GrantId, 1, RemoteGrantAction.SandboxCreate, create);
+            var wrongTemplate = CreateRequest(epoch, provision.GrantId, provision.TemplateRevision.Value + 1, template, "wrong revision");
+            Assert.True(CenterEndpoint.TryParse(enrollment.Audience, out var endpoint, out var parseError), parseError);
+            var now = TimeProvider.System.GetUtcNow();
+            var deadline = now.AddSeconds(10);
+            var accepted = new V2ChannelEnrollment(endpoint!, enrollment.AccountId, Hex(NewId()), enrollment.EnrollmentId,
+                enrollment.Epoch, connection.ConnectionId, connection.HubFence, now);
+            var header = new V2ControlRequestHeader(NewId().Value.Memory, V2ControlSelector.SandboxCreate,
+                Convert.FromHexString(enrollment.AccountId), Convert.FromHexString(actor), NewId().Value.Memory,
+                Convert.FromHexString(enrollment.EnrollmentId), Convert.FromHexString(enrollment.Epoch),
+                Convert.FromHexString(connection.ConnectionId), epoch.Value.Memory, wrongTemplate.Meta.CommandId.Value.Memory,
+                provision.GrantId.Value.Memory, 1, connection.HubFence, deadline.ToUnixTimeMilliseconds(),
+                SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(enrollment.Audience)), "fixture");
+            // Exercise the production adapter after channel verification, where Core's ordinary error becomes a signed reply body.
+            using var dispatcher = new RoutedDispatcher(fixture.Runtime);
+            var routed = new V2ControlCall(new(header, wrongTemplate.ToByteArray(), default, default, default), accepted, now, deadline);
+            var returned = SandboxServiceCreateResponse.Parser.ParseFrom((await dispatcher.DispatchV2Async(routed, ct)).Span);
+            Denied(returned.Error);
+            Assert.True(Shape.IsValid(returned), returned.ToString());
+            Assert.Equal("operation", returned.Error.Details.State.State);
+            Assert.Equal("remote_grant_authority_unavailable", returned.Error.Details.State.Reason);
+            AssertNoReceipt(store, wrongTemplate.Meta.CommandId);
+
             var foreign = enrollment with { EnrollmentId = Hex(NewId()) };
             Denied(manager.CreateFromCenter(create, call with { Enrollment = foreign }, ct).Error);
             Denied(manager.CreateFromCenter(create, call with { Enrollment = enrollment with { Epoch = Hex(NewId()) } }, ct).Error);

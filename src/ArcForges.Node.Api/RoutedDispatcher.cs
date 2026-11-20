@@ -335,7 +335,9 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
             var remote = new VerifiedRemoteGrantCall(enrollment, Convert.ToHexStringLower(header.ActorId.Span),
                 Convert.ToHexStringLower(header.GrantId.Span), checked((long)header.GrantRevision), action,
                 call.ReceivedAt, call.Deadline, ByteString.CopyFrom(SHA256.HashData(request.ToByteArray())), channel, header.OriginalOwnerEpoch);
-            return execute(manager, request, remote, cancellationToken).ToByteArray();
+            var response = execute(manager, request, remote, cancellationToken);
+            CompleteV2StateDetail(V2ReplyError(response));
+            return response.ToByteArray();
 
             ReadOnlyMemory<byte> Refused(ArcError error)
             {
@@ -343,14 +345,38 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
                 var correlation = V2Shapes.IsValid(requested) ? requested.Clone() :
                     new Id { Value = ByteString.CopyFrom(header.CallId.Span) };
                 error.CorrelationId = correlation.Clone();
-                if (error.Details?.State is { HasState: false } state)
-                {
-                    state.State = "sandbox";
-                }
+                CompleteV2StateDetail(error);
                 node.Log.Warning("center.control.routed_refused", new LogField("method", action.ToString()),
                     new LogField("callId", Convert.ToHexStringLower(header.CallId.Span)), new LogField("code", error.Code));
                 return refuse(new ResponseMeta { CorrelationId = correlation }, error).ToByteArray();
             }
+        }
+    }
+
+    private static ArcError? V2ReplyError(IMessage reply) => reply switch
+    {
+        V2.NodeServiceGetOperationResponse value => value.Error ?? value.Value?.Operation?.Error,
+        V2.NodeServiceListRemoteGrantsResponse value => value.Error,
+        V2.NodeServiceRevokeRemoteGrantResponse value => value.Error,
+        V2.SandboxServiceCreateResponse value => value.Error,
+        V2.SandboxServiceConfigureResponse value => value.Error,
+        V2.SandboxServiceListResponse value => value.Error,
+        V2.SandboxServiceInspectResponse value => value.Error,
+        V2.RunServiceStartResponse value => value.Error,
+        V2.RunServiceStopResponse value => value.Error,
+        V2.RunServiceListResponse value => value.Error,
+        V2.RunServiceInspectResponse value => value.Error,
+        V2.ResourceServiceGetBudgetResponse value => value.Error,
+        V2.ResourceServiceSetPolicyResponse value => value.Error,
+        _ => null,
+    };
+
+    private static void CompleteV2StateDetail(ArcError? error)
+    {
+        // The published V2 wire shape requires both a state and a reason when state details are present.
+        if (error?.Details?.State is { HasState: false } state)
+        {
+            state.State = "operation";
         }
     }
 
