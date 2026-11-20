@@ -100,6 +100,17 @@ public sealed class RemoteStreamCenterTests
         Assert.Equal((1 << 20) + 17, file.Length);
         Assert.Equal(exported.Transfer.Sha256, Convert.ToHexStringLower(SHA256.HashData(file)));
 
+        var oversizedCommand = IdFrom(await ReadObservationAsync(directory, "oversize.json"), "command");
+        var missing = await node.GetOperationAsync(new()
+        {
+            Meta = Meta(),
+            OwnerEpoch = epoch,
+            CommandId = oversizedCommand,
+        }, deadline: Deadline, cancellationToken: Ct);
+        Assert.Null(missing.Value);
+        Assert.Equal("not_found", missing.Error?.Code);
+        Assert.False(File.Exists(Path.Combine(fileRoot, "oversize-import.bin")));
+
         var revoked = IdFrom(await ReadObservationAsync(directory, "revoke-transfer.json"), "transfer");
         await RevokeAsync(node, epoch, transfer);
         var beforeRevoke = await InspectAsync(data, revoked, Ct);
