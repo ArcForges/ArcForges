@@ -82,7 +82,9 @@ public sealed partial class MxcRunServiceTests
             RequireNativeStartupLimit(fixture.DataRoot, cpuRun, cpuOwner, cpuGroup, BusyRunCpu, LiveRunMemoryMiB);
 
             // This request fits by itself. The first Run's existing hard grant makes the combination too large.
-            var refusedRequest = Request(sandbox, BusyRunCpu, LiveRunMemoryMiB,
+            // Keep the combined request within the Node ceiling so this rejection tests the Sandbox ceiling.
+            var refusedCpu = OperatingSystem.IsLinux() ? 200U : BusyRunCpu;
+            var refusedRequest = Request(sandbox, refusedCpu, LiveRunMemoryMiB,
                 [payload, "hold", "--hold-ms", "1000", "--marker", refusedMarker]);
             await RequireRefusedStartAsync(refusedRequest, refusedMarker, "sandbox_cpu_grant_unavailable");
             Assert.Equal(cpuRun.RunId, Assert.Single(await ListAsync(runs, sandbox.SandboxId)).RunId);
