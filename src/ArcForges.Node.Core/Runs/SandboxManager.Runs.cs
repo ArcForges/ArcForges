@@ -171,6 +171,11 @@ internal sealed partial class SandboxManager
             return RunFailure(Error(meta, ErrorCategory.State, "busy", "sandbox_not_ready"));
         }
 
+        if (_store.Read(reader => TransferRecords.HasMutationGate(reader, OwnerId, sandboxId)))
+        {
+            return RunFailure(Error(meta, ErrorCategory.State, "managed_use", "sandbox_transfer_in_progress"));
+        }
+
         var launcher = RunLauncher;
         if (launcher is null || _runObservationStopped)
         {

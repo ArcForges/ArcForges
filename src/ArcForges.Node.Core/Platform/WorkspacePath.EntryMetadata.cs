@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Globalization;
+using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 
 namespace ArcForges.Node.Core.Platform;
@@ -15,7 +16,10 @@ internal enum WorkspaceEntryType
 
 /// <summary>A no-follow metadata observation, never an authority to perform a later name-based effect.</summary>
 internal readonly record struct WorkspaceEntryMetadata(WorkspaceEntryType Kind, ulong? Size,
-    WorkspaceObjectIdentity Identity, WorkspaceFileStamp Stamp);
+    WorkspaceObjectIdentity Identity, WorkspaceFileStamp Stamp)
+{
+    internal ulong? AllocatedBytes { get; init; }
+}
 
 internal sealed partial class WorkspacePath
 {
@@ -23,13 +27,16 @@ internal sealed partial class WorkspacePath
     /// Inspects the final entry without opening its data. Ancestors retain the normal checked
     /// no-follow semantics; a final link is reported as a link and is never traversed.
     /// </summary>
-    internal WorkspaceEntryMetadata InspectEntry(string path, bool allowRoot = false)
+    internal WorkspaceEntryMetadata InspectEntry(string path, bool allowRoot = false, bool observeAllocation = false)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         var parts = Components(path, allowRoot);
         if (parts.Length == 0)
         {
-            return new WorkspaceEntryMetadata(WorkspaceEntryType.Directory, null, RootIdentity, FileStamp(RootHandle));
+            return new WorkspaceEntryMetadata(WorkspaceEntryType.Directory, null, RootIdentity, FileStamp(RootHandle))
+            {
+                AllocatedBytes = observeAllocation ? ReadEntryAllocation(RootHandle) : null,
+            };
         }
 
         if (OperatingSystem.IsLinux())
@@ -57,7 +64,10 @@ internal sealed partial class WorkspacePath
                 throw new WorkspacePathException("file_metadata_unavailable");
             }
 
-            return new WorkspaceEntryMetadata(type, type == WorkspaceEntryType.File ? checked((ulong)stamp.Size) : null, identity, stamp);
+            return new WorkspaceEntryMetadata(type, type == WorkspaceEntryType.File ? checked((ulong)stamp.Size) : null, identity, stamp)
+            {
+                AllocatedBytes = observeAllocation ? ReadEntryAllocation(metadata) : null,
+            };
         }
 
         if (OperatingSystem.IsWindows())
@@ -99,11 +109,75 @@ internal sealed partial class WorkspacePath
                 throw new WorkspacePathException("file_metadata_unavailable");
             }
 
-            return new WorkspaceEntryMetadata(type, type == WorkspaceEntryType.File ? checked((ulong)stamp.Size) : null, identity, stamp);
+            return new WorkspaceEntryMetadata(type, type == WorkspaceEntryType.File ? checked((ulong)stamp.Size) : null, identity, stamp)
+            {
+                AllocatedBytes = observeAllocation ? ReadEntryAllocation(metadata) : null,
+            };
         }
 
         throw new WorkspacePathException("path_enforcement_unavailable");
     }
+
+    /// <summary>Anchors all observations of one selected Linux directory to the same native descriptor.</summary>
+    internal WorkspacePath OpenLinuxEntryDirectory(string path)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (!OperatingSystem.IsLinux()) throw new WorkspacePathException("path_enforcement_unavailable");
+        var relative = string.Join('/', Components(path));
+        using var metadata = LinuxOpenAt2(RootHandle, relative, noCrossMount: true);
+        CheckVolume(metadata, _linuxFileSystemUuid);
+        var selected = new WorkspacePath();
+        try
+        {
+            var opened = Retain(selected._directories, LinuxReopenChecked(metadata, directory: true,
+                knownUuid: _linuxFileSystemUuid, afterMetadataOpen: null));
+            selected._rootHandle = opened;
+            selected._linuxFileSystemUuid = _linuxFileSystemUuid;
+            selected.RootIdentity = LinuxIdentity(opened, _linuxFileSystemUuid);
+            selected.RootPath = FinalPath(opened, Path.Combine(RootPath, relative));
+            return selected;
+        }
+        catch
+        {
+            selected.Dispose();
+            throw;
+        }
+    }
+
+    private static unsafe ulong? ReadEntryAllocation(SafeFileHandle handle)
+    {
+        if (OperatingSystem.IsLinux())
+        {
+            const uint blocksMask = 0x400; // STATX_BLOCKS
+            var buffer = stackalloc byte[256];
+            if (Statx(checked((int)handle.DangerousGetHandle()), string.Empty, 0x1000 | 0x100, blocksMask, buffer) != 0 ||
+                (*(uint*)buffer & blocksMask) == 0)
+            {
+                return null;
+            }
+
+            var blocks = *(ulong*)(buffer + 48);
+            return blocks <= ulong.MaxValue / 512 ? blocks * 512 : null;
+        }
+
+        return OperatingSystem.IsWindows() && GetAllocationInformation(handle, 1, out var standard, (uint)sizeof(FileAllocationInformation)) &&
+            standard.AllocationSize >= 0 ? (ulong)standard.AllocationSize : null;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FileAllocationInformation
+    {
+        public long AllocationSize;
+        public long EndOfFile;
+        public uint NumberOfLinks;
+        public byte DeletePending;
+        public byte Directory;
+    }
+
+    [LibraryImport("kernel32.dll", EntryPoint = "GetFileInformationByHandleEx", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool GetAllocationInformation(SafeFileHandle file, int informationClass,
+        out FileAllocationInformation information, uint size);
 
     private static unsafe SafeFileHandle OpenWindowsEntryMetadata(SafeFileHandle parent, string name)
     {

@@ -69,7 +69,9 @@ public static class CliApplication
         var root = new RootCommand("Manage local Sandboxes and Runs.");
         globals.AddTo(root);
         var factory = new Func<ParseResult, Cli>(result => globals.Create(result, output, error));
-        root.Subcommands.Add(SandboxCommands.Build(factory));
+        var sandboxes = SandboxCommands.Build(factory);
+        DataCommands.AddTo(sandboxes, factory);
+        root.Subcommands.Add(sandboxes);
         root.Subcommands.Add(SandboxRunCommands.Build(factory));
         root.Subcommands.Add(WorkspaceCommands.Build(factory));
         root.Subcommands.Add(FileOperationCommands.Build(factory));

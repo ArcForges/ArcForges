@@ -6,8 +6,9 @@ socket or Windows named pipe. Local Sandbox and Run operations work without an
 account, enrollment or network connection. Remote grants are the exception.
 They manage access for an existing enrollment.
 
-This guide covers the offline CLI in the CLI-02 development candidate. The
-filesystem delivery tasks cover data transfers and Sandbox deletion, and
+This guide covers the offline CLI. See [Owned Sandbox data](data.md) for
+usage, file listings, imports and exports. The filesystem delivery tasks
+cover Sandbox deletion, and
 CENTER-02 covers Center connection commands. The Plan records native
 verification, merge and release status. [Design and command map](https://github.com/ArcForges/ArcForges-Design/blob/main/docs/architecture/06-local-node-cli.md) ·
 [Delivery plan](https://github.com/ArcForges/Plan).

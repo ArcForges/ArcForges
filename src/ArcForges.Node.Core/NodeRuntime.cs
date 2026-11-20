@@ -135,6 +135,7 @@ public sealed class NodeRuntime : IDisposable
     public void Dispose()
     {
         Sandboxes?.StopRunObservations();
+        Sandboxes?.StopDataTransfers();
         Sandboxes?.Dispose();
         _stop.Dispose();
     }
