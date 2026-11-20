@@ -13,7 +13,7 @@
     <PackageVersion Include="ArcForges.Contracts.Relay" Version="1.0.0-ci.450.1" />
     <PackageVersion Include="ArcForges.Contracts.Sandbox.V2" Version="1.0.0-ci.486.1" />
     <PackageVersion Include="ArcForges.LocalRpc" Version="1.0.0-ci.150.1" />
-    <PackageVersion Include="ArcForges.Observability" Version="1.0.0-ci.150.1" />
+    <PackageVersion Include="ArcForges.Observability" Version="1.0.0-ci.151.1" />
     <PackageVersion Include="ArcForges.Security.Secrets" Version="1.0.0-ci.150.1" />
     <PackageVersion Include="Azure.Core" Version="1.65.0" />
     <PackageVersion Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.10.0" />
