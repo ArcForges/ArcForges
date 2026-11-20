@@ -5,9 +5,10 @@ using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Sandbox.V2;
 using ArcForges.Node.Platform.Capabilities;
+using ArcForges.Node.Store;
 using ArcForges.Tests;
 using Google.Protobuf;
-using Grpc.Core;
+using Microsoft.Data.Sqlite;
 using static ArcForges.ClosedLoop.Tests.CloudLinkCenterControlTests;
 
 namespace ArcForges.ClosedLoop.Tests;
@@ -16,7 +17,6 @@ namespace ArcForges.ClosedLoop.Tests;
 public sealed class RemoteStreamCenterTests
 {
     private const string DataServiceName = "/arcforges.sandbox.v2.DataService/";
-    private static readonly string[] TransferObservations = ["import.json", "export.json", "revoked-import.json", "expired-import.json"];
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     [Fact(Timeout = 290_000, DisableParallelization = true)]
@@ -32,7 +32,6 @@ public sealed class RemoteStreamCenterTests
         var control = new CenterControlService.CenterControlServiceClient(local.CallInvoker);
         var sandboxes = new SandboxService.SandboxServiceClient(local.CallInvoker);
         var runs = new RunService.RunServiceClient(local.CallInvoker);
-        var data = new DataService.DataServiceClient(local.CallInvoker);
         var hello = await node.HandshakeAsync(new() { Meta = Meta() }, deadline: Deadline, cancellationToken: Ct);
         var identity = Value(hello.Value, hello.Error);
         var epoch = identity.OwnerEpoch;
@@ -63,7 +62,6 @@ public sealed class RemoteStreamCenterTests
             [DataServiceName + "BeginImport", DataServiceName + "WriteImport", DataServiceName + "CommitImport",
                 DataServiceName + "BeginExport", DataServiceName + "ReadExport", DataServiceName + "InspectTransfer",
                 DataServiceName + "CloseTransfer"], allowData: true);
-        await using var transfers = new OwnedTransferCleanup(data, epoch, files.SandboxId, directory);
         await ObserveOutputAsync(runs, epoch, logs, watch, directory);
 
         await WriteObservationAsync(directory, "file-scope.json", new
@@ -90,47 +88,47 @@ public sealed class RemoteStreamCenterTests
 
         var completed = await ReadObservationAsync(directory, "round-trip.json");
         var exportId = IdFrom(completed, "export");
-        var exported = await InspectAsync(data, exportId, Ct);
-        Assert.Equal(exportId, exported.Transfer.TransferId);
-        Assert.Equal(files.SandboxId, exported.Transfer.SandboxId);
-        Assert.Equal(TransferState.Complete, exported.Transfer.State);
-        Assert.NotNull(exported.Transfer.ClosedAt);
-        Assert.Equal(completed.GetProperty("digest").GetString(), exported.Transfer.Sha256);
+        var exported = ReadFixtureTransfer(fixture, files.SandboxId, epoch, exportId, transfer, enrollment);
+        Assert.Equal(StoredTransferDirection.Export, exported.Direction);
+        Assert.Equal(StoredTransferState.Complete, exported.State);
+        Assert.Equal(StoredTransferCloseReason.ExplicitClose, exported.CloseReason);
+        Assert.NotNull(exported.ClosedAt);
+        Assert.Equal(completed.GetProperty("digest").GetString(), exported.ExpectedSha256);
+        Assert.False(File.Exists(FixtureStage(fixture, exportId)));
         var file = await File.ReadAllBytesAsync(Path.Combine(fileRoot, "round-trip.bin"), Ct);
         Assert.Equal((1 << 20) + 17, file.Length);
-        Assert.Equal(exported.Transfer.Sha256, Convert.ToHexStringLower(SHA256.HashData(file)));
+        Assert.Equal(exported.ExpectedSha256, Convert.ToHexStringLower(SHA256.HashData(file)));
 
         var oversizedCommand = IdFrom(await ReadObservationAsync(directory, "oversize.json"), "command");
-        var missing = await node.GetOperationAsync(new()
-        {
-            Meta = Meta(),
-            OwnerEpoch = epoch,
-            CommandId = oversizedCommand,
-        }, deadline: Deadline, cancellationToken: Ct);
-        Assert.Null(missing.Value);
-        Assert.Equal("not_found", missing.Error?.Code);
+        RequireNoFixtureReceipt(fixture, files.SandboxId, epoch, oversizedCommand);
         Assert.False(File.Exists(Path.Combine(fileRoot, "oversize-import.bin")));
 
         var revoked = IdFrom(await ReadObservationAsync(directory, "revoke-transfer.json"), "transfer");
+        var beforeRevoke = ReadFixtureTransfer(fixture, files.SandboxId, epoch, revoked, transfer, enrollment);
         await RevokeAsync(node, epoch, transfer);
-        var beforeRevoke = await InspectAsync(data, revoked, Ct);
         await WriteObservationAsync(directory, "grant-revoked", new { });
         await WaitForFixtureAsync(directory, "revoke-refused", NativeBound, "typed refusal after grant revocation");
-        await RequireUnchangedAsync(data, revoked, beforeRevoke, Path.Combine(fileRoot, "revoked.bin"));
-        await CloseKnownAsync(data, epoch, beforeRevoke, Ct);
+        RequireUnchangedImport(fixture, files.SandboxId, epoch, revoked, transfer, enrollment, beforeRevoke, Path.Combine(fileRoot, "revoked.bin"));
 
+        var shortFiles = await CreateSandboxAsync(sandboxes, epoch, "Expiring transfer fixture");
         var expiry = DateTimeOffset.UtcNow.AddSeconds(12);
-        var shortGrant = await SetGrantAsync(node, epoch, enrollment, files.SandboxId,
+        var shortGrant = await SetGrantAsync(node, epoch, enrollment, shortFiles.SandboxId,
             [DataServiceName + "BeginImport", DataServiceName + "WriteImport", DataServiceName + "InspectTransfer"],
             allowData: true, expiresAt: ProtoTime.ToInstant(expiry));
-        await WriteObservationAsync(directory, "short-grant.json", new { grant = Hex(shortGrant.GrantId), revision = shortGrant.Revision.Value });
+        await WriteObservationAsync(directory, "short-grant.json", new
+        {
+            grant = Hex(shortGrant.GrantId),
+            revision = shortGrant.Revision.Value,
+            sandbox = Hex(shortFiles.SandboxId),
+            sandboxRevision = shortFiles.Revision.Value,
+        });
         var expiring = IdFrom(await ReadObservationAsync(directory, "expire-transfer.json"), "transfer");
+        var beforeExpiry = ReadFixtureTransfer(fixture, shortFiles.SandboxId, epoch, expiring, shortGrant, enrollment);
         await TestNode.WaitAsync(() => DateTimeOffset.UtcNow >= expiry, NativeBound, "the original grant expires on the installed Node's wall clock");
-        var beforeExpiry = await InspectAsync(data, expiring, Ct);
         await WriteObservationAsync(directory, "grant-expired", new { });
         await WaitForFixtureAsync(directory, "expire-refused", NativeBound, "typed refusal after expiry of the same grant");
-        await RequireUnchangedAsync(data, expiring, beforeExpiry, Path.Combine(fileRoot, "expired.bin"));
-        await CloseKnownAsync(data, epoch, beforeExpiry, Ct);
+        RequireUnchangedImport(fixture, shortFiles.SandboxId, epoch, expiring, shortGrant, enrollment, beforeExpiry,
+            Path.Combine(shortFiles.DataLocation, "data", "expired.bin"));
         Assert.Equal("preserve owned data", await File.ReadAllTextAsync(sentinel, Ct));
     }
 
@@ -266,37 +264,59 @@ public sealed class RemoteStreamCenterTests
         return Value(reply.Value, reply.Error).Run;
     }
 
-    private static async Task<(Transfer Transfer, Revision Revision)> InspectAsync(DataService.DataServiceClient data, Id transfer, CancellationToken token)
+    private static StoredTransfer ReadFixtureTransfer(TestNode fixture, Id sandbox, Id epoch, Id transfer, RemoteGrant grant, Id enrollment)
     {
-        var reply = await data.InspectTransferAsync(new() { Meta = Meta(), TransferId = transfer }, deadline: Deadline, cancellationToken: token);
-        return (Value(reply.Value, reply.Error).Transfer, Assert.IsType<Revision>(reply.Meta.ResultRev));
+        using var database = OpenFixtureDatabase(fixture);
+        var reader = new StoreReader(database, transaction: null, clock: TimeProvider.System);
+        string owner = FixtureSandboxOwner(reader, sandbox);
+        var row = Assert.IsType<StoredTransfer>(TransferRecords.Get(reader, owner, Hex(transfer)));
+        Assert.Equal(Hex(sandbox), row.SandboxId);
+        Assert.True(epoch.Value.Span.SequenceEqual(row.OwnerEpoch));
+        Assert.Equal(Hex(grant.GrantId), row.Manifest.GrantId);
+        Assert.Equal(grant.Revision.Value, row.Manifest.GrantRevision);
+        Assert.Equal(Hex(enrollment), row.Manifest.EnrollmentId);
+        Assert.NotEqual(owner, row.Manifest.ActorId);
+        return row;
     }
 
-    private static async Task RequireUnchangedAsync(DataService.DataServiceClient data, Id id, (Transfer Transfer, Revision Revision) before, string path)
+    private static void RequireUnchangedImport(TestNode fixture, Id sandbox, Id epoch, Id id, RemoteGrant grant, Id enrollment,
+        StoredTransfer before, string path)
     {
-        var current = await InspectAsync(data, id, Ct);
-        Assert.Equal(before.Transfer, current.Transfer);
-        Assert.Equal(before.Revision, current.Revision);
-        Assert.Equal(0UL, current.Transfer.VerifiedOffset);
+        var current = ReadFixtureTransfer(fixture, sandbox, epoch, id, grant, enrollment);
+        Assert.Equal(before with { OwnerEpoch = current.OwnerEpoch }, current);
+        Assert.Equal(StoredTransferDirection.Import, current.Direction);
+        Assert.Equal(StoredTransferState.Open, current.State);
+        Assert.Equal("data/" + Path.GetFileName(path), current.Manifest.RelativePath);
+        Assert.Null(current.Manifest.Pending);
+        Assert.Null(current.ClosedAt);
+        Assert.Equal(0L, current.VerifiedOffset);
+        Assert.Equal(0L, new FileInfo(FixtureStage(fixture, id)).Length);
         Assert.False(File.Exists(path));
     }
 
-    private static async Task CloseKnownAsync(DataService.DataServiceClient data, Id epoch, (Transfer Transfer, Revision Revision) current,
-        CancellationToken token)
+    private static void RequireNoFixtureReceipt(TestNode fixture, Id sandbox, Id epoch, Id command)
     {
-        if (current.Transfer.ClosedAt is not null)
-            return;
-        Assert.NotEqual(TransferState.RecoveryRequired, current.Transfer.State);
-        var reply = await data.CloseTransferAsync(new()
-        {
-            Meta = Meta(mutation: true, revision: current.Revision),
-            OwnerEpoch = epoch,
-            TransferId = current.Transfer.TransferId,
-        }, deadline: Deadline, cancellationToken: token);
-        var closed = Value(reply.Value, reply.Error).Transfer;
-        Assert.Equal(current.Transfer.TransferId, closed.TransferId);
-        Assert.NotNull(closed.ClosedAt);
+        using var database = OpenFixtureDatabase(fixture);
+        var reader = new StoreReader(database, transaction: null, clock: TimeProvider.System);
+        Assert.Null(DurableOperationReads.Find(reader, FixtureSandboxOwner(reader, sandbox), epoch.Value.Span, command.Value.Span));
     }
+
+    private static SqliteConnection OpenFixtureDatabase(TestNode fixture)
+    {
+        var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = StorePaths.Database(fixture.DataRoot),
+            Mode = SqliteOpenMode.ReadOnly,
+            Pooling = false,
+        }.ToString());
+        connection.Open();
+        return connection;
+    }
+
+    private static string FixtureSandboxOwner(StoreReader reader, Id sandbox) => Assert.IsType<string>(
+        reader.Scalar("SELECT owner_id FROM sandbox WHERE sandbox_id=$id;", ("$id", Hex(sandbox))));
+
+    private static string FixtureStage(TestNode fixture, Id id) => Path.Combine(fixture.DataRoot, "control", "sandbox-transfers", Hex(id));
 
     private static async Task<JsonElement> ReadObservationAsync(string directory, string name)
     {
@@ -313,30 +333,4 @@ public sealed class RemoteStreamCenterTests
     }
 
     private static string Hex(Id id) => Convert.ToHexStringLower(id.Value.Span);
-
-    private sealed class OwnedTransferCleanup(DataService.DataServiceClient data, Id epoch, Id sandbox, string directory) : IAsyncDisposable
-    {
-        public async ValueTask DisposeAsync()
-        {
-            using var stopped = new CancellationTokenSource(TimeSpan.FromSeconds(12));
-            foreach (string name in TransferObservations)
-            {
-                string path = Path.Combine(directory, name);
-                if (!File.Exists(path))
-                    continue;
-                try
-                {
-                    using var recorded = JsonDocument.Parse(await File.ReadAllBytesAsync(path, stopped.Token));
-                    var id = IdFrom(recorded.RootElement, "transfer");
-                    var current = await InspectAsync(data, id, stopped.Token);
-                    Assert.Equal(sandbox, current.Transfer.SandboxId);
-                    await CloseKnownAsync(data, epoch, current, stopped.Token);
-                }
-                catch (Exception failure) when (failure is RpcException or OperationCanceledException or IOException or JsonException or Xunit.Sdk.XunitException)
-                {
-                    TestContext.Current.SendDiagnosticMessage("The owned transfer cleanup could not be confirmed: " + failure.GetType().Name);
-                }
-            }
-        }
-    }
 }
