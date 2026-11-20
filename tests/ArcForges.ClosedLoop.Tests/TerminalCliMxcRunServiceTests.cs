@@ -370,7 +370,7 @@ public sealed partial class MxcRunServiceTests
             if not "%errorlevel%"=="0" exit /b %errorlevel%
             type nul > cli-pipe-eof
             if not exist cli-pipe-eof exit /b 9
-            echo cli-pipe-stderr 1>&2
+            1>&2 echo cli-pipe-stderr
             arcforges-testload.exe hold --hold-ms 20000 --until-file cli-pipe-release >nul
             if not exist cli-pipe-release exit /b 9
             exit /b 7
