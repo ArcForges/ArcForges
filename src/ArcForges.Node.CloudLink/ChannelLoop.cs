@@ -584,6 +584,8 @@ internal sealed partial class ChannelLoop : IAsyncDisposable
         {
             if (ticket.UseV2)
             {
+                // Fence waiting effect calls before the enrollment callback can wait on Core's ownership gate.
+                session.Ending = true;
                 PublishV2Enrollment(session, null);
             }
 

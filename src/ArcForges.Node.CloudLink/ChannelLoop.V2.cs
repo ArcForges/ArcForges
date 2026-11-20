@@ -376,7 +376,8 @@ internal sealed partial class ChannelLoop
 
         try
         {
-            await session.V2Refresh.WaitAsync(session.Token).ConfigureAwait(false);
+            using var active = CancellationTokenSource.CreateLinkedTokenSource(session.Token, session.EffectsEnding);
+            await session.V2Refresh.WaitAsync(active.Token).ConfigureAwait(false);
             try
             {
                 var ticket = _host.Ticket().Ticket;
@@ -394,7 +395,7 @@ internal sealed partial class ChannelLoop
                     return;
                 }
 
-                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(session.Token);
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(active.Token);
                 timeout.CancelAfter(TimeSpan.FromSeconds(2));
                 await session.Client.SendV2Async(V2ChannelKind.Refresh, payload, timeout.Token).ConfigureAwait(false);
                 session.Generation = ticket.Generation;
@@ -403,6 +404,10 @@ internal sealed partial class ChannelLoop
             {
                 session.V2Refresh.Release();
             }
+        }
+        catch (OperationCanceledException) when (session.Ending)
+        {
+            // Session teardown owns the final close.
         }
         catch (Exception exception) when (exception is OperationCanceledException or WebSocketException or IOException or InvalidOperationException)
         {
