@@ -467,6 +467,69 @@ public sealed class SignInFlowTests
     }
 
     [Fact]
+    public async Task CenterDeviceFlowHidesTheOldCodeWhileItsReplacementIsStarting()
+    {
+        await using var link = await LinkFixture.CreateAsync();
+        await link.StartAsync();
+        link.Center.NextUserCodes.Enqueue("BCDFGHJK");
+        link.Center.NextUserCodes.Enqueue("LMNPQRST");
+        var id = await StartV2FlowAsync(link, SignInMethod.DeviceCode);
+        await Eventually.TrueAsync(() => link.Service.GetCenterFlow(id) is { HasNodeKeyFingerprint: true, HasUserCode: true }, "the first V2 device display");
+        var original = link.Service.GetCenterFlow(id)!;
+
+        var held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        link.Center.Script(Poll, new FakeFault.Refusal(KeyHeld()));
+        link.Center.Script("StartDeviceAuthorization", new FakeFault.Hold(held));
+        try
+        {
+            await Advance(link, TimeSpan.FromSeconds(30), () => link.Center.CallsOf("StartDeviceAuthorization").Count == 2, "the replacement device request");
+            var waiting = link.Service.GetCenterFlow(id)!;
+            Assert.Equal("pending", waiting.State);
+            Assert.False(waiting.HasNodeKeyFingerprint || waiting.HasUserCode || waiting.HasVerificationUri || waiting.HasPollAfterMs);
+            Assert.Equal(original.ExpiresAt, waiting.ExpiresAt);
+        }
+        finally
+        {
+            held.TrySetResult();
+        }
+
+        await Eventually.TrueAsync(() => link.Service.GetCenterFlow(id) is { HasNodeKeyFingerprint: true, HasUserCode: true }, "the replacement V2 device display");
+        var replacement = link.Service.GetCenterFlow(id)!;
+        var admitted = NodeEnrollmentServiceStartDeviceAuthorizationRequest.Parser.ParseFrom(
+            FakeCenter.Payload(link.Center.CallsOf("StartDeviceAuthorization")[1].Body));
+        Assert.Equal(CloudIdentity.Fingerprint(admitted.NodePublicKey.Span), replacement.NodeKeyFingerprint);
+        Assert.NotEqual(original.NodeKeyFingerprint, replacement.NodeKeyFingerprint);
+        Assert.NotEqual(original.UserCode, replacement.UserCode);
+        Assert.Null(await link.Service.CancelCenterConnectAsync(id, Cancel));
+    }
+
+    [Fact]
+    public async Task CenterBrowserFlowHidesApprovalDisplayAsSoonAsTheReceiverCompletes()
+    {
+        await using var link = await LinkFixture.CreateAsync();
+        await link.StartAsync();
+        var held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        link.Service.SignIn.BeforeWork = _ => held.Task;
+        try
+        {
+            var id = await StartV2FlowAsync(link, SignInMethod.Browser);
+            await Eventually.TrueAsync(() => link.Service.GetCenterFlow(id) is { HasNodeKeyFingerprint: true, HasVerificationUri: true }, "the V2 browser approval display");
+            var receiver = Assert.IsType<LoopbackReceiver>(link.Service.SignIn.Receiver);
+            Assert.Equal("HTTP/1.1 200 OK", await ScriptedBrowser.GetAsync(link.Center.ApproveFlow()));
+            await receiver.Result.WaitAsync(TimeSpan.FromSeconds(5), Cancel);
+
+            var accepted = link.Service.GetCenterFlow(id)!;
+            Assert.Equal("pending", accepted.State);
+            Assert.False(accepted.HasNodeKeyFingerprint || accepted.HasVerificationUri);
+            Assert.Null(await link.Service.CancelCenterConnectAsync(id, Cancel));
+        }
+        finally
+        {
+            held.TrySetResult();
+        }
+    }
+
+    [Fact]
     public async Task CenterFlowRetainsItsExpiryAndRejectsLegacySignOutDuringSetup()
     {
         await using var link = await LinkFixture.CreateAsync();
@@ -786,6 +849,14 @@ public sealed class SignInFlowTests
 
     internal static Task<SignInReply> BeginAsync(LinkFixture link, SignInMethod method) =>
         link.Service.SignIn.BeginAsync(method, link.Clock.GetTimestamp(), Cancel);
+
+    private static async Task<Id> StartV2FlowAsync(LinkFixture link, SignInMethod method)
+    {
+        using var held = await link.Service.EnterAsync(Cancel);
+        var begun = link.Service.SignIn.StartCenterFlow(method);
+        Assert.Null(begun.Error);
+        return Assert.IsType<Id>(begun.FlowId);
+    }
 
     internal static ArcError Arc(ErrorCategory category, string code) => new()
     {

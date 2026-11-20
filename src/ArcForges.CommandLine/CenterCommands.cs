@@ -54,7 +54,7 @@ internal static class CenterCommands
         var origin = new Argument<string>("origin") { Description = "Exact Center HTTPS origin" };
         var mode = new Option<string>("--mode") { Required = true, Description = "Select the service mode" };
         mode.AcceptOnlyFromAmong("official", "self_hosted");
-        var flow = new Option<string?>("--flow") { Description = "Select the sign-in flow for a new enrollment" };
+        var flow = new Option<string?>("--flow") { Description = "Select the sign-in flow for a new enrollment (default browser)" };
         flow.AcceptOnlyFromAmong("browser", "device_code");
         var command = new Command("connect", "Enable an existing enrollment or begin a bounded sign-in") { origin, mode, flow };
         var mutation = new V2MutationOptions();
@@ -65,11 +65,8 @@ internal static class CenterCommands
             {
                 CenterOrigin = result.GetValue(origin)!,
                 ServiceMode = result.GetValue(mode)!,
+                FlowKind = result.GetValue(flow) ?? "browser",
             };
-            if (result.GetValue(flow) is { } flowKind)
-            {
-                request.FlowKind = flowKind;
-            }
 
             await using var session = await V2CliSession.OpenAsync(cli, ct).ConfigureAwait(false);
             using var pin = session.PinConnection();
@@ -86,7 +83,7 @@ internal static class CenterCommands
             }
 
             var document = (JsonObject)CliOutput.ToJsonNode(value);
-            if (value.FlowId is { } flowId)
+            if (!mutation.IsReplay(result) && value.FlowId is { } flowId)
             {
                 await ObserveFlowAsync(document, cli, session, flowId, deadline, ct).ConfigureAwait(false);
             }
@@ -107,12 +104,12 @@ internal static class CenterCommands
             using var pin = session.PinConnection();
             var response = await ReadFlowAsync(cli, session, id, cli.Deadline(ControlDeadline), ct).ConfigureAwait(false);
             var value = V2Cli.Require(response.Value, response.Error);
-            if (!id.Equals(value.Flow?.FlowId))
+            if (value.Flow is not { } flow || !id.Equals(flow.FlowId))
             {
                 return V2Cli.Fail(cli, V2Cli.Error(ErrorCategory.State, "node_unavailable", "flow_response_identity_mismatch"));
             }
 
-            return V2Cli.Print(cli, value);
+            return V2Cli.Print(cli, new JsonObject { ["flow"] = FlowDocument(cli, flow) });
         });
         return command;
     }
@@ -198,7 +195,7 @@ internal static class CenterCommands
             var response = await ReadFlowAsync(cli, session, flowId, deadline, ct).ConfigureAwait(false);
             if (response.Error is null && response.Value?.Flow is { } flow && flowId.Equals(flow.FlowId))
             {
-                document["flow"] = CliOutput.ToJsonNode(flow);
+                document["flow"] = FlowDocument(cli, flow);
                 return;
             }
         }
@@ -208,6 +205,22 @@ internal static class CenterCommands
         }
 
         document["flowObservation"] = "unavailable";
+    }
+
+    private static JsonObject FlowDocument(Cli cli, V2.CenterConnectFlow flow)
+    {
+        var document = (JsonObject)CliOutput.ToJsonNode(flow);
+        if (flow.State == "pending" && flow.HasNodeKeyFingerprint && LoginCommands.Fingerprint(flow.NodeKeyFingerprint)
+            && ProtoTime.ToDateTimeOffset(flow.ExpiresAt) is { } expires && expires > DateTimeOffset.UtcNow)
+        {
+            cli.Output.Note("Compare the Node key fingerprint with the approval page. Enter its last group if asked.");
+        }
+        else
+        {
+            document.Remove("nodeKeyFingerprint");
+        }
+
+        return document;
     }
 
     private static int PrintMutation(Cli cli, IMessage value, V2.Operation? operation, string method, V2CommandIdentity identity) =>

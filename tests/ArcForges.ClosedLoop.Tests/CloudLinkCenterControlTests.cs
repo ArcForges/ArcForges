@@ -20,32 +20,18 @@ namespace ArcForges.ClosedLoop.Tests;
 [Trait("loop", "cloud")]
 public sealed class CloudLinkCenterControlTests
 {
-    private static readonly TimeSpan NativeBound = TimeSpan.FromSeconds(35);
+    internal static readonly TimeSpan NativeBound = TimeSpan.FromSeconds(35);
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
-    private static DateTime Deadline => DateTime.UtcNow.AddSeconds(10);
+    internal static DateTime Deadline => DateTime.UtcNow.AddSeconds(10);
 
     [Fact(Timeout = 290_000, DisableParallelization = true)]
     public async Task InstalledNodeUsesTheTypedLocalCenterAndContinuesRunsThroughAnActualCenterOutage()
     {
         var ct = TestContext.Current.CancellationToken;
         ct.ThrowIfCancellationRequested();
-        var origin = Environment.GetEnvironmentVariable("ARCFORGES_CENTER02_URL");
-        Assert.SkipUnless(Environment.GetEnvironmentVariable("ARCFORGES_CENTER02_E2E_REQUIRED") == "1",
-            "Run this supplement under the real Go Center and PostgreSQL fixture.");
-        Assert.True(Uri.TryCreate(origin, UriKind.Absolute, out var center) && center.Scheme == Uri.UriSchemeHttps && center.IsLoopback
-            && center.GetLeftPart(UriPartial.Authority) == origin);
-        Assert.Equal("1", Environment.GetEnvironmentVariable("ARCFORGES_MXC_PACKAGE_TESTS"));
-        Assert.True(File.Exists(Path.Combine(Path.GetDirectoryName(TestNode.Host)!, "mxc", "mxc-manifest.json")),
-            "the Node must come from the verified package");
-        if (OperatingSystem.IsLinux()) Assert.Null(SystemdTestEnvironment.SkipReason);
-        var coordination = Environment.GetEnvironmentVariable("ARCFORGES_CENTER02_COORDINATION_DIR");
-        Assert.True(!string.IsNullOrEmpty(coordination) && Path.IsPathFullyQualified(coordination) && Directory.Exists(coordination));
-
+        var (origin, coordination) = RequireNativeFixture();
         await using var fixture = TestNode.Create();
-        CreatePrivateRoot(fixture.DataRoot);
-        fixture.Environment[CloudLinkTestHooks.CenterUrl] = origin;
-        fixture.Environment[CloudLinkTestHooks.RefreshSeconds] = "15";
-        fixture.Environment["ARCFORGES_TEST_CLIENT_IMAGES"] = null;
+        ConfigureNativeFixture(fixture, origin);
         var process = await fixture.StartNodeAsync();
         await using var local = OpenChannel(fixture);
         var node = new NodeService.NodeServiceClient(local.CallInvoker);
@@ -60,6 +46,18 @@ public sealed class CloudLinkCenterControlTests
         var initial = await StatusAsync(control);
         Assert.False(initial.ConnectionEnabled);
         Assert.Equal("offline", initial.ChannelState);
+        var configPath = Path.Combine(fixture.ConfigDirectory, "node.json");
+        var initialConfig = await File.ReadAllBytesAsync(configPath, ct);
+        await RequireRawOmittedFlowRefusalAsync(control, ownerEpoch, origin, ct);
+        var refusedInitial = await StatusAsync(control);
+        Assert.Equal(initial.CenterOrigin, refusedInitial.CenterOrigin);
+        Assert.Equal("signed_out", refusedInitial.State);
+        Assert.False(refusedInitial.ConnectionEnabled);
+        Assert.Null(refusedInitial.EnrollmentId);
+        Assert.False(File.Exists(Path.Combine(fixture.DataRoot, "run", "cloud-link.json")));
+        var refusedInitialConfig = await File.ReadAllBytesAsync(configPath, ct);
+        Assert.True(initialConfig.AsSpan().SequenceEqual(refusedInitialConfig),
+            "Omitting the flow selection for a new enrollment must not rewrite Node configuration.");
         await CliAsync(fixture, 0, "center", "status");
         var sandbox = await CreateSandboxAsync(sandboxes, ownerEpoch);
         var working = Path.Combine(sandbox.DataLocation, "work");
@@ -98,15 +96,16 @@ public sealed class CloudLinkCenterControlTests
             "--owner-epoch", IdText.Format(ownerEpoch), "--command-id", IdText.Format(cancel.Meta.CommandId));
         RequireCliReceipt(cancellation, ownerEpoch, cancel.Meta);
 
-        var browser = Connect(ownerEpoch, origin!, "browser");
+        var connectingCli = await CliAsync(fixture, 0, "center", "connect", origin, "--mode", "self_hosted");
+        Assert.Equal(ownerEpoch, ReadCliId(connectingCli, "ownerEpoch"));
+        var browser = Connect(ownerEpoch, origin, "browser");
+        browser.Meta.CommandId = ReadCliId(connectingCli, "commandId");
         var connecting = await BeginAsync(control, browser);
         RequireReceipt(connecting.Operation, ownerEpoch, browser.Meta);
         Assert.NotNull(connecting.FlowId);
-        var connectingCli = await CliAsync(fixture, 0, "center", "connect", origin!, "--mode", "self_hosted", "--flow", "browser",
-            "--owner-epoch", IdText.Format(ownerEpoch), "--command-id", IdText.Format(browser.Meta.CommandId));
-        RequireCliReceipt(connectingCli, ownerEpoch, browser.Meta);
         Assert.Equal(IdText.Format(connecting.FlowId), connectingCli.GetProperty("flowId").GetString());
         var approval = await WaitForFlowAsync(control, connecting.FlowId, flow => flow.HasVerificationUri);
+        Assert.False(approval.HasUserCode);
         await WriteObservationAsync(coordination!, "approval.json", new { verificationUri = approval.VerificationUri });
         await WaitForFlowAsync(control, connecting.FlowId, flow => flow.State == "succeeded");
         var connected = await WaitForStatusAsync(control, value => value.ChannelState == "online");
@@ -121,7 +120,10 @@ public sealed class CloudLinkCenterControlTests
         await WaitForFixtureAsync(coordination!, "connected-confirmed", NativeBound, "the exact Go V2 connection observation");
 
         var hold = await StartAsync(runs, sandbox, ownerEpoch, HoldingPayload(working));
-        await TestNode.WaitAsync(() => File.Exists(Path.Combine(working, "holding.txt")), NativeBound, "the exact native workload started");
+        var holdingMarker = Path.Combine(working, "holding.txt");
+        await TestNode.WaitAsync(async () => File.Exists(holdingMarker) &&
+            (await InspectRunAsync(runs, hold.RunId)).State == RunState.Running, NativeBound,
+            "the exact native workload marker and durable Running state");
         var disconnected = new CenterControlServiceDisconnectRequest { OwnerEpoch = ownerEpoch, Meta = Meta(mutation: true) };
         var off = await control.DisconnectAsync(disconnected, deadline: Deadline, cancellationToken: ct);
         var offValue = Value(off.Value, off.Error);
@@ -134,7 +136,11 @@ public sealed class CloudLinkCenterControlTests
         RequireCliReceipt(disconnectCli, ownerEpoch, disconnected.Meta);
         Assert.Equal(RunState.Running, (await InspectRunAsync(runs, hold.RunId)).State);
 
-        var reconnect = Connect(ownerEpoch, origin!, "browser");
+        var reconnectCli = await CliAsync(fixture, 0, "center", "connect", origin, "--mode", "self_hosted");
+        Assert.Equal(ownerEpoch, ReadCliId(reconnectCli, "ownerEpoch"));
+        Assert.False(reconnectCli.TryGetProperty("flowId", out _), "Re-enabling an admitted enrollment must not start a new flow.");
+        var reconnect = Connect(ownerEpoch, origin, "browser");
+        reconnect.Meta.CommandId = ReadCliId(reconnectCli, "commandId");
         var resumed = await BeginAsync(control, reconnect);
         Assert.Null(resumed.FlowId);
         RequireReceipt(resumed.Operation, ownerEpoch, reconnect.Meta);
@@ -189,7 +195,7 @@ public sealed class CloudLinkCenterControlTests
         FlowKind = flow,
     };
 
-    private static NodeChannel OpenChannel(TestNode fixture) => NodeChannel.Create(OperatingSystem.IsWindows()
+    internal static NodeChannel OpenChannel(TestNode fixture) => NodeChannel.Create(OperatingSystem.IsWindows()
         ? LocalRpcEndpoint.NamedPipe(fixture.Endpoint)
         : LocalRpcEndpoint.UnixDomainSocket(fixture.Endpoint));
 
@@ -200,13 +206,31 @@ public sealed class CloudLinkCenterControlTests
         return Value(reply.Value, reply.Error);
     }
 
+    private static async Task RequireRawOmittedFlowRefusalAsync(CenterControlService.CenterControlServiceClient client, Id owner, string origin,
+        CancellationToken ct)
+    {
+        var response = await client.BeginConnectAsync(new()
+        {
+            Meta = Meta(mutation: true),
+            OwnerEpoch = owner,
+            CenterOrigin = origin,
+            ServiceMode = "self_hosted",
+        }, deadline: Deadline, cancellationToken: ct);
+        Assert.Null(response.Value);
+        var refused = response.Error;
+        Assert.NotNull(refused);
+        Assert.Equal(ErrorCategory.Validation, refused.Category);
+        Assert.Equal("invalid_argument", refused.Code);
+        Assert.Equal(EffectCertainty.DidNotHappen, refused.Effect);
+    }
+
     private static async Task<CenterConnection> StatusAsync(CenterControlService.CenterControlServiceClient client)
     {
         var reply = await client.GetStatusAsync(new() { Meta = Meta() }, deadline: Deadline, cancellationToken: Ct);
         return Value(reply.Value, reply.Error).Connection;
     }
 
-    private static async Task<CenterConnection> WaitForStatusAsync(CenterControlService.CenterControlServiceClient client,
+    internal static async Task<CenterConnection> WaitForStatusAsync(CenterControlService.CenterControlServiceClient client,
         Func<CenterConnection, bool> matches)
     {
         CenterConnection? state = null;
@@ -219,7 +243,7 @@ public sealed class CloudLinkCenterControlTests
         return Assert.IsType<CenterConnection>(state);
     }
 
-    private static async Task<CenterConnectFlow> WaitForFlowAsync(CenterControlService.CenterControlServiceClient client, Id id,
+    internal static async Task<CenterConnectFlow> WaitForFlowAsync(CenterControlService.CenterControlServiceClient client, Id id,
         Func<CenterConnectFlow, bool> matches)
     {
         CenterConnectFlow? flow = null;
@@ -297,6 +321,30 @@ public sealed class CloudLinkCenterControlTests
         ? [Path.Combine(Environment.SystemDirectory, "cmd.exe"), "/d", "/c", "echo local>offline.txt"]
         : ["/usr/bin/dash", "-c", "printf 'local\\n' > offline.txt"];
 
+    internal static (string Origin, string Coordination) RequireNativeFixture()
+    {
+        Assert.SkipUnless(Environment.GetEnvironmentVariable("ARCFORGES_CENTER02_E2E_REQUIRED") == "1",
+            "Run this supplement under the real Go Center and PostgreSQL fixture.");
+        var origin = Environment.GetEnvironmentVariable("ARCFORGES_CENTER02_URL");
+        Assert.True(Uri.TryCreate(origin, UriKind.Absolute, out var center) && center.Scheme == Uri.UriSchemeHttps && center.IsLoopback
+            && center.GetLeftPart(UriPartial.Authority) == origin);
+        Assert.Equal("1", Environment.GetEnvironmentVariable("ARCFORGES_MXC_PACKAGE_TESTS"));
+        Assert.True(File.Exists(Path.Combine(Path.GetDirectoryName(TestNode.Host)!, "mxc", "mxc-manifest.json")),
+            "the Node must come from the verified package");
+        if (OperatingSystem.IsLinux()) Assert.Null(SystemdTestEnvironment.SkipReason);
+        var coordination = Environment.GetEnvironmentVariable("ARCFORGES_CENTER02_COORDINATION_DIR");
+        Assert.True(!string.IsNullOrEmpty(coordination) && Path.IsPathFullyQualified(coordination) && Directory.Exists(coordination));
+        return (origin!, coordination!);
+    }
+
+    internal static void ConfigureNativeFixture(TestNode fixture, string origin)
+    {
+        CreatePrivateRoot(fixture.DataRoot);
+        fixture.Environment[CloudLinkTestHooks.CenterUrl] = origin;
+        fixture.Environment[CloudLinkTestHooks.RefreshSeconds] = "15";
+        fixture.Environment["ARCFORGES_TEST_CLIENT_IMAGES"] = null;
+    }
+
     private static void CreatePrivateRoot(string path)
     {
         if (OperatingSystem.IsWindows())
@@ -316,7 +364,7 @@ public sealed class CloudLinkCenterControlTests
         }
     }
 
-    private static async Task<JsonElement> CliAsync(TestNode fixture, int exitCode, params string[] args)
+    internal static async Task<JsonElement> CliAsync(TestNode fixture, int exitCode, params string[] args)
     {
         var reply = await fixture.ProductCliBytesAsync(NativeBound, ["--json", .. args]);
         Assert.True(reply.ExitCode == exitCode, $"the installed {args[0]} {args[1]} command returned {reply.ExitCode}");
@@ -324,14 +372,21 @@ public sealed class CloudLinkCenterControlTests
         return document.RootElement.Clone();
     }
 
-    private static async Task WriteObservationAsync<T>(string directory, string name, T data)
+    internal static Id ReadCliId(JsonElement document, string name)
+    {
+        var value = document.GetProperty(name).GetString();
+        Assert.True(IdText.TryParse(value, out var bytes), "Expected a canonical fixture ID.");
+        return new Id { Value = Google.Protobuf.ByteString.CopyFrom(bytes) };
+    }
+
+    internal static async Task WriteObservationAsync<T>(string directory, string name, T data)
     {
         var file = Path.Combine(directory, name);
         await File.WriteAllBytesAsync(file + ".input", JsonSerializer.SerializeToUtf8Bytes(data), Ct);
         File.Move(file + ".input", file);
     }
 
-    private static Task WaitForFixtureAsync(string directory, string name, TimeSpan bound, string description) =>
+    internal static Task WaitForFixtureAsync(string directory, string name, TimeSpan bound, string description) =>
         TestNode.WaitAsync(() =>
         {
             CheckFixtureAbort();
@@ -345,20 +400,20 @@ public sealed class CloudLinkCenterControlTests
             "the real Go Center fixture requested teardown");
     }
 
-    private static RequestMeta Meta(bool mutation = false, Revision? revision = null) => new()
+    internal static RequestMeta Meta(bool mutation = false, Revision? revision = null) => new()
     {
         CorrelationId = CommandIds.New(),
         CommandId = mutation ? CommandIds.New() : null,
         ExpectedRev = revision,
     };
 
-    private static T Value<T>(T? value, ArcError? error) where T : class
+    internal static T Value<T>(T? value, ArcError? error) where T : class
     {
         Assert.True(error is null, $"Unexpected installed operation refusal: {error?.Category}/{error?.Code}");
         return Assert.IsType<T>(value);
     }
 
-    private sealed class OwnedNodeCleanup(TestNode fixture, Process process, CenterControlService.CenterControlServiceClient center, Id epoch)
+    internal sealed class OwnedNodeCleanup(TestNode fixture, Process process, CenterControlService.CenterControlServiceClient center, Id epoch)
         : IAsyncDisposable
     {
         public async ValueTask DisposeAsync()

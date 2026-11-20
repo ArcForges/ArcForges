@@ -52,6 +52,7 @@ public sealed class SignInCommandLineTests
     [InlineData("center connect https://center.example.test")]
     [InlineData("center connect https://center.example.test --mode unspecified")]
     [InlineData("center connect https://center.example.test --mode self_hosted --flow unsupported")]
+    [InlineData("center connect https://center.example.test --mode self_hosted --flow ")]
     [InlineData("center flow")]
     [InlineData("center cancel")]
     [InlineData("center disconnect --owner-epoch 01H00000000000000000000001")]

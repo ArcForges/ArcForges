@@ -247,8 +247,11 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
                     _ => StateName(run.State),
                 },
             };
-            if (run.State is FlowPhase.Pending or FlowPhase.Completing && RemainingLifetime(run, BrowserLifetime) > TimeSpan.Zero)
+            if (run.State == FlowPhase.Pending && Wanted(run) && RemainingLifetime(run, BrowserLifetime) > TimeSpan.Zero &&
+                run.AdmittedFingerprint is { } fingerprint &&
+                (run.Method != SignInMethod.Browser || run.Receiver is { Result.IsCompleted: false, Closed.IsCompleted: false }))
             {
+                flow.NodeKeyFingerprint = fingerprint;
                 if (run.Authorize is { } authorize) flow.VerificationUri = authorize.Value;
                 if (run.Device is { } device)
                 {
@@ -624,6 +627,7 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
                     run.CenterFlowId = value.FlowId!.Value.ToByteArray();
                     run.Verifier = verifier;
                     run.Authorize = url;
+                    RecordAdmittedFingerprint(run, request.NodePublicKey);
                 }
 
                 return null;
@@ -666,6 +670,7 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
 
                     run.Device = device;
                     run.Interval = Interval(value.Authorization.HasIntervalMs ? value.Authorization.IntervalMs : 0, PollFloor);
+                    RecordAdmittedFingerprint(run, request.NodePublicKey);
                 }
 
                 return null;
@@ -721,6 +726,15 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
     private TimeSpan RemainingLifetime(Run run, TimeSpan legacyLifetime) =>
         (run.UseV2 ? run.Lifetime : legacyLifetime) - _options.Clock.GetElapsedTime(run.Received);
 
+    /// <summary>Publishes proof of the exact public key paired with this validated Center response under the flow lock.</summary>
+    private void RecordAdmittedFingerprint(Run run, ByteString publicKey)
+    {
+        if (run.UseV2 && Wanted(run))
+        {
+            run.AdmittedFingerprint = CloudIdentity.Fingerprint(publicKey.Span);
+        }
+    }
+
     /// <summary>A Begin or Start refusal as BeginSignIn answers it (only its annotated codes; N2 decision F-12).</summary>
     private static ArcError BeginRefusal<T>(CenterReply<T> reply)
         where T : class
@@ -764,6 +778,15 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
     /// <summary>The contract's replace-once: the key is deleted and a new one created (persisted before its public half leaves the node).</summary>
     private void ReplaceKey(Run run)
     {
+        if (run.UseV2)
+        {
+            lock (_lock)
+            {
+                // Hide the previous approval data before replacing the key. The next validated Begin publishes a new pair.
+                run.AdmittedFingerprint = null;
+            }
+        }
+
         run.Key?.Dispose();
         run.Key = _options.Keys.Create(_options.NodeId.Span, run.Center.Origin, _options.Clock);
         run.Replaced = true;
@@ -1256,6 +1279,7 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
             }
 
             run.State = FlowPhase.Completing;
+            run.AdmittedFingerprint = null;
             return true;
         }
     }
@@ -1305,6 +1329,7 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
             run.Ended = true;
             run.State = state;
             run.Error = state is FlowPhase.Failed or FlowPhase.Cancelled ? error : null;
+            run.AdmittedFingerprint = null;
 
             // In the same step as the flow's end (lock order: the flow's lock, then the link's state lock; never the other way): a reader of
             // the ended flow never sees the link still SigningIn (the Windows leg saw that race in ABrowserFlowExpiresAfterTenMinutes).
@@ -1452,6 +1477,8 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
         public DerivedUrl? Authorize { get; set; }
 
         public DeviceUrls? Device { get; set; }
+
+        public string? AdmittedFingerprint { get; set; }
 
         public Instant? ExpiresAt { get; set; }
 
