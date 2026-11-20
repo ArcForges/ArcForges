@@ -136,7 +136,7 @@ internal sealed partial class SandboxManager
         string digest = HashDataExport(source, row.ByteLength, stage, cancellationToken);
         RequireDataExportSource(row, workspace, source);
         cancellationToken.ThrowIfCancellationRequested();
-        RandomAccess.FlushToDisk(stage);
+        WorkspacePath.FlushSandboxDataFile(stage);
         return row with
         {
             State = StoredTransferState.Complete,

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Buffers;
+using System.Buffers.Binary;
 using System.Security.Cryptography;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Sandbox.V2;
@@ -22,6 +23,11 @@ internal sealed partial class SandboxManager
             : StartDataTransfer(request.Meta, request.OwnerEpoch, request.SandboxId, request.RelativePath,
                 StoredTransferDirection.Import, checked((long)request.ByteLength), request.Sha256, request.Overwrite,
                 request.HasExpectedFileVersion ? request.ExpectedFileVersion : null, canonical, cancellationToken);
+        if (result is { Error: null, Row: { } row, Receipt.State: "ACCEPTED" })
+        {
+            result = AwaitDataImportStage(request.Meta, row, cancellationToken);
+        }
+
         var response = new DataServiceBeginImportResponse { Meta = DataResponseMeta(request.Meta, result.Row) };
         if (result.Error is { } error)
         {
@@ -35,13 +41,51 @@ internal sealed partial class SandboxManager
         return response;
     }
 
+    private DataMutation AwaitDataImportStage(RequestMeta meta, StoredTransfer row, CancellationToken cancellationToken)
+    {
+        try
+        {
+            Task? worker;
+            lock (OwnershipGate)
+            {
+                _dataWorkers.TryGetValue(row.TransferId, out worker);
+            }
+
+            // OPEN is the usable import stage state. Do not advertise it while Begin still owns unverified staging.
+            worker?.WaitAsync(cancellationToken).GetAwaiter().GetResult();
+            lock (OwnershipGate)
+            {
+                var receipt = Receipts.Inspect(meta.CommandId.Value.ToByteArray());
+                if (receipt is { State: "ACCEPTED" })
+                {
+                    var pending = Error(meta, ErrorCategory.Execution, "outcome_unknown",
+                        "import_stage_pending_reconciliation", EffectCertainty.Unknown);
+                    pending.Details.State.Resource = AggregateIdentity(receipt);
+                    return new(row, receipt, pending);
+                }
+
+                return ResolveDataAdmission(meta, new(receipt?.Compacted == true ? DurableDecision.Compacted : DurableDecision.Replay, receipt));
+            }
+        }
+        catch (Exception failure) when (IsDataFailure(failure))
+        {
+            return new(row, null, DataError(meta, failure));
+        }
+    }
+
     internal DataServiceWriteImportResponse WriteDataImport(DataServiceWriteImportRequest request, CancellationToken cancellationToken)
     {
+        var chunkHash = SHA256.HashData(request.Chunk.Span);
+        Span<byte> contentIdentity = stackalloc byte[sizeof(int) + SHA256.HashSizeInBytes];
+        BinaryPrimitives.WriteInt32LittleEndian(contentIdentity, request.Chunk.Length);
+        chunkHash.CopyTo(contentIdentity[sizeof(int)..]);
         var canonical = request.Clone();
         canonical.Meta = DataCanonicalMeta(request.Meta);
         canonical.OwnerEpoch = null;
+        // The private intent contains the exact content identity, not a second wire-sized payload.
+        canonical.Chunk = ByteString.CopyFrom(contentIdentity);
         var result = ExecuteDataMutation(request.Meta, request.OwnerEpoch, request.TransferId, TransferRecords.WriteMethod,
-            canonical, (row, intent) => WriteDataChunk(request.Meta, row, intent, request.Offset, request.Chunk, cancellationToken),
+            canonical, (row, intent) => WriteDataChunk(request.Meta, row, intent, request.Offset, request.Chunk, chunkHash, cancellationToken),
             cancellationToken);
         var response = new DataServiceWriteImportResponse { Meta = DataResponseMeta(request.Meta, result.Row) };
         if (result.Error is { } error)
@@ -148,9 +192,7 @@ internal sealed partial class SandboxManager
 
                     if (row.Manifest.Revision != meta.ExpectedRev.Value)
                     {
-                        var revision = RevisionError(meta, meta.ExpectedRev.Value, row.Manifest.Revision);
-                        revision.Details.State.Reason = "transfer_revision_changed";
-                        return new(row, null, revision);
+                        return new(row, null, RevisionError(meta, meta.ExpectedRev.Value, row.Manifest.Revision));
                     }
 
                     if (row.Manifest.Pending is not null || row.State == StoredTransferState.RecoveryRequired)
@@ -180,7 +222,7 @@ internal sealed partial class SandboxManager
     }
 
     private DataMutation WriteDataChunk(RequestMeta meta, StoredTransfer row, DurableIntent intent, ulong offset,
-        ByteString bytes, CancellationToken cancellationToken)
+        ByteString bytes, byte[] chunkHash, CancellationToken cancellationToken)
     {
         if (row.Direction != StoredTransferDirection.Import || row.State is not (StoredTransferState.Open or StoredTransferState.Streaming)
             || offset > (ulong)row.VerifiedOffset || bytes.Length is <= 0 or > 1_048_576
@@ -230,7 +272,7 @@ internal sealed partial class SandboxManager
         var checkpoint = new WorkspaceEntryMetadata(WorkspaceEntryType.File, (ulong)row.VerifiedOffset,
             WorkspacePath.Identity(stage), WorkspacePath.FileStamp(stage));
         var recorded = new StoredTransferPending(StoredTransferPhase.Chunk, Convert.ToHexStringLower(intent.CommandId),
-            checked((long)offset), bytes.Length, Convert.ToHexStringLower(SHA256.HashData(bytes.Span)),
+            checked((long)offset), bytes.Length, Convert.ToHexStringLower(chunkHash),
             TargetIdentity: DataFileVersion(row.TransferId, "import-stage", checkpoint));
         var pending = NextDataRow(row, recorded);
         var admission = AdmitDataStep(intent, row, pending);
@@ -242,7 +284,7 @@ internal sealed partial class SandboxManager
         try
         {
             RandomAccess.Write(stage, bytes.Span, checked((long)offset));
-            RandomAccess.FlushToDisk(stage);
+            WorkspacePath.FlushSandboxDataFile(stage);
             if (RandomAccess.GetLength(stage) != row.VerifiedOffset + bytes.Length)
             {
                 throw new DataEffectException(ErrorCategory.Conflict, "identity_changed", "import_stage_length_changed");

@@ -26,8 +26,8 @@ internal sealed partial class WorkspacePath
             var identity = RequireSandboxDataLinuxFile(file, links: 1);
             LinuxUseSynchronousFileIo(file);
             if (RandomAccess.GetLength(file) != 0) throw new WorkspacePathException("file_identity_changed");
-            RandomAccess.FlushToDisk(file);
-            SyncSandboxDataLinuxDirectory(RootHandle);
+            FlushSandboxDataLinuxHandle(file);
+            FlushSandboxDataLinuxHandle(RootHandle);
             RequireSandboxDataLinuxName(RootHandle, name, identity, links: 1);
             return file;
         }
@@ -81,7 +81,7 @@ internal sealed partial class WorkspacePath
             stage.DangerousAddRef(ref retained);
             var identity = RequireSandboxDataLinuxFile(stage, links: 1);
             RequireSandboxDataLinuxName(RootHandle, stageName, identity, links: 1);
-            RandomAccess.FlushToDisk(stage);
+            FlushSandboxDataLinuxHandle(stage);
             using var proc = LinuxProcFdDirectory();
             var descriptor = SandboxDataLinuxDescriptor(stage).ToString(CultureInfo.InvariantCulture);
             // The kernel resolves the held file descriptor as the source and refuses a preexisting destination.
@@ -92,14 +92,14 @@ internal sealed partial class WorkspacePath
             }
 
             applied();
-            RandomAccess.FlushToDisk(stage);
-            SyncSandboxDataLinuxDirectory(targetParent);
+            FlushSandboxDataLinuxHandle(stage);
+            FlushSandboxDataLinuxHandle(targetParent);
 
             // Preserve the private name until the destination is durable and both names identify the same inode.
             RequireSandboxDataLinuxName(targetParent, targetName, identity, links: 2);
             RequireSandboxDataLinuxName(RootHandle, stageName, identity, links: 2);
             UnlinkSandboxDataLinuxName(stageName);
-            SyncSandboxDataLinuxDirectory(RootHandle);
+            FlushSandboxDataLinuxHandle(RootHandle);
             RequireSandboxDataLinuxName(targetParent, targetName, identity, links: 1);
         }
         finally
@@ -121,7 +121,7 @@ internal sealed partial class WorkspacePath
 
         UnlinkSandboxDataLinuxName(name);
         applied();
-        SyncSandboxDataLinuxDirectory(RootHandle);
+        FlushSandboxDataLinuxHandle(RootHandle);
         if (LinuxBasicIdentity(metadata).Links != 0)
         {
             throw new WorkspacePathException("file_identity_changed");
@@ -182,9 +182,9 @@ internal sealed partial class WorkspacePath
 
     private static int SandboxDataLinuxDescriptor(SafeFileHandle file) => checked((int)file.DangerousGetHandle());
 
-    private static void SyncSandboxDataLinuxDirectory(SafeFileHandle directory)
+    private static void FlushSandboxDataLinuxHandle(SafeFileHandle file)
     {
-        if (SyncDirectory(SandboxDataLinuxDescriptor(directory)) != 0) throw NativeFailure();
+        if (SyncDirectory(SandboxDataLinuxDescriptor(file)) != 0) throw NativeFailure();
     }
 
     private void UnlinkSandboxDataLinuxName(string name)

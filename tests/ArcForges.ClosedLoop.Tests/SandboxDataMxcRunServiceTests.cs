@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Diagnostics;
 using System.Globalization;
 using System.Security.Cryptography;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Sandbox.V2;
+using ArcForges.Node.Store;
 using Google.Protobuf;
 
 namespace ArcForges.ClosedLoop.Tests;
@@ -82,7 +84,7 @@ public sealed partial class MxcRunServiceTests
         Assert.NotEqual(firstRun.RunId, secondRun.RunId);
         var updated = await File.ReadAllBytesAsync(Path.Combine(sandbox.DataLocation, "data", "round-trip.bin"), token);
         Assert.True(replacement.AsSpan().SequenceEqual(updated));
-        await VerifyRetainedExportReplayAsync(installed.Node, data, node, epoch, sandbox, retained, original, token);
+        await VerifyRetainedExportReplayAsync(installed.Node, data, node, installed.Runs, epoch, sandbox, retained, original, token);
 
         var destination = Path.Combine(clientFiles, "fixture export 四.bin");
         var exported = await InstalledCliSuccessAsync(installed.Node, "sandbox", "export", installed.SandboxText, FixtureDataPath,
@@ -143,10 +145,12 @@ public sealed partial class MxcRunServiceTests
             deadline: Deadline, cancellationToken: token);
         RequireFileDestinationRefused(wrongCase);
         Assert.Equal("CaseOwner.bin", Path.GetFileName(Assert.Single(Directory.EnumerateFiles(owned))));
+        await RequireGuardedExistingFileRefusalsAsync(installed, data, epoch, existing, original, offered, token);
         await RequireDataLinkRefusalAsync(installed.Node, data, sandbox, epoch, owned, outside, token);
         await RequireApprovedHostGrantExclusionAsync(new SandboxService.SandboxServiceClient(control.CallInvoker), data,
             sandbox.Config, epoch, outside, token);
         await RequireActiveRunDataRefusalAsync(installed, data, epoch, offered, token);
+        await RequireNewDestinationPreservedAsync(data, sandbox, epoch, offered, original, token);
         var retained = await File.ReadAllBytesAsync(existing, token);
         var sentinel = await File.ReadAllBytesAsync(outsideFile, token);
         Assert.True(original.AsSpan().SequenceEqual(retained));
@@ -172,15 +176,45 @@ public sealed partial class MxcRunServiceTests
         Assert.Equal(EffectCertainty.DidNotHappen, response.Error.Effect);
     }
 
+    private static async Task RequireGuardedExistingFileRefusalsAsync(TerminalCliFixture installed, DataService.DataServiceClient data,
+        Id epoch, string destination, byte[] existing, byte[] offered, CancellationToken token)
+    {
+        const string path = "data/CaseOwner.bin";
+        var sandbox = installed.Sandbox;
+        var current = await ObserveFixtureRegularFileAsync(data, sandbox.SandboxId, path, token);
+        Assert.Equal((ulong)existing.Length, current.ByteLength);
+        var exact = BeginFixtureImport(sandbox, epoch, path, offered);
+        exact.Overwrite = true;
+        exact.ExpectedFileVersion = current.VersionToken;
+        var unsupported = await data.BeginImportAsync(exact, deadline: Deadline, cancellationToken: token);
+        Assert.Null(unsupported.Value);
+        RequireDataRefusal(unsupported.Error, ErrorCategory.Execution, "unsupported_combination");
+        Assert.Equal("guarded_existing_file_replace_unavailable", unsupported.Error?.Details?.State?.Reason);
+        var afterExact = await File.ReadAllBytesAsync(destination, token);
+        Assert.True(existing.AsSpan().SequenceEqual(afterExact));
+
+        var different = await ObserveFixtureRegularFileAsync(data, sandbox.SandboxId,
+            RelativeWorkdir + "/" + Path.GetFileName(installed.Payload), token);
+        Assert.NotEqual(current.VersionToken, different.VersionToken);
+        var wrong = BeginFixtureImport(sandbox, epoch, path, offered);
+        wrong.Overwrite = true;
+        wrong.ExpectedFileVersion = different.VersionToken;
+        var conflict = await data.BeginImportAsync(wrong, deadline: Deadline, cancellationToken: token);
+        Assert.Null(conflict.Value);
+        RequireDataRefusal(conflict.Error, ErrorCategory.Conflict, "identity_changed");
+        Assert.Equal("import_target_changed", conflict.Error?.Details?.State?.Reason);
+        var afterWrong = await File.ReadAllBytesAsync(destination, token);
+        Assert.True(existing.AsSpan().SequenceEqual(afterWrong));
+        Assert.Equal(current.VersionToken, (await ObserveFixtureRegularFileAsync(data, sandbox.SandboxId, path, token)).VersionToken);
+    }
+
     private static async Task RequireDataLinkRefusalAsync(TestNode fixture, DataService.DataServiceClient data, Sandbox sandbox,
         Id epoch, string owned, string outside, CancellationToken token)
     {
         var link = Path.Combine(owned, "linked-dir");
         if (OperatingSystem.IsWindows())
         {
-            using var junction = fixture.Start(Path.Combine(Environment.SystemDirectory, "cmd.exe"), ["/d", "/c", "mklink", "/J", link, outside]);
-            await junction.WaitForExitAsync(token).WaitAsync(NativeBound, token);
-            Assert.Equal(0, junction.ExitCode);
+            await CreateFileFixtureJunctionAsync(fixture.Root, link, outside, token);
         }
         else
         {
@@ -207,6 +241,48 @@ public sealed partial class MxcRunServiceTests
         finally
         {
             Directory.Delete(link, recursive: false);
+        }
+    }
+
+    private static async Task CreateFileFixtureJunctionAsync(string fixtureRoot, string link, string target, CancellationToken token)
+    {
+        Assert.True(Directory.Exists(Path.GetDirectoryName(link)));
+        Assert.True(Directory.Exists(target));
+        Assert.False(Path.Exists(link));
+        var start = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "cmd.exe"))
+        {
+            WorkingDirectory = fixtureRoot,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            // /s strips just the enclosing pair. Quote the expanded paths independently.
+            Arguments = "/d /s /v:off /c \"mklink /J \"%ARCFORGES_FIXTURE_JUNCTION%\" \"%ARCFORGES_FIXTURE_JUNCTION_TARGET%\"\"",
+        };
+        start.Environment["ARCFORGES_FIXTURE_JUNCTION"] = link;
+        start.Environment["ARCFORGES_FIXTURE_JUNCTION_TARGET"] = target;
+        using var junction = Process.Start(start) ?? throw new InvalidOperationException("The owned junction fixture did not start.");
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+        deadline.CancelAfter(NativeBound);
+        var errors = junction.StandardError.ReadToEndAsync(deadline.Token);
+        var output = junction.StandardOutput.ReadToEndAsync(deadline.Token);
+        try
+        {
+            await junction.WaitForExitAsync(deadline.Token);
+            var stderr = await errors;
+            var stdout = await output;
+            Assert.True(junction.ExitCode == 0,
+                $"Owned junction creation returned {junction.ExitCode}. stderr: {Bounded(stderr)}. stdout: {Bounded(stdout)}.");
+        }
+        finally
+        {
+            await KillOwnedCliAsync(junction);
+        }
+
+        static string Bounded(string value)
+        {
+            string line = value.Trim().ReplaceLineEndings(" ");
+            return line[..Math.Min(line.Length, 512)];
         }
     }
 
@@ -267,6 +343,48 @@ public sealed partial class MxcRunServiceTests
         var settled = await installed.WaitExitedAsync(run.RunId, token);
         Assert.True(settled.Exit.HasRawCode);
         Assert.Equal(0, settled.Exit.RawCode);
+    }
+
+    private static async Task RequireNewDestinationPreservedAsync(DataService.DataServiceClient data, Sandbox sandbox, Id epoch,
+        byte[] offered, byte[] newOwnerFile, CancellationToken token)
+    {
+        const string path = "data/appeared-after-begin.bin";
+        string destination = Path.Combine(sandbox.DataLocation, "data", "appeared-after-begin.bin");
+        var opened = await data.BeginImportAsync(BeginFixtureImport(sandbox, epoch, path, offered), deadline: Deadline,
+            cancellationToken: token);
+        var transfer = Value(opened.Value, opened.Error).Transfer;
+        var written = await data.WriteImportAsync(new DataServiceWriteImportRequest
+        {
+            Meta = Mutation(TransferRevision(opened.Meta)), OwnerEpoch = epoch, TransferId = transfer.TransferId,
+            Offset = 0, Chunk = ByteString.CopyFrom(offered),
+        }, deadline: Deadline, cancellationToken: token);
+        var staged = Value(written.Value, written.Error).Transfer;
+        Assert.Equal((ulong)offered.Length, staged.VerifiedOffset);
+        Assert.False(File.Exists(destination));
+
+        // An ordinary owner action creates this single regular file after staging has completed.
+        await File.WriteAllBytesAsync(destination, newOwnerFile, token);
+        var declined = await data.CommitImportAsync(new DataServiceCommitImportRequest
+        {
+            Meta = Mutation(TransferRevision(written.Meta)), OwnerEpoch = epoch, TransferId = transfer.TransferId,
+        }, deadline: Deadline, cancellationToken: token);
+        Assert.Null(declined.Value);
+        RequireDataRefusal(declined.Error, ErrorCategory.Conflict, "identity_changed");
+        Assert.Equal("import_target_changed", declined.Error?.Details?.State?.Reason);
+        var actual = await File.ReadAllBytesAsync(destination, token);
+        Assert.True(newOwnerFile.AsSpan().SequenceEqual(actual));
+
+        var current = await InspectFileTransferAsync(data, transfer.TransferId, token);
+        Assert.Equal(staged, Value(current.Value, current.Error).Transfer);
+        var close = await data.CloseTransferAsync(new DataServiceCloseTransferRequest
+        {
+            Meta = Mutation(TransferRevision(current.Meta)), OwnerEpoch = epoch, TransferId = transfer.TransferId,
+        }, deadline: Deadline, cancellationToken: token);
+        var canceled = Value(close.Value, close.Error).Transfer;
+        Assert.Equal(TransferState.Failed, canceled.State);
+        Assert.NotNull(canceled.ClosedAt);
+        actual = await File.ReadAllBytesAsync(destination, token);
+        Assert.True(newOwnerFile.AsSpan().SequenceEqual(actual));
     }
 
     [Fact(Timeout = 125_000, DisableParallelization = true)]
@@ -478,14 +596,21 @@ public sealed partial class MxcRunServiceTests
     private static async Task<FileEntry> ReadOwnedFileEntryAsync(DataService.DataServiceClient data, Sandbox sandbox, int length,
         CancellationToken token)
     {
+        var entry = await ObserveFixtureRegularFileAsync(data, sandbox.SandboxId, FixtureDataPath, token);
+        Assert.Equal((ulong)length, entry.ByteLength);
+        return entry;
+    }
+
+    private static async Task<FileEntry> ObserveFixtureRegularFileAsync(DataService.DataServiceClient data, Id sandbox, string path,
+        CancellationToken token)
+    {
         var listed = await data.ListEntriesAsync(new DataServiceListEntriesRequest
         {
-            Meta = Query(), SandboxId = sandbox.SandboxId, RelativeDirectory = "data", Limit = 20,
+            Meta = Query(), SandboxId = sandbox, RelativeDirectory = path[..path.LastIndexOf('/')], Limit = 20,
         }, deadline: Deadline, cancellationToken: token);
-        var entry = Assert.Single(Value(listed.Value, listed.Error).Entries, row => row.RelativePath == FixtureDataPath);
+        var entry = Assert.Single(Value(listed.Value, listed.Error).Entries, row => row.RelativePath == path);
         Assert.Equal("regular_file", entry.Kind);
         Assert.True(entry.HasByteLength);
-        Assert.Equal((ulong)length, entry.ByteLength);
         Assert.False(string.IsNullOrEmpty(entry.VersionToken));
         return entry;
     }
@@ -580,7 +705,8 @@ public sealed partial class MxcRunServiceTests
     }
 
     private static async Task VerifyRetainedExportReplayAsync(TestNode fixture, DataService.DataServiceClient data,
-        NodeService.NodeServiceClient node, Id epoch, Sandbox sandbox, Transfer retained, byte[] original, CancellationToken token)
+        NodeService.NodeServiceClient node, RunService.RunServiceClient runs, Id epoch, Sandbox sandbox, Transfer retained,
+        byte[] original, CancellationToken token)
     {
         var initial = new DataServiceReadExportRequest
         {
@@ -624,11 +750,20 @@ public sealed partial class MxcRunServiceTests
         {
             Meta = Mutation(inspected.Meta.ResultRev), TransferId = retained.TransferId, OwnerEpoch = epoch,
         };
+        var settledRuns = await ListAsync(runs, sandbox.SandboxId);
+        Assert.Equal(2, settledRuns.Length);
+        Assert.All(settledRuns, run =>
+        {
+            Assert.Equal(RunState.Exited, run.State);
+            Assert.True(run.Exit.GroupEmptyVerified);
+        });
+        RequireStoredExportManagedUse(fixture, sandbox.SandboxId, epoch, retained.TransferId, held: true);
         var response = await data.CloseTransferAsync(close, deadline: Deadline, cancellationToken: token);
         var closed = Value(response.Value, response.Error).Transfer;
         RequireCompleteFileTransfer(closed, sandbox, FixtureDataPath, "export", original);
         Assert.Equal(retained.TransferId, closed.TransferId);
         Assert.NotNull(closed.ClosedAt);
+        RequireStoredExportManagedUse(fixture, sandbox.SandboxId, epoch, closed.TransferId, held: false);
         var again = await data.CloseTransferAsync(close, deadline: Deadline, cancellationToken: token);
         Assert.Equal(closed, Value(again.Value, again.Error).Transfer);
         var operation = await OperationAsync(node, epoch, close.Meta.CommandId);
@@ -640,6 +775,20 @@ public sealed partial class MxcRunServiceTests
         Assert.Null(after.Value);
         RequireDataRefusal(after.Error, ErrorCategory.State, "managed_use");
         Assert.Equal("transfer_closed", after.Error?.Details?.State?.Reason);
+    }
+
+    private static void RequireStoredExportManagedUse(TestNode fixture, Id sandbox, Id epoch, Id transfer, bool held)
+    {
+        using var database = ReadDatabase(fixture.DataRoot);
+        var reader = new StoreReader(database, transaction: null, clock: TimeProvider.System);
+        var sandboxId = Hex(sandbox);
+        var owner = Assert.IsType<string>(reader.Scalar("SELECT owner_id FROM sandbox WHERE sandbox_id=$id;", ("$id", sandboxId)));
+        var stored = Assert.IsType<StoredTransfer>(TransferRecords.Get(reader, owner, Hex(transfer)));
+        Assert.Equal(sandboxId, stored.SandboxId);
+        Assert.Equal(StoredTransferDirection.Export, stored.Direction);
+        Assert.Equal(StoredTransferState.Complete, stored.State);
+        Assert.Equal(held, stored.ClosedAt is null);
+        Assert.Equal(held, SandboxRecords.HasUnresolvedUse(reader, owner, sandboxId, epoch.Value.ToByteArray()));
     }
 
     private static async Task RequireLocalExportNoReplaceAsync(TestNode fixture, string sandbox, string destination, byte[] content,

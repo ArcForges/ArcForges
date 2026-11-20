@@ -63,6 +63,22 @@ internal sealed partial class WorkspacePath
     internal static string EncodeDataIdentity(WorkspaceObjectIdentity identity, bool directory = false) =>
         Convert.ToBase64String(RegisteredWorkspaces.RootIdentity.Encode(identity, directory).Bytes);
 
+    internal static void FlushSandboxDataFile(SafeFileHandle file)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            RequireWindowsSandboxDataStatus(FlushRemovalBuffers(file, out _));
+        }
+        else if (OperatingSystem.IsLinux())
+        {
+            FlushSandboxDataLinuxHandle(file);
+        }
+        else
+        {
+            throw new WorkspacePathException("path_enforcement_unavailable");
+        }
+    }
+
     private static WorkspaceObjectIdentity ParseDataStageIdentity(string text)
     {
         var identity = Convert.FromBase64String(text);

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Buffers;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using ArcForges.Contracts.Foundation.V1;
@@ -211,7 +212,7 @@ internal sealed partial class SandboxManager
         using var stage = OpenDataStage(row, staging, writable: true);
         var stamp = WorkspacePath.FileStamp(stage);
         if (stamp.Size != 0) return false;
-        RandomAccess.FlushToDisk(stage);
+        WorkspacePath.FlushSandboxDataFile(stage);
         FlushRecoveredDataDirectory(staging.RootHandle);
         if (WorkspacePath.FileStamp(stage) != stamp) return false;
         var opened = NextDataRow(row, null) with { State = StoredTransferState.Open, Effect = (int)EffectCertainty.DidNotHappen };
@@ -252,7 +253,7 @@ internal sealed partial class SandboxManager
         var end = checked(offset + length);
         if (stamp.Size != end || !MatchesRecoveredDataChunk(stage, offset, checked((int)length), pending.Sha256, cancellationToken))
             return false;
-        RandomAccess.FlushToDisk(stage);
+        WorkspacePath.FlushSandboxDataFile(stage);
         if (WorkspacePath.FileStamp(stage) != stamp) return false;
         var verified = NextDataRow(row, null) with
         {
@@ -280,8 +281,8 @@ internal sealed partial class SandboxManager
     private bool RecoverDataPublication(StoredTransfer row, StoredTransferPending pending, byte[] command,
         CancellationToken cancellationToken)
     {
-        // Linux can re-establish publication durability on the exact held file and both directories.
-        if (!OperatingSystem.IsLinux() || row.StagingIdentity == TransferRecords.UnboundStage || pending.TargetIdentity != row.StagingIdentity
+        if (row.StagingIdentity == TransferRecords.UnboundStage || pending.TargetIdentity is not { } targetIdentity
+            || targetIdentity != row.StagingIdentity
             || pending.ParentIdentity is null || pending.ParentIdentity != row.Manifest.TargetParentIdentity) return false;
 
         using var root = InspectDataRoot(row);
@@ -289,23 +290,35 @@ internal sealed partial class SandboxManager
         if (!staging.InspectRemovalAbsent(row.TransferId)) return false;
         var workspace = root.OwnedWorkspace;
         var path = row.Manifest.RelativePath;
-        var parent = workspace.OpenDirectory(DataParent(path));
+        var parentPath = DataParent(path);
+        var parent = workspace.OpenDirectory(parentPath);
         if (WorkspacePath.EncodeDataIdentity(WorkspacePath.Identity(parent), directory: true) != pending.ParentIdentity) return false;
+        workspace.CheckSandboxDataName(path, allowMissingFinal: false);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (OperatingSystem.IsWindows())
+        {
+            // The guarded writable reopen must precede the read-only lease, which excludes writers.
+            workspace.FlushPublishedSandboxDataFileWindows(parent, path[(parentPath.Length + 1)..], targetIdentity);
+        }
 
         using var target = workspace.OpenRead(path);
         var identity = WorkspacePath.Identity(target);
         var stamp = WorkspacePath.FileStamp(target);
-        if (!identity.IsFile || identity.Links != 1 || WorkspacePath.EncodeDataIdentity(identity) != pending.TargetIdentity
+        if (!identity.IsFile || identity.Links != 1 || WorkspacePath.EncodeDataIdentity(identity) != targetIdentity
             || !VerifyDataDigest(target, row.ByteLength, row.ExpectedSha256, cancellationToken)) return false;
-        SyncRecoveredDataFile(target);
-        FlushRecoveredDataDirectory(parent);
-        FlushRecoveredDataDirectory(staging.RootHandle);
+        if (OperatingSystem.IsLinux())
+        {
+            SyncRecoveredDataFile(target);
+            SyncRecoveredDataFile(parent);
+            SyncRecoveredDataFile(staging.RootHandle);
+        }
 
         var named = workspace.InspectEntry(path);
-        var currentParent = workspace.OpenDirectory(DataParent(path));
+        var currentParent = workspace.OpenDirectory(parentPath);
         if (named.Kind != WorkspaceEntryType.File || named.Identity.Links != 1 || !identity.SameObject(named.Identity)
             || named.Stamp != stamp || WorkspacePath.FileStamp(target) != stamp || !staging.InspectRemovalAbsent(row.TransferId)
             || WorkspacePath.EncodeDataIdentity(WorkspacePath.Identity(currentParent), directory: true) != pending.ParentIdentity) return false;
+        workspace.CheckSandboxDataName(path, allowMissingFinal: false);
 
         var published = NextDataRow(row, null) with { State = StoredTransferState.Complete, Effect = (int)EffectCertainty.Happened };
         SettleData(command, row, published, "SUCCEEDED", EffectCertainty.Happened);
@@ -368,7 +381,7 @@ internal sealed partial class SandboxManager
     private static void SyncRecoveredDataFile(SafeFileHandle file)
     {
         if (SyncDataRecoveryHandle(file) != 0)
-            throw new WorkspacePathException($"native_{Marshal.GetLastPInvokeError()}");
+            throw new WorkspacePathException("native_" + Marshal.GetLastPInvokeError().ToString(CultureInfo.InvariantCulture));
     }
 
     [LibraryImport("libc", EntryPoint = "fsync", SetLastError = true)]

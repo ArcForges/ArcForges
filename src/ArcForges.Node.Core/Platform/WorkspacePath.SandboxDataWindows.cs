@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Security.Principal;
 using System.Text;
@@ -12,6 +13,7 @@ internal sealed partial class WorkspacePath
     // Local NTFS only. Reuse the existing held-handle NT API without exposing a pathname mutation.
     private const uint SandboxStageRead = 0x80120000; // GENERIC_READ | SYNCHRONIZE | READ_CONTROL
     private const uint SandboxStageWrite = SandboxStageRead | 0x40010000; // GENERIC_WRITE | DELETE
+    private const uint SandboxPublicationFlushAccess = 0x40120080; // GENERIC_WRITE | SYNCHRONIZE | READ_CONTROL | FILE_READ_ATTRIBUTES
     private const uint OpenSandboxStage = 1; // FILE_OPEN
     private const uint CreateSandboxStage = 2; // FILE_CREATE
 
@@ -157,7 +159,61 @@ internal sealed partial class WorkspacePath
     }
 
     [SupportedOSPlatform("windows")]
-    private unsafe SafeFileHandle OpenWindowsSandboxDataName(string name, uint disposition, bool writable, nint descriptor)
+    internal void FlushPublishedSandboxDataFileWindows(SafeFileHandle targetParent, string targetName, string identity)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(targetParent);
+        var root = Identity(RootHandle);
+        var parent = Identity(targetParent);
+        var expected = ParseDataStageIdentity(identity);
+        if (!root.IsDirectory || root.Links == 0 || !RootIdentity.SameObject(root) ||
+            !parent.IsDirectory || parent.Links == 0 || parent.Volume != root.Volume || expected.Volume != root.Volume)
+        {
+            throw new WorkspacePathException("directory_identity_changed");
+        }
+
+        RequireWindowsSandboxDataCaseInsensitive(targetParent);
+        CheckName();
+        using var file = OpenWindowsSandboxDataName(targetParent, targetName, OpenSandboxStage,
+            SandboxPublicationFlushAccess, writeThrough: false, descriptor: 0);
+        if (!expected.SameObject(CheckWindowsSandboxDataFile(file)))
+        {
+            throw new WorkspacePathException("file_identity_changed");
+        }
+
+        var stamp = FileStamp(file);
+        CheckName();
+        if (!FlushSandboxDataFileBuffers(file))
+        {
+            throw new WorkspacePathException("native_" + Marshal.GetLastPInvokeError().ToString(CultureInfo.InvariantCulture));
+        }
+
+        if (!expected.SameObject(CheckWindowsSandboxDataFile(file)) || stamp != FileStamp(file))
+        {
+            throw new WorkspacePathException("file_identity_changed");
+        }
+
+        CheckName();
+
+        void CheckName()
+        {
+            var named = InspectHeldParentChild(targetParent, targetName);
+            if (!parent.SameObject(Identity(targetParent)) || !root.SameObject(Identity(RootHandle)) ||
+                named.Links != 1 || !expected.SameObject(named))
+            {
+                throw new WorkspacePathException("file_identity_changed");
+            }
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private SafeFileHandle OpenWindowsSandboxDataName(string name, uint disposition, bool writable, nint descriptor) =>
+        OpenWindowsSandboxDataName(RootHandle, name, disposition, writable ? SandboxStageWrite : SandboxStageRead,
+            writeThrough: writable, descriptor);
+
+    [SupportedOSPlatform("windows")]
+    private static unsafe SafeFileHandle OpenWindowsSandboxDataName(SafeFileHandle directory, string name, uint disposition,
+        uint access, bool writeThrough, nint descriptor)
     {
         if (Components(name).Length != 1)
         {
@@ -167,7 +223,7 @@ internal sealed partial class WorkspacePath
         var retained = false;
         try
         {
-            RootHandle.DangerousAddRef(ref retained);
+            directory.DangerousAddRef(ref retained);
             fixed (char* text = name)
             {
                 ushort bytes = checked((ushort)(name.Length * sizeof(char)));
@@ -175,15 +231,15 @@ internal sealed partial class WorkspacePath
                 var attributes = new ObjectAttributes
                 {
                     Length = (uint)sizeof(ObjectAttributes),
-                    RootDirectory = RootHandle.DangerousGetHandle(),
+                    RootDirectory = directory.DangerousGetHandle(),
                     ObjectName = (nint)(&unicode),
-                    Attributes = 0x40, // OBJ_CASE_INSENSITIVE verified on the held stage directory.
+                    Attributes = 0x40, // OBJ_CASE_INSENSITIVE verified on the held directory.
                     SecurityDescriptor = descriptor,
                 };
 
                 // Synchronous, non-directory, no-follow. Writable staging also requests NTFS write-through.
-                uint options = 0x00200060u | (writable ? 2u : 0u);
-                int status = NtCreateFile(out var raw, writable ? SandboxStageWrite : SandboxStageRead, ref attributes,
+                uint options = 0x00200060u | (writeThrough ? 2u : 0u);
+                int status = NtCreateFile(out var raw, access, ref attributes,
                     out _, 0, 0x80, 0, disposition, options, 0, 0);
                 RequireWindowsSandboxDataStatus(status);
                 return new SafeFileHandle(raw, ownsHandle: true);
@@ -193,7 +249,7 @@ internal sealed partial class WorkspacePath
         {
             if (retained)
             {
-                RootHandle.DangerousRelease();
+                directory.DangerousRelease();
             }
         }
     }
@@ -263,6 +319,10 @@ internal sealed partial class WorkspacePath
             throw new WorkspacePathException("native_" + RtlNtStatusToDosError(status).ToString(CultureInfo.InvariantCulture));
         }
     }
+
+    [LibraryImport("kernel32.dll", EntryPoint = "FlushFileBuffers", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool FlushSandboxDataFileBuffers(SafeFileHandle file);
 }
 
 internal sealed partial class WorkspaceWriteGuard
