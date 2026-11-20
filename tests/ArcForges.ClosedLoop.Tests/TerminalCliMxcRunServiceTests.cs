@@ -809,6 +809,8 @@ public sealed partial class MxcRunServiceTests
                 if (_reader.IsCompleted)
                 {
                     await _reader;
+                    if (observed()) return;
+
                     Assert.Fail($"The CLI host terminal closed before {description}. {ReadOutcomeIndicators()}");
                 }
 
