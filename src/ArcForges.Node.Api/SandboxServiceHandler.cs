@@ -80,6 +80,8 @@ internal sealed class SandboxServiceHandler(NodeRuntime node) : V2.SandboxServic
 /// <summary>Negotiates the owner's V2 namespace, reads durable operations and manages local remote grants.</summary>
 internal sealed class SandboxNodeServiceHandler(NodeRuntime node) : V2.NodeService.NodeServiceBase
 {
+    internal const int EventBuffer = 1;
+
     public override Task<V2.NodeServiceHandshakeResponse> Handshake(
         V2.NodeServiceHandshakeRequest request, ServerCallContext context) =>
         SandboxLocalCalls.Execute(node, context, request, request.Meta, V2Shapes.IsValid,
@@ -91,6 +93,51 @@ internal sealed class SandboxNodeServiceHandler(NodeRuntime node) : V2.NodeServi
         SandboxLocalCalls.Execute(node, context, request, request.Meta, V2Shapes.IsValid,
             static (manager, value, cancellation) => manager.GetOperation(value, cancellation),
             static (meta, error) => new V2.NodeServiceGetOperationResponse { Meta = meta, Error = error });
+
+    public override async Task WatchEvents(V2.NodeServiceWatchEventsRequest request,
+        IServerStreamWriter<V2.NodeServiceWatchEventsFrame> responseStream, ServerCallContext context)
+    {
+        var writer = context.OpenLocalRpcStream(responseStream);
+        await using (writer.ConfigureAwait(false))
+        {
+            using var stop = CancellationTokenSource.CreateLinkedTokenSource(writer.Ended, context.CancellationToken, node.Stopping);
+            var watch = await SandboxLocalCalls.Execute<V2.NodeServiceWatchEventsRequest,
+                (IAsyncEnumerable<V2.NodeServiceWatchEventsFrame>? Frames, V2.NodeServiceWatchEventsFrame? Refusal)>(
+                node, context, request, request.Meta,
+                static value => V2Shapes.IsValid(value) && value.Meta is
+                { CommandId: null, ExpectedRev: null, ExpectedNative: null, WorkspaceId: null, ApplicationScope: null, HasRecoveryGeneration: false } &&
+                    HasKnownFields(value, V2.NodeServiceWatchEventsRequest.Parser),
+                (manager, value, _) => (manager.WatchEventsAsync(value, stop.Token), null),
+                static (meta, error) => (null, new() { Meta = meta, Error = error })).ConfigureAwait(false);
+            if (watch.Refusal is { } refusal)
+            {
+                _ = writer.TryWrite(refusal);
+                await writer.CompleteAsync().ConfigureAwait(false);
+                return;
+            }
+
+            try
+            {
+                await foreach (var frame in watch.Frames!.WithCancellation(stop.Token).ConfigureAwait(false))
+                {
+                    if (!writer.TryWrite(frame))
+                    {
+                        break;
+                    }
+
+                    // Let the bounded journal report any actual gap before admitting another frame.
+                    while (writer.Buffered != 0)
+                    {
+                        await Task.Delay(10, stop.Token).ConfigureAwait(false);
+                    }
+                }
+            }
+            catch (OperationCanceledException) when (stop.IsCancellationRequested)
+            {
+            }
+            await writer.CompleteAsync().ConfigureAwait(false);
+        }
+    }
 
     public override Task<V2.NodeServiceSetRemoteGrantResponse> SetRemoteGrant(
         V2.NodeServiceSetRemoteGrantRequest request, ServerCallContext context) =>

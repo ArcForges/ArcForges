@@ -46,9 +46,16 @@ internal sealed partial class DurableCommandStore : IDisposable
         FROM transfer AS t
         JOIN sandbox AS s ON s.sandbox_id=t.sandbox_id AND s.owner_id=t.owner_id
         JOIN command_receipt AS b ON b.owner_id=t.owner_id AND b.owner_epoch=t.owner_epoch AND b.command_id=t.command_id
+        LEFT JOIN remote_command_binding AS rb ON rb.owner_id=b.owner_id AND rb.owner_epoch=b.owner_epoch AND rb.command_id=b.command_id
         WHERE t.direction='import' AND t.state IN (1,2,5) AND t.closed_utc IS NULL
           AND t.staging_identity<>$unbound AND length(t.staging_identity)>0
-          AND json_extract(t.manifest_json,'$.actorId')=t.owner_id AND json_extract(t.manifest_json,'$.grantId') IS NULL
+          AND ((rb.command_id IS NULL AND json_extract(t.manifest_json,'$.actorId')=t.owner_id
+                  AND json_extract(t.manifest_json,'$.grantId') IS NULL)
+               OR (rb.scope_kind='sandbox' AND rb.sandbox_id=t.sandbox_id
+                  AND rb.actor_id=json_extract(t.manifest_json,'$.actorId')
+                  AND rb.grant_id=json_extract(t.manifest_json,'$.grantId')
+                  AND rb.grant_revision=json_extract(t.manifest_json,'$.grantRevision')
+                  AND rb.enrollment_id=json_extract(t.manifest_json,'$.enrollmentId')))
           AND b.method=$beginImport AND b.aggregate_kind='transfer' AND b.aggregate_id=t.transfer_id
           AND b.state='SUCCEEDED' AND b.effect_certainty=2 AND b.safety_parent_command_id IS NULL
           AND NOT EXISTS(SELECT 1 FROM command_receipt AS child

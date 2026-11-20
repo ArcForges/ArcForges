@@ -59,6 +59,13 @@ internal static class TransferRecords
         return rows.Read() ? Read(rows) : null;
     }
 
+    internal static bool MatchesRemote(StoredTransfer row, ReadOnlySpan<byte> ownerEpoch, DurableRemoteBinding binding) =>
+        row.OwnerEpoch.AsSpan().SequenceEqual(ownerEpoch) && MatchesManifestAuthority(row, binding);
+
+    internal static bool HasBoundBeginReceipt(StoreReader reader, StoredTransfer row, DurableRemoteBinding binding) =>
+        ReadPhaseAuthority(reader, row, row.BeginCommandId, PhaseMethod(row.Direction, StoredTransferPhase.Begin))
+            == (true, binding);
+
     internal static IReadOnlyList<StoredTransfer> ListPending(StoreReader reader, string ownerId, int limit, string? after = null) =>
         List(reader, Owned + """
              AND t.closed_utc IS NULL AND json_type(t.manifest_json,'$.pending')='object'
@@ -99,6 +106,9 @@ internal static class TransferRecords
             })
             throw new ArgumentException("A transfer reservation requires its unbound stage and exact Begin journal.", nameof(row));
 
+        if (!HasPhaseAuthority(transaction, row, row.BeginCommandId, PhaseMethod(row.Direction, StoredTransferPhase.Begin)))
+            throw new InvalidOperationException("The Begin receipt does not authorize this transfer actor and scope.");
+
         if (transaction.Execute("""
             INSERT INTO transfer(transfer_id,sandbox_id,owner_id,owner_epoch,command_id,direction,state,manifest_json,
                 staging_identity,byte_length,verified_offset,expected_sha256,expires_utc,effect_certainty)
@@ -127,6 +137,8 @@ internal static class TransferRecords
 
         var witness = after.Manifest.Pending ?? before.Manifest.Pending;
         string? witnessMethod = witness?.CommandId is null ? null : PhaseMethod(before.Direction, witness.Phase);
+        if (!HasPhaseAuthority(transaction, before, witness?.CommandId, witnessMethod))
+            return false;
 
         return transaction.Execute("""
             UPDATE transfer SET state=$state,manifest_json=$manifest,staging_identity=$stage,verified_offset=$offset,
@@ -172,6 +184,43 @@ internal static class TransferRecords
                   AND t.closed_utc IS NULL);
             """, ("$owner", ownerId), ("$epoch", epoch), ("$transfer", transferId), ("$begin", beginCommandId),
             ("$import", BeginImportMethod), ("$export", BeginExportMethod)), 1L);
+
+    private static bool MatchesManifestAuthority(StoredTransfer row, DurableRemoteBinding? binding) =>
+        binding is null ? row.Manifest.GrantId is null
+            : binding.ScopeKind == "sandbox" && binding.SandboxId == row.SandboxId
+                && binding.ActorId == row.Manifest.ActorId && binding.GrantId == row.Manifest.GrantId
+                && binding.GrantRevision == row.Manifest.GrantRevision && binding.EnrollmentId == row.Manifest.EnrollmentId;
+
+    private static bool HasPhaseAuthority(StoreReader reader, StoredTransfer row, string? commandId, string? method)
+    {
+        string beginMethod = PhaseMethod(row.Direction, StoredTransferPhase.Begin);
+        var begin = ReadPhaseAuthority(reader, row, row.BeginCommandId, beginMethod);
+        if (!begin.Found || !MatchesManifestAuthority(row, begin.Binding))
+            return false;
+
+        // Expiry has no caller command. Existing accepted phases may still settle proven effects
+        // after revocation, but only with the original authority retained in their own receipts.
+        return commandId is null || commandId == row.BeginCommandId && method == beginMethod
+            || ReadPhaseAuthority(reader, row, commandId, method!) == begin;
+    }
+
+    private static (bool Found, DurableRemoteBinding? Binding) ReadPhaseAuthority(StoreReader reader, StoredTransfer row,
+        string commandId, string method)
+    {
+        using var command = reader.CreateCommand("""
+            SELECT b.account_id,b.actor_id,b.enrollment_id,b.protocol_epoch,b.grant_id,b.grant_revision,b.scope_kind,b.sandbox_id
+            FROM command_receipt AS r LEFT JOIN remote_command_binding AS b USING(owner_id,owner_epoch,command_id)
+            WHERE r.owner_id=$owner AND r.owner_epoch=$epoch AND r.command_id=$command AND r.method=$method
+              AND r.aggregate_kind='transfer' AND r.aggregate_id=$transfer;
+            """);
+        StoreReader.Bind(command, [("$owner", row.OwnerId), ("$epoch", row.OwnerEpoch), ("$command", commandId),
+            ("$method", method), ("$transfer", row.TransferId)]);
+        using var result = command.ExecuteReader();
+        if (!result.Read()) return default;
+        return (true, result.IsDBNull(0) ? null : new(result.GetString(0), result.GetString(1), result.GetString(2),
+            result.GetString(3), result.GetString(4), result.GetInt64(5), result.GetString(6),
+            result.IsDBNull(7) ? null : result.GetString(7)));
+    }
 
     private static string PhaseMethod(StoredTransferDirection direction, StoredTransferPhase phase) => phase switch
     {
@@ -327,7 +376,9 @@ internal static class TransferRecords
 
     private static bool ValidGrant(string ownerId, StoredTransferManifest manifest) => manifest.GrantId is null
         ? manifest.GrantRevision is null && manifest.EnrollmentId is null && manifest.ActorId == ownerId
-        : Hex(manifest.GrantId, 32) && manifest.GrantRevision > 0 && manifest.EnrollmentId is { } enrollment && Hex(enrollment, 32);
+        : RemoteId(manifest.GrantId) && manifest.GrantRevision > 0 && RemoteId(manifest.EnrollmentId) && RemoteId(manifest.ActorId);
+
+    private static bool RemoteId(string? value) => Hex(value, 32) && value.AsSpan().ContainsAnyExcept('0');
 
     private static bool ValidPending(StoredTransfer row)
     {

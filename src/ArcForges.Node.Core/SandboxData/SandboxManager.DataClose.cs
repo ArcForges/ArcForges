@@ -7,24 +7,26 @@ namespace ArcForges.Node.Core.Sandboxes;
 internal sealed partial class SandboxManager
 {
     private DataMutation CloseDataEffect(RequestMeta meta, StoredTransfer row, DurableIntent intent,
-        CancellationToken cancellationToken)
+        RemoteDataCall? remote, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (row.ClosedAt is not null)
         {
             lock (OwnershipGate)
             {
-                return ResolveDataAdmission(meta, Receipts.AdmitObserved(intent, "SUCCEEDED", (int)EffectCertainty.Happened,
+                RequireRemoteDataCallCurrent(remote);
+                var observed = TrackDataAdmission(remote, () => Receipts.AdmitObserved(intent, "SUCCEEDED", (int)EffectCertainty.Happened,
                     DataReceiptBody(row)));
+                return ResolveDataAdmission(meta, observed, intent.Remote);
             }
         }
 
         var pending = NextDataRow(row, new(StoredTransferPhase.Close, Convert.ToHexStringLower(intent.CommandId),
             TargetIdentity: row.StagingIdentity));
-        var admission = AdmitDataStep(intent, row, pending);
+        var admission = AdmitDataStep(intent, row, pending, remote);
         if (admission.Decision != DurableDecision.Execute)
         {
-            return ResolveDataAdmission(meta, admission);
+            return ResolveDataAdmission(meta, admission, intent.Remote);
         }
 
         try

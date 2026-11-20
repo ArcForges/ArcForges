@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Text.Json;
+
 namespace ArcForges.Node.Store;
 
 /// <summary>Content-free authority at first admission. The associated receipt retains the original owner epoch.</summary>
@@ -40,10 +42,52 @@ internal sealed partial class DurableCommandStore
         if (intent.AggregateKind == "run" && intent.Method != StartRunMethod
             && RunRecords.Get(reader, _owner, intent.AggregateId!)?.SandboxId != binding.SandboxId)
             return false;
+        if (intent.AggregateKind == TransferRecords.Aggregate)
+            return CanAdmitRemoteTransfer(reader, intent, binding, grant, now);
         return intent.Method != StopRunMethod || intent.SafetyParent is null || Equals(reader.Scalar("""
             SELECT method FROM command_receipt WHERE owner_id=$owner AND owner_epoch=$epoch AND command_id=$parent;
             """, ("$owner", _owner), ("$epoch", _fence.Epoch), ("$parent", StoreIds.ToHex(intent.SafetyParent))), StartRunMethod);
     }
+
+    private bool CanAdmitRemoteTransfer(StoreReader reader, DurableIntent intent, DurableRemoteBinding binding,
+        StoredRemoteGrant grant, DateTimeOffset now)
+    {
+        // Core authorizes the live channel and the direction-specific permission. Recheck the
+        // saved enrollment and grant revision in the same FULL transaction as admission.
+        if (!MatchesTransferEnrollment(grant, binding)
+            || grant.ParentGrantId is { } parentId && (RemoteGrantRecords.Get(reader, _owner, parentId) is not
+            { Scope: StoredRemoteGrantScope.Provision } parent
+                || !MatchesTransferEnrollment(parent, binding)))
+            return false;
+
+        if (intent.Method is TransferRecords.BeginImportMethod or TransferRecords.BeginExportMethod)
+            return true;
+        if (TransferRecords.Get(reader, _owner, intent.AggregateId!) is not { } row
+            || !TransferRecords.MatchesRemote(row, intent.OwnerEpoch, binding)
+            || !TransferRecords.HasBoundBeginReceipt(reader, row, binding)
+            || row.Manifest.Pending is not null || row.State == StoredTransferState.RecoveryRequired)
+            return false;
+
+        if (intent.Method == TransferRecords.CloseMethod)
+            return row.ClosedAt is not null ? intent.SafetyParent is null
+                : intent.SafetyParent is { } parentCommand && StoreIds.ToHex(parentCommand) == row.BeginCommandId;
+        return row.Direction == StoredTransferDirection.Import && row.ClosedAt is null && row.ExpiresAt > now
+            && row.State is StoredTransferState.Open or StoredTransferState.Streaming;
+    }
+
+    private static bool MatchesTransferEnrollment(StoredRemoteGrant grant, DurableRemoteBinding binding)
+    {
+        using var policy = JsonDocument.Parse(grant.PolicyJson);
+        return grant.EnrollmentId == binding.EnrollmentId && policy.RootElement.ValueKind == JsonValueKind.Object
+            && policy.RootElement.TryGetProperty("binding", out var enrollment) && enrollment.ValueKind == JsonValueKind.Object
+            && HasEnrollmentValue(enrollment, "owner", grant.OwnerId)
+            && HasEnrollmentValue(enrollment, "enrollment", binding.EnrollmentId)
+            && HasEnrollmentValue(enrollment, "account", binding.AccountId)
+            && HasEnrollmentValue(enrollment, "epoch", binding.ProtocolEpoch);
+    }
+
+    private static bool HasEnrollmentValue(JsonElement enrollment, string key, string expected) =>
+        enrollment.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String && value.ValueEquals(expected);
 
     private void RecordRemoteBinding(StoreTransaction transaction, string commandId, DurableRemoteBinding binding)
     {
@@ -95,6 +139,14 @@ internal sealed partial class DurableCommandStore
             StartRunMethod => intent.AggregateKind == "run" && intent.ExpectedSandboxId == binding.SandboxId,
             StopRunMethod => intent.AggregateKind == "run",
             ResourcePolicyMethod when intent.AggregateKind == "run" => intent.SafetyParent is null,
+            TransferRecords.BeginImportMethod or TransferRecords.BeginExportMethod =>
+                intent is { AggregateKind: TransferRecords.Aggregate, ExpectedSandboxRevision: > 0, SafetyParent: null }
+                && intent.ExpectedSandboxId == binding.SandboxId,
+            TransferRecords.WriteMethod or TransferRecords.CommitMethod =>
+                intent is { AggregateKind: TransferRecords.Aggregate, ExpectedSandboxId: null, ExpectedSandboxRevision: null, SafetyParent: null },
+            TransferRecords.CloseMethod =>
+                intent is { AggregateKind: TransferRecords.Aggregate, ExpectedSandboxId: null, ExpectedSandboxRevision: null },
+            _ when intent.Method?.StartsWith("DataService.", StringComparison.Ordinal) == true => false,
             _ => intent.AggregateKind == "sandbox" && intent.AggregateId == binding.SandboxId,
         };
         if (!valid || !IsRemoteIdentity(intent.AggregateId)

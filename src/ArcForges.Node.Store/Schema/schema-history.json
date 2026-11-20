@@ -149,6 +149,14 @@
       "sha256": "ae5418be78ead33e4490a10710eebc504cbdcc87dfcff1b51554423254b51136",
       "source": "AFV2-CENTER-03 original authenticated remote command binding and target scope.",
       "addedBy": "AFV2-CENTER-03"
+    },
+    {
+      "version": 19,
+      "minReaderVersion": 19,
+      "file": "0019-v2-scoped-events.sql",
+      "sha256": "54367cc308f91cbc2f43eed78829c470f9af2c9de0487c814045d5e94b456e81",
+      "source": "AFV2-CENTER-04 committed metadata-only Sandbox and Run events, with scoped retention cursors.",
+      "addedBy": "AFV2-CENTER-04"
     }
   ]
 }

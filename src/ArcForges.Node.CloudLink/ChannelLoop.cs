@@ -60,6 +60,9 @@ internal interface IChannelHost
     /// <summary>The fixed Node API callback for verified private V2 control requests.</summary>
     Func<V2ControlCall, CancellationToken, Task<ReadOnlyMemory<byte>>>? V2ControlDispatch => null;
 
+    /// <summary>The fixed callback for the separately negotiated stream and Sandbox data selectors.</summary>
+    Func<V2ControlCall, CancellationToken, Task<ReadOnlyMemory<byte>>>? V2StreamDataDispatch => null;
+
     /// <summary>Publishes verified enrollment while the corresponding V2 session is live.</summary>
     void V2EnrollmentChanged(V2ChannelEnrollment? enrollment) { }
 }
@@ -1130,6 +1133,8 @@ internal sealed partial class ChannelLoop : IAsyncDisposable
         public V2ChannelEnrollment? V2Enrollment { get; set; }
 
         public Func<V2ControlCall, CancellationToken, Task<ReadOnlyMemory<byte>>>? V2ControlDispatch { get; set; }
+
+        public Func<V2ControlCall, CancellationToken, Task<ReadOnlyMemory<byte>>>? V2StreamDataDispatch { get; set; }
 
         public SemaphoreSlim V2Refresh { get; } = new(1, 1);
 

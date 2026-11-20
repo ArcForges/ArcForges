@@ -87,6 +87,30 @@ internal sealed partial class SandboxManager
             : new() { Meta = Response(request.Meta), Error = GrantDenied(request.Meta) },
         error => new ResourceServiceGetBudgetResponse { Meta = Response(request.Meta), Error = error }, cancellationToken);
 
+    internal ResourceServiceWatchUsageFrame? PollResourceUsageFromCenter(ResourceServiceWatchUsageRequest request,
+        VerifiedRemoteGrantCall verified, CancellationToken cancellationToken) =>
+        ReadFromCenter<ResourceServiceWatchUsageRequest, ResourceServiceWatchUsageFrame?>(request, request.Meta, verified,
+        RemoteGrantAction.ResourceWatchUsage, ResourceServiceWatchUsageRequest.Parser, Shape.IsValid(request),
+        (grant, _) =>
+        {
+            if (!ValidGrantId(request.ScopeId) || !CoversRemoteTarget(grant, request.ScopeKind, ToHex(request.ScopeId)))
+            {
+                return UsageFailure(GrantDenied(request.Meta));
+            }
+
+            var response = GetResourceBudgetLocked(new() { Meta = request.Meta, ScopeKind = request.ScopeKind, ScopeId = request.ScopeId },
+                _resourceMonitor?.Latest);
+            cancellationToken.ThrowIfCancellationRequested();
+            return !RemoteSandboxAdmissionCurrent(verified, grant, _clock.GetUtcNow()) ? UsageFailure(GrantDenied(request.Meta))
+                : response.Error is { } error ? UsageFailure(error)
+                : response.Value?.Snapshot is { SampleSequence: > 0 } snapshot
+                    ? new ResourceServiceWatchUsageFrame { Meta = response.Meta, Snapshot = snapshot }
+                    : null;
+        }, UsageFailure, cancellationToken);
+
+    private static ResourceServiceWatchUsageFrame UsageFailure(ArcError error) =>
+        new() { Meta = new() { CorrelationId = error.CorrelationId?.Clone() }, Error = error };
+
     internal NodeServiceGetOperationResponse GetOperationFromCenter(NodeServiceGetOperationRequest request,
         VerifiedRemoteGrantCall verified, CancellationToken cancellationToken) => ReadFromCenter(request, request.Meta, verified,
         RemoteGrantAction.GetOperation, NodeServiceGetOperationRequest.Parser,
@@ -175,6 +199,7 @@ internal sealed partial class SandboxManager
                 grant.SandboxId is { } sandbox && receipt.Remote?.SandboxId == sandbox,
             "run" => CoversRemoteTarget(grant, "run", id),
             "grant" => grant.GrantId == id,
+            "transfer" => RemoteDataReceiptVisible(receipt, grant),
             _ => false,
         };
     }

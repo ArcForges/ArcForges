@@ -22,6 +22,8 @@ internal enum V2ChannelKind : byte
     Close,
     ControlRequest,
     ControlResult,
+    DataRequest,
+    DataResult,
 }
 
 internal readonly record struct V2ChannelFrame(V2ChannelKind Kind, ReadOnlyMemory<byte> Payload);
@@ -69,14 +71,16 @@ internal static class V2ChannelProtocol
         return bytes;
     }
 
-    public static bool TryDecode(ReadOnlyMemory<byte> bytes, ulong expectedSequence, out V2ChannelFrame frame, bool controlEnabled = false)
+    public static bool TryDecode(ReadOnlyMemory<byte> bytes, ulong expectedSequence, out V2ChannelFrame frame, bool controlEnabled = false,
+        bool streamDataEnabled = false)
     {
         frame = default;
         var input = bytes.Span;
-        if (input.Length is < HeaderBytes or > CenterChannelClient.MaxFrameBytes || input[0] != Version || expectedSequence == 0 ||
+        var maximumKind = streamDataEnabled ? V2ChannelKind.DataResult : controlEnabled ? V2ChannelKind.ControlResult : V2ChannelKind.Close;
+        if (input.Length is < HeaderBytes or > V2ControlWire.ExtendedFrameLimit || input[0] != Version || expectedSequence == 0 ||
             BinaryPrimitives.ReadUInt64BigEndian(input[2..]) != expectedSequence ||
-            input[1] < (byte)V2ChannelKind.Challenge ||
-            input[1] > (byte)(controlEnabled ? V2ChannelKind.ControlResult : V2ChannelKind.Close))
+            input[1] < (byte)V2ChannelKind.Challenge || input[1] > (byte)maximumKind ||
+            input.Length > CenterChannelClient.MaxFrameBytes && (!streamDataEnabled || !V2ControlWire.IsLargeWritePrefix(input, expectedSequence)))
         {
             return false;
         }
