@@ -87,8 +87,9 @@ internal sealed partial class SandboxManager
             : new() { Meta = Response(request.Meta), Error = GrantDenied(request.Meta) },
         error => new ResourceServiceGetBudgetResponse { Meta = Response(request.Meta), Error = error }, cancellationToken);
 
-    internal ResourceServiceWatchUsageFrame PollResourceUsageFromCenter(ResourceServiceWatchUsageRequest request,
-        VerifiedRemoteGrantCall verified, CancellationToken cancellationToken) => ReadFromCenter(request, request.Meta, verified,
+    internal ResourceServiceWatchUsageFrame? PollResourceUsageFromCenter(ResourceServiceWatchUsageRequest request,
+        VerifiedRemoteGrantCall verified, CancellationToken cancellationToken) =>
+        ReadFromCenter<ResourceServiceWatchUsageRequest, ResourceServiceWatchUsageFrame?>(request, request.Meta, verified,
         RemoteGrantAction.ResourceWatchUsage, ResourceServiceWatchUsageRequest.Parser, Shape.IsValid(request),
         (grant, _) =>
         {
@@ -102,7 +103,9 @@ internal sealed partial class SandboxManager
             cancellationToken.ThrowIfCancellationRequested();
             return !RemoteSandboxAdmissionCurrent(verified, grant, _clock.GetUtcNow()) ? UsageFailure(GrantDenied(request.Meta))
                 : response.Error is { } error ? UsageFailure(error)
-                : new ResourceServiceWatchUsageFrame { Meta = response.Meta, Snapshot = response.Value.Snapshot };
+                : response.Value?.Snapshot is { SampleSequence: > 0 } snapshot
+                    ? new ResourceServiceWatchUsageFrame { Meta = response.Meta, Snapshot = snapshot }
+                    : null;
         }, UsageFailure, cancellationToken);
 
     private static ResourceServiceWatchUsageFrame UsageFailure(ArcError error) =>
