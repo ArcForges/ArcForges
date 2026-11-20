@@ -482,8 +482,9 @@ public sealed partial class MxcRunServiceTests
         await using var firstOutput = new TerminalCliCanvas(first.Output, token);
         var run = await fixture.OnlyNewRunAsync(null, token);
         var runText = IdText.Format(run.RunId);
-        var original = ReadSupervisor(fixture.Node.DataRoot, run);
         var priorLease = await firstOutput.WaitForLeaseAsync(runText, token);
+        Assert.Equal(RunState.Running, (await InspectAsync(fixture.Runs, run.RunId, token)).State);
+        var original = ReadSupervisor(fixture.Node.DataRoot, run);
         await WaitForCliTerminalGeometryAsync(marker, firstOutput, 29, 120, requireAppliedSize: false, token);
         await first.SendAsync(canary, token);
         await WaitMarkerAsync(marker, FormattableString.Invariant($"consumed {canary.Length}"));
