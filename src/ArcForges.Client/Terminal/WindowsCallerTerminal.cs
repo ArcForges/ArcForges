@@ -508,14 +508,16 @@ internal sealed partial class WindowsCallerTerminal : ICallerTerminal
         {
             fixed (char* address = characters)
             {
-                if (!ReadConsole(handle, address, (uint)characters.Length, out uint read, 0))
+                bool succeeded = ReadConsole(handle, address, (uint)characters.Length, out uint read, 0);
+                int error = Marshal.GetLastPInvokeError();
+                // A cooked Ctrl+C can abort a console read even when Win32 returns TRUE.
+                if (error == OperationAborted)
                 {
-                    int error = Marshal.GetLastPInvokeError();
-                    if (error == OperationAborted)
-                    {
-                        cancellationToken.ThrowIfCancellationRequested();
-                    }
+                    throw new OperationCanceledException("The caller console interrupted input.", cancellationToken);
+                }
 
+                if (!succeeded)
+                {
                     throw NativeFailure("read console input", error);
                 }
 

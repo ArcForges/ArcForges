@@ -14,7 +14,7 @@ internal static class TerminalAttachment
 
     internal static bool HasCallerTerminal => !Console.IsInputRedirected && !Console.IsOutputRedirected;
 
-    internal static ArcError CallerTerminalRequired() => V2Cli.Error(ErrorCategory.Execution, "terminal_unavailable",
+    internal static ArcError CallerTerminalRequired() => V2Cli.Error(ErrorCategory.State, "terminal_unavailable",
         "Interactive writing requires a native local input and output terminal.");
 
     internal static async Task<int> AttachAsync(Cli cli, V2CliSession session, Run initial, bool readOnly, bool takeover,
@@ -95,6 +95,7 @@ internal static class TerminalAttachment
         Task<bool>? input = null;
         Task? maintenance = null;
         Run? finished = null;
+        bool interrupted = false;
         ArcError? failure = null;
         ArcError? releaseFailure = null;
         try
@@ -176,9 +177,10 @@ internal static class TerminalAttachment
         {
             failure = exception.Error;
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested || input?.IsCanceled == true)
         {
-            // An explicit local interruption stops forwarding and releases the same lease below.
+            // A cooked native read can observe Ctrl+C before the signal callback runs.
+            interrupted = true;
         }
         catch (RpcException exception)
         {
@@ -249,7 +251,7 @@ internal static class TerminalAttachment
             return Exit(cli, finished);
         }
 
-        if (cancellationToken.IsCancellationRequested)
+        if (interrupted || cancellationToken.IsCancellationRequested)
         {
             cli.Output.Error.WriteLine("Attachment interrupted. The Run remains under Node management.");
             return 130;

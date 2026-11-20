@@ -30,11 +30,12 @@ public sealed partial class MxcRunServiceTests
             fixture.StartArguments(fixture.Payload, "terminal", "tui", marker)))
         {
             await using var canvas = new TerminalCliCanvas(host.Output, tuiToken);
-            await WaitMarkerAsync(marker, "ready 27 93");
             tui = await fixture.OnlyNewRunAsync(null, tuiToken);
             Assert.Equal(TerminalMode.Interactive, tui.TerminalMode);
+            await canvas.WaitForLeaseAsync(IdText.Format(tui.RunId), tuiToken);
             await canvas.WaitForAsync("CORE03", tuiToken);
             await host.RequireActiveModeAsync(tuiToken);
+            await WaitForCliTerminalGeometryAsync(marker, canvas, 27, 93, requireAppliedSize: true, tuiToken);
             host.Resize(35, 107);
             await WaitMarkerAsync(marker, "resize 35 107");
             await canvas.WaitForAsync("35x107", tuiToken);
@@ -94,10 +95,11 @@ public sealed partial class MxcRunServiceTests
             : [fixture.Payload, "terminal", "signal", signalMarker];
         await using var foreground = await fixture.OpenTerminalAsync(28, 97, token, fixture.StartArguments(signal));
         await using var foregroundCanvas = new TerminalCliCanvas(foreground.Output, token);
-        await WaitMarkerAsync(signalMarker, "ready 28 97");
+        var signalRun = await fixture.OnlyNewRunAsync(tui.RunId, token);
+        await foregroundCanvas.WaitForLeaseAsync(IdText.Format(signalRun.RunId), token);
         await foreground.RequireActiveModeAsync(token);
         await foregroundCanvas.WaitForAsync("CORE03 foreground ready", token);
-        var signalRun = await fixture.OnlyNewRunAsync(tui.RunId, token);
+        await WaitForCliTerminalGeometryAsync(signalMarker, foregroundCanvas, 28, 97, requireAppliedSize: false, token);
         await foreground.SendAsync(new byte[] { 3 }, token);
         var result = await fixture.WaitExitedAsync(signalRun.RunId, token);
         int status = await foreground.WaitForExitAsync(token).WaitAsync(NativeBound, token);
@@ -119,6 +121,31 @@ public sealed partial class MxcRunServiceTests
             RequireObservedCliExit(result, 0);
             await RequireUnconfirmedCliZeroAsync(status, foregroundCanvas, token);
         }
+    }
+
+    private static async Task WaitForCliTerminalGeometryAsync(string marker, TerminalCliCanvas canvas, int rows, int columns,
+        bool requireAppliedSize, CancellationToken token)
+    {
+        string size = FormattableString.Invariant($"{rows} {columns}");
+        string ready = "ready " + size;
+        string resize = "resize " + size;
+        string[] observed = [];
+        var elapsed = Stopwatch.StartNew();
+        while (elapsed.Elapsed < NativeBound)
+        {
+            observed = ReadLines(marker);
+            // Start keeps replay-stable 24×80. The native payload may sample before or after the attached writer resizes it.
+            if (observed.Contains(ready, StringComparer.Ordinal)
+                || observed.Contains("ready 24 80", StringComparer.Ordinal)
+                    && (!requireAppliedSize || observed.Contains(resize, StringComparer.Ordinal))) return;
+
+            await Task.Delay(30, token);
+        }
+
+        string geometry = string.Join(", ", observed.Where(line => line.StartsWith("ready ", StringComparison.Ordinal)
+            || line.StartsWith("resize ", StringComparison.Ordinal)).Take(5));
+        Assert.Fail($"Native terminal geometry {size} was not observed (lease confirmed, console output observed; "
+            + $"resize unsupported={canvas.Contains("terminal_mode_unsupported")}; native geometry [{geometry}]).");
     }
 
     private static async Task<ulong> CaptureTerminalCliCursorAsync(RunService.RunServiceClient runs, Run run,
@@ -187,20 +214,16 @@ public sealed partial class MxcRunServiceTests
         var unavailable = await RunInstalledCliAsync(fixture.Node, "run", "start", fixture.SandboxText,
             "--terminal", "on", "--", fixture.Payload, "echo");
         Assert.Equal(5, unavailable.ExitCode);
-        Assert.Contains("terminal_unavailable", Encoding.UTF8.GetString(unavailable.Stderr), StringComparison.Ordinal);
+        Assert.Contains("STATE/terminal_unavailable", Encoding.UTF8.GetString(unavailable.Stderr), StringComparison.Ordinal);
         Assert.Empty(await ListAsync(fixture.Runs, fixture.Sandbox.SandboxId));
 
         var eofMarker = Path.Combine(fixture.Working, "cli-pipe-eof");
         var resume = Path.Combine(fixture.Working, "cli-pipe-release");
         string[] workload = PipeWorkload(fixture, eofMarker, resume);
-        Id? pipeRun = null;
-        using var child = fixture.OpenPipes(fixture.StartArguments(workload, terminal: "off"));
+        var run = await InterruptCookedPipesAsync(fixture, workload, eofMarker, token);
+        using var child = fixture.OpenPipes("run", "attach", IdText.Format(run.RunId));
         try
         {
-            var run = await fixture.OnlyNewRunAsync(null, token);
-            pipeRun = run.RunId;
-            Assert.Equal(TerminalMode.Pipes, run.TerminalMode);
-            await WaitForStateAsync(fixture.Node, fixture.Runs, run.RunId, RunState.Running, token);
             using var output = new MemoryStream();
             using var errors = new MemoryStream();
             var stderr = child.StandardError.BaseStream.CopyToAsync(errors, token);
@@ -244,7 +267,33 @@ public sealed partial class MxcRunServiceTests
             await KillOwnedCliAsync(child);
         }
 
-        await RequirePipesOnCallerTerminalAsync(fixture, Assert.IsType<Id>(pipeRun), token);
+        await RequirePipesOnCallerTerminalAsync(fixture, run.RunId, token);
+    }
+
+    private static async Task<Run> InterruptCookedPipesAsync(TerminalCliFixture fixture, string[] workload, string eofMarker,
+        CancellationToken token)
+    {
+        await using var host = await fixture.OpenTerminalAsync(24, 120, token, fixture.StartArguments(workload, terminal: "off"));
+        await using var display = new TerminalCliCanvas(host.Output, token);
+        var requested = await fixture.OnlyNewRunAsync(null, token);
+        var running = await WaitForStateAsync(fixture.Node, fixture.Runs, requested.RunId, RunState.Running, token);
+        Assert.Equal(TerminalMode.Pipes, running.TerminalMode);
+        await display.WaitForLeaseAsync(IdText.Format(running.RunId), token);
+        await host.RequireUnmodifiedModeAsync(token);
+        var original = ReadSupervisor(fixture.Node.DataRoot, running);
+        Assert.False(File.Exists(eofMarker));
+
+        // Inject actual terminal input while the caller's cooked input mode remains enabled.
+        await host.SendAsync(new byte[] { 3 }, token);
+        Assert.Equal(130, await host.WaitForExitAsync(token).WaitAsync(NativeBound, token));
+        await display.WaitForAsync("Attachment interrupted. The Run remains under Node management.", token);
+        // A Windows same-console observer can receive this processed Ctrl+C too.
+        if (OperatingSystem.IsLinux()) await host.RequireRestoredModeAsync(token);
+
+        Assert.Equal(RunState.Running, (await InspectAsync(fixture.Runs, running.RunId, token)).State);
+        Assert.Equal(original, ReadSupervisor(fixture.Node.DataRoot, running));
+        Assert.False(File.Exists(eofMarker));
+        return running;
     }
 
     private static async Task RequireCliJsonLogStreamsAsync(TestNode fixture, Id run, string[] expected)
@@ -431,11 +480,11 @@ public sealed partial class MxcRunServiceTests
         await using var first = await fixture.OpenTerminalAsync(29, 120, token, fixture.StartArguments(fixture.Payload,
             "terminal", "quiet", marker, expected.ToString(CultureInfo.InvariantCulture), "1200"));
         await using var firstOutput = new TerminalCliCanvas(first.Output, token);
-        await WaitMarkerAsync(marker, "ready 29 120");
         var run = await fixture.OnlyNewRunAsync(null, token);
         var runText = IdText.Format(run.RunId);
         var original = ReadSupervisor(fixture.Node.DataRoot, run);
         var priorLease = await firstOutput.WaitForLeaseAsync(runText, token);
+        await WaitForCliTerminalGeometryAsync(marker, firstOutput, 29, 120, requireAppliedSize: false, token);
         await first.SendAsync(canary, token);
         await WaitMarkerAsync(marker, FormattableString.Invariant($"consumed {canary.Length}"));
 
