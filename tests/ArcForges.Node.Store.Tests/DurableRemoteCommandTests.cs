@@ -135,15 +135,18 @@ public sealed partial class DurableCommandStoreTests
         var binding = CreateRemoteBinding(store, commands, now, scopeKind);
         var revoke = Intent(commands, method: "NodeService.RevokeRemoteGrant") with
         {
-            AggregateKind = "grant", AggregateId = binding.GrantId,
-            Grant = new(binding.GrantRevision, DurableGrantAction.Revoke), Remote = binding,
+            AggregateKind = "grant",
+            AggregateId = binding.GrantId,
+            Grant = new(binding.GrantRevision, DurableGrantAction.Revoke),
+            Remote = binding,
         };
 
         Assert.Throws<ArgumentException>(() => commands.Admit(revoke with { AggregateId = NewRemoteId() }));
         Assert.Throws<ArgumentException>(() => commands.Admit(revoke with { Grant = new(2, DurableGrantAction.Revoke) }));
         Assert.Throws<ArgumentException>(() => commands.Admit(revoke with
         {
-            Method = "NodeService.SetRemoteGrant", Grant = new(1, DurableGrantAction.Replace),
+            Method = "NodeService.SetRemoteGrant",
+            Grant = new(1, DurableGrantAction.Replace),
         }));
         var result = commands.AdmitObserved(revoke, "SUCCEEDED", 2, "{}", tx => Assert.Equal(1,
             RemoteGrantRecords.Revoke(tx, "fixture-owner", binding.GrantId, binding.GrantRevision, now, binding.EnrollmentId)));
