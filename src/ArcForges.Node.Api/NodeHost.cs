@@ -435,6 +435,7 @@ public static class NodeHost
             V2Snapshot = () => DescribeV2Channel(sandboxes),
             V2EnrollmentChanged = enrollment => ObserveV2Enrollment(sandboxes, enrollment),
             V2ControlDispatch = routed.DispatchV2Async,
+            V2StreamDataDispatch = routed.DispatchV2StreamDataAsync,
             Log = log,
             Clock = clock,
             NodeInfo = () => store.Read(reader => DescribeNode(node, reader)),

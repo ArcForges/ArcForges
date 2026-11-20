@@ -20,6 +20,16 @@ internal enum V2ControlSelector : byte
     RunInspect = 11,
     ResourceGetBudget = 12,
     ResourceSetPolicy = 13,
+    RunWatchOutput = 14,
+    NodeWatchEvents = 15,
+    ResourceWatchUsage = 16,
+    DataBeginImport = 17,
+    DataWriteImport = 18,
+    DataCommitImport = 19,
+    DataBeginExport = 20,
+    DataReadExport = 21,
+    DataInspectTransfer = 22,
+    DataCloseTransfer = 23,
 }
 
 internal readonly record struct V2ControlRequestHeader(
@@ -35,7 +45,11 @@ internal readonly record struct V2ControlResult(ReadOnlyMemory<byte> CallId, Rea
     ReadOnlyMemory<byte> SigningInput, ReadOnlyMemory<byte> Signature);
 
 /// <summary>An exact signed request body and its authenticated live channel as observed on receipt.</summary>
-internal sealed record V2ControlCall(V2ControlRequest Request, V2ChannelEnrollment Enrollment, DateTimeOffset ReceivedAt, DateTimeOffset Deadline);
+internal sealed record V2ControlCall(V2ControlRequest Request, V2ChannelEnrollment Enrollment, DateTimeOffset ReceivedAt, DateTimeOffset Deadline)
+{
+    /// <summary>The selected byte limit for the public protobuf response, excluding any private watch marker.</summary>
+    internal int MaximumResponseBodyBytes { get; init; }
+}
 
 internal sealed class V2ControlPreparedFrame(byte[] payloadPrefix, V2ChannelKind kind, ulong sequence,
     ReadOnlyMemory<byte> signingInput, ReadOnlyMemory<byte> requestBinding)
@@ -57,8 +71,12 @@ internal sealed class V2ControlPreparedFrame(byte[] payloadPrefix, V2ChannelKind
 internal static class V2ControlWire
 {
     public const string ControlCapability = "center-control-v2";
+    public const string StreamDataCapability = "center-stream-data-v2";
     public const byte RequestKind = (byte)V2ChannelKind.ControlRequest;
     public const byte ResultKind = (byte)V2ChannelKind.ControlResult;
+    public const int DataBodyLimit = 2 * 1024 * 1024;
+    public const int ExtendedFrameLimit = DataBodyLimit + 512;
+    public const int RequestPrefixBytes = V2ChannelProtocol.HeaderBytes + IdBytes + sizeof(byte);
 
     private const int IdBytes = 16;
     private const int HashBytes = 32;
@@ -92,15 +110,16 @@ internal static class V2ControlWire
     private static ReadOnlySpan<byte> ResultDomain => "ArcForges relay-control-result v2\n"u8;
 
     public static V2ControlPreparedFrame? PrepareRequest(in V2ControlRequestHeader header, ReadOnlySpan<byte> body,
-        ulong sequence, uint maxFrameBytes, DateTimeOffset now)
+        ulong sequence, uint maxFrameBytes, DateTimeOffset now, bool streamDataEnabled = false)
     {
-        if (!ValidRequestHeader(header, now))
+        if (!SelectorAvailable(header.Selector, streamDataEnabled) || !ValidRequestHeader(header, now) ||
+            !ValidLegacyFrameLimit(maxFrameBytes))
         {
             return null;
         }
 
         int metadataLength = KeyOffset + header.KeyId.Length + sizeof(uint);
-        if (sequence == 0 || !CanPrepare(maxFrameBytes, metadataLength, body.Length))
+        if (sequence == 0 || !CanPrepare(RequestFrameLimit(header.Selector, maxFrameBytes), metadataLength, body.Length, header.Selector))
         {
             return null;
         }
@@ -129,14 +148,22 @@ internal static class V2ControlWire
         body.CopyTo(prefix.AsSpan(metadataLength));
 
         var input = SigningInput(RequestDomain, metadata);
-        return new(prefix, V2ChannelKind.ControlRequest, sequence, input, SHA256.HashData(input));
+        return new(prefix, RequestKindFor(header.Selector), sequence, input, SHA256.HashData(input));
     }
 
     public static bool TryDecodeRequest(ReadOnlyMemory<byte> frame, ulong expectedSequence, uint maxFrameBytes, DateTimeOffset now,
-        out V2ControlRequest request)
+        out V2ControlRequest request, bool streamDataEnabled = false)
     {
         request = default;
-        if (!TryPayload(frame, RequestKind, expectedSequence, maxFrameBytes, MinRequestMetadataBytes, out var payload))
+        if (!ValidLegacyFrameLimit(maxFrameBytes) || frame.Length < RequestPrefixBytes)
+        {
+            return false;
+        }
+
+        var selector = (V2ControlSelector)frame.Span[RequestPrefixBytes - 1];
+        if (!SelectorAvailable(selector, streamDataEnabled) ||
+            !TryPayload(frame, (byte)RequestKindFor(selector), expectedSequence, RequestFrameLimit(selector, maxFrameBytes),
+                MinRequestMetadataBytes, out var payload))
         {
             return false;
         }
@@ -150,14 +177,15 @@ internal static class V2ControlWire
             return false;
         }
 
-        var header = new V2ControlRequestHeader(payload[..IdBytes], (V2ControlSelector)bytes[SelectorOffset],
+        var header = new V2ControlRequestHeader(payload[..IdBytes], selector,
             payload.Slice(AccountOffset, IdBytes), payload.Slice(ActorOffset, IdBytes), payload.Slice(NodeOffset, IdBytes),
             payload.Slice(EnrollmentOffset, IdBytes), payload.Slice(ProtocolEpochOffset, IdBytes), payload.Slice(ConnectionOffset, IdBytes),
             payload.Slice(OwnerEpochOffset, IdBytes), payload.Slice(CommandOffset, IdBytes), payload.Slice(GrantOffset, IdBytes),
             BinaryPrimitives.ReadUInt64BigEndian(bytes[GrantRevisionOffset..]), BinaryPrimitives.ReadUInt64BigEndian(bytes[HubFenceOffset..]),
             BinaryPrimitives.ReadInt64BigEndian(bytes[DeadlineOffset..]), payload.Slice(AudienceOffset, HashBytes),
             Encoding.ASCII.GetString(bytes.Slice(KeyOffset, keyBytes)));
-        if (!ValidRequestHeader(header, now) || !TryBody(payload, metadataLength, bodyLengthOffset, RequestDigestOffset, out var body))
+        if (!ValidRequestHeader(header, now) ||
+            !TryBody(payload, metadataLength, bodyLengthOffset, RequestDigestOffset, out var body, selector))
         {
             return false;
         }
@@ -168,17 +196,20 @@ internal static class V2ControlWire
     }
 
     public static V2ControlPreparedFrame? PrepareResult(ReadOnlySpan<byte> callId, ReadOnlySpan<byte> requestBinding, ReadOnlySpan<byte> body,
-        ulong sequence, uint maxFrameBytes) =>
-        sequence == 0 ? null : PrepareResultCore(callId, requestBinding, body, sequence, maxFrameBytes);
+        ulong sequence, uint maxFrameBytes, V2ControlSelector selector = V2ControlSelector.RunStart, bool streamDataEnabled = false) =>
+        sequence == 0 ? null : PrepareResultCore(callId, requestBinding, body, sequence, maxFrameBytes, selector, streamDataEnabled);
 
     /// <summary>Prepares a response whose outer sequence is written by the connected send gate.</summary>
     public static V2ControlPreparedFrame? PrepareResultPayload(ReadOnlySpan<byte> callId, ReadOnlySpan<byte> requestBinding,
-        ReadOnlySpan<byte> body, uint maxFrameBytes) => PrepareResultCore(callId, requestBinding, body, 0, maxFrameBytes);
+        ReadOnlySpan<byte> body, uint maxFrameBytes, V2ControlSelector selector = V2ControlSelector.RunStart, bool streamDataEnabled = false) =>
+        PrepareResultCore(callId, requestBinding, body, 0, maxFrameBytes, selector, streamDataEnabled);
 
     private static V2ControlPreparedFrame? PrepareResultCore(ReadOnlySpan<byte> callId, ReadOnlySpan<byte> requestBinding,
-        ReadOnlySpan<byte> body, ulong sequence, uint maxFrameBytes)
+        ReadOnlySpan<byte> body, ulong sequence, uint maxFrameBytes, V2ControlSelector selector, bool streamDataEnabled)
     {
-        if (!IsId(callId) || requestBinding.Length != HashBytes || !CanPrepare(maxFrameBytes, ResultMetadataBytes, body.Length))
+        if (!SelectorAvailable(selector, streamDataEnabled) || !ValidLegacyFrameLimit(maxFrameBytes) || !IsId(callId) ||
+            requestBinding.Length != HashBytes || !CanPrepare(ResultFrameLimit(selector, maxFrameBytes), ResultMetadataBytes, body.Length, selector) ||
+            !ValidResultBody(selector, body))
         {
             return null;
         }
@@ -190,16 +221,19 @@ internal static class V2ControlWire
         BinaryPrimitives.WriteUInt32BigEndian(metadata[ResultLengthOffset..], (uint)body.Length);
         SHA256.HashData(body, metadata.Slice(ResultDigestOffset, HashBytes));
         body.CopyTo(prefix.AsSpan(ResultMetadataBytes));
-        return new(prefix, V2ChannelKind.ControlResult, sequence, SigningInput(ResultDomain, metadata),
+        return new(prefix, ResultKindFor(selector), sequence, SigningInput(ResultDomain, metadata),
             prefix.AsMemory(ResultBindingOffset, HashBytes));
     }
 
-    public static bool TryDecodeResult(ReadOnlyMemory<byte> frame, ulong expectedSequence, uint maxFrameBytes, out V2ControlResult result)
+    public static bool TryDecodeResult(ReadOnlyMemory<byte> frame, ulong expectedSequence, uint maxFrameBytes, out V2ControlResult result,
+        V2ControlSelector selector = V2ControlSelector.RunStart, bool streamDataEnabled = false)
     {
         result = default;
-        if (!TryPayload(frame, ResultKind, expectedSequence, maxFrameBytes, ResultMetadataBytes, out var payload) ||
-            !IsId(payload.Span[..IdBytes]) ||
-            !TryBody(payload, ResultMetadataBytes, ResultLengthOffset, ResultDigestOffset, out var body))
+        if (!SelectorAvailable(selector, streamDataEnabled) || !ValidLegacyFrameLimit(maxFrameBytes) ||
+            !TryPayload(frame, (byte)ResultKindFor(selector), expectedSequence, ResultFrameLimit(selector, maxFrameBytes), ResultMetadataBytes,
+                out var payload) || !IsId(payload.Span[..IdBytes]) ||
+            !TryBody(payload, ResultMetadataBytes, ResultLengthOffset, ResultDigestOffset, out var body, selector) ||
+            !ValidResultBody(selector, body.Span))
         {
             return false;
         }
@@ -209,8 +243,51 @@ internal static class V2ControlWire
         return true;
     }
 
+    public static bool IsLegacyControl(V2ControlSelector selector) =>
+        selector is >= V2ControlSelector.NodeGetOperation and <= V2ControlSelector.ResourceSetPolicy;
+
+    public static bool IsWatch(V2ControlSelector selector) =>
+        selector is >= V2ControlSelector.RunWatchOutput and <= V2ControlSelector.ResourceWatchUsage;
+
+    public static bool IsData(V2ControlSelector selector) =>
+        selector is >= V2ControlSelector.DataBeginImport and <= V2ControlSelector.DataCloseTransfer;
+
+    /// <summary>Only the exact next WriteImport request can use the negotiated larger receive buffer.</summary>
+    public static bool IsLargeWritePrefix(ReadOnlySpan<byte> frame, ulong expectedSequence) =>
+        frame.Length >= RequestPrefixBytes && expectedSequence != 0 && frame[0] == V2ChannelProtocol.Version
+        && frame[1] == (byte)V2ChannelKind.DataRequest && BinaryPrimitives.ReadUInt64BigEndian(frame[2..]) == expectedSequence
+        && IsId(frame.Slice(V2ChannelProtocol.HeaderBytes, IdBytes)) && frame[RequestPrefixBytes - 1] == (byte)V2ControlSelector.DataWriteImport;
+
+    public static uint ResultFrameLimit(V2ControlSelector selector, uint maxFrameBytes) =>
+        selector == V2ControlSelector.DataReadExport ? ExtendedFrameLimit : maxFrameBytes;
+
+    public static int MaximumResponseBodyBytes(V2ControlSelector selector, uint maxFrameBytes)
+    {
+        if (!ValidLegacyFrameLimit(maxFrameBytes))
+        {
+            return 0;
+        }
+
+        int body = (int)ResultFrameLimit(selector, maxFrameBytes) - V2ChannelProtocol.HeaderBytes - ResultMetadataBytes - SignatureBytes;
+        return IsData(selector) ? Math.Max(0, Math.Min(body, DataBodyLimit)) : Math.Max(0, body - (IsWatch(selector) ? 1 : 0));
+    }
+
+    private static uint RequestFrameLimit(V2ControlSelector selector, uint maxFrameBytes) =>
+        selector == V2ControlSelector.DataWriteImport ? ExtendedFrameLimit : maxFrameBytes;
+
+    private static V2ChannelKind RequestKindFor(V2ControlSelector selector) =>
+        IsData(selector) ? V2ChannelKind.DataRequest : V2ChannelKind.ControlRequest;
+
+    private static V2ChannelKind ResultKindFor(V2ControlSelector selector) =>
+        IsData(selector) ? V2ChannelKind.DataResult : V2ChannelKind.ControlResult;
+
+    private static bool SelectorAvailable(V2ControlSelector selector, bool streamDataEnabled) =>
+        IsLegacyControl(selector) || streamDataEnabled && (IsWatch(selector) || IsData(selector));
+
+    private static bool ValidResultBody(V2ControlSelector selector, ReadOnlySpan<byte> body) =>
+        !IsWatch(selector) || body.Length == 1 && body[0] == 0 || body.Length > 1 && body[0] == 1;
+
     private static bool ValidRequestHeader(in V2ControlRequestHeader header, DateTimeOffset now) =>
-        header.Selector is >= V2ControlSelector.NodeGetOperation and <= V2ControlSelector.ResourceSetPolicy &&
         IsId(header.CallId.Span) && IsId(header.AccountId.Span) && IsId(header.ActorId.Span) && IsId(header.NodeId.Span) &&
         IsId(header.EnrollmentId.Span) && IsId(header.ProtocolEpoch.Span) && IsId(header.ConnectionId.Span) &&
         IsId(header.OriginalOwnerEpoch.Span) && IsId(header.GrantId.Span) && header.CommandId.Length == IdBytes &&
@@ -223,21 +300,26 @@ internal static class V2ControlWire
     private static bool RequiresCommand(V2ControlSelector selector) =>
         selector is V2ControlSelector.NodeGetOperation or V2ControlSelector.NodeRevokeRemoteGrant or
             V2ControlSelector.SandboxCreate or V2ControlSelector.SandboxConfigure or V2ControlSelector.RunStart or
-            V2ControlSelector.RunStop or V2ControlSelector.ResourceSetPolicy;
+            V2ControlSelector.RunStop or V2ControlSelector.ResourceSetPolicy or V2ControlSelector.DataBeginImport or
+            V2ControlSelector.DataWriteImport or V2ControlSelector.DataCommitImport or V2ControlSelector.DataBeginExport or V2ControlSelector.DataCloseTransfer;
 
     private static bool IsId(ReadOnlySpan<byte> value) => value.Length == IdBytes && value.IndexOfAnyExcept((byte)0) >= 0;
 
-    private static bool CanPrepare(uint maxFrameBytes, int metadataLength, int bodyLength) => bodyLength > 0 &&
-        FitsFrame((long)V2ChannelProtocol.HeaderBytes + metadataLength + bodyLength + SignatureBytes, maxFrameBytes);
+    private static bool CanPrepare(uint maxFrameBytes, int metadataLength, int bodyLength, V2ControlSelector selector) =>
+        ValidBodyLength(bodyLength, selector) &&
+        (long)V2ChannelProtocol.HeaderBytes + metadataLength + bodyLength + SignatureBytes <= maxFrameBytes;
 
-    private static bool FitsFrame(long frameBytes, uint maxFrameBytes) => maxFrameBytes <= CenterChannelClient.MaxFrameBytes && frameBytes <= maxFrameBytes;
+    private static bool ValidLegacyFrameLimit(uint maxFrameBytes) => maxFrameBytes is > 0 and <= CenterChannelClient.MaxFrameBytes;
+
+    private static bool ValidBodyLength(int bodyLength, V2ControlSelector selector) =>
+        bodyLength > 0 && (!IsData(selector) || bodyLength <= DataBodyLimit);
 
     private static bool TryPayload(ReadOnlyMemory<byte> frame, byte kind, ulong sequence, uint maxFrameBytes, int minimumMetadata,
         out ReadOnlyMemory<byte> payload)
     {
         payload = default;
         if (sequence == 0 || frame.Length < V2ChannelProtocol.HeaderBytes + minimumMetadata + 1 + SignatureBytes ||
-            !FitsFrame(frame.Length, maxFrameBytes) || frame.Span[0] != V2ChannelProtocol.Version || frame.Span[1] != kind ||
+            frame.Length > maxFrameBytes || frame.Span[0] != V2ChannelProtocol.Version || frame.Span[1] != kind ||
             BinaryPrimitives.ReadUInt64BigEndian(frame.Span[2..]) != sequence)
         {
             return false;
@@ -248,11 +330,11 @@ internal static class V2ControlWire
     }
 
     private static bool TryBody(ReadOnlyMemory<byte> payload, int metadataLength, int lengthOffset, int digestOffset,
-        out ReadOnlyMemory<byte> body)
+        out ReadOnlyMemory<byte> body, V2ControlSelector selector)
     {
         body = default;
         int bodyBytes = payload.Length - metadataLength - SignatureBytes;
-        if (bodyBytes <= 0 || BinaryPrimitives.ReadUInt32BigEndian(payload.Span[lengthOffset..]) != (uint)bodyBytes)
+        if (!ValidBodyLength(bodyBytes, selector) || BinaryPrimitives.ReadUInt32BigEndian(payload.Span[lengthOffset..]) != (uint)bodyBytes)
         {
             return false;
         }

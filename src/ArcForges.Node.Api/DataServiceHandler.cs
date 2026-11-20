@@ -75,7 +75,7 @@ internal sealed class DataServiceHandler(NodeRuntime node) : V2.DataService.Data
         where TRequest : class, IMessage<TRequest>
         where TResponse : class, IMessage<TResponse> =>
         SandboxLocalCalls.Execute(node, context, request, requestMeta,
-            value => ValidLocalMetadata(requestMeta, mutation) && value.CalculateSize() <= MaximumWireBytes && isValid(value)
+            value => ValidMetadata(requestMeta, mutation) && value.CalculateSize() <= MaximumWireBytes && isValid(value)
                 && value.Equals(parser.WithDiscardUnknownFields(true).ParseFrom(value.ToByteArray())),
             (manager, value, cancellation) =>
             {
@@ -86,7 +86,7 @@ internal sealed class DataServiceHandler(NodeRuntime node) : V2.DataService.Data
             },
             fail);
 
-    private static bool ValidLocalMetadata(RequestMeta? meta, bool mutation) =>
+    internal static bool ValidMetadata(RequestMeta? meta, bool mutation) =>
         meta is { ExpectedNative: null, WorkspaceId: null, ApplicationScope: null, HasRecoveryGeneration: false }
         && (mutation
             ? meta is { CommandId: not null, ExpectedRev: { HasValue: true, Value: > 0 } }

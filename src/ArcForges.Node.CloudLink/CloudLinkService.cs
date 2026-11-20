@@ -79,6 +79,8 @@ internal sealed record CloudLinkOptions
 
     internal Func<V2ControlCall, CancellationToken, Task<ReadOnlyMemory<byte>>>? V2ControlDispatch { get; init; }
 
+    internal Func<V2ControlCall, CancellationToken, Task<ReadOnlyMemory<byte>>>? V2StreamDataDispatch { get; init; }
+
     /// <summary>The node log.</summary>
     public required NodeLog Log { get; init; }
 

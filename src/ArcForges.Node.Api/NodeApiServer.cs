@@ -58,6 +58,11 @@ public static class NodeApiServer
         var sandboxDeadline = new LocalRpcCallProfile(TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
         builder.RegisterMethod(SandboxNode, "Handshake", sandboxDeadline);
         builder.RegisterMethod(SandboxNode, "GetOperation", sandboxDeadline);
+        builder.RegisterStream(SandboxNode, "WatchEvents", new LocalRpcStreamProfile
+        {
+            MaxBufferedMessages = SandboxNodeServiceHandler.EventBuffer,
+            RequireReads = TimeSpan.FromSeconds(10),
+        });
         foreach (var method in (ReadOnlySpan<string>)["SetRemoteGrant", "ListRemoteGrants", "RevokeRemoteGrant"])
         {
             builder.RegisterMethod(SandboxNode, method, sandboxDeadline);

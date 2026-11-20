@@ -191,6 +191,10 @@ internal sealed class RoutedContext(IRoutedLink link, NodeLifecycle lifecycle, D
 internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, IDisposable
 {
     private const string Service = "arcforges.node.v1.TaskService";
+    private const int MaximumOutputFrameBytes = 65_536;
+    // The chunk envelope carries the correlation, a bounded Run epoch, stream and two offsets.
+    private const int OutputFrameMetadataBytes = 512;
+    private static readonly byte[] IdleWatch = [0];
     private readonly ConcurrentDictionary<string, CenterCaller> _inFlight = new(StringComparer.Ordinal);
     private TaskServiceHandler? _tasks;
     private WorkspaceServiceHandler? _workspaces;
@@ -220,10 +224,19 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
     internal FileServiceHandler? FileHandlerForTests => Volatile.Read(ref _files);
 
     /// <summary>Dispatches a request admitted by the authenticated V2 channel on its exact live connection.</summary>
-    internal Task<ReadOnlyMemory<byte>> DispatchV2Async(V2ControlCall call, CancellationToken cancellationToken)
+    internal Task<ReadOnlyMemory<byte>> DispatchV2Async(V2ControlCall call, CancellationToken cancellationToken) =>
+        Task.FromResult(DispatchV2(call, streamData: false, cancellationToken));
+
+    /// <summary>Dispatches one typed stream observation or transfer under the separate negotiated capability.</summary>
+    internal Task<ReadOnlyMemory<byte>> DispatchV2StreamDataAsync(V2ControlCall call, CancellationToken cancellationToken) =>
+        Task.FromResult(DispatchV2(call, streamData: true, cancellationToken));
+
+    private ReadOnlyMemory<byte> DispatchV2(V2ControlCall call, bool streamData, CancellationToken cancellationToken)
     {
         node.CountCall();
-        ReadOnlyMemory<byte> result = call.Request.Header.Selector switch
+        return streamData ? StreamData() : Control();
+
+        ReadOnlyMemory<byte> Control() => call.Request.Header.Selector switch
         {
             V2ControlSelector.NodeGetOperation => Route(RemoteGrantAction.GetOperation, V2.NodeServiceGetOperationRequest.Parser, V2Shapes.IsValid,
                 static request => (request.Meta, request.OwnerEpoch, request.CommandId),
@@ -279,16 +292,62 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
                 static (meta, error) => new V2.ResourceServiceSetPolicyResponse { Meta = meta, Error = error }),
             _ => ReadOnlyMemory<byte>.Empty,
         };
-        return Task.FromResult(result);
+
+        ReadOnlyMemory<byte> StreamData() => call.Request.Header.Selector switch
+        {
+            V2ControlSelector.RunWatchOutput => Route(RemoteGrantAction.RunWatchOutput, V2.RunServiceWatchOutputRequest.Parser, V2Shapes.IsValid,
+                static request => (request.Meta, null, null),
+                (manager, request, remote, token) => manager.PollRunOutputFromCenter(request, remote,
+                    Math.Max(1, OutputFrameBytes(call) - OutputFrameMetadataBytes), token),
+                static (meta, error) => new V2.RunServiceWatchOutputFrame { Meta = meta, Error = error }, watch: true),
+            V2ControlSelector.NodeWatchEvents => Route(RemoteGrantAction.WatchEvents, V2.NodeServiceWatchEventsRequest.Parser, V2Shapes.IsValid,
+                static request => (request.Meta, null, null),
+                static (manager, request, remote, token) => manager.PollEventsFromCenter(request, remote, token),
+                static (meta, error) => new V2.NodeServiceWatchEventsFrame { Meta = meta, Error = error }, watch: true),
+            V2ControlSelector.ResourceWatchUsage => Route(RemoteGrantAction.ResourceWatchUsage, V2.ResourceServiceWatchUsageRequest.Parser, V2Shapes.IsValid,
+                static request => (request.Meta, null, null),
+                static (manager, request, remote, token) => manager.PollResourceUsageFromCenter(request, remote, token),
+                static (meta, error) => new V2.ResourceServiceWatchUsageFrame { Meta = meta, Error = error }, watch: true),
+            V2ControlSelector.DataBeginImport => Route(RemoteGrantAction.DataBeginImport, V2.DataServiceBeginImportRequest.Parser, V2Shapes.IsValid,
+                static request => (request.Meta, request.OwnerEpoch, request.Meta?.CommandId),
+                static (manager, request, remote, token) => manager.BeginDataImportFromCenter(request, remote, token),
+                static (meta, error) => new V2.DataServiceBeginImportResponse { Meta = meta, Error = error }),
+            V2ControlSelector.DataWriteImport => Route(RemoteGrantAction.DataWriteImport, V2.DataServiceWriteImportRequest.Parser, V2Shapes.IsValid,
+                static request => (request.Meta, request.OwnerEpoch, request.Meta?.CommandId),
+                static (manager, request, remote, token) => manager.WriteDataImportFromCenter(request, remote, token),
+                static (meta, error) => new V2.DataServiceWriteImportResponse { Meta = meta, Error = error }),
+            V2ControlSelector.DataCommitImport => Route(RemoteGrantAction.DataCommitImport, V2.DataServiceCommitImportRequest.Parser, V2Shapes.IsValid,
+                static request => (request.Meta, request.OwnerEpoch, request.Meta?.CommandId),
+                static (manager, request, remote, token) => manager.CommitDataImportFromCenter(request, remote, token),
+                static (meta, error) => new V2.DataServiceCommitImportResponse { Meta = meta, Error = error }),
+            V2ControlSelector.DataBeginExport => Route(RemoteGrantAction.DataBeginExport, V2.DataServiceBeginExportRequest.Parser, V2Shapes.IsValid,
+                static request => (request.Meta, request.OwnerEpoch, request.Meta?.CommandId),
+                static (manager, request, remote, token) => manager.BeginDataExportFromCenter(request, remote, token),
+                static (meta, error) => new V2.DataServiceBeginExportResponse { Meta = meta, Error = error }),
+            V2ControlSelector.DataReadExport => Route(RemoteGrantAction.DataReadExport, V2.DataServiceReadExportRequest.Parser, V2Shapes.IsValid,
+                static request => (request.Meta, null, null),
+                static (manager, request, remote, token) => manager.ReadDataExportFromCenter(request, remote, token),
+                static (meta, error) => new V2.DataServiceReadExportResponse { Meta = meta, Error = error }),
+            V2ControlSelector.DataInspectTransfer => Route(RemoteGrantAction.DataInspectTransfer, V2.DataServiceInspectTransferRequest.Parser, V2Shapes.IsValid,
+                static request => (request.Meta, null, null),
+                static (manager, request, remote, token) => manager.InspectDataTransferFromCenter(request, remote, token),
+                static (meta, error) => new V2.DataServiceInspectTransferResponse { Meta = meta, Error = error }),
+            V2ControlSelector.DataCloseTransfer => Route(RemoteGrantAction.DataCloseTransfer, V2.DataServiceCloseTransferRequest.Parser, V2Shapes.IsValid,
+                static request => (request.Meta, request.OwnerEpoch, request.Meta?.CommandId),
+                static (manager, request, remote, token) => manager.CloseDataTransferFromCenter(request, remote, token),
+                static (meta, error) => new V2.DataServiceCloseTransferResponse { Meta = meta, Error = error }),
+            _ => ReadOnlyMemory<byte>.Empty,
+        };
 
         ReadOnlyMemory<byte> Route<TRequest, TResponse>(RemoteGrantAction action, MessageParser<TRequest> parser, Func<TRequest, bool> valid,
             Func<TRequest, (RequestMeta? Meta, Id? OwnerEpoch, Id? CommandId)> identify,
-            Func<SandboxManager, TRequest, VerifiedRemoteGrantCall, CancellationToken, TResponse> execute,
-            Func<ResponseMeta, ArcError, TResponse> refuse)
+            Func<SandboxManager, TRequest, VerifiedRemoteGrantCall, CancellationToken, TResponse?> execute,
+            Func<ResponseMeta, ArcError, TResponse> refuse, bool watch = false)
             where TRequest : class, IMessage<TRequest>
             where TResponse : class, IMessage<TResponse>
         {
             var header = call.Request.Header;
+            bool hasSignedCommand = header.CommandId.Span.IndexOfAnyExcept((byte)0) >= 0;
             RequestMeta? meta = null;
             cancellationToken.ThrowIfCancellationRequested();
             TRequest request;
@@ -301,6 +360,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
                 (meta, ownerEpoch, commandId) = identify(request);
                 if (!valid(request) || !V2Shapes.IsValid(meta?.CorrelationId) ||
                     !request.Equals(parser.WithDiscardUnknownFields(true).ParseFrom(exactBody)) ||
+                    (streamData && !DataServiceHandler.ValidMetadata(meta, hasSignedCommand)) ||
                     ((commandId is null || action == RemoteGrantAction.GetOperation) && meta?.CommandId is not null))
                 {
                     return Refused(NodeErrors.InvalidArgument("remote_request_shape_invalid"));
@@ -311,7 +371,6 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
                 return Refused(NodeErrors.InvalidArgument("remote_request_shape_invalid"));
             }
 
-            bool hasSignedCommand = header.CommandId.Span.IndexOfAnyExcept((byte)0) >= 0;
             if (hasSignedCommand != (commandId is not null && ownerEpoch is not null) ||
                 (ownerEpoch is not null && !ownerEpoch.Value.Span.SequenceEqual(header.OriginalOwnerEpoch.Span)) ||
                 (commandId is not null && !commandId.Value.Span.SequenceEqual(header.CommandId.Span)))
@@ -339,8 +398,19 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
                 Convert.ToHexStringLower(header.GrantId.Span), checked((long)header.GrantRevision), action,
                 call.ReceivedAt, call.Deadline, ByteString.CopyFrom(SHA256.HashData(request.ToByteArray())), channel, header.OriginalOwnerEpoch);
             var response = execute(manager, request, remote, cancellationToken);
+            if (response is null)
+            {
+                return watch ? IdleWatch : ReadOnlyMemory<byte>.Empty;
+            }
+
             CompleteV2Error(V2ReplyError(response), node.Clock.GetUtcNow());
-            return response.ToByteArray();
+            if (watch && response.CalculateSize() > (action == RemoteGrantAction.RunWatchOutput
+                ? OutputFrameBytes(call) : call.MaximumResponseBodyBytes))
+            {
+                return Refused(NodeErrors.Overloaded(node.Clock.GetUtcNow()));
+            }
+
+            return Encode(response);
 
             ReadOnlyMemory<byte> Refused(ArcError error)
             {
@@ -351,10 +421,37 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
                 CompleteV2Error(error, node.Clock.GetUtcNow());
                 node.Log.Warning("center.control.routed_refused", new LogField("method", action.ToString()),
                     new LogField("callId", Convert.ToHexStringLower(header.CallId.Span)), new LogField("code", error.Code));
-                return refuse(new ResponseMeta { CorrelationId = correlation }, error).ToByteArray();
+                return Encode(refuse(new ResponseMeta { CorrelationId = correlation }, error));
+            }
+
+            ReadOnlyMemory<byte> Encode(TResponse response)
+            {
+                // Let the verified caller reconcile an effect if its result cannot fit. An oversized response
+                // never becomes a typed refusal claiming that an already admitted transfer had no effect.
+                if (streamData)
+                {
+                    int size = response.CalculateSize();
+                    if (size == 0 || size > call.MaximumResponseBodyBytes)
+                    {
+                        return ReadOnlyMemory<byte>.Empty;
+                    }
+                }
+
+                var body = response.ToByteArray();
+                if (!watch)
+                {
+                    return body;
+                }
+
+                var frame = new byte[body.Length + 1];
+                frame[0] = 1;
+                body.CopyTo(frame, 1);
+                return frame;
             }
         }
     }
+
+    private static int OutputFrameBytes(V2ControlCall call) => Math.Min(call.MaximumResponseBodyBytes, MaximumOutputFrameBytes);
 
     private static ArcError? V2ReplyError(IMessage reply) => reply switch
     {
@@ -371,6 +468,16 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
         V2.RunServiceInspectResponse value => value.Error,
         V2.ResourceServiceGetBudgetResponse value => value.Error,
         V2.ResourceServiceSetPolicyResponse value => value.Error,
+        V2.RunServiceWatchOutputFrame value => value.Error,
+        V2.NodeServiceWatchEventsFrame value => value.Error,
+        V2.ResourceServiceWatchUsageFrame value => value.Error,
+        V2.DataServiceBeginImportResponse value => value.Error,
+        V2.DataServiceWriteImportResponse value => value.Error,
+        V2.DataServiceCommitImportResponse value => value.Error,
+        V2.DataServiceBeginExportResponse value => value.Error,
+        V2.DataServiceReadExportResponse value => value.Error,
+        V2.DataServiceInspectTransferResponse value => value.Error,
+        V2.DataServiceCloseTransferResponse value => value.Error,
         _ => null,
     };
 
@@ -391,8 +498,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
         {
             case (ErrorCategory.State, "busy", EffectCertainty.DidNotHappen):
             case (ErrorCategory.Resource, "budget_unavailable", EffectCertainty.DidNotHappen):
-            case (ErrorCategory.Resource, "disk_space", EffectCertainty.DidNotHappen)
-                when error.Details?.State?.Reason == "durable_receipt_capacity":
+            case (ErrorCategory.Resource, "disk_space", EffectCertainty.DidNotHappen):
                 if (error.Retry is not
                     {
                         Mode: RetryMode.AfterTime,

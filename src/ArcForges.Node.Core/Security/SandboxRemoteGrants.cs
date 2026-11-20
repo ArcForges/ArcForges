@@ -415,13 +415,13 @@ namespace ArcForges.Node.Core.Sandboxes
         }
 
         private StoredRemoteGrant? AuthorizedGrant(StoreReader reader, VerifiedRemoteGrantCall remote, IMessage request,
-            RemoteGrantAction action, string requiredGrantId, DateTimeOffset now)
+            RemoteGrantAction action, string requiredGrantId, DateTimeOffset now, int maximumRequestBytes = 1_048_576)
         {
             if (!RemoteChannelCurrent(remote) || !IsRemoteGrantIdentity(remote.ActorId) || !IsRemoteGrantIdentity(remote.GrantId)
                 || remote.GrantId != requiredGrantId || remote.Revision <= 0 || remote.Action != action
                 || remote.OriginalOwnerEpoch.Length != 16 || !remote.OriginalOwnerEpoch.Span.ContainsAnyExcept((byte)0)
                 || remote.IssuedAt > now || remote.ExpiresAt <= now || remote.ExpiresAt - remote.IssuedAt > TimeSpan.FromMinutes(5)
-                || request.CalculateSize() > 1_048_576
+                || maximumRequestBytes is < 1 or > 2_097_152 || request.CalculateSize() > maximumRequestBytes
                 || !CryptographicOperations.FixedTimeEquals(remote.BodySha256.Span, SHA256.HashData(request.ToByteArray())))
             {
                 return null;

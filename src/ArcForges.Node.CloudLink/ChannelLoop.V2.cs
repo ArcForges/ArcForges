@@ -14,6 +14,7 @@ internal sealed partial class ChannelLoop
     private const int MaxV2ControlCalls = 8;
     private const long LastUtcMillisecond = 253402300799999L;
     private static readonly TimeSpan V2ControlCallTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan V2DataCallTimeout = TimeSpan.FromSeconds(30);
 
     private static bool SameChannelAuthority(ChannelTicket opened, ChannelTicket? current) =>
         current is not null && opened.UseV2 == current.UseV2 && opened.Center.Url == current.Center.Url &&
@@ -50,10 +51,17 @@ internal sealed partial class ChannelLoop
         }
 
         var dispatch = _host.V2ControlDispatch;
-        var capabilities = snapshot.Capabilities.Where(capability => capability != V2ControlWire.ControlCapability);
+        var streamDataDispatch = _host.V2StreamDataDispatch;
+        var capabilities = snapshot.Capabilities.Where(capability =>
+            capability is not (V2ControlWire.ControlCapability or V2ControlWire.StreamDataCapability));
         if (dispatch is not null)
         {
             capabilities = capabilities.Append(V2ControlWire.ControlCapability);
+        }
+
+        if (streamDataDispatch is not null)
+        {
+            capabilities = capabilities.Append(V2ControlWire.StreamDataCapability);
         }
 
         snapshot = snapshot with { Capabilities = capabilities.ToArray() };
@@ -83,6 +91,7 @@ internal sealed partial class ChannelLoop
         session.V2Limits = limits;
         session.V2Enrollment = enrollment;
         session.V2ControlDispatch = dispatch;
+        session.V2StreamDataDispatch = streamDataDispatch;
         session.Accepted = true;
         StartV2TokenRefresh(session);
         return null;
@@ -118,12 +127,12 @@ internal sealed partial class ChannelLoop
                     continue;
                 }
 
-                if (received.Frame.Kind != V2ChannelKind.ControlRequest || session.V2ControlDispatch is not { } dispatch)
+                if (received.Frame.Kind is not (V2ChannelKind.ControlRequest or V2ChannelKind.DataRequest))
                 {
                     return await ProtocolErrorAsync(session, "v2_unexpected_frame").ConfigureAwait(false);
                 }
 
-                if (!StartV2Control(session, dispatch, received.Bytes, session.V2ReceivedSequence))
+                if (!StartV2Control(session, received.Bytes, session.V2ReceivedSequence))
                 {
                     session.Ending = true;
                     _nodeLog.Warning("cloud.channel.v2_control_refused", new LogField("reason", "control_capacity"));
@@ -140,19 +149,22 @@ internal sealed partial class ChannelLoop
     private async Task<(V2ChannelFrame Frame, ReadOnlyMemory<byte> Bytes, ChannelEnd? End)> ReceiveV2Async(
         Session session, CancellationToken cancellationToken)
     {
-        var bytes = await session.Client.ReceiveAsync(cancellationToken).ConfigureAwait(false);
+        ulong sequence = checked(session.V2ReceivedSequence + 1);
+        bool streamDataEnabled = session.Accepted && session.V2StreamDataDispatch is not null;
+        uint maxFrameBytes = session.Accepted ? session.V2Limits.MaxFrameBytes : CenterChannelClient.MaxFrameBytes;
+        var bytes = await session.Client.ReceiveV2Async(maxFrameBytes, streamDataEnabled ? sequence : 0, cancellationToken).ConfigureAwait(false);
         if (bytes is null)
         {
             return (default, default, ChannelPolicy.Closed((int?)session.Client.CloseStatus ?? 1006, null));
         }
 
-        if (!V2ChannelProtocol.TryDecode(bytes, checked(++session.V2ReceivedSequence), out var frame,
-                controlEnabled: session.Accepted && session.V2ControlDispatch is not null) ||
-            session.Accepted && bytes.Length > session.V2Limits.MaxFrameBytes)
+        if (!V2ChannelProtocol.TryDecode(bytes, sequence, out var frame,
+                controlEnabled: session.Accepted && session.V2ControlDispatch is not null, streamDataEnabled: streamDataEnabled))
         {
             return (default, default, await ProtocolErrorAsync(session, "v2_protocol_or_sequence").ConfigureAwait(false));
         }
 
+        session.V2ReceivedSequence = sequence;
         if (frame.Kind != V2ChannelKind.Close)
         {
             return (frame, bytes, null);
@@ -174,8 +186,7 @@ internal sealed partial class ChannelLoop
         return (default, default, end);
     }
 
-    private bool StartV2Control(Session session, Func<V2ControlCall, CancellationToken, Task<ReadOnlyMemory<byte>>> dispatch,
-        ReadOnlyMemory<byte> frame, ulong sequence)
+    private bool StartV2Control(Session session, ReadOnlyMemory<byte> frame, ulong sequence)
     {
         if (!session.V2ControlSlots.Wait(0))
         {
@@ -194,7 +205,7 @@ internal sealed partial class ChannelLoop
 
             try
             {
-                await AnswerV2ControlAsync(session, dispatch, frame, sequence, receivedAt, receivedTimestamp).ConfigureAwait(false);
+                await AnswerV2ControlAsync(session, frame, sequence, receivedAt, receivedTimestamp).ConfigureAwait(false);
             }
             finally
             {
@@ -212,8 +223,8 @@ internal sealed partial class ChannelLoop
         return added;
     }
 
-    private async Task AnswerV2ControlAsync(Session session, Func<V2ControlCall, CancellationToken, Task<ReadOnlyMemory<byte>>> dispatch,
-        ReadOnlyMemory<byte> frame, ulong sequence, DateTimeOffset receivedAt, long receivedTimestamp)
+    private async Task AnswerV2ControlAsync(Session session, ReadOnlyMemory<byte> frame, ulong sequence, DateTimeOffset receivedAt,
+        long receivedTimestamp)
     {
         try
         {
@@ -222,8 +233,19 @@ internal sealed partial class ChannelLoop
                 return;
             }
 
-            if (!V2ControlWire.TryDecodeRequest(frame, sequence, session.V2Limits.MaxFrameBytes, receivedAt, out var request) ||
-                !TryV2ControlDeadline(request.Header.DeadlineUnixMilliseconds, receivedAt, out var signedDeadline))
+            bool extended = session.V2StreamDataDispatch is not null;
+            if (!V2ControlWire.TryDecodeRequest(frame, sequence, session.V2Limits.MaxFrameBytes, receivedAt, out var request,
+                    streamDataEnabled: extended))
+            {
+                RefuseV2Control(session, "control_frame_or_deadline");
+                return;
+            }
+
+            var selector = request.Header.Selector;
+            var dispatch = V2ControlWire.IsLegacyControl(selector) ? session.V2ControlDispatch : session.V2StreamDataDispatch;
+            bool data = V2ControlWire.IsData(selector);
+            var timeout = data && selector != V2ControlSelector.DataInspectTransfer ? V2DataCallTimeout : V2ControlCallTimeout;
+            if (dispatch is null || !TryV2ControlDeadline(request.Header.DeadlineUnixMilliseconds, receivedAt, timeout, out var signedDeadline))
             {
                 RefuseV2Control(session, "control_frame_or_deadline");
                 return;
@@ -254,7 +276,7 @@ internal sealed partial class ChannelLoop
             }
 
             var signedRemaining = signedDeadline - _clock.GetUtcNow();
-            var localRemaining = V2ControlCallTimeout - _clock.GetElapsedTime(receivedTimestamp);
+            var localRemaining = timeout - _clock.GetElapsedTime(receivedTimestamp);
             var remaining = signedRemaining < localRemaining ? signedRemaining : localRemaining;
             if (remaining <= TimeSpan.Zero)
             {
@@ -264,7 +286,11 @@ internal sealed partial class ChannelLoop
             using var expired = new CancellationTokenSource(remaining, _clock);
             using var active = CancellationTokenSource.CreateLinkedTokenSource(expired.Token, session.Token, session.EffectsEnding);
             active.Token.ThrowIfCancellationRequested();
-            var response = await dispatch(new(request, enrollment, receivedAt, signedDeadline), active.Token).ConfigureAwait(false);
+            var call = new V2ControlCall(request, enrollment, receivedAt, signedDeadline)
+            {
+                MaximumResponseBodyBytes = V2ControlWire.MaximumResponseBodyBytes(selector, session.V2Limits.MaxFrameBytes),
+            };
+            var response = await dispatch(call, active.Token).ConfigureAwait(false);
             active.Token.ThrowIfCancellationRequested();
             if (!CurrentV2ControlSession(session))
             {
@@ -272,7 +298,7 @@ internal sealed partial class ChannelLoop
             }
 
             var result = V2ControlWire.PrepareResultPayload(request.Header.CallId.Span, request.RequestBinding.Span,
-                response.Span, session.V2Limits.MaxFrameBytes);
+                response.Span, session.V2Limits.MaxFrameBytes, selector, streamDataEnabled: extended);
             if (result is null)
             {
                 RefuseV2Control(session, "control_result_unavailable");
@@ -294,7 +320,10 @@ internal sealed partial class ChannelLoop
 
             if (CurrentV2ControlSession(session))
             {
-                await session.Client.SendV2Async(V2ChannelKind.ControlResult, signedPayload, active.Token).ConfigureAwait(false);
+                var send = data
+                    ? session.Client.SendV2DataResultAsync(selector, signedPayload, session.V2Limits.MaxFrameBytes, active.Token)
+                    : session.Client.SendV2Async(V2ChannelKind.ControlResult, signedPayload, active.Token);
+                await send.ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException)
@@ -311,12 +340,12 @@ internal sealed partial class ChannelLoop
         session.Accepted && !session.Ending && !session.Token.IsCancellationRequested && !_host.Stopping &&
         Volatile.Read(ref _publishedV2Session) == session && SameChannelAuthority(session.Ticket, _host.Ticket().Ticket);
 
-    private static bool TryV2ControlDeadline(long deadline, DateTimeOffset receivedAt, out DateTimeOffset signedDeadline)
+    private static bool TryV2ControlDeadline(long deadline, DateTimeOffset receivedAt, TimeSpan timeout, out DateTimeOffset signedDeadline)
     {
         signedDeadline = default;
         long received = receivedAt.ToUnixTimeMilliseconds();
         if (deadline <= received || deadline > LastUtcMillisecond ||
-            deadline - received > (long)(V2ControlCallTimeout + CallVerifier.Skew).TotalMilliseconds)
+            deadline - received > (long)(timeout + CallVerifier.Skew).TotalMilliseconds)
         {
             return false;
         }

@@ -6,15 +6,19 @@ using System.Runtime.Versioning;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Sandbox.V2;
 using ArcForges.Node.Core.Platform;
+using ArcForges.Node.Core.Security;
 using ArcForges.Node.Store;
 using ArcForges.RunSupervisor.Protocol;
 using Google.Protobuf;
 using Microsoft.Win32.SafeHandles;
+using Shape = ArcForges.Contracts.Sandbox.V2.Shapes.ContractShapeValidation;
 
 namespace ArcForges.Node.Core.Sandboxes;
 
 internal sealed partial class SandboxManager
 {
+    private const int MaximumOutputPollBytes = 65_536;
+
     internal async IAsyncEnumerable<RunServiceWatchOutputFrame> WatchRunOutputAsync(RunServiceWatchOutputRequest request,
         Action<string, StreamKind>? audit,
         [EnumeratorCancellation] CancellationToken cancellationToken)
@@ -44,8 +48,30 @@ internal sealed partial class SandboxManager
         }
     }
 
+    internal RunServiceWatchOutputFrame? PollRunOutputFromCenter(RunServiceWatchOutputRequest request,
+        VerifiedRemoteGrantCall verified, int maximumBytes, CancellationToken cancellationToken) =>
+        ReadFromCenter<RunServiceWatchOutputRequest, RunServiceWatchOutputFrame?>(request, request.Meta, verified,
+            RemoteGrantAction.RunWatchOutput, RunServiceWatchOutputRequest.Parser,
+            Shape.IsValid(request) && ValidGrantId(request.RunId) && maximumBytes is >= 1 and <= MaximumOutputPollBytes,
+            (grant, _) =>
+            {
+                string runId = ToHex(request.RunId);
+                if (!CoversRemoteTarget(grant, "run", runId))
+                {
+                    return Failure(GrantDenied(request.Meta));
+                }
+
+                Action<string, StreamKind>? audit = null;
+                var poll = PollRunOutput(request, runId, request.HasEpoch ? request.Epoch : null, request.Offset, ref audit, maximumBytes);
+                cancellationToken.ThrowIfCancellationRequested();
+                return RemoteSandboxAdmissionCurrent(verified, grant, _clock.GetUtcNow()) ? poll.Frame : Failure(GrantDenied(request.Meta));
+            }, Failure, cancellationToken);
+
+    private static RunServiceWatchOutputFrame Failure(ArcError error) =>
+        new() { Meta = new() { CorrelationId = error.CorrelationId?.Clone() }, Error = error };
+
     private OutputPoll PollRunOutput(RunServiceWatchOutputRequest request, string runId, string? epoch, ulong offset,
-        ref Action<string, StreamKind>? audit)
+        ref Action<string, StreamKind>? audit, int maximumBytes = MaximumOutputPollBytes)
     {
         try
         {
@@ -71,7 +97,7 @@ internal sealed partial class SandboxManager
             }
 
             var meta = Response(request.Meta, row.Revision);
-            var result = ReadProtectedRunOutput(new(runId, row.Epoch, row.LaunchSha256, mode), stream, epoch, offset);
+            var result = ReadProtectedRunOutput(new(runId, row.Epoch, row.LaunchSha256, mode), stream, epoch, offset, maximumBytes);
             bool finished = row.State is StoredRunState.Exited or StoredRunState.Failed;
             switch (result.Status)
             {
@@ -125,7 +151,8 @@ internal sealed partial class SandboxManager
         OutputPoll Failure(ArcError error) => new(new() { Meta = Response(request.Meta), Error = error });
     }
 
-    private RunOutputReadResult ReadProtectedRunOutput(RunOutputIdentity identity, RunOutputStream stream, string? epoch, ulong offset)
+    private RunOutputReadResult ReadProtectedRunOutput(RunOutputIdentity identity, RunOutputStream stream, string? epoch, ulong offset,
+        int maximumBytes)
     {
         _roots.ValidateControlPaths();
         using var data = WorkspacePath.OpenRoot(_dataRoot);
@@ -134,7 +161,7 @@ internal sealed partial class SandboxManager
         try
         {
             using var output = control.OpenSandboxDirectory("run-" + identity.RunId);
-            return RunOutputSpool.Read(identity, name => OpenRunOutputLeaf(output, name), stream, epoch, offset);
+            return RunOutputSpool.Read(identity, name => OpenRunOutputLeaf(output, name), stream, epoch, offset, maximumBytes);
         }
         catch (WorkspacePathException error) when (error.Reason is "native_2" or "native_3")
         {

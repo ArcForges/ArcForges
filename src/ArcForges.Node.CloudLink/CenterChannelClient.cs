@@ -175,7 +175,22 @@ internal sealed class CenterChannelClient : IAsyncDisposable
     internal Task SendV2Async(V2ChannelKind kind, ReadOnlyMemory<byte> payload, CancellationToken cancellationToken) =>
         SendFrameAsync(isV2: true, sequence => V2ChannelProtocol.Encode(kind, sequence, payload.Span), cancellationToken);
 
-    private async Task SendFrameAsync(bool isV2, Func<ulong, byte[]> encode, CancellationToken cancellationToken)
+    internal Task SendV2DataResultAsync(V2ControlSelector selector, ReadOnlyMemory<byte> payload, uint maxFrameBytes,
+        CancellationToken cancellationToken)
+    {
+        RequireV2BaseFrameLimit(maxFrameBytes);
+        if (!V2ControlWire.IsData(selector))
+        {
+            throw new ArgumentOutOfRangeException(nameof(selector));
+        }
+
+        var limit = checked((int)V2ControlWire.ResultFrameLimit(selector, maxFrameBytes));
+        return SendFrameAsync(isV2: true, sequence => V2ChannelProtocol.Encode(V2ChannelKind.DataResult, sequence, payload.Span),
+            cancellationToken, limit);
+    }
+
+    private async Task SendFrameAsync(bool isV2, Func<ulong, byte[]> encode, CancellationToken cancellationToken,
+        int maxFrameBytes = MaxFrameBytes)
     {
         if (isV2 != _useV2)
         {
@@ -188,7 +203,7 @@ internal sealed class CenterChannelClient : IAsyncDisposable
             var sequence = checked(_sequence + 1);
             _sequence = sequence;
             var bytes = encode((ulong)sequence);
-            if (bytes.Length > MaxFrameBytes)
+            if (bytes.Length > maxFrameBytes)
             {
                 throw new InvalidOperationException("A frame larger than the channel's frame bound is never sent.");
             }
@@ -211,7 +226,24 @@ internal sealed class CenterChannelClient : IAsyncDisposable
     /// Receives one whole binary message of at most <see cref="MaxFrameBytes"/>; <see langword="null"/> when the center closed the
     /// channel. A larger or a text message throws <see cref="WebSocketException"/> (the channel then closes).
     /// </summary>
-    public async Task<byte[]?> ReceiveAsync(CancellationToken cancellationToken)
+    public Task<byte[]?> ReceiveAsync(CancellationToken cancellationToken) =>
+        ReceiveFrameAsync(MaxFrameBytes, 0, cancellationToken);
+
+    internal Task<byte[]?> ReceiveV2Async(uint maxFrameBytes, ulong largeWriteSequence, CancellationToken cancellationToken)
+    {
+        RequireV2BaseFrameLimit(maxFrameBytes);
+        return ReceiveFrameAsync((int)maxFrameBytes, largeWriteSequence, cancellationToken);
+    }
+
+    private void RequireV2BaseFrameLimit(uint maxFrameBytes)
+    {
+        if (!_useV2 || maxFrameBytes is 0 or > MaxFrameBytes)
+        {
+            throw new InvalidOperationException("The negotiated base frame limit must match an authenticated V2 connection.");
+        }
+    }
+
+    private async Task<byte[]?> ReceiveFrameAsync(int frameLimit, ulong largeWriteSequence, CancellationToken cancellationToken)
     {
         var buffer = new ArrayBufferWriter();
         while (true)
@@ -222,12 +254,30 @@ internal sealed class CenterChannelClient : IAsyncDisposable
                 return null;
             }
 
-            if (result.MessageType != WebSocketMessageType.Binary || buffer.Length + result.Count > MaxFrameBytes)
+            if (result.MessageType != WebSocketMessageType.Binary)
             {
-                throw new WebSocketException(WebSocketError.InvalidMessageType, "The channel carries binary frames of at most 1 MiB.");
+                throw new WebSocketException(WebSocketError.InvalidMessageType, "The channel carries only binary frames.");
             }
 
-            buffer.Write(_receive.AsSpan(0, result.Count));
+            var incoming = _receive.AsSpan(0, result.Count);
+            int total = buffer.Length + incoming.Length;
+            if (largeWriteSequence != 0 && total >= V2ControlWire.RequestPrefixBytes)
+            {
+                // Only the fixed prefix can select the extended frame bound, before buffering the remaining message.
+                if (buffer.HasLargeWritePrefix(incoming, largeWriteSequence))
+                {
+                    frameLimit = V2ControlWire.ExtendedFrameLimit;
+                }
+
+                largeWriteSequence = 0;
+            }
+
+            if (total > frameLimit)
+            {
+                throw new WebSocketException(WebSocketError.InvalidMessageType, "The frame exceeds its channel limit.");
+            }
+
+            buffer.Write(incoming, frameLimit);
             if (result.EndOfMessage)
             {
                 return buffer.ToArray();
@@ -276,11 +326,19 @@ internal sealed class CenterChannelClient : IAsyncDisposable
 
         public int Length { get; private set; }
 
-        public void Write(ReadOnlySpan<byte> data)
+        public bool HasLargeWritePrefix(ReadOnlySpan<byte> incoming, ulong sequence)
+        {
+            Span<byte> prefix = stackalloc byte[V2ControlWire.RequestPrefixBytes];
+            _bytes.AsSpan(0, Length).CopyTo(prefix);
+            incoming[..(prefix.Length - Length)].CopyTo(prefix[Length..]);
+            return V2ControlWire.IsLargeWritePrefix(prefix, sequence);
+        }
+
+        public void Write(ReadOnlySpan<byte> data, int frameLimit)
         {
             if (Length + data.Length > _bytes.Length)
             {
-                Array.Resize(ref _bytes, Math.Max(_bytes.Length * 2, Length + data.Length));
+                Array.Resize(ref _bytes, Math.Min(frameLimit, Math.Max(_bytes.Length * 2, Length + data.Length)));
             }
 
             data.CopyTo(_bytes.AsSpan(Length));

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Security.Cryptography;
+using ArcForges.Contracts.Sandbox.V2;
+using Google.Protobuf;
 
 namespace ArcForges.Node.CloudLink.Tests;
 
@@ -160,4 +162,97 @@ public sealed class RemoteManagementV2WireTests
         CloudIdentity.NormalizeLowS(key.SignData(input, HashAlgorithmName.SHA256, DSASignatureFormat.IeeeP1363FixedFieldConcatenation));
 
     private static string Sha(ReadOnlySpan<byte> input) => Convert.ToHexStringLower(SHA256.HashData(input));
+
+    [Theory]
+    [InlineData(14, false,
+        "126d9abbf208582a45af1a64831f3d508accafad031a28b0193fbdf43f17cec0",
+        "bb4a129c0297685688cc1547dcc549b83438ce91b071e55c720a8cb7d5e97c79",
+        "8c3a206c07f116b8f39d5e3a54b21c30eb006df8c710eb5ed6aadbe4c502b5bf",
+        "c6cf764758ba96b0d060bc991f2549c7af324828681d6b64a5e131490ba3f6a3")]
+    [InlineData(18, true,
+        "f1df16e94a6af0236165eaad1c48ea4467b5c36cc476e0149c743ea8404f6319",
+        "98825bf4f44e3207968563b8ea7c4854cb97adce6c095b92cc571caf9c000d1b",
+        "0d6a92fda4dc338186c9c6aced5a5fc00a5223b0397d3d5d0acd657076fbba5f",
+        "4f767da3383510e52f4f58fcd42d68a72f3b2ce4464fac99d77846f168a3bc5e")]
+    public void NegotiatedWatchAndDataMatchIndependentGoVectors(int selectorNumber, bool data, string binding, string signedResult,
+        string requestFrameHash, string resultFrameHash)
+    {
+        var selector = (V2ControlSelector)selectorNumber;
+        var header = Header() with { Selector = selector, CommandId = data ? RepeatId(0x99) : new byte[16] };
+        Assert.Null(V2ControlWire.PrepareRequest(header, RequestBody, 3, FrameLimit, Now));
+        var request = Assert.IsType<V2ControlPreparedFrame>(V2ControlWire.PrepareRequest(header, RequestBody, 3, FrameLimit, Now,
+            streamDataEnabled: true));
+        var frame = Assert.IsType<byte[]>(request.AttachSignature(InertSignature()));
+        Assert.Equal(data ? (byte)9 : (byte)7, frame[1]);
+        Assert.Equal(requestFrameHash, Sha(frame));
+        Assert.Equal(binding, Convert.ToHexStringLower(request.RequestBinding.Span));
+        Assert.False(V2ControlWire.TryDecodeRequest(frame, 3, FrameLimit, Now, out _));
+        Assert.True(V2ControlWire.TryDecodeRequest(frame, 3, FrameLimit, Now, out var decoded, streamDataEnabled: true));
+        Assert.Equal(selector, decoded.Header.Selector);
+
+        byte[] body = data ? ResultBody.ToArray() : [1, .. ResultBody];
+        var result = Assert.IsType<V2ControlPreparedFrame>(V2ControlWire.PrepareResult(header.CallId.Span, decoded.RequestBinding.Span,
+            body, 9, FrameLimit, selector, streamDataEnabled: true));
+        var resultFrame = Assert.IsType<byte[]>(result.AttachSignature(InertSignature()));
+        Assert.Equal(data ? (byte)10 : (byte)8, resultFrame[1]);
+        Assert.Equal(resultFrameHash, Sha(resultFrame));
+        Assert.Equal(signedResult, Sha(result.SigningInput.Span));
+        Assert.True(V2ControlWire.TryDecodeResult(resultFrame, 9, FrameLimit, out var decodedResult, selector, streamDataEnabled: true));
+        Assert.Equal(body, decodedResult.Body.ToArray());
+    }
+
+    [Fact]
+    public void OnlyTheSelectedDataDirectionCarriesAFullPublishedChunk()
+    {
+        const uint legacy = CenterChannelClient.MaxFrameBytes;
+        var chunk = ByteString.CopyFrom(new byte[CenterChannelClient.MaxFrameBytes]);
+        var writeBody = new DataServiceWriteImportRequest { Chunk = chunk }.ToByteArray();
+        var readBody = new DataServiceReadExportResponse { Value = new() { Chunk = new() { Data = chunk } } }.ToByteArray();
+        Assert.True(writeBody.Length > legacy);
+        Assert.True(readBody.Length > legacy);
+        Assert.Equal(V2ControlWire.DataBodyLimit, V2ControlWire.MaximumResponseBodyBytes(V2ControlSelector.DataReadExport, legacy));
+        Assert.Equal((int)legacy - 158, V2ControlWire.MaximumResponseBodyBytes(V2ControlSelector.DataWriteImport, legacy));
+
+        var header = Header() with { Selector = V2ControlSelector.DataWriteImport };
+        var upload = Assert.IsType<V2ControlPreparedFrame>(
+            V2ControlWire.PrepareRequest(header, writeBody, 3, legacy, Now, streamDataEnabled: true));
+        var uploadFrame = Assert.IsType<byte[]>(upload.AttachSignature(InertSignature()));
+        Assert.False(V2ControlWire.IsLargeWritePrefix(uploadFrame.AsSpan(0, V2ControlWire.RequestPrefixBytes - 1), 3));
+        Assert.True(V2ControlWire.IsLargeWritePrefix(uploadFrame.AsSpan(0, V2ControlWire.RequestPrefixBytes), 3));
+        Assert.False(V2ControlWire.IsLargeWritePrefix(uploadFrame, 4));
+        Assert.False(V2ChannelProtocol.TryDecode(uploadFrame, 3, out _, controlEnabled: true));
+        Assert.True(V2ChannelProtocol.TryDecode(uploadFrame, 3, out var uploadKind, streamDataEnabled: true));
+        Assert.Equal(V2ChannelKind.DataRequest, uploadKind.Kind);
+        Assert.False(V2ControlWire.TryDecodeRequest(uploadFrame, 3, legacy, Now, out _));
+        Assert.True(V2ControlWire.TryDecodeRequest(uploadFrame, 3, legacy, Now, out var parsed, streamDataEnabled: true));
+        Assert.Equal(writeBody, parsed.Body.ToArray());
+        Assert.Null(V2ControlWire.PrepareRequest(header with { Selector = V2ControlSelector.DataBeginImport },
+            writeBody, 3, legacy, Now, streamDataEnabled: true));
+        Assert.Null(V2ControlWire.PrepareRequest(header, new byte[V2ControlWire.DataBodyLimit + 1],
+            3, legacy, Now, streamDataEnabled: true));
+
+        var download = Assert.IsType<V2ControlPreparedFrame>(V2ControlWire.PrepareResult(header.CallId.Span,
+            parsed.RequestBinding.Span, readBody, 9, legacy, V2ControlSelector.DataReadExport, streamDataEnabled: true));
+        var downloadFrame = Assert.IsType<byte[]>(download.AttachSignature(InertSignature()));
+        Assert.False(V2ControlWire.TryDecodeResult(downloadFrame, 9, legacy, out _, V2ControlSelector.DataWriteImport, streamDataEnabled: true));
+        Assert.True(V2ControlWire.TryDecodeResult(downloadFrame, 9, legacy, out var decodedResult, V2ControlSelector.DataReadExport,
+            streamDataEnabled: true));
+        Assert.Equal(readBody, decodedResult.Body.ToArray());
+        Assert.Null(V2ControlWire.PrepareResult(header.CallId.Span, parsed.RequestBinding.Span, readBody, 9, legacy,
+            V2ControlSelector.DataInspectTransfer, streamDataEnabled: true));
+    }
+
+    [Fact]
+    public void WatchIdleAndTypedFrameMarkersHaveExactShapes()
+    {
+        var header = Header();
+        var binding = Convert.FromHexString(Binding);
+        var selector = V2ControlSelector.ResourceWatchUsage;
+        Assert.Equal((int)FrameLimit - 159, V2ControlWire.MaximumResponseBodyBytes(selector, FrameLimit));
+        Assert.NotNull(V2ControlWire.PrepareResult(header.CallId.Span, binding, [0], 9, FrameLimit, selector, streamDataEnabled: true));
+        Assert.NotNull(V2ControlWire.PrepareResult(header.CallId.Span, binding, [1, .. ResultBody], 9, FrameLimit, selector, streamDataEnabled: true));
+        Assert.Null(V2ControlWire.PrepareResult(header.CallId.Span, binding, [1], 9, FrameLimit, selector, streamDataEnabled: true));
+        Assert.Null(V2ControlWire.PrepareResult(header.CallId.Span, binding, [0, .. ResultBody], 9, FrameLimit, selector, streamDataEnabled: true));
+        Assert.Null(V2ControlWire.PrepareResult(header.CallId.Span, binding, [2, .. ResultBody], 9, FrameLimit, selector, streamDataEnabled: true));
+    }
 }

@@ -163,8 +163,11 @@ public sealed partial class DurableCommandStoreTests
             scopeKind, sandboxScope ? NewRemoteId() : null);
         var grantCommand = Intent(commands, method: "NodeService.SetRemoteGrant") with { AggregateKind = "grant", AggregateId = binding.GrantId };
         var scope = sandboxScope ? StoredRemoteGrantScope.Sandbox : StoredRemoteGrantScope.Provision;
+        string policy = $$$"""
+            {"binding":{"owner":"fixture-owner","enrollment":"{{{binding.EnrollmentId}}}","account":"{{{binding.AccountId}}}","epoch":"{{{binding.ProtocolEpoch}}}"}}
+            """;
         var grant = new StoredRemoteGrant(binding.GrantId, "fixture-owner", binding.EnrollmentId, scope, binding.SandboxId,
-            null, null, 1, StoredRemoteGrantState.Active, "{}", StoreIds.ToHex(grantCommand.CommandId),
+            null, null, 1, StoredRemoteGrantState.Active, policy, StoreIds.ToHex(grantCommand.CommandId),
             sandboxScope ? null : 1, sandboxScope ? null : "{}", now, null, null);
 
         var observed = commands.AdmitObserved(grantCommand, "SUCCEEDED", 2, "{}", transaction =>
