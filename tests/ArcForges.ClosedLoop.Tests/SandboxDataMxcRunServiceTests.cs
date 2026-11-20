@@ -433,7 +433,8 @@ public sealed partial class MxcRunServiceTests
         if (recoveredPublication)
         {
             Assert.Equal(version, (await ObserveFixtureRegularFileAsync(data, sandbox.SandboxId, path, token)).VersionToken);
-            Assert.Equal(destination, Assert.Single(Directory.EnumerateFiles(Path.GetDirectoryName(destination)!)));
+            var onlyTarget = Assert.Single(Directory.EnumerateFiles(Path.GetDirectoryName(destination)!));
+            Assert.Equal(Path.GetFullPath(destination), Path.GetFullPath(onlyTarget));
             await CloseFileCommitAsync(fixture, data, commit, after.Meta, TransferState.Complete, token);
         }
     }

@@ -15,11 +15,13 @@ Usage reports owned logical bytes, file count, observation time and excluded ext
 
 ```sh
 arcforges sandbox import "$SANDBOX_ID" ./artifact.bin --to work/artifact.bin --json
-arcforges sandbox import "$SANDBOX_ID" ./updated.bin --to work/artifact.bin \
-  --overwrite --expected-file-version "$FILE_VERSION" --json
 ```
 
-Import records the length and SHA-256 of the opened local regular file. The Node verifies contiguous chunks and the complete staged file before publishing it. For overwrite, use the version shown by `sandbox files`. A changed target returns a conflict. Wait for active Runs to drain before starting an import.
+Import records the length and SHA-256 of the opened local regular file. The Node verifies contiguous chunks and the complete staged file before publishing it. Wait for active Runs to drain before starting an import.
+
+The initial Windows and Linux profiles publish to fresh destinations. `--overwrite` requires the exact version shown by `sandbox files` and a qualified native replacement guard. A changed target returns `CONFLICT/identity_changed`. A matching version with an unavailable guard returns `EXECUTION/unsupported_combination` before touching the target.
+
+The Node admits up to 256 MiB per file and reserves up to 1 GiB across the owner's retained transfers. Transfer expiry defaults to one hour. An unresolved effect or unconfirmed stage release holds its reservation until verified reconciliation.
 
 A durable failure or lost response includes the exact command ID and owner epoch when available. Inspect that command with `arcforges operation inspect "$COMMAND_ID" --owner-epoch "$OWNER_EPOCH"`. If you need to replay Begin, supply those same values as `--command-id` and `--owner-epoch`, the original `--expected-revision`, and the original file and options.
 
