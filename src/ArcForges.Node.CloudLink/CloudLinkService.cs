@@ -632,6 +632,11 @@ internal sealed partial class CloudLinkService : ICloudLinkView, IChannelHost, I
                 return NodeErrors.InvalidState("signing_in", "sign_in");
             }
 
+            if (!ownerV2 && CenterControlOwnsLinkLocked)
+            {
+                return NodeErrors.InvalidState("signed_out", "center_control_required");
+            }
+
             if (_link is { State: LinkStates.Ending })
             {
                 return NodeErrors.InvalidState("signed_out", "ending");

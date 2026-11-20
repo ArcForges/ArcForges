@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.ComponentModel;
+using System.Diagnostics;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text.Json;
@@ -8,7 +10,10 @@ using ArcForges.Contracts.Sandbox.V2;
 using ArcForges.LocalRpc;
 using ArcForges.Node.CloudLink;
 using ArcForges.Node.Platform.Capabilities;
+using ArcForges.Node.Store;
 using ArcForges.Tests;
+using Grpc.Core;
+using Microsoft.Data.Sqlite;
 
 namespace ArcForges.ClosedLoop.Tests;
 
@@ -41,7 +46,7 @@ public sealed class CloudLinkCenterControlTests
         fixture.Environment[CloudLinkTestHooks.CenterUrl] = origin;
         fixture.Environment[CloudLinkTestHooks.RefreshSeconds] = "15";
         fixture.Environment["ARCFORGES_TEST_CLIENT_IMAGES"] = null;
-        await fixture.StartNodeAsync();
+        var process = await fixture.StartNodeAsync();
         await using var local = OpenChannel(fixture);
         var node = new NodeService.NodeServiceClient(local.CallInvoker);
         var control = new CenterControlService.CenterControlServiceClient(local.CallInvoker);
@@ -50,6 +55,8 @@ public sealed class CloudLinkCenterControlTests
         var hello = await node.HandshakeAsync(new() { Meta = Meta() }, deadline: Deadline, cancellationToken: ct);
         var identity = Value(hello.Value, hello.Error);
         var ownerEpoch = identity.OwnerEpoch;
+        Assert.NotNull(ownerEpoch);
+        await using var cleanup = new OwnedNodeCleanup(fixture, process, control, ownerEpoch);
         var initial = await StatusAsync(control);
         Assert.False(initial.ConnectionEnabled);
         Assert.Equal("offline", initial.ChannelState);
@@ -120,7 +127,7 @@ public sealed class CloudLinkCenterControlTests
         var offValue = Value(off.Value, off.Error);
         RequireReceipt(offValue.Operation, ownerEpoch, disconnected.Meta);
         Assert.False(offValue.Connection.ConnectionEnabled);
-        Assert.Equal(connected.EnrollmentId, offValue.Connection.EnrollmentId);
+        Assert.Null(offValue.Connection.EnrollmentId);
         Assert.Equal("not_requested", offValue.Connection.RemoteRevocation);
         var disconnectCli = await CliAsync(fixture, 0, "center", "disconnect", "--owner-epoch", IdText.Format(ownerEpoch),
             "--command-id", IdText.Format(disconnected.Meta.CommandId));
@@ -349,5 +356,92 @@ public sealed class CloudLinkCenterControlTests
     {
         Assert.True(error is null, $"Unexpected installed operation refusal: {error?.Category}/{error?.Code}");
         return Assert.IsType<T>(value);
+    }
+
+    private sealed class OwnedNodeCleanup(TestNode fixture, Process process, CenterControlService.CenterControlServiceClient center, Id epoch)
+        : IAsyncDisposable
+    {
+        public async ValueTask DisposeAsync()
+        {
+            if (!process.HasExited)
+            {
+                await SignOutAsync();
+                await StopAsync();
+            }
+
+            if (process.HasExited)
+            {
+                RemoveReceiptKey();
+            }
+        }
+
+        private async Task SignOutAsync()
+        {
+            using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(9));
+            try
+            {
+                var before = await center.GetStatusAsync(new() { Meta = Meta() }, deadline: DateTime.UtcNow.AddSeconds(2),
+                    cancellationToken: bound.Token);
+                if (before.Value?.Connection?.State == "signed_out")
+                    return;
+
+                var signedOut = await center.SignOutAsync(new() { Meta = Meta(mutation: true), OwnerEpoch = epoch },
+                    deadline: DateTime.UtcNow.AddSeconds(6), cancellationToken: bound.Token);
+                if (signedOut.Value?.Connection?.State != "signed_out")
+                    WriteCleanupDiagnostic("The fixture Center credential did not finish signing out before Node shutdown.");
+            }
+            catch (Exception error) when (error is RpcException or IOException or OperationCanceledException)
+            {
+                WriteCleanupDiagnostic("The fixture Center sign-out did not finish. " + error.GetType().Name);
+            }
+        }
+
+        private async Task StopAsync()
+        {
+            try
+            {
+                var stopped = await fixture.ProductCliBytesAsync(TimeSpan.FromSeconds(16), "node", "stop", "--timeout", "12s");
+                if (stopped.ExitCode != 0)
+                {
+                    WriteCleanupDiagnostic("The installed fixture Node stop command returned " + stopped.ExitCode + ".");
+                    return;
+                }
+
+                using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                await process.WaitForExitAsync(bound.Token);
+            }
+            catch (Exception error) when (error is IOException or Win32Exception or InvalidOperationException or OperationCanceledException or TimeoutException)
+            {
+                WriteCleanupDiagnostic("The installed fixture Node did not stop before receipt key cleanup. " + error.GetType().Name);
+            }
+        }
+
+        private void RemoveReceiptKey()
+        {
+            try
+            {
+                using var database = new SqliteConnection(new SqliteConnectionStringBuilder
+                {
+                    DataSource = StorePaths.Database(fixture.DataRoot), Mode = SqliteOpenMode.ReadOnly, Pooling = false,
+                }.ToString());
+                database.Open();
+                using var command = database.CreateCommand();
+                command.CommandText = "SELECT node_id FROM store_meta WHERE singleton = 1;";
+                if (command.ExecuteScalar() is not byte[] { Length: 16 } node)
+                {
+                    WriteCleanupDiagnostic("Could not identify the isolated fixture Node receipt key.");
+                    return;
+                }
+
+                var name = NodeDataKeyRing.TargetName(node, "v2-owner-" + Convert.ToHexStringLower(epoch.Value.Span));
+                NodeSecretStores.ForTestDataRoot(fixture.DataRoot).Store.Delete(name);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or SqliteException)
+            {
+                WriteCleanupDiagnostic("The exact isolated fixture receipt key could not be removed. " + error.GetType().Name);
+            }
+        }
+
+        private static void WriteCleanupDiagnostic(string message) => TestContext.Current.TestOutputHelper?.WriteLine(message);
     }
 }

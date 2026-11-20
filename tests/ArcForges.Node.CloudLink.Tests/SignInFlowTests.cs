@@ -637,6 +637,33 @@ public sealed class SignInFlowTests
     }
 
     [Fact]
+    public async Task LegacyBeginLeavesARejectedCenterControlCredentialInPlace()
+    {
+        await using var link = await LinkFixture.CreateAsync();
+        await link.StartAsync();
+        var first = await link.SignInAsync();
+        var store = link.Service.Storage;
+        var selected = store.ReadLink()!;
+        await link.StopAsync();
+        selected.UseV2 = true;
+        store.WriteLink(selected);
+
+        await link.StartAsync();
+        link.Center.Script("RefreshNodeSession", new FakeFault.Refusal(Arc(ErrorCategory.Authentication, "unauthenticated")));
+        await Eventually.AdvanceUntilAsync(link, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(45),
+            () => link.Service.Status().Warnings.Contains("center_rejected_credential"), "the V2 link rejection");
+
+        var denied = await BeginAsync(link, SignInMethod.Browser);
+        Assert.Null(denied.Flow);
+        Assert.Equal("invalid_state", denied.Error!.Code);
+        Assert.Equal("center_control_required", denied.Error.Details.State.Reason);
+        Assert.Equal(CloudLinkPhase.SignedOut, link.Service.Phase);
+        Assert.True(store.ReadLink()!.UseV2);
+        Assert.Equal(first.RefreshToken, link.StoredRecord()!.RefreshToken);
+        Assert.Empty(link.Center.CallsOf("BeginNodeSignIn"));
+    }
+
+    [Fact]
     public async Task ACenterChangedOutOfBandDuringAFlowEndsItWithoutSending()
     {
         await using var link = await LinkFixture.CreateAsync();
