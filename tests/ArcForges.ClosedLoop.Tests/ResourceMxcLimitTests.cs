@@ -14,7 +14,6 @@ namespace ArcForges.ClosedLoop.Tests;
 public sealed partial class MxcRunServiceTests
 {
     private const uint CohortCpuCap = 500;
-    private const uint BusyRunCpu = 300;
     private const uint SpareRunCpu = 150;
     private const uint RaisedRunCpu = 340;
     private const uint UnsafeMixedIncreaseCpu = CohortCpuCap - SpareRunCpu;
@@ -29,6 +28,9 @@ public sealed partial class MxcRunServiceTests
     private const string SaturationReport = "grant-cap-unexpected.json";
     private const string WindowsSaturationStatus = "grant-cap-child-exit.txt";
     private const int WindowsSaturationStepMiB = 8;
+
+    // Keep the Linux cohort budget at its actual cap before a later mixed edit tests resource preservation.
+    private static uint BusyRunCpu => OperatingSystem.IsLinux() ? CohortCpuCap - SpareRunCpu : 300;
 
     private static async Task VerifyInstalledResourceLimitsAsync(TestNode fixture, NodeService.NodeServiceClient node,
         SandboxService.SandboxServiceClient sandboxes, RunService.RunServiceClient runs, ResourceService.ResourceServiceClient resources,
