@@ -26,6 +26,7 @@ public static class NodeApiServer
     private const string Runs = "arcforges.sandbox.v2.RunService";
     private const string SandboxResources = "arcforges.sandbox.v2.ResourceService";
     private const string SandboxData = "arcforges.sandbox.v2.DataService";
+    private const string CenterControl = "arcforges.sandbox.v2.CenterControlService";
 
     /// <summary>Builds the server (not started).</summary>
     /// <param name="endpoint">The node's endpoint.</param>
@@ -34,8 +35,9 @@ public static class NodeApiServer
     /// <param name="streamBuffer">The per-subscriber buffer (default 2,048, 02 section 1).</param>
     /// <param name="images">The executables that verify each client kind (default: the node's own, <see cref="ClientImages.ForNode"/>).</param>
     /// <param name="cloud">The cloud link (AF-CTR-04): <c>AccountService</c> is served when it is given.</param>
+    /// <param name="centerControl">The recovered owner-local V2 Center controller.</param>
     internal static LocalRpcServer Build(LocalRpcEndpoint endpoint, NodeRuntime node, ClientSessions sessions, int streamBuffer = 2048, ClientImages? images = null,
-        ArcForges.Node.CloudLink.CloudLinkService? cloud = null)
+        ArcForges.Node.CloudLink.CloudLinkService? cloud = null, CenterControlServiceHandler? centerControl = null)
     {
         ArgumentNullException.ThrowIfNull(endpoint);
         ArgumentNullException.ThrowIfNull(node);
@@ -109,6 +111,16 @@ public static class NodeApiServer
         {
             builder.RegisterMethod(Files, method, new LocalRpcCallProfile(TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(30)));
         }
+        if (centerControl is not null)
+        {
+            builder.AddService(centerControl);
+            foreach (var method in (ReadOnlySpan<string>)["GetStatus", "BeginConnect", "GetConnectFlow", "CancelConnect", "Disconnect", "SignOut"])
+            {
+                builder.RegisterMethod(CenterControl, method, sandboxDeadline);
+            }
+
+        }
+
         if (cloud is not null)
         {
             // account.proto deadlines: GetAccountStatus 5 s, SignOut 15 s, BeginSignIn 15 s, GetSignInFlow 5 s, CancelSignIn 5 s; the methods of later

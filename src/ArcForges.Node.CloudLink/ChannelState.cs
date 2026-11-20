@@ -6,7 +6,8 @@ namespace ArcForges.Node.CloudLink;
 /// <summary>The SM-RELAY state and its closed reason (account.proto <c>AccountStatus.relay</c> and <c>relay_reason</c>).</summary>
 /// <param name="State">The state.</param>
 /// <param name="Reason">The reason, one of <see cref="ChannelReasons"/>.</param>
-internal sealed record ChannelStatus(RelayState State, string Reason);
+/// <param name="V2Reason">An exact V2 negotiation reason for the local typed status.</param>
+internal sealed record ChannelStatus(RelayState State, string Reason, string? V2Reason = null);
 
 /// <summary>The closed vocabulary of <c>AccountStatus.relay_reason</c> (AF-CTR-05 N1).</summary>
 internal static class ChannelReasons
@@ -49,7 +50,8 @@ internal static class ChannelReasons
 /// <param name="Reason">The closed reason.</param>
 /// <param name="RefreshFirst">A refresh of the node credential before the next attempt (4401, a 401 before the upgrade).</param>
 /// <param name="Delay">A delay the center asked for (4500 <c>reconnect_after_ms</c>), or <see langword="null"/> for the node's own backoff.</param>
-internal sealed record ChannelEnd(RelayState State, string Reason, bool RefreshFirst = false, TimeSpan? Delay = null);
+/// <param name="V2Reason">An exact V2 negotiation reason for the local typed status.</param>
+internal sealed record ChannelEnd(RelayState State, string Reason, bool RefreshFirst = false, TimeSpan? Delay = null, string? V2Reason = null);
 
 /// <summary>The timing rules of SM-RELAY (pure functions; the loop passes its random source).</summary>
 internal static class ChannelPolicy

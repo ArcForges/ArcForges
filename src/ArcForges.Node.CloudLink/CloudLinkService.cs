@@ -70,6 +70,13 @@ internal sealed record CloudLinkOptions
     /// </summary>
     public required Func<CenterEndpoint?> Center { get; init; }
 
+    /// <summary>Persist an explicit local V2 owner selection while the link's gate is held.</summary>
+    internal Func<CenterEndpoint, Task<ArcError?>>? ConfigureCenter { get; init; }
+
+    internal Func<V2ChannelSnapshot?>? V2Snapshot { get; init; }
+
+    internal Action<V2ChannelEnrollment?>? V2EnrollmentChanged { get; init; }
+
     /// <summary>The node log.</summary>
     public required NodeLog Log { get; init; }
 
@@ -135,7 +142,7 @@ internal static class ChannelContract
 /// flushed at shutdown; a restart before a successful write presents the spent stored token, which the center treats as a reuse that
 /// revokes the family and signs the node out (it fails closed).</para>
 /// </summary>
-internal sealed class CloudLinkService : ICloudLinkView, IChannelHost, IAsyncDisposable
+internal sealed partial class CloudLinkService : ICloudLinkView, IChannelHost, IAsyncDisposable
 {
     /// <summary>The access lifetime assumed when the center states none (the policy minimum, so the node never refreshes late).</summary>
     public static readonly TimeSpan FallbackAccessLifetime = TimeSpan.FromMinutes(15);
@@ -376,52 +383,58 @@ internal sealed class CloudLinkService : ICloudLinkView, IChannelHost, IAsyncDis
     {
         using (await EnterAsync(CancellationToken.None).ConfigureAwait(false))
         {
-            var center = Configured();
-            CloudCredentialRecord? held;
-            lock (_stateLock)
-            {
-                held = _phase == CloudLinkPhase.SignedIn ? _record : null;
-            }
-
-            if (held is null || center?.Url != held.CenterUrl)
-            {
-                _http?.Dispose();
-                _http = null;
-                CloudLinkFile? stored;
-                var readable = true;
-                try
-                {
-                    stored = _store.ReadLink();
-                }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
-                {
-                    stored = null;
-                    readable = false;
-                }
-
-                if (stored is not null && Unowned(stored) is null && stored.CenterUrl != center?.Url)
-                {
-                    // Whether or not the record can be read now: the ending is recorded first and completes once the store answers (R-1),
-                    // so the old center's credential can never be signed in again by configuring that center again.
-                    EndCredential("center_changed", notice: null, stored);
-                }
-                else
-                {
-                    Load();
-                    if (Phase != CloudLinkPhase.SignedIn)
-                    {
-                        TryDeleteKeySets();
-                        if (readable && _link is null)
-                        {
-                            TryDeleteKey(null);
-                        }
-                    }
-                }
-            }
+            RebindConfiguredCenter();
         }
 
         Wake();
         await PublishAsync(null).ConfigureAwait(false);
+    }
+
+    /// <summary>Rebinds the credential store while the caller holds the link's gate.</summary>
+    private void RebindConfiguredCenter()
+    {
+        var center = Configured();
+        CloudCredentialRecord? held;
+        lock (_stateLock)
+        {
+            held = _phase == CloudLinkPhase.SignedIn ? _record : null;
+        }
+
+        if (held is not null && center?.Url == held.CenterUrl)
+        {
+            return;
+        }
+
+        _http?.Dispose();
+        _http = null;
+        CloudLinkFile? stored;
+        var readable = true;
+        try
+        {
+            stored = _store.ReadLink();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            stored = null;
+            readable = false;
+        }
+
+        if (stored is not null && Unowned(stored) is null && stored.CenterUrl != center?.Url)
+        {
+            // Whether or not the record can be read now, the ending is recorded first and completes once the store answers.
+            EndCredential("center_changed", notice: null, stored);
+            return;
+        }
+
+        Load();
+        if (Phase != CloudLinkPhase.SignedIn)
+        {
+            TryDeleteKeySets();
+            if (readable && _link is null)
+            {
+                TryDeleteKey(null);
+            }
+        }
     }
 
     /// <summary>The account status (account.proto <c>AccountStatus</c>; AF-CTR-04 N1 d.2).</summary>
@@ -555,6 +568,7 @@ internal sealed class CloudLinkService : ICloudLinkView, IChannelHost, IAsyncDis
             Target = target,
             CenterUrl = center.Url,
             NodeId = _nodeHex,
+            UseV2 = SignIn.CompletingCenterFlow ? true : null,
         };
         _store.WriteLink(link);
         _store.WriteRecord(target, record);
@@ -811,7 +825,7 @@ internal sealed class CloudLinkService : ICloudLinkView, IChannelHost, IAsyncDis
         using (await EnterAsync(cancellationToken).ConfigureAwait(false))
         {
             // No refresh starts once the stop began (BeginStop).
-            if (Stopping || Generation != seenGeneration || Phase != CloudLinkPhase.SignedIn)
+            if (Stopping || Generation != seenGeneration || Phase != CloudLinkPhase.SignedIn || IsCenterPaused())
             {
                 return;
             }
@@ -1056,7 +1070,7 @@ internal sealed class CloudLinkService : ICloudLinkView, IChannelHost, IAsyncDis
                 link = _phase == CloudLinkPhase.SignedIn ? _link : null;
             }
 
-            if (link is null)
+            if (link is null || link.UseV2 == true || link.ConnectionPaused == true)
             {
                 return false;
             }
@@ -1071,6 +1085,45 @@ internal sealed class CloudLinkService : ICloudLinkView, IChannelHost, IAsyncDis
         }
 
         await PublishAsync(null).ConfigureAwait(false);
+        return true;
+    }
+
+    /// <summary>Updates the existing protected link after the caller takes the credential gate.</summary>
+    private bool SetCenterConnectionHeld(bool enabled)
+    {
+        CloudLinkFile? link;
+        lock (_stateLock)
+        {
+            link = _link;
+            if (link is null)
+            {
+                return !enabled && !_warnings.Contains(Warnings.StoreUnavailable);
+            }
+
+            if (link.State != LinkStates.SignedIn || _warnings.Contains(Warnings.StoreUnavailable) || Unowned(link) is not null ||
+                (enabled && _phase != CloudLinkPhase.SignedIn))
+            {
+                return false;
+            }
+        }
+
+        bool? disabled = enabled ? null : true;
+        var useV2 = enabled ? true : link.UseV2;
+        if (link.ChannelDisabled == disabled && link.ConnectionPaused == disabled && link.UseV2 == useV2)
+        {
+            return true;
+        }
+
+        var updated = link.Clone();
+        updated.UseV2 = useV2;
+        updated.ChannelDisabled = disabled;
+        updated.ConnectionPaused = disabled;
+        _store.WriteLink(updated);
+        lock (_stateLock)
+        {
+            _link = updated;
+        }
+
         return true;
     }
 
@@ -1104,7 +1157,7 @@ internal sealed class CloudLinkService : ICloudLinkView, IChannelHost, IAsyncDis
     {
         var (ticket, reason) = ((IChannelHost)this).Ticket();
         var assertion = signed.Assertion;
-        if (Stopping || ticket is null || !signed.Center.Equals(ticket.Center) || assertion.RelayingNodeId is null || assertion.RelayingInstallationId is null
+        if (Stopping || ticket is null || ticket.UseV2 || !signed.Center.Equals(ticket.Center) || assertion.RelayingNodeId is null || assertion.RelayingInstallationId is null
             || !assertion.RelayingNodeId.Value.Span.SequenceEqual(ticket.NodeId.Span)
             || !assertion.RelayingInstallationId.Value.Span.SequenceEqual(ticket.InstallationId.Span))
         {
@@ -1114,6 +1167,12 @@ internal sealed class CloudLinkService : ICloudLinkView, IChannelHost, IAsyncDis
         if (BeforeRelayForward is { } beforeForward)
         {
             await beforeForward(cancellationToken).ConfigureAwait(false);
+        }
+
+        var current = ((IChannelHost)this).Ticket().Ticket;
+        if (Stopping || current is null || current.UseV2 || current.Generation != ticket.Generation || !current.Center.Equals(ticket.Center))
+        {
+            return new CenterReply<T>(CenterOutcome.Unreachable, null, null, null, false, ChannelReasons.CredentialUnusable);
         }
 
         using var transport = new CenterHttpClient(ticket.Center, _options.ConnectLog);
@@ -1131,7 +1190,7 @@ internal sealed class CloudLinkService : ICloudLinkView, IChannelHost, IAsyncDis
                 return (null, _warnings.Count > 0 && _link is not null ? ChannelReasons.CredentialUnusable : ChannelReasons.SignedOut);
             }
 
-            if (link.ChannelDisabled == true)
+            if (link.ChannelDisabled == true || link.ConnectionPaused == true)
             {
                 return (null, ChannelReasons.LinkDisabled);
             }
@@ -1152,7 +1211,26 @@ internal sealed class CloudLinkService : ICloudLinkView, IChannelHost, IAsyncDis
                 return (null, ChannelReasons.CredentialUnusable);
             }
 
-            return (new ChannelTicket(bound, record.AccessToken, Generation, _options.NodeId, installation), ChannelReasons.Connecting);
+            byte[] account = [];
+            if (link.UseV2 == true)
+            {
+                if (record.AccountId is not { Length: 32 } accountId || !accountId.All(char.IsAsciiHexDigitLower))
+                {
+                    return (null, ChannelReasons.CredentialUnusable);
+                }
+
+                account = Convert.FromHexString(accountId);
+                if (account.All(static value => value == 0))
+                {
+                    return (null, ChannelReasons.CredentialUnusable);
+                }
+            }
+
+            return (new ChannelTicket(bound, record.AccessToken, Generation, _options.NodeId, installation)
+            {
+                UseV2 = link.UseV2 == true,
+                AccountId = account,
+            }, ChannelReasons.Connecting);
         }
     }
 
@@ -1346,19 +1424,19 @@ internal sealed class CloudLinkService : ICloudLinkView, IChannelHost, IAsyncDis
                     // Review B N-9 (b) of PR #72: the refresh is not cancelled by the stop (its work ends only at a sign-out or at the stop's
                     // bound), since a refresh cut off after the center committed its strict rotation leaves the spent token. None starts once
                     // the stop began.
-                    if (!Stopping && (Phase == CloudLinkPhase.SignedIn || (_rejected && !SigningInNow)) && now >= Interlocked.Read(ref _nextRefresh))
+                    if (!Stopping && !IsCenterPaused() && (Phase == CloudLinkPhase.SignedIn || (_rejected && !SigningInNow)) && now >= Interlocked.Read(ref _nextRefresh))
                     {
                         changed |= await RefreshCoreAsync(work.Token).ConfigureAwait(false);
                     }
                 }
 
                 // The gate is released between the refresh and the report, so a sign-out waits for one center call at most (R-5).
-                if (!Stopping && Phase == CloudLinkPhase.SignedIn && now >= Interlocked.Read(ref _nextReport))
+                if (!Stopping && !IsCenterPaused() && Phase == CloudLinkPhase.SignedIn && now >= Interlocked.Read(ref _nextReport))
                 {
                     using (await EnterAsync(stop).ConfigureAwait(false))
                     using (var work = BeginWork(stop))
                     {
-                        if (Phase == CloudLinkPhase.SignedIn && now >= Interlocked.Read(ref _nextReport))
+                        if (!IsCenterPaused() && Phase == CloudLinkPhase.SignedIn && now >= Interlocked.Read(ref _nextReport))
                         {
                             changed |= await ReportCoreAsync(work.Token).ConfigureAwait(false);
                         }
@@ -1458,7 +1536,9 @@ internal sealed class CloudLinkService : ICloudLinkView, IChannelHost, IAsyncDis
         long next;
         lock (_stateLock)
         {
-            next = _phase == CloudLinkPhase.SignedIn || (_rejected && !_signingIn) ? Math.Min(_nextRefresh, _phase == CloudLinkPhase.SignedIn ? _nextReport : long.MaxValue) : long.MaxValue;
+            next = _link?.ConnectionPaused != true && (_phase == CloudLinkPhase.SignedIn || (_rejected && !_signingIn))
+                ? Math.Min(_nextRefresh, _phase == CloudLinkPhase.SignedIn ? _nextReport : long.MaxValue)
+                : long.MaxValue;
             if (_reload || _pendingWrite || _warnings.Contains(Warnings.OtherCenter) || Volatile.Read(ref _reportedUnwritten) is not null)
             {
                 next = Math.Min(next, now + Ticks(TimeSpan.FromSeconds(60)));

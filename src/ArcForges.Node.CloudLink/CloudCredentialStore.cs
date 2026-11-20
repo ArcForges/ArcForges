@@ -138,6 +138,14 @@ internal sealed class CloudLinkFile
     /// and a node signed in before AF-CTR-05 connects after the upgrade.
     /// </summary>
     public bool? ChannelDisabled { get; set; }
+
+    /// <summary>Set by an authenticated owner through the V2 Center control.</summary>
+    public bool? UseV2 { get; set; }
+
+    /// <summary>Disconnect pauses V2 network work without ending the protected credential.</summary>
+    public bool? ConnectionPaused { get; set; }
+
+    internal CloudLinkFile Clone() => (CloudLinkFile)MemberwiseClone();
 }
 
 /// <summary>One center public key as <c>run/cloud-keys.json</c> keeps it.</summary>

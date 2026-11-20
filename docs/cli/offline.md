@@ -8,8 +8,8 @@ They manage access for an existing enrollment.
 
 This guide covers the offline CLI. See [Owned Sandbox data](data.md) for
 usage, file listings, imports and exports. The filesystem delivery tasks
-cover Sandbox deletion, and
-CENTER-02 covers Center connection commands. The Plan records native
+cover Sandbox deletion. See [Center connection](center.md) for enrollment and
+link commands from this Node. The Plan records native
 verification, merge and release status. [Design and command map](https://github.com/ArcForges/ArcForges-Design/blob/main/docs/architecture/06-local-node-cli.md) ·
 [Delivery plan](https://github.com/ArcForges/Plan).
 
@@ -24,9 +24,11 @@ arcforges doctor
 `node start` uses the installed local service bootstrap when the Node is absent,
 waits for readiness and reports the V2 handshake. A running Node is reused.
 `node status` combines its actual service state with the handshake.
-`doctor` also reads the Node resource budget. With `--sandbox` it reads that
-Sandbox's identity, revision, profile and capabilities. Status and diagnostics
-leave the service stopped when it is absent.
+`doctor` also reads the Node resource budget and its observation of the Center
+link. `center.available` indicates whether the local Node could report the link
+state. `center.channelState` describes the outbound channel. With `--sandbox`,
+`doctor` reads that Sandbox's identity, revision, profile and capabilities.
+Status and diagnostics leave the service stopped when it is absent.
 
 Read capability states and their evidence with the selected profile in mind.
 An unverified capability has no measured guarantee for that request and host.

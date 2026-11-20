@@ -7,6 +7,7 @@ using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Node.Core;
 using Google.Protobuf;
+using CenterConnectFlow = ArcForges.Contracts.Sandbox.V2.CenterConnectFlow;
 
 namespace ArcForges.Node.CloudLink;
 
@@ -155,6 +156,144 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
         }
     }
 
+    internal bool HasUnsettledFlow
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _current is { } run && (run.IsActive || run.HasUnfinishedWork);
+            }
+        }
+    }
+
+    internal bool CenterCancellationPending
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _current is { UseV2: true, IsActive: true, CancelRequested: true };
+            }
+        }
+    }
+
+    internal bool CompletingCenterFlow
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _current is { UseV2: true, State: FlowPhase.Completing };
+            }
+        }
+    }
+
+    /// <summary>Reserves the flow under the link gate and starts its own bounded work outside the RPC lifetime.</summary>
+    internal (Id? FlowId, ArcError? Error) StartCenterFlow(SignInMethod method)
+    {
+        lock (_lock)
+        {
+            if (_current is { } existing && (existing.IsActive || existing.HasUnfinishedWork))
+            {
+                return (null, CloudLinkService.CenterControlError(ErrorCategory.State, "busy", "center_flow_unsettled"));
+            }
+
+            if (_link.ReserveSignIn(out var center) is not null)
+            {
+                return (null, CloudLinkService.CenterControlError(ErrorCategory.State, "busy", "center_sign_in_unavailable"));
+            }
+
+            var entered = _options.Clock.GetTimestamp();
+            var run = new Run(CommandIds.New(_options.Clock), center!, CancellationTokenSource.CreateLinkedTokenSource(_stop.Token), useV2: true)
+            {
+                Method = method,
+                StartedAt = entered,
+            };
+            _current?.Dispose();
+            _current = run;
+            run.StartWork = Task.Run(async () =>
+            {
+                if (await StartSafelyAsync(run, method, entered, []).ConfigureAwait(false) is { } error)
+                {
+                    Finish(run, FlowPhase.Failed, error);
+                }
+            }, CancellationToken.None);
+            return (run.Id.Clone(), null);
+        }
+    }
+
+    /// <summary>Projects only this V2 flow and its short-lived, Center-validated sign-in display values.</summary>
+    internal CenterConnectFlow? ReadCenterFlow(Id id)
+    {
+        lock (_lock)
+        {
+            if (_current is not { UseV2: true } run || !id.Value.Equals(run.Id.Value))
+            {
+                return null;
+            }
+
+            var flow = new CenterConnectFlow
+            {
+                FlowId = run.Id.Clone(),
+                State = run.State switch
+                {
+                    FlowPhase.SignedIn => "succeeded",
+                    FlowPhase.Denied => "failed",
+                    _ => StateName(run.State),
+                },
+            };
+            if (run.State is not FlowPhase.Starting)
+            {
+                flow.ExpiresAt = run.ExpiresAt?.Clone();
+            }
+
+            if (run.State is FlowPhase.Pending or FlowPhase.Completing && RemainingLifetime(run, BrowserLifetime) > TimeSpan.Zero)
+            {
+                if (run.Authorize is { } authorize) flow.VerificationUri = authorize.Value;
+                if (run.Device is { } device)
+                {
+                    flow.VerificationUri = device.Verification.Value;
+                    flow.UserCode = device.UserCode;
+                    flow.PollAfterMs = (uint)run.Interval.TotalMilliseconds;
+                }
+            }
+            else if (run.Error is { } error)
+            {
+                flow.ReasonCode = Token(error.Code) ?? "center_sign_in_failed";
+            }
+            else if (run.State == FlowPhase.Denied)
+            {
+                flow.ReasonCode = "center_sign_in_denied";
+            }
+
+            return flow;
+        }
+    }
+
+    internal ArcError? CancelCenterFlow(Id id)
+    {
+        Run run;
+        lock (_lock)
+        {
+            if (_current is not { UseV2: true } current || !id.Value.Equals(current.Id.Value))
+            {
+                return CloudLinkService.CenterControlError(ErrorCategory.State, "not_found", "center_flow_not_found");
+            }
+
+            if (current.State is not (FlowPhase.Starting or FlowPhase.Pending) || current.CancelRequested)
+            {
+                return CloudLinkService.CenterControlError(ErrorCategory.State, "busy", "center_flow_not_pending");
+            }
+
+            current.CancelRequested = true;
+            run = current;
+        }
+
+        Finish(run, FlowPhase.Cancelled, null);
+        return null;
+    }
+
     /// <summary>
     /// BeginSignIn: the active flow, or a new one. <paramref name="entered"/> is the monotonic instant of the handler's entry (the budget of
     /// N2 decision F-4/N-5 counts from it).
@@ -167,6 +306,11 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
         {
             lock (_lock)
             {
+                if (_current is { UseV2: true } v2 && (v2.IsActive || v2.HasUnfinishedWork))
+                {
+                    return new SignInReply(null, NodeErrors.InvalidState("signing_in", "sign_in"), []);
+                }
+
                 if (_current is { IsActive: true } active)
                 {
                     existing = active;
@@ -214,16 +358,8 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
         }
 
         var warnings = new List<string>();
-        ArcError? error;
-        try
-        {
-            error = await StartAsync(run!, method == SignInMethod.DeviceCode ? SignInMethod.DeviceCode : SignInMethod.Browser, entered, warnings).ConfigureAwait(false);
-        }
-        catch (Exception exception) when (exception is not OutOfMemoryException)
-        {
-            _options.Log.Warning("cloud.sign_in.start_failed", new LogField("errorType", exception.GetType().Name));
-            error = NodeErrors.CloudUnreachable("sign_in_start_failed");
-        }
+        var error = await StartSafelyAsync(run!, method == SignInMethod.DeviceCode ? SignInMethod.DeviceCode : SignInMethod.Browser,
+            entered, warnings).ConfigureAwait(false);
 
         if (error is not null)
         {
@@ -239,7 +375,7 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
     {
         lock (_lock)
         {
-            return _current is { } run && flowId is { } id && id.Value.Span.SequenceEqual(run.Id.Value.Span) ? Snapshot(run) : null;
+            return _current is { UseV2: false } run && flowId is { } id && id.Value.Span.SequenceEqual(run.Id.Value.Span) ? Snapshot(run) : null;
         }
     }
 
@@ -253,7 +389,7 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
         Run run;
         lock (_lock)
         {
-            if (_current is not { } current || flowId is not { } id || !id.Value.Span.SequenceEqual(current.Id.Value.Span))
+            if (_current is not { UseV2: false } current || flowId is not { } id || !id.Value.Span.SequenceEqual(current.Id.Value.Span))
             {
                 return (null, NodeErrors.NotFound("sign_in_flow", flowId is null ? [] : flowId.Value.Span));
             }
@@ -320,11 +456,11 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
         {
         }
 
-        if (run?.Work is { } work)
+        if (run is not null)
         {
             try
             {
-                await work.WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false);
+                await run.WaitForWorkAsync().WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false);
             }
             catch (Exception exception) when (exception is TimeoutException or OperationCanceledException)
             {
@@ -343,9 +479,30 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
         return left > TimeSpan.Zero ? left : TimeSpan.Zero;
     }
 
+    private async Task<ArcError?> StartSafelyAsync(Run run, SignInMethod method, long entered, List<string> warnings)
+    {
+        try
+        {
+            return await StartAsync(run, method, entered, warnings).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            _options.Log.Warning("cloud.sign_in.start_failed", new LogField("errorType", exception.GetType().Name));
+            return NodeErrors.CloudUnreachable("sign_in_start_failed");
+        }
+    }
+
     /// <summary>Starts the flow: the key, the receiver (or the fallback), the center's Begin or Start with the key replace-once, the opener.</summary>
     private async Task<ArcError?> StartAsync(Run run, SignInMethod method, long entered, List<string> warnings)
     {
+        lock (_lock)
+        {
+            if (run.CancelRequested || run.Ended)
+            {
+                return null;
+            }
+        }
+
         run.Key = LoadOrCreateKey(run.Center);
         if (method == SignInMethod.Browser)
         {
@@ -353,6 +510,11 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
             run.Receiver = LoopbackReceiver.TryStart(state, _options.Log, Listen);
             if (run.Receiver is null)
             {
+                if (run.UseV2)
+                {
+                    return CloudLinkService.CenterControlError(ErrorCategory.State, "busy", "center_loopback_unavailable");
+                }
+
                 // The only automatic fallback (node-11 corrected item 1; account.proto: "loopback port unavailable").
                 method = SignInMethod.DeviceCode;
                 run.FellBack = true;
@@ -377,7 +539,7 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
 
         lock (_lock)
         {
-            if (run.State != FlowPhase.Starting)
+            if (run.State != FlowPhase.Starting || run.CancelRequested)
             {
                 // Cancelled while the first call was in flight: nothing was approved, nothing to revoke.
                 run.Started.TrySetResult();
@@ -453,11 +615,18 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
                     return NodeErrors.InvalidArgument(failure!);
                 }
 
-                run.CenterFlowId = value.FlowId!.Value.ToByteArray();
-                run.Verifier = verifier;
-                run.Authorize = url;
-                run.ExpiresAt = value.ExpiresAt;
-                run.Received = _options.Clock.GetTimestamp();
+                lock (_lock)
+                {
+                    if (!RecordFlowExpiry(run, value.ExpiresAt, BrowserLifetime))
+                    {
+                        return CloudLinkService.CenterControlError(ErrorCategory.Validation, "invalid_argument", "center_flow_expiry_invalid");
+                    }
+
+                    run.CenterFlowId = value.FlowId!.Value.ToByteArray();
+                    run.Verifier = verifier;
+                    run.Authorize = url;
+                }
+
                 return null;
             }
 
@@ -489,10 +658,17 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
                     return NodeErrors.InvalidArgument(failure!);
                 }
 
-                run.Device = device;
-                run.ExpiresAt = value.Authorization.ExpiresAt;
-                run.Interval = Interval(value.Authorization.HasIntervalMs ? value.Authorization.IntervalMs : 0, PollFloor);
-                run.Received = _options.Clock.GetTimestamp();
+                lock (_lock)
+                {
+                    if (!RecordFlowExpiry(run, value.Authorization.ExpiresAt, DeviceHardStop))
+                    {
+                        return CloudLinkService.CenterControlError(ErrorCategory.Validation, "invalid_argument", "center_flow_expiry_invalid");
+                    }
+
+                    run.Device = device;
+                    run.Interval = Interval(value.Authorization.HasIntervalMs ? value.Authorization.IntervalMs : 0, PollFloor);
+                }
+
                 return null;
             }
 
@@ -513,6 +689,36 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
         using var bounded = new CancellationTokenSource(budget > TimeSpan.Zero ? budget : TimeSpan.FromMilliseconds(1));
         return await call(bounded.Token).ConfigureAwait(false);
     }
+
+    private bool RecordFlowExpiry(Run run, Instant? providerExpiry, TimeSpan localLimit)
+    {
+        run.Received = _options.Clock.GetTimestamp();
+        if (!run.UseV2)
+        {
+            run.ExpiresAt = providerExpiry;
+            return true;
+        }
+
+        if (providerExpiry is not { HasUnixSeconds: true, UnixSeconds: >= 0 and <= 253402300799, Nanos: < 1000000000 })
+        {
+            return false;
+        }
+
+        var now = _options.Clock.GetUtcNow();
+        var fromCenter = DateTimeOffset.FromUnixTimeSeconds(providerExpiry.UnixSeconds).AddTicks(providerExpiry.Nanos / 100) - now;
+        var fromLocal = localLimit - _options.Clock.GetElapsedTime(run.StartedAt, run.Received);
+        run.Lifetime = fromCenter < fromLocal ? fromCenter : fromLocal;
+        if (run.Lifetime <= TimeSpan.Zero)
+        {
+            return false;
+        }
+
+        run.ExpiresAt = ProtoTime.ToInstant(now + run.Lifetime);
+        return true;
+    }
+
+    private TimeSpan RemainingLifetime(Run run, TimeSpan legacyLifetime) =>
+        (run.UseV2 ? run.Lifetime : legacyLifetime) - _options.Clock.GetElapsedTime(run.Received);
 
     /// <summary>A Begin or Start refusal as BeginSignIn answers it (only its annotated codes; N2 decision F-12).</summary>
     private static ArcError BeginRefusal<T>(CenterReply<T> reply)
@@ -681,7 +887,8 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
             while (true)
             {
                 var receiver = run.Receiver!;
-                var expiry = Task.Delay(BrowserLifetime - _options.Clock.GetElapsedTime(run.Received), _options.Clock, run.Stop.Token);
+                var remaining = RemainingLifetime(run, BrowserLifetime);
+                var expiry = Task.Delay(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero, _options.Clock, run.Stop.Token);
                 var done = await OnClockAsync(run, expiry, receiver.Result, run.Cancelled.Task).ConfigureAwait(false);
                 if (done != receiver.Result)
                 {
@@ -843,7 +1050,7 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
             var ambiguous = false;
             while (true)
             {
-                var remaining = DeviceHardStop - _options.Clock.GetElapsedTime(run.Received);
+                var remaining = RemainingLifetime(run, DeviceHardStop);
                 if (remaining <= TimeSpan.Zero)
                 {
                     Finish(run, FlowPhase.Expired, null);
@@ -857,7 +1064,7 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
                 }
 
                 await wait.ConfigureAwait(false);
-                if (_options.Clock.GetElapsedTime(run.Received) >= DeviceHardStop)
+                if (RemainingLifetime(run, DeviceHardStop) <= TimeSpan.Zero)
                 {
                     Finish(run, FlowPhase.Expired, null);
                     return;
@@ -1042,7 +1249,7 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
     {
         lock (_lock)
         {
-            if (run.State is not (FlowPhase.Pending or FlowPhase.Completing))
+            if (run.State is not (FlowPhase.Pending or FlowPhase.Completing) || run.CancelRequested)
             {
                 return false;
             }
@@ -1201,11 +1408,13 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
     }
 
     /// <summary>One flow.</summary>
-    private sealed class Run(Id id, CenterEndpoint center, CancellationTokenSource stop) : IDisposable
+    private sealed class Run(Id id, CenterEndpoint center, CancellationTokenSource stop, bool useV2 = false) : IDisposable
     {
         public Id Id { get; } = id;
 
         public CenterEndpoint Center { get; } = center;
+
+        public bool UseV2 { get; } = useV2;
 
         public CancellationTokenSource Stop { get; } = stop;
 
@@ -1249,9 +1458,23 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
 
         public long Received { get; set; }
 
+        public long StartedAt { get; init; }
+
+        public TimeSpan Lifetime { get; set; }
+
         public ArcError? Error { get; set; }
 
         public Task? Work { get; set; }
+
+        public Task? StartWork { get; set; }
+
+        public bool HasUnfinishedWork => StartWork is { IsCompleted: false } || Work is { IsCompleted: false };
+
+        public async Task WaitForWorkAsync()
+        {
+            if (StartWork is { } start) await start.ConfigureAwait(false);
+            if (Work is { } work) await work.ConfigureAwait(false);
+        }
 
         /// <summary>The tasks this flow waits for while it waits on the clock (tests: the orchestrator's ClockWait); guarded by the flow lock.</summary>
         public Task[]? ClockTasks { get; set; }
