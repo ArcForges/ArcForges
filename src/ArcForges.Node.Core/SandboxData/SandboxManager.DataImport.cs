@@ -175,11 +175,17 @@ internal sealed partial class SandboxManager
                 {
                     var previous = Receipts.Inspect(command);
                     row = FindDataTransfer(id);
+                    string? safetyParent = null;
+                    if (method == TransferRecords.CloseMethod)
+                    {
+                        safetyParent = previous?.Method == TransferRecords.CloseMethod
+                            ? previous.SafetyParentCommandId
+                            : row is { ClosedAt: null } ? row.BeginCommandId : null;
+                    }
+
                     intent = new DurableIntent(command, epoch.Value.ToByteArray(), method, TransferRecords.Aggregate,
                         transferId, canonical.ToByteArray(),
-                        SafetyParent: method == TransferRecords.CloseMethod && row is { ClosedAt: null }
-                            ? Convert.FromHexString(row.BeginCommandId) : previous?.SafetyParentCommandId is { } parent
-                                ? Convert.FromHexString(parent) : null);
+                        SafetyParent: safetyParent is null ? null : Convert.FromHexString(safetyParent));
                     if (previous is not null || !EpochMatches(epoch))
                     {
                         return ResolveDataAdmission(meta, Receipts.Admit(intent));
@@ -344,6 +350,7 @@ internal sealed partial class SandboxManager
         var recorded = new StoredTransferPending(StoredTransferPhase.Publish, Convert.ToHexStringLower(intent.CommandId),
             TargetIdentity: row.StagingIdentity, ParentIdentity: parentIdentity);
         var pending = NextDataRow(row, recorded);
+        HoldRunFault("hold-data-before-commit-intent");
         var admission = Receipts.Admit(intent, transaction => RequireChanged(TransferRecords.Advance(transaction, row, pending)));
         if (admission.Decision != DurableDecision.Execute)
         {
@@ -353,6 +360,7 @@ internal sealed partial class SandboxManager
         var applied = false;
         try
         {
+            HoldRunFault("hold-data-after-commit-intent");
             using var checkedRoot = InspectDataRoot(row);
             using var checkedParent = checkedRoot.OwnedWorkspace.OpenDirectory(DataParent(path));
             if (!WorkspacePath.Identity(parent).SameObject(WorkspacePath.Identity(checkedParent)))
@@ -362,7 +370,11 @@ internal sealed partial class SandboxManager
 
             checkedRoot.OwnedWorkspace.CheckSandboxDataName(path, allowMissingFinal: true);
             staging.PublishSandboxDataStage(stage, row.TransferId, parent, path[(path.LastIndexOf('/') + 1)..],
-                () => applied = true);
+                () =>
+                {
+                    applied = true;
+                    HoldRunFault("hold-data-after-first-publication-effect");
+                });
             if (!applied)
             {
                 return SettleDataUnknown(meta, intent, pending,
@@ -380,6 +392,7 @@ internal sealed partial class SandboxManager
             }
 
             publishedRoot.OwnedWorkspace.CheckSandboxDataName(path, allowMissingFinal: false);
+            HoldRunFault("hold-data-after-publication");
         }
         catch (Exception failure) when (IsDataFailure(failure))
         {
@@ -396,6 +409,7 @@ internal sealed partial class SandboxManager
 
         var after = NextDataRow(pending, null) with { State = StoredTransferState.Complete, Effect = (int)EffectCertainty.Happened };
         var receipt = SettleData(intent.CommandId, pending, after, "SUCCEEDED", EffectCertainty.Happened);
+        HoldRunFault("hold-data-before-commit-reply");
         return new(after, receipt, null);
     }
 

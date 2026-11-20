@@ -12,6 +12,7 @@ namespace ArcForges.Client;
 
 internal sealed partial class LocalTransferFile : IDisposable
 {
+    private const int LinuxNonBlocking = 0x800;
     private readonly FileVersion _version;
     internal FileStream Body { get; }
     internal long Length => _version.Length;
@@ -28,10 +29,15 @@ internal sealed partial class LocalTransferFile : IDisposable
         using var parent = OpenParent(directory, writing: false);
         var handle = OperatingSystem.IsWindows()
             ? OpenWindowsEntry(parent, name, stage: false)
-            : CheckedLinuxHandle(OpenAt(Descriptor(parent), name, 0x80000 | 0x20000 | 0x800, 0));
+            : CheckedLinuxHandle(OpenAt(Descriptor(parent), name, 0x80000 | 0x20000 | LinuxNonBlocking, 0));
         try
         {
             var version = ReadVersion(handle);
+            if (OperatingSystem.IsLinux())
+            {
+                UseLinuxSynchronousFileIo(handle);
+            }
+
             return new(OpenBody(handle, FileAccess.Read), version);
         }
         catch
@@ -272,6 +278,21 @@ internal sealed partial class LocalTransferFile : IDisposable
         }
     }
 
+    private static void UseLinuxSynchronousFileIo(SafeFileHandle handle)
+    {
+        const int GetStatusFlags = 3;
+        const int SetStatusFlags = 4;
+        // Keep the initial no-follow open nonblocking until the held descriptor is
+        // verified as a regular file. The stream can then use positional I/O.
+        int descriptor = Descriptor(handle);
+        int flags = FileControl(descriptor, GetStatusFlags, 0);
+        if (flags < 0 || (flags & LinuxNonBlocking) != 0 &&
+            FileControl(descriptor, SetStatusFlags, flags & ~LinuxNonBlocking) < 0)
+        {
+            throw NativeFailure("Could not configure the verified local source for positional I/O.");
+        }
+    }
+
     private static FileVersion ReadVersion(SafeFileHandle handle)
     {
         if (OperatingSystem.IsLinux())
@@ -465,6 +486,9 @@ internal sealed partial class LocalTransferFile : IDisposable
 
     [LibraryImport("libc", EntryPoint = "openat", SetLastError = true, StringMarshalling = StringMarshalling.Utf8)]
     private static partial int OpenAt(int directory, string path, int flags, uint mode);
+
+    [LibraryImport("libc", EntryPoint = "fcntl", SetLastError = true)]
+    private static partial int FileControl(int descriptor, int command, int value);
 
     [LibraryImport("libc", EntryPoint = "statx", SetLastError = true, StringMarshalling = StringMarshalling.Utf8)]
     private static partial int Statx(int file, string path, int flags, uint mask, out LinuxStat metadata);

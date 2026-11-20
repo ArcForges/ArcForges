@@ -293,10 +293,11 @@ internal sealed partial class SandboxManager
         }
     }
 
-    private SandboxPrivateRootLease InspectDataRoot(StoredTransfer row)
+    private SandboxPrivateRootLease InspectDataRoot(StoredTransfer row, bool requireAdmittedRevision = true)
     {
         var current = _store.Read(reader => SandboxRecords.Get(reader, OwnerId, row.SandboxId));
-        if (current is null || current.State != StoredSandboxState.Ready || current.Revision != row.Manifest.SandboxRevision
+        if (current is null || current.State != StoredSandboxState.Ready
+            || requireAdmittedRevision && current.Revision != row.Manifest.SandboxRevision
             || current.RootGeneration != row.Manifest.RootGeneration || current.RootIdentity != row.Manifest.RootIdentity
             || current.RootRelative != SandboxPrivateRoots.RelativePath(row.SandboxId))
         {

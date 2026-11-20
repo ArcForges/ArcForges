@@ -5,8 +5,12 @@ using System.Security.Cryptography;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Sandbox.V2;
+using ArcForges.Node.Core.Execution;
+using ArcForges.Node.Core.Platform;
 using ArcForges.Node.Store;
 using Google.Protobuf;
+using Grpc.Core;
+using Microsoft.Win32.SafeHandles;
 
 namespace ArcForges.ClosedLoop.Tests;
 
@@ -14,6 +18,11 @@ public sealed partial class MxcRunServiceTests
 {
     private const string FixtureDataPath = "data/round-trip.bin";
     private const int TransferChunkSize = 1024 * 1024;
+    private const string BeforeFileCommitIntent = "hold-data-before-commit-intent";
+    private const string AfterFileCommitIntent = "hold-data-after-commit-intent";
+    private const string AfterFirstFilePublicationEffect = "hold-data-after-first-publication-effect";
+    private const string AfterFilePublication = "hold-data-after-publication";
+    private const string BeforeFileCommitReply = "hold-data-before-commit-reply";
 
     [Fact(Timeout = 145_000, DisableParallelization = true)]
     public async Task InstalledSandboxDataImportsPersistsAndExportsTheExactRetainedSnapshot()
@@ -167,6 +176,281 @@ public sealed partial class MxcRunServiceTests
         Sha256 = FileDigest(bytes),
         Overwrite = false,
     };
+
+    [Theory(Timeout = 135_000, DisableParallelization = true)]
+    [InlineData(BeforeFileCommitIntent)]
+    [InlineData(AfterFileCommitIntent)]
+    [InlineData(AfterFirstFilePublicationEffect)]
+    [InlineData(AfterFilePublication)]
+    [InlineData(BeforeFileCommitReply)]
+    public async Task InstalledSandboxDataRecoversOriginalCommitAtEachDurableBoundary(string checkpoint)
+    {
+        var token = TestContext.Current.CancellationToken;
+        token.ThrowIfCancellationRequested();
+        RequireExtractedPackage();
+        await using var fixture = TestNode.Create();
+        PrepareInstalledCliFixture(fixture);
+        fixture.Environment[ExecutionFaults.Variable] = checkpoint + "=60";
+        var interrupted = await fixture.StartNodeAsync();
+        Process? restarted = null;
+        Id? cleanupEpoch = null;
+        try
+        {
+            const string path = "data/checkpoint-import.bin";
+            byte[] content = BuildFileBytes(27_031, 119);
+            bool beforeIntent = checkpoint == BeforeFileCommitIntent;
+            bool published = checkpoint is AfterFirstFilePublicationEffect or AfterFilePublication or BeforeFileCommitReply;
+            bool bothNamesRemain = checkpoint == AfterFirstFilePublicationEffect && OperatingSystem.IsLinux();
+            string? expectedReceipt = beforeIntent ? null : checkpoint == BeforeFileCommitReply ? "SUCCEEDED" : "ACCEPTED";
+            DataServiceCommitImportRequest commit;
+            Sandbox sandbox;
+            string destination;
+            string firstNodeEpoch;
+            StoredTransfer atCheckpoint;
+            await using (var connection = OpenChannel(fixture))
+            {
+                var node = new NodeService.NodeServiceClient(connection.CallInvoker);
+                var data = new DataService.DataServiceClient(connection.CallInvoker);
+                var hello = await HandshakeAsync(node);
+                var epoch = hello.OwnerEpoch;
+                cleanupEpoch = epoch;
+                firstNodeEpoch = hello.NodeEpoch;
+                sandbox = await CreateSandboxAsync(new SandboxService.SandboxServiceClient(connection.CallInvoker), epoch);
+                destination = Path.Combine(sandbox.DataLocation, "data", "checkpoint-import.bin");
+                var (_, staged) = await WriteFirstFileChunkAsync(data, sandbox, epoch, path, destination, content, content.Length, token);
+                var ready = await InspectFileTransferAsync(data, staged.TransferId, token);
+                Assert.Equal(staged, Value(ready.Value, ready.Error).Transfer);
+                commit = new DataServiceCommitImportRequest
+                {
+                    Meta = Mutation(TransferRevision(ready.Meta)), OwnerEpoch = epoch, TransferId = staged.TransferId,
+                };
+
+                using var pending = data.CommitImportAsync(commit, deadline: DateTime.UtcNow.AddSeconds(55), cancellationToken: token);
+                await WaitDispatchCheckpointAsync(fixture, checkpoint);
+                Assert.False(pending.ResponseAsync.IsCompleted, "The original caller must lose its reply at the selected private boundary.");
+                var observation = ReadFileCommitCheckpoint(fixture, sandbox.SandboxId, commit);
+                atCheckpoint = observation.Transfer;
+                Assert.Equal(expectedReceipt, observation.ReceiptState);
+                Assert.Equal(published, File.Exists(destination));
+                Assert.Equal((long)content.Length, atCheckpoint.VerifiedOffset);
+                Assert.Equal(checkpoint == BeforeFileCommitReply ? StoredTransferState.Complete : StoredTransferState.Streaming,
+                    atCheckpoint.State);
+                Assert.Null(atCheckpoint.ClosedAt);
+                if (beforeIntent || checkpoint == BeforeFileCommitReply)
+                {
+                    Assert.Null(atCheckpoint.Manifest.Pending);
+                }
+                else
+                {
+                    Assert.Equal(StoredTransferPhase.Publish, atCheckpoint.Manifest.Pending?.Phase);
+                    Assert.Equal(Hex(commit.Meta.CommandId), atCheckpoint.Manifest.Pending?.CommandId);
+                }
+
+                interrupted.Kill();
+                await interrupted.WaitForExitAsync(token).WaitAsync(NativeBound, token);
+                await Assert.ThrowsAnyAsync<RpcException>(() => pending.ResponseAsync.WaitAsync(NativeBound, token));
+            }
+
+            var diskStamp = await RequireFileCommitDiskBoundaryAsync(fixture, commit, atCheckpoint, destination, published,
+                bothNamesRemain, content, token);
+            fixture.Environment.Remove(ExecutionFaults.Variable);
+            restarted = await fixture.StartNodeAsync();
+            await using var recovered = OpenChannel(fixture);
+            var recoveredNode = new NodeService.NodeServiceClient(recovered.CallInvoker);
+            var recoveredData = new DataService.DataServiceClient(recovered.CallInvoker);
+            var current = await HandshakeAsync(recoveredNode);
+            Assert.Equal(commit.OwnerEpoch, current.OwnerEpoch);
+            Assert.NotEqual(firstNodeEpoch, current.NodeEpoch);
+            await VerifyRecoveredFileCommitAsync(fixture, recoveredNode, recoveredData, sandbox, commit, atCheckpoint,
+                destination, path, content, beforeIntent, published, bothNamesRemain ? diskStamp : null, token);
+        }
+        finally
+        {
+            string marker = DispatchCheckpointPath(fixture, checkpoint);
+            if (!interrupted.HasExited && File.Exists(marker))
+            {
+                File.WriteAllText(Path.ChangeExtension(marker, ".release"), string.Empty);
+            }
+
+            if (restarted is not null) interrupted.Dispose();
+            await CleanInstalledCliFixtureAsync(fixture, restarted ?? interrupted, cleanupEpoch, heldRun: null);
+        }
+    }
+
+    private static (StoredTransfer Transfer, string? ReceiptState) ReadFileCommitCheckpoint(TestNode fixture, Id sandbox,
+        DataServiceCommitImportRequest commit)
+    {
+        using var database = ReadDatabase(fixture.DataRoot);
+        var reader = new StoreReader(database, transaction: null, clock: TimeProvider.System);
+        var sandboxId = Hex(sandbox);
+        var transferId = Hex(commit.TransferId);
+        var owner = Assert.IsType<string>(reader.Scalar("SELECT owner_id FROM sandbox WHERE sandbox_id=$id;", ("$id", sandboxId)));
+        var row = Assert.IsType<StoredTransfer>(TransferRecords.Get(reader, owner, transferId));
+        Assert.Equal(sandboxId, row.SandboxId);
+        Assert.Equal(StoredTransferDirection.Import, row.Direction);
+        Assert.True(commit.OwnerEpoch.Value.Span.SequenceEqual(row.OwnerEpoch));
+        var state = reader.Scalar("""
+            SELECT state FROM command_receipt WHERE owner_id=$owner AND owner_epoch=$epoch AND command_id=$command
+                AND method=$method AND aggregate_kind='transfer' AND aggregate_id=$transfer;
+            """, ("$owner", owner), ("$epoch", commit.OwnerEpoch.Value.ToByteArray()), ("$command", Hex(commit.Meta.CommandId)),
+            ("$method", TransferRecords.CommitMethod), ("$transfer", transferId));
+        return (row, state as string);
+    }
+
+    private static string FileCommitStageDirectory(TestNode fixture) => Path.Combine(fixture.DataRoot, "control", "sandbox-transfers");
+
+    private static string FileCommitStagePath(TestNode fixture, Id transfer) =>
+        Path.Combine(FileCommitStageDirectory(fixture), Hex(transfer));
+
+    private static async Task<WorkspaceFileStamp> RequireFileCommitDiskBoundaryAsync(TestNode fixture, DataServiceCommitImportRequest commit,
+        StoredTransfer observed, string destination, bool published, bool bothNamesRemain, byte[] expected, CancellationToken token)
+    {
+        var stagePath = FileCommitStagePath(fixture, commit.TransferId);
+        Assert.Equal(published, File.Exists(destination));
+        Assert.Equal(!published || bothNamesRemain, File.Exists(stagePath));
+        if (bothNamesRemain)
+        {
+            // Linux has linked the exact fixture file to its final name and has yet to retire its original name.
+            // The production reader requires single-link files, so observe only these known fixture paths directly.
+            const FileAttributes nonRegular = FileAttributes.Directory | FileAttributes.ReparsePoint;
+            Assert.Equal((FileAttributes)0, File.GetAttributes(stagePath) & nonRegular);
+            Assert.Equal((FileAttributes)0, File.GetAttributes(destination) & nonRegular);
+            using var stage = File.OpenHandle(stagePath, FileMode.Open, FileAccess.Read);
+            using var target = File.OpenHandle(destination, FileMode.Open, FileAccess.Read);
+            var stageIdentity = WorkspacePath.Identity(stage);
+            var targetIdentity = WorkspacePath.Identity(target);
+            Assert.True(stageIdentity.IsFile && targetIdentity.IsFile);
+            Assert.Equal(2U, stageIdentity.Links);
+            Assert.Equal(2U, targetIdentity.Links);
+            Assert.True(stageIdentity.SameObject(targetIdentity));
+            // The durable token excludes link count. The encoder accepts its original one-link shape only.
+            Assert.Equal(observed.StagingIdentity, WorkspacePath.EncodeDataIdentity(stageIdentity with { Links = 1 }));
+            var stamp = WorkspacePath.FileStamp(stage);
+            Assert.Equal(stamp, WorkspacePath.FileStamp(target));
+            await RequireFileCommitBytesAsync(stage, expected, token);
+            await RequireFileCommitBytesAsync(target, expected, token);
+            return stamp;
+        }
+
+        var parent = published ? Path.GetDirectoryName(destination)! : FileCommitStageDirectory(fixture);
+        using var workspace = WorkspacePath.OpenRoot(parent);
+        using var file = published ? workspace.OpenRead(Path.GetFileName(destination))
+            : workspace.OpenSandboxDataStage(Hex(commit.TransferId), observed.StagingIdentity, writable: false);
+        if (published)
+        {
+            Assert.Equal(observed.StagingIdentity, WorkspacePath.EncodeDataIdentity(WorkspacePath.Identity(file)));
+        }
+
+        var observedStamp = WorkspacePath.FileStamp(file);
+        await RequireFileCommitBytesAsync(file, expected, token);
+        return observedStamp;
+    }
+
+    private static async Task RequireFileCommitBytesAsync(SafeFileHandle file, byte[] expected, CancellationToken token)
+    {
+        using var input = new FileStream(file, FileAccess.Read);
+        Assert.Equal(expected.LongLength, input.Length);
+        var staged = new byte[expected.Length];
+        await input.ReadExactlyAsync(staged, token);
+        Assert.True(expected.AsSpan().SequenceEqual(staged));
+    }
+
+    private static async Task VerifyRecoveredFileCommitAsync(TestNode fixture, NodeService.NodeServiceClient node,
+        DataService.DataServiceClient data, Sandbox sandbox, DataServiceCommitImportRequest commit, StoredTransfer original,
+        string destination, string path, byte[] bytes, bool beforeIntent, bool published, WorkspaceFileStamp? linkedStamp,
+        CancellationToken token)
+    {
+        if (beforeIntent)
+        {
+            var missing = await node.GetOperationAsync(new NodeServiceGetOperationRequest
+            {
+                Meta = Query(), OwnerEpoch = commit.OwnerEpoch, CommandId = commit.Meta.CommandId,
+            }, deadline: Deadline, cancellationToken: token);
+            Assert.Null(missing.Value);
+            RequireDataRefusal(missing.Error, ErrorCategory.State, "not_found");
+            var stillStaged = ReadFileCommitCheckpoint(fixture, sandbox.SandboxId, commit);
+            Assert.Null(stillStaged.ReceiptState);
+            Assert.Equal(original.StagingIdentity, stillStaged.Transfer.StagingIdentity);
+            Assert.Null(stillStaged.Transfer.Manifest.Pending);
+            var stage = await InspectFileTransferAsync(data, commit.TransferId, token);
+            Assert.Equal(TransferState.Streaming, Value(stage.Value, stage.Error).Transfer.State);
+            await RequireFileCommitDiskBoundaryAsync(fixture, commit, stillStaged.Transfer, destination, published: false,
+                bothNamesRemain: false, bytes, token);
+            await CloseFileCommitAsync(fixture, data, commit, stage.Meta, TransferState.Failed, token);
+            Assert.False(File.Exists(destination));
+            return;
+        }
+
+        bool recoveredPublication = published && linkedStamp is null;
+        OperationState expectedState = recoveredPublication ? OperationState.Succeeded : OperationState.Unknown;
+        EffectCertainty expectedEffect = recoveredPublication ? EffectCertainty.Happened : EffectCertainty.Unknown;
+        await TestNode.WaitAsync(async () =>
+        {
+            var receipt = await OperationAsync(node, commit.OwnerEpoch, commit.Meta.CommandId);
+            Assert.Equal(commit.Meta.CommandId, receipt.CommandId);
+            Assert.Equal(commit.TransferId, receipt.AggregateId);
+            Assert.Equal(commit.OwnerEpoch, receipt.OwnerEpoch);
+            if (receipt.State == OperationState.Accepted) return false;
+            Assert.Equal(expectedState, receipt.State);
+            Assert.Equal(expectedEffect, receipt.Effect);
+            return true;
+        }, NativeBound, "reconciliation of the original commit receipt");
+
+        var before = await InspectFileTransferAsync(data, commit.TransferId, token);
+        var transfer = Value(before.Value, before.Error).Transfer;
+        var stored = ReadFileCommitCheckpoint(fixture, sandbox.SandboxId, commit);
+        Assert.Equal(original.StagingIdentity, stored.Transfer.StagingIdentity);
+        if (recoveredPublication)
+        {
+            RequireCompleteFileTransfer(transfer, sandbox, path, "import", bytes);
+            Assert.Null(stored.Transfer.Manifest.Pending);
+        }
+        else
+        {
+            Assert.Equal(TransferState.RecoveryRequired, transfer.State);
+            Assert.Null(transfer.ClosedAt);
+            Assert.Equal(StoredTransferPhase.Publish, stored.Transfer.Manifest.Pending?.Phase);
+            Assert.Equal(Hex(commit.Meta.CommandId), stored.Transfer.Manifest.Pending?.CommandId);
+        }
+
+        var version = recoveredPublication ? (await ObserveFixtureRegularFileAsync(data, sandbox.SandboxId, path, token)).VersionToken : null;
+        var replayed = await data.CommitImportAsync(commit, deadline: Deadline, cancellationToken: token);
+        var replay = Value(replayed.Value, replayed.Error);
+        Assert.Equal(commit.Meta.CommandId, replay.Operation.CommandId);
+        Assert.Equal(expectedState, replay.Operation.State);
+        Assert.Equal(expectedEffect, replay.Operation.Effect);
+        Assert.Equal(transfer, replay.Transfer);
+        var after = await InspectFileTransferAsync(data, commit.TransferId, token);
+        Assert.Equal(transfer, Value(after.Value, after.Error).Transfer);
+        Assert.Equal(TransferRevision(before.Meta), TransferRevision(after.Meta));
+        var stampAfterReplay = await RequireFileCommitDiskBoundaryAsync(fixture, commit, stored.Transfer, destination, published,
+            linkedStamp is not null, bytes, token);
+        if (linkedStamp is { } originalStamp)
+        {
+            Assert.Equal(originalStamp, stampAfterReplay);
+        }
+
+        if (recoveredPublication)
+        {
+            Assert.Equal(version, (await ObserveFixtureRegularFileAsync(data, sandbox.SandboxId, path, token)).VersionToken);
+            Assert.Equal(destination, Assert.Single(Directory.EnumerateFiles(Path.GetDirectoryName(destination)!)));
+            await CloseFileCommitAsync(fixture, data, commit, after.Meta, TransferState.Complete, token);
+        }
+    }
+
+    private static async Task CloseFileCommitAsync(TestNode fixture, DataService.DataServiceClient data,
+        DataServiceCommitImportRequest commit, ResponseMeta observed, TransferState expected, CancellationToken token)
+    {
+        var reply = await data.CloseTransferAsync(new DataServiceCloseTransferRequest
+        {
+            Meta = Mutation(TransferRevision(observed)), OwnerEpoch = commit.OwnerEpoch, TransferId = commit.TransferId,
+        }, deadline: Deadline, cancellationToken: token);
+        var result = Value(reply.Value, reply.Error).Transfer;
+        Assert.Equal(commit.TransferId, result.TransferId);
+        Assert.Equal(expected, result.State);
+        Assert.NotNull(result.ClosedAt);
+        Assert.False(File.Exists(FileCommitStagePath(fixture, commit.TransferId)));
+    }
 
     private static void RequireFileDestinationRefused(DataServiceBeginImportResponse response)
     {
@@ -528,13 +812,28 @@ public sealed partial class MxcRunServiceTests
         Assert.Equal(EffectCertainty.Happened, operation.Effect);
         var actual = await File.ReadAllBytesAsync(destination, token);
         Assert.True(original.AsSpan().SequenceEqual(actual));
-        var close = await resumed.CloseTransferAsync(new DataServiceCloseTransferRequest
+        var closeRequest = new DataServiceCloseTransferRequest
         {
             Meta = Mutation(TransferRevision(finished.Meta)), OwnerEpoch = epoch, TransferId = id,
-        }, deadline: Deadline, cancellationToken: token);
+        };
+        var close = await resumed.CloseTransferAsync(closeRequest, deadline: Deadline, cancellationToken: token);
         var closed = Value(close.Value, close.Error).Transfer;
         RequireCompleteFileTransfer(closed, sandbox, path, "import", original);
         Assert.NotNull(closed.ClosedAt);
+
+        var reused = new DataServiceCommitImportRequest
+        {
+            Meta = Mutation(TransferRevision(close.Meta)), OwnerEpoch = epoch, TransferId = id,
+        };
+        reused.Meta.CommandId = closeRequest.Meta.CommandId;
+        var wrongMethod = await resumed.CommitImportAsync(reused, deadline: Deadline, cancellationToken: token);
+        Assert.Null(wrongMethod.Value);
+        RequireDataRefusal(wrongMethod.Error, ErrorCategory.Conflict, "command_id_reused");
+        var afterConflict = await InspectFileTransferAsync(resumed, id, token);
+        Assert.Equal(closed, Value(afterConflict.Value, afterConflict.Error).Transfer);
+        Assert.Equal(TransferRevision(close.Meta), TransferRevision(afterConflict.Meta));
+        var unchanged = await File.ReadAllBytesAsync(destination, token);
+        Assert.True(original.AsSpan().SequenceEqual(unchanged));
     }
 
     private static Revision TransferRevision(ResponseMeta meta)
@@ -619,17 +918,22 @@ public sealed partial class MxcRunServiceTests
         string? replacementFile, CancellationToken token)
     {
         var owned = Path.Combine(installed.Sandbox.DataLocation, "data", "round-trip.bin");
+        var readbackName = "data-readback-" + Guid.NewGuid().ToString("N") + ".bin";
+        var readback = Path.Combine(installed.Working, readbackName);
+        Assert.False(File.Exists(readback));
         string[] argv;
         if (OperatingSystem.IsLinux())
         {
-            argv = replacementFile is null ? ["/usr/bin/cat", "--", owned]
-                : ["/usr/bin/dash", "-c", "cat -- \"$1\" && cat -- \"$2\" > \"$1\"", "arcforges-file-fixture", owned, replacementFile];
+            const string capture = "/usr/bin/cat -- \"$1\" > \"$2\"";
+            argv = replacementFile is null
+                ? ["/usr/bin/dash", "-c", capture, "arcforges-file-fixture", owned, readback]
+                : ["/usr/bin/dash", "-c", capture + " && /usr/bin/cat -- \"$3\" > \"$1\"", "arcforges-file-fixture", owned, readback, replacementFile];
         }
         else
         {
-            const string read = """
+            var read = $"""
                 @echo off
-                arcforges-testload.exe echo < "..\..\data\round-trip.bin"
+                copy /b /y "..\..\data\round-trip.bin" "{readbackName}" >nul
                 if not "%errorlevel%"=="0" exit /b %errorlevel%
                 """;
             const string replace = """
@@ -649,10 +953,10 @@ public sealed partial class MxcRunServiceTests
         var final = await installed.WaitExitedAsync(run.RunId, token);
         Assert.True(final.Exit.HasRawCode);
         Assert.Equal(0, final.Exit.RawCode);
-        var output = await WatchAsync(installed.Runs, final, StreamKind.Stdout);
-        Assert.Null(output.Gap);
-        Assert.Equal((ulong)expected.Length, output.Offset);
-        Assert.True(expected.AsSpan().SequenceEqual(output.Bytes), "The native Run did not read the exact imported file bytes.");
+        Assert.True(File.Exists(readback), "The native Run did not create its private readback file.");
+        var actual = await File.ReadAllBytesAsync(readback, token);
+        Assert.Equal(expected.Length, actual.Length);
+        Assert.True(expected.AsSpan().SequenceEqual(actual), "The native Run did not read the exact imported file bytes.");
         return final;
     }
 

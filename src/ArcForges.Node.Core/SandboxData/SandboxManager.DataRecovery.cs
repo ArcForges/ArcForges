@@ -208,7 +208,7 @@ internal sealed partial class SandboxManager
             return true;
         }
 
-        using var root = InspectDataRoot(row);
+        using var root = InspectDataRoot(row, requireAdmittedRevision: false);
         using var stage = OpenDataStage(row, staging, writable: true);
         var stamp = WorkspacePath.FileStamp(stage);
         if (stamp.Size != 0) return false;
@@ -231,7 +231,7 @@ internal sealed partial class SandboxManager
         if (pending.Offset is not { } offset || pending.Length is not { } length || pending.Sha256 is null
             || row.StagingIdentity == TransferRecords.UnboundStage) return false;
 
-        using var root = InspectDataRoot(row);
+        using var root = InspectDataRoot(row, requireAdmittedRevision: false);
         using var staging = OpenDataStaging(row);
         using var stage = OpenDataStage(row, staging, writable: true);
         var stamp = WorkspacePath.FileStamp(stage);
@@ -285,7 +285,7 @@ internal sealed partial class SandboxManager
             || targetIdentity != row.StagingIdentity
             || pending.ParentIdentity is null || pending.ParentIdentity != row.Manifest.TargetParentIdentity) return false;
 
-        using var root = InspectDataRoot(row);
+        using var root = InspectDataRoot(row, requireAdmittedRevision: false);
         using var staging = OpenDataStaging(row);
         if (!staging.InspectRemovalAbsent(row.TransferId)) return false;
         var workspace = root.OwnedWorkspace;
