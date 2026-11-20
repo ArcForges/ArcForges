@@ -86,7 +86,7 @@ internal sealed partial class DurableCommandStore
                 observation = HMACSHA256.HashData(_key, pairProof);
             }
 
-            if (state != "UNKNOWN" && observedMetadata is null && _store.Read(reader => HasUnresolvedEffect(reader, id)))
+            if (state != "UNKNOWN" && observedMetadata is null && _store.Read(reader => BlocksKnownResult(reader, id, state, effect)))
                 throw new InvalidOperationException("An unresolved effect cannot become a known settled result.");
             Advance(safetyId is null ? "observe" : "observe_run_stop", id, observation, tx =>
             {
@@ -204,7 +204,7 @@ internal sealed partial class DurableCommandStore
 
     private void WriteResult(StoreTransaction tx, string id, string state, int effect, string json, string now, string? resolved, string? expires)
     {
-        if (state != "UNKNOWN" && HasUnresolvedEffect(tx, id))
+        if (state != "UNKNOWN" && BlocksKnownResult(tx, id, state, effect))
             throw new InvalidOperationException("An unresolved effect cannot become a known settled result.");
         if (tx.Execute("""
             UPDATE command_receipt SET state=$s,effect_certainty=$effect,response_json=$body,updated_utc=$now,
@@ -232,12 +232,25 @@ internal sealed partial class DurableCommandStore
             ("$identity", ReceiptIdentityBytes), ("$promised", promised));
     }
 
-    private bool HasUnresolvedEffect(StoreReader reader, string id) => !Equals(reader.Scalar("""
-        SELECT (SELECT count(*) FROM transfer WHERE owner_id=$o AND owner_epoch=$e AND command_id=$c
-                   AND (state IN (1,2,5) OR effect_certainty=3))
-          + (SELECT count(*) FROM deletion_journal WHERE owner_id=$o AND owner_epoch=$e
-                   AND (command_id=$c OR latest_resume_command_id=$c) AND (phase<>'complete' OR effect_certainty=3));
-        """, ("$o", _owner), ("$e", _fence.Epoch), ("$c", id)), 0L);
+    private bool BlocksKnownResult(StoreReader reader, string id, string state, int effect)
+    {
+        // BeginImport can have a definite stage reservation while its transfer still holds managed use.
+        bool readyImport = state == "SUCCEEDED" && effect == 2
+            && TransferRecords.CanSettleReadyImport(reader, _owner, _fence.Epoch, id);
+        return !Equals(reader.Scalar("""
+            SELECT (SELECT count(*) FROM transfer WHERE owner_id=$o AND owner_epoch=$e
+                       AND ((command_id=$c AND $readyImport=0 AND (state IN (1,2,5) OR effect_certainty=3))
+                            OR json_extract(manifest_json,'$.pending.commandId')=$c))
+              + (SELECT count(*) FROM deletion_journal WHERE owner_id=$o AND owner_epoch=$e
+                       AND (command_id=$c OR latest_resume_command_id=$c) AND (phase<>'complete' OR effect_certainty=3))
+              + (SELECT count(*) FROM command_receipt AS close
+                 JOIN transfer AS t ON t.owner_id=close.owner_id AND t.owner_epoch=close.owner_epoch
+                   AND t.command_id=close.safety_parent_command_id AND t.transfer_id=close.aggregate_id
+                 WHERE $succeeded=1 AND close.owner_id=$o AND close.owner_epoch=$e AND close.command_id=$c
+                   AND close.method=$close AND t.closed_utc IS NULL);
+            """, ("$o", _owner), ("$e", _fence.Epoch), ("$c", id), ("$readyImport", readyImport ? 1 : 0),
+            ("$succeeded", state == "SUCCEEDED" && effect == 2 ? 1 : 0), ("$close", TransferRecords.CloseMethod)), 0L);
+    }
 
     internal int CompactKnownResponses()
     {

@@ -42,6 +42,18 @@ internal sealed partial class DurableCommandStore : IDisposable
     private const int ReceiptIdentityBytes = 2048;
     private const int PendingReceiptBodyBytes = 2;
     private const int ReservedSafetyIdentityBytes = ReceiptIdentityBytes + PendingReceiptBodyBytes;
+    private const string ImportCloseAnchor = """
+        FROM transfer AS t
+        JOIN sandbox AS s ON s.sandbox_id=t.sandbox_id AND s.owner_id=t.owner_id
+        JOIN command_receipt AS b ON b.owner_id=t.owner_id AND b.owner_epoch=t.owner_epoch AND b.command_id=t.command_id
+        WHERE t.direction='import' AND t.state IN (1,2,5) AND t.closed_utc IS NULL
+          AND t.staging_identity<>$unbound AND length(t.staging_identity)>0
+          AND json_extract(t.manifest_json,'$.actorId')=t.owner_id AND json_extract(t.manifest_json,'$.grantId') IS NULL
+          AND b.method=$beginImport AND b.aggregate_kind='transfer' AND b.aggregate_id=t.transfer_id
+          AND b.state='SUCCEEDED' AND b.effect_certainty=2 AND b.safety_parent_command_id IS NULL
+          AND NOT EXISTS(SELECT 1 FROM command_receipt AS child
+            WHERE child.owner_id=b.owner_id AND child.owner_epoch=b.owner_epoch AND child.safety_parent_command_id=b.command_id)
+        """;
 
     private readonly NodeStore _store;
     private readonly string _owner;
@@ -241,7 +253,7 @@ internal sealed partial class DurableCommandStore : IDisposable
             if (MaintenanceRequired) return new(DurableDecision.Maintenance, null);
             byte[] digest = IntentDigest(intent);
             string id = Convert.ToHexStringLower(intent.CommandId);
-            if (intent.SafetyParent is not null)
+            if (intent.SafetyParent is not null && intent.Method != TransferRecords.CloseMethod)
             {
                 string? held = _store.Read(reader => reader.Scalar("SELECT command_id FROM command_receipt WHERE owner_id=$o AND owner_epoch=$e AND safety_parent_command_id=$p AND method=$m;",
                     ("$o", _owner), ("$e", _fence.Epoch), ("$p", Convert.ToHexStringLower(intent.SafetyParent)), ("$m", intent.Method)) as string);
@@ -261,6 +273,11 @@ internal sealed partial class DurableCommandStore : IDisposable
             }
             if (IsGrantMutation(intent) && (observed is not { State: "SUCCEEDED", Effect: 2 } || metadataChanges is null))
                 throw new ArgumentException("A new grant mutation must atomically commit its observed SQLite effect.", nameof(intent));
+            if (intent.Method is TransferRecords.BeginImportMethod or TransferRecords.BeginExportMethod
+                && (observed is { Effect: not 1 } || observed is null && metadataChanges is null)
+                || intent.Method == TransferRecords.CloseMethod && intent.SafetyParent is null && observed is null
+                || IsImportStep(intent) && (observed is null or { State: "UNKNOWN" }) && metadataChanges is null)
+                throw new ArgumentException("A new transfer effect requires its exact durable reservation.", nameof(intent));
             if (intent.AdditionalSafetyReservations != 0 && (observed is not null || intent.Provision is null))
                 throw new ArgumentException("New provisioning must persist its exact derived grant reservation before native work.", nameof(intent));
             string? provisionBody = intent.Provision is { } provision ? WriteProvisionReservation(null, provision) : null;
@@ -303,6 +320,9 @@ internal sealed partial class DurableCommandStore : IDisposable
                 metadataChanges?.Invoke(tx);
                 if (IsGrantMutation(intent))
                     RequireGrantMutation(tx, intent, id);
+                if (IsImportStep(intent) && (observed is null or { State: "UNKNOWN" })
+                    && !HasImportCloseAnchor(tx, intent, admittedAt, id))
+                    throw new InvalidOperationException("The exact import phase must share its original Close reservation.");
                 if (observed is not null)
                 {
                     bool uncertain = observed.State == "UNKNOWN";
@@ -342,6 +362,9 @@ internal sealed partial class DurableCommandStore : IDisposable
         }
         long count = (long)reader.Scalar("SELECT count(*) FROM command_receipt WHERE owner_id=$o AND owner_epoch=$e;",
             ("$o", _owner), ("$e", _fence.Epoch))!;
+        bool coveredImport = IsImportStep(intent) && (observed is null or { State: "UNKNOWN" });
+        if (coveredImport && !HasImportCloseAnchor(reader, intent, admittedAt, pendingCommand: null))
+            return DurableDecision.Conflict;
         bool safety = intent.SafetyParent is not null || intent.Grant?.Action == DurableGrantAction.Revoke;
         long reserve = (long)reader.Scalar("SELECT length(reserve_storage) FROM owner_epoch_capacity WHERE owner_id=$o AND owner_epoch=$e;",
             ("$o", _owner), ("$e", _fence.Epoch))!;
@@ -349,8 +372,8 @@ internal sealed partial class DurableCommandStore : IDisposable
         long futureSafety = 0;
         if (!safety)
         {
-            // A known effect with no remaining owned boundary does not promise a new safety operation.
-            int newSafety = intent.Method == ResourcePolicyMethod || intent.Grant?.Action == DurableGrantAction.Replace
+            // A known effect with no remaining boundary and an import step already covered by its Begin do not add promises.
+            int newSafety = coveredImport || intent.Method == ResourcePolicyMethod || intent.Grant?.Action == DurableGrantAction.Replace
                 || observed is { State: not "UNKNOWN" } && !IsGrantMutation(intent) ? 0 : 1;
             futureSafety = CountOutstandingSafetyPromises(reader) + newSafety + intent.AdditionalSafetyReservations;
             if (futureSafety * _capacity.MaximumResponseBytes > reserve) return DurableDecision.Capacity;
@@ -359,6 +382,9 @@ internal sealed partial class DurableCommandStore : IDisposable
         if (intent.SafetyParent is not null)
         {
             string parent = Convert.ToHexStringLower(intent.SafetyParent);
+            if (intent.Method == TransferRecords.CloseMethod
+                && !TransferRecords.IsCloseSafetyParent(reader, _owner, _fence.Epoch, intent.AggregateId!, parent))
+                return DurableDecision.Conflict;
             if (!Equals(reader.Scalar("SELECT count(*) FROM command_receipt WHERE owner_id=$o AND owner_epoch=$e AND command_id=$p AND aggregate_kind IS $k AND aggregate_id IS $id AND safety_parent_command_id IS NULL;",
                 ("$o", _owner), ("$e", _fence.Epoch), ("$p", parent), ("$k", intent.AggregateKind), ("$id", intent.AggregateId)), 1L))
                 return DurableDecision.Conflict;
@@ -377,9 +403,14 @@ internal sealed partial class DurableCommandStore : IDisposable
     {
         // A settled remote provision keeps its owned-root reconciliation promise while
         // the exact derived authority is still active. That grant also owns its revoke.
-        long active = (long)reader.Scalar("""
+        long active = (long)reader.Scalar($"""
             SELECT count(*) FROM command_receipt p WHERE p.owner_id=$o AND p.owner_epoch=$e AND p.safety_parent_command_id IS NULL
               AND p.aggregate_kind IS NOT 'grant' AND p.method<>$resourcePolicy
+              AND NOT (p.aggregate_kind IS 'transfer' AND p.method IN ($write,$commit) AND EXISTS(
+                SELECT 1 {ImportCloseAnchor}
+                  AND t.owner_id=p.owner_id AND t.owner_epoch=p.owner_epoch AND t.transfer_id=p.aggregate_id
+                  AND json_extract(t.manifest_json,'$.pending.commandId')=p.command_id
+                  AND json_extract(t.manifest_json,'$.pending.phase')=CASE p.method WHEN $write THEN $chunk ELSE $publish END))
               AND (
                 p.state IN ('ACCEPTED','UNKNOWN')
                 OR (p.method='RunService.Start' AND EXISTS(
@@ -394,7 +425,8 @@ internal sealed partial class DurableCommandStore : IDisposable
                 OR EXISTS(SELECT 1 FROM transfer t
                   WHERE t.owner_id=p.owner_id AND t.owner_epoch=p.owner_epoch AND t.command_id=p.command_id
                     AND (t.state IN (1,2,5) OR t.effect_certainty=3 OR
-                      (t.direction='export' AND t.state=3 AND t.closed_utc IS NULL)))
+                      (t.state IN (3,4) AND t.closed_utc IS NULL AND
+                        (t.state=3 OR t.staging_identity<>'unbound'))))
                 OR EXISTS(SELECT 1 FROM deletion_journal d
                   WHERE d.owner_id=p.owner_id AND d.owner_epoch=p.owner_epoch AND d.command_id=p.command_id
                     AND (d.phase<>'complete' OR d.effect_certainty=3))
@@ -402,7 +434,9 @@ internal sealed partial class DurableCommandStore : IDisposable
               AND NOT EXISTS(SELECT 1 FROM command_receipt s WHERE s.owner_id=p.owner_id AND s.owner_epoch=p.owner_epoch AND s.safety_parent_command_id=p.command_id);
             """, ("$o", _owner), ("$e", _fence.Epoch), ("$resourcePolicy", ResourcePolicyMethod),
             ("$create", SandboxCreateMethod), ("$deleted", (int)StoredSandboxState.Deleted),
-            ("$grantActive", (int)StoredRemoteGrantState.Active))!;
+            ("$grantActive", (int)StoredRemoteGrantState.Active), ("$unbound", TransferRecords.UnboundStage),
+            ("$beginImport", TransferRecords.BeginImportMethod), ("$write", TransferRecords.WriteMethod), ("$commit", TransferRecords.CommitMethod),
+            ("$chunk", (int)StoredTransferPhase.Chunk), ("$publish", (int)StoredTransferPhase.Publish))!;
         long pendingGrants = (long)reader.Scalar("""
             SELECT count(*) FROM command_receipt p WHERE p.owner_id=$o AND p.owner_epoch=$e
               AND p.method=$create AND p.aggregate_kind='sandbox' AND p.state IN ('ACCEPTED','UNKNOWN')
@@ -410,6 +444,23 @@ internal sealed partial class DurableCommandStore : IDisposable
             """, ("$o", _owner), ("$e", _fence.Epoch), ("$create", SandboxCreateMethod), ("$field", GrantReservationPath))!;
         return active + RemoteGrantRecords.CountActive(reader, _owner) + pendingGrants;
     }
+
+    private bool HasImportCloseAnchor(StoreReader reader, DurableIntent intent, DateTimeOffset admittedAt, string? pendingCommand) =>
+        Equals(reader.Scalar($"""
+            SELECT EXISTS(SELECT 1 {ImportCloseAnchor}
+              AND t.owner_id=$owner AND t.owner_epoch=$epoch AND t.transfer_id=$id
+              AND t.expires_utc>$now
+              AND ($phase=$chunk OR t.verified_offset=t.byte_length)
+              AND (($command IS NULL AND t.state IN (1,2) AND json_extract(t.manifest_json,'$.pending') IS NULL)
+                   OR ($command IS NOT NULL AND json_extract(t.manifest_json,'$.pending.commandId')=$command
+                       AND json_extract(t.manifest_json,'$.pending.phase')=$phase)));
+            """, ("$owner", _owner), ("$epoch", _fence.Epoch), ("$id", intent.AggregateId),
+            ("$now", SandboxRecords.FormatTime(admittedAt)), ("$command", pendingCommand), ("$unbound", TransferRecords.UnboundStage),
+            ("$beginImport", TransferRecords.BeginImportMethod), ("$chunk", (int)StoredTransferPhase.Chunk),
+            ("$phase", (int)(intent.Method == TransferRecords.WriteMethod ? StoredTransferPhase.Chunk : StoredTransferPhase.Publish))), 1L);
+
+    private static bool IsImportStep(DurableIntent intent) =>
+        intent.Method is TransferRecords.WriteMethod or TransferRecords.CommitMethod;
 
     private static bool IsGrantMutation(DurableIntent intent) => intent.Method is SetGrantMethod or RevokeGrantMethod;
 
@@ -508,6 +559,12 @@ internal sealed partial class DurableCommandStore : IDisposable
         StoreIds.Validate(intent.CommandId, nameof(intent)); StoreIds.Validate(intent.OwnerEpoch, nameof(intent));
         ArgumentNullException.ThrowIfNull(intent.CanonicalBody);
         if (intent.SafetyParent is not null) StoreIds.Validate(intent.SafetyParent, nameof(intent));
+        if (intent.Method == TransferRecords.CloseMethod
+            && (intent.AggregateKind != TransferRecords.Aggregate || !IsGrantIdentity(intent.AggregateId))
+            || intent.AggregateKind == TransferRecords.Aggregate && intent.SafetyParent is not null
+                && intent.Method != TransferRecords.CloseMethod
+            || IsImportStep(intent) && (intent.AggregateKind != TransferRecords.Aggregate || !IsGrantIdentity(intent.AggregateId)))
+            throw new ArgumentException("The transfer receipt must identify its exact owned aggregate and Close reservation.", nameof(intent));
         if (intent.ExpectedSandboxId is { } sandboxId
             && (intent.ExpectedSandboxRevision is not > 0 || sandboxId.Length != 32
                 || !sandboxId.All(character => character is >= '0' and <= '9' or >= 'a' and <= 'f')))

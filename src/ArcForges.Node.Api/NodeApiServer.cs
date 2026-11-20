@@ -25,6 +25,7 @@ public static class NodeApiServer
     private const string Sandbox = "arcforges.sandbox.v2.SandboxService";
     private const string Runs = "arcforges.sandbox.v2.RunService";
     private const string SandboxResources = "arcforges.sandbox.v2.ResourceService";
+    private const string SandboxData = "arcforges.sandbox.v2.DataService";
 
     /// <summary>Builds the server (not started).</summary>
     /// <param name="endpoint">The node's endpoint.</param>
@@ -51,6 +52,7 @@ public static class NodeApiServer
         builder.AddService(new SandboxServiceHandler(node));
         builder.AddService(new RunServiceHandler(node, sessions));
         builder.AddService(new SandboxResourceServiceHandler(node));
+        builder.AddService(new DataServiceHandler(node));
         var sandboxDeadline = new LocalRpcCallProfile(TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
         builder.RegisterMethod(SandboxNode, "Handshake", sandboxDeadline);
         builder.RegisterMethod(SandboxNode, "GetOperation", sandboxDeadline);
@@ -82,6 +84,14 @@ public static class NodeApiServer
             MaxBufferedMessages = SandboxResourceServiceHandler.WatchBuffer,
             RequireReads = TimeSpan.FromSeconds(10),
         });
+
+        var dataDeadline = new LocalRpcCallProfile(TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+        foreach (var method in (ReadOnlySpan<string>)["GetUsage", "ListEntries", "BeginImport", "WriteImport", "CommitImport",
+                     "BeginExport", "ReadExport", "CloseTransfer"])
+        {
+            builder.RegisterMethod(SandboxData, method, dataDeadline);
+        }
+        builder.RegisterMethod(SandboxData, "InspectTransfer", sandboxDeadline);
 
         var tasks = new TaskServiceHandler(node, sessions, executors);
         var files = new FileServiceHandler(node);

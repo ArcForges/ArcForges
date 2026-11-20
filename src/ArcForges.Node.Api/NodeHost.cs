@@ -513,6 +513,7 @@ public static class NodeHost
             {
                 await recoveredSandboxes.RecoverRunsAsync(recovery, node.Stopping).ConfigureAwait(false);
                 log.Info("node.recovery.done", new LogField("participant", "sandbox_runs"));
+                recoveredSandboxes.StartDataRecovery();
                 sandboxResources = recoveredSandboxes.StartResourceSampling(sampler as IHostResourceSource, log);
             }
 

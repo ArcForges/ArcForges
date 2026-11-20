@@ -23,6 +23,10 @@ internal sealed class SandboxPrivateRootLease(WorkspacePath dataRoot, WorkspaceP
 {
     internal string RootPath => root.RootPath;
 
+    internal WorkspacePath OwnedWorkspace => root;
+
+    internal WorkspacePath OpenTransferStaging() => SandboxPrivateRoots.OpenTransferStaging(dataRoot);
+
     internal IReadOnlyList<string> WritablePaths { get; } = writablePaths;
 
     public void Dispose()
@@ -39,7 +43,21 @@ internal sealed class SandboxPrivateRoots(string dataRoot)
     private const string ParentName = "sandboxes";
     internal const string DeletionQuarantineName = "deletion-quarantine";
     private static readonly string[] WritableNames = ["home", "config", "cache", "tmp", "work", "data"];
+    internal static IReadOnlyList<string> OwnedDataDirectoryNames { get; } = Array.AsReadOnly(WritableNames);
     private static readonly string[] ProtectedDirectories = ["store", "control", "credentials"];
+
+    internal static WorkspacePath OpenTransferStaging(WorkspacePath dataRoot)
+    {
+        using var control = EnsureManagedDirectory(dataRoot, "control", configuredRoot: true);
+        return EnsureManagedDirectory(control, "sandbox-transfers");
+    }
+
+    internal WorkspacePath OpenTransferStaging()
+    {
+        using var anchor = OpenDataRoot(requireControl: true);
+        using var control = anchor.OpenSandboxDirectory("control", configuredRoot: true);
+        return control.OpenSandboxDirectory("sandbox-transfers");
+    }
 
     internal static string RelativePath(string sandboxId)
     {

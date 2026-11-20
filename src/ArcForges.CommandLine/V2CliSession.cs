@@ -17,12 +17,14 @@ internal sealed class V2CliSession : IAsyncDisposable
         Sandboxes = new V2.SandboxService.SandboxServiceClient(invoker);
         Runs = new V2.RunService.RunServiceClient(invoker);
         Resources = new V2.ResourceService.ResourceServiceClient(invoker);
+        Data = new V2.DataService.DataServiceClient(invoker);
     }
 
     internal V2.NodeService.NodeServiceClient Node { get; }
     internal V2.SandboxService.SandboxServiceClient Sandboxes { get; }
     internal V2.RunService.RunServiceClient Runs { get; }
     internal V2.ResourceService.ResourceServiceClient Resources { get; }
+    internal V2.DataService.DataServiceClient Data { get; }
     internal V1.NodeInfo LocalNode => _session.Hello.Node;
     internal V1.NodeService.NodeServiceClient Lifecycle => _session.Channel.Node;
 
