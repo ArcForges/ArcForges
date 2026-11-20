@@ -106,6 +106,7 @@ internal sealed class LinuxSandboxDeletionAuthority
 internal sealed partial class WorkspacePath
 {
     private const string LinuxCustodyRecordName = "sandbox-deletion-owner.v1";
+    private const string LinuxCustodyStampStage = "sandbox-deletion-provisioned.stage";
 
     [SupportedOSPlatform("linux")]
     internal static uint GetLinuxCustodyPrincipal()
@@ -195,9 +196,16 @@ internal sealed partial class WorkspacePath
     [SupportedOSPlatform("linux")]
     internal void InitializeOrVerifyLinuxCustodyStamp(uint owner, byte[] expected)
     {
+        var parent = checked((int)RootHandle.DangerousGetHandle());
         try
         {
             VerifyLinuxCustodyStamp(owner, expected);
+            // Retry the directory flush if a prior Node published the name but did not complete initialization.
+            if (SyncDirectory(parent) != 0)
+            {
+                throw NativeFailure();
+            }
+
             return;
         }
         catch (WorkspacePathException error) when (error.Reason == "native_2")
@@ -205,27 +213,72 @@ internal sealed partial class WorkspacePath
             // A new profile starts with the dedicated lock only. A legacy store cannot be adopted by adding an owner record.
         }
 
-        var entries = ReadLinuxSandboxDeleteNames(RootHandle, 2, CancellationToken.None);
-        if (entries.Count != 1 || !entries[0].AsSpan().SequenceEqual("node.lock\0"u8))
+        var entries = ReadLinuxSandboxDeleteNames(RootHandle, 3, CancellationToken.None);
+        var stagedName = Encoding.ASCII.GetBytes(LinuxCustodyStampStage + '\0');
+        var hasStage = entries.Any(entry => entry.AsSpan().SequenceEqual(stagedName));
+        if (entries.Count != (hasStage ? 2 : 1) || !entries.Any(static entry => entry.AsSpan().SequenceEqual("node.lock\0"u8)))
         {
             throw new WorkspacePathException("linux_protected_storage_provenance_missing");
         }
 
+        using var stage = OpenLinuxCustodyStampStage(owner, expected, parent, hasStage);
+        RandomAccess.Write(stage, expected, 0);
+        RandomAccess.FlushToDisk(stage);
+        if (RenameRemovalAt(parent, LinuxCustodyStampStage, parent, LinuxSandboxDeletionAuthority.ProvisioningStampName, 1) != 0 ||
+            SyncDirectory(parent) != 0)
+        {
+            throw NativeFailure();
+        }
+    }
+
+    [SupportedOSPlatform("linux")]
+    private SafeFileHandle OpenLinuxCustodyStampStage(uint owner, byte[] expected, int parent, bool hasStage)
+    {
+        if (hasStage)
+        {
+            using var metadata = LinuxOpenAt2(RootHandle, LinuxCustodyStampStage, noCrossMount: true);
+            RequireLinuxCustodyMode(metadata, owner, file: true, exactPrivateMode: true);
+            var existing = LinuxReopenChecked(metadata, directory: false, _linuxFileSystemUuid, afterMetadataOpen: null, writable: true);
+            try
+            {
+                var length = RandomAccess.GetLength(existing);
+                if (length > expected.Length)
+                {
+                    throw new WorkspacePathException("linux_protected_storage_provenance_changed");
+                }
+
+                Span<byte> prefix = stackalloc byte[checked((int)length)];
+                if (RandomAccess.Read(existing, prefix, 0) != prefix.Length || !prefix.SequenceEqual(expected.AsSpan(0, prefix.Length)))
+                {
+                    throw new WorkspacePathException("linux_protected_storage_provenance_changed");
+                }
+
+                return existing;
+            }
+            catch
+            {
+                existing.Dispose();
+                throw;
+            }
+        }
+
         const int createExclusiveNoFollow = 1 | 0x40 | 0x80 | 0x20000 | 0x80000;
-        var parent = checked((int)RootHandle.DangerousGetHandle());
-        var descriptor = OpenAt(parent, LinuxSandboxDeletionAuthority.ProvisioningStampName, createExclusiveNoFollow, 0x180);
+        var descriptor = OpenAt(parent, LinuxCustodyStampStage, createExclusiveNoFollow, 0x180);
         if (descriptor < 0)
         {
             throw NativeFailure();
         }
 
-        using var stamp = new SafeFileHandle(descriptor, ownsHandle: true);
-        RequireLinuxCustodyMode(stamp, owner, file: true, exactPrivateMode: true);
-        RandomAccess.Write(stamp, expected, 0);
-        RandomAccess.FlushToDisk(stamp);
-        if (SyncDirectory(parent) != 0)
+        var stage = new SafeFileHandle(descriptor, ownsHandle: true);
+        try
         {
-            throw NativeFailure();
+            RequireLinuxCustodyMode(stage, owner, file: true, exactPrivateMode: true);
+            return stage;
+        }
+        catch
+        {
+            stage.Dispose();
+            throw;
         }
     }
 
