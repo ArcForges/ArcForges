@@ -477,7 +477,9 @@ public sealed class CloudLinkCenterControlTests
             {
                 using var database = new SqliteConnection(new SqliteConnectionStringBuilder
                 {
-                    DataSource = StorePaths.Database(fixture.DataRoot), Mode = SqliteOpenMode.ReadOnly, Pooling = false,
+                    DataSource = StorePaths.Database(fixture.DataRoot),
+                    Mode = SqliteOpenMode.ReadOnly,
+                    Pooling = false,
                 }.ToString());
                 database.Open();
                 using var command = database.CreateCommand();
