@@ -15,6 +15,19 @@ internal sealed partial class CloudLinkService
     private bool _v2PreviouslyObserved;
     private string _remoteRevocation = "not_requested";
 
+    internal void RestoreCenterRemoteRevocation(string observation)
+    {
+        if (observation is not ("not_requested" or "confirmed" or "unknown"))
+        {
+            throw new ArgumentOutOfRangeException(nameof(observation));
+        }
+
+        lock (_stateLock)
+        {
+            _remoteRevocation = observation;
+        }
+    }
+
     internal CenterConnection GetCenterStatus()
     {
         var configured = Configured();
@@ -96,7 +109,11 @@ internal sealed partial class CloudLinkService
 
             if (Phase == CloudLinkPhase.SignedIn)
             {
-                if (!SetCenterConnectionHeld(enabled: true))
+                if (CenterCredentialNeedsReenrollment())
+                {
+                    error = CenterBusy("center_credential_reenrollment_required");
+                }
+                else if (!SetCenterConnectionHeld(enabled: true))
                 {
                     error = CenterBusy("center_credential_unavailable");
                 }
@@ -146,7 +163,7 @@ internal sealed partial class CloudLinkService
                 return CenterBusy("center_credential_unavailable");
             }
 
-            SignIn.CancelActive();
+            SignIn.CancelActive(includeCenterFlow: true);
             SetV2Enrollment(null, resetHistory: false);
             _options.Log.Info("center.control.disconnected");
         }
@@ -161,19 +178,19 @@ internal sealed partial class CloudLinkService
         string remote;
         SignOutResult result;
         bool localPending;
-        using (await EnterForSignOutAsync(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false))
+        using (await EnterForSignOutAsync(TimeSpan.FromSeconds(1), cancellationToken, ownerV2: true).ConfigureAwait(false))
         {
             if (Phase == CloudLinkPhase.SignedIn && !SetCenterConnectionHeld(enabled: false))
             {
                 return ("not_requested", CenterBusy("center_credential_unavailable"));
             }
 
-            SignIn.CancelActive();
+            SignIn.CancelActive(includeCenterFlow: true);
             var pending = SignIn.HasUnsettledFlow;
             SetV2Enrollment(null, resetHistory: false);
             // The protected pause is persistent and immediately fences channel authority before the bounded remote request.
             _channel?.LinkChanged();
-            result = await SignOutHeldAsync(revokeRemote: true, TimeSpan.FromSeconds(4)).ConfigureAwait(false);
+            result = await SignOutHeldAsync(revokeRemote: true, TimeSpan.FromSeconds(4), ownerV2: true).ConfigureAwait(false);
             lock (_stateLock)
             {
                 localPending = _link?.State == LinkStates.Ending || _warnings.Contains(Warnings.StoreUnavailable);
@@ -234,6 +251,21 @@ internal sealed partial class CloudLinkService
             return _link?.ConnectionPaused == true;
         }
     }
+
+    private bool CenterControlOwnsLinkLocked => _v2SignInReserved || IsCenterControlLink(_link);
+
+    private static bool IsCenterControlLink(CloudLinkFile? link) => link is { UseV2: true } or { ConnectionPaused: true };
+
+    private bool CenterCredentialNeedsReenrollment()
+    {
+        lock (_stateLock)
+        {
+            return _record is null || !IsV2AccountId(_record.AccountId);
+        }
+    }
+
+    private static bool IsV2AccountId(string? account) =>
+        account is { Length: 32 } && account.All(char.IsAsciiHexDigitLower) && account.Any(static digit => digit != '0');
 
     private static ArcError CenterBusy(string reason) => CenterControlError(ErrorCategory.State, "busy", reason);
 

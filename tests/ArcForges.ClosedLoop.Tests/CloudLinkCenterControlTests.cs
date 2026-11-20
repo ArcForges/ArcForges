@@ -5,6 +5,7 @@ using System.Text.Json;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Sandbox.V2;
+using ArcForges.LocalRpc;
 using ArcForges.Node.CloudLink;
 using ArcForges.Node.Platform.Capabilities;
 using ArcForges.Tests;
@@ -41,7 +42,7 @@ public sealed class CloudLinkCenterControlTests
         fixture.Environment[CloudLinkTestHooks.RefreshSeconds] = "15";
         fixture.Environment["ARCFORGES_TEST_CLIENT_IMAGES"] = null;
         await fixture.StartNodeAsync();
-        await using var local = await fixture.HumanChannelAsync();
+        await using var local = OpenChannel(fixture);
         var node = new NodeService.NodeServiceClient(local.CallInvoker);
         var control = new CenterControlService.CenterControlServiceClient(local.CallInvoker);
         var sandboxes = new SandboxService.SandboxServiceClient(local.CallInvoker);
@@ -180,6 +181,10 @@ public sealed class CloudLinkCenterControlTests
         ServiceMode = "self_hosted",
         FlowKind = flow,
     };
+
+    private static NodeChannel OpenChannel(TestNode fixture) => NodeChannel.Create(OperatingSystem.IsWindows()
+        ? LocalRpcEndpoint.NamedPipe(fixture.Endpoint)
+        : LocalRpcEndpoint.UnixDomainSocket(fixture.Endpoint));
 
     private static async Task<CenterControlServiceBeginConnectValue> BeginAsync(CenterControlService.CenterControlServiceClient client,
         CenterControlServiceBeginConnectRequest request)

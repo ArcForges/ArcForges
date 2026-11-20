@@ -467,6 +467,79 @@ public sealed class SignInFlowTests
     }
 
     [Fact]
+    public async Task CenterFlowRetainsItsExpiryAndRejectsLegacySignOutDuringSetup()
+    {
+        await using var link = await LinkFixture.CreateAsync();
+        await link.StartAsync();
+        var expected = ArcForges.Client.ProtoTime.ToInstant(link.Clock.GetUtcNow() + SignInOrchestrator.BrowserLifetime);
+        var held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        link.Center.Script("BeginNodeSignIn", new FakeFault.Hold(held));
+        try
+        {
+            Id id;
+            using (await link.Service.EnterAsync(Cancel))
+            {
+                var begun = link.Service.SignIn.StartCenterFlow(SignInMethod.Browser);
+                Assert.Null(begun.Error);
+                id = Assert.IsType<Id>(begun.FlowId);
+            }
+
+            await Eventually.TrueAsync(() => link.Center.CallsOf("BeginNodeSignIn").Count == 1, "V2 start in flight");
+            var starting = Assert.IsType<ArcForges.Contracts.Sandbox.V2.CenterConnectFlow>(link.Service.GetCenterFlow(id));
+            Assert.Equal("pending", starting.State);
+            Assert.Equal(expected, starting.ExpiresAt);
+            Assert.False(starting.HasVerificationUri);
+
+            link.Service.SignIn.CancelActive();
+            using (await link.Service.EnterForSignOutAsync(TimeSpan.Zero, Cancel))
+            {
+                Assert.Equal(SignOutResult.NotSignedIn, await link.Service.SignOutHeldAsync(revokeRemote: true));
+            }
+
+            Assert.Equal("pending", link.Service.GetCenterFlow(id)!.State);
+            Assert.Null(await link.Service.CancelCenterConnectAsync(id, Cancel));
+            var cancelled = link.Service.GetCenterFlow(id)!;
+            Assert.Equal("cancelled", cancelled.State);
+            Assert.Equal(expected, cancelled.ExpiresAt);
+            Assert.False(cancelled.HasVerificationUri);
+            Assert.Empty(link.Center.CallsOf("SignOutNode"));
+        }
+        finally
+        {
+            held.TrySetResult();
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CenterConnectPreservesLegacyCredentialWithUnusableAccountId(bool zero)
+    {
+        await using var link = await LinkFixture.CreateAsync();
+        var center = CenterEndpoint.Parse("https" + link.Center.Endpoint.Url["http".Length..]);
+        link.ConfiguredCenter = center;
+        await link.StartAsync();
+        var credential = link.Center.Issue(link.NodeId);
+        if (zero)
+        {
+            credential.Account!.AccountId = new Id { Value = Google.Protobuf.ByteString.CopyFrom(new byte[16]) };
+        }
+        else
+        {
+            credential.Account = null;
+        }
+
+        await link.Service.AdoptAsync(credential, center);
+        var begun = await link.Service.BeginCenterConnectAsync(center.Origin, "self_hosted", "device_code", Cancel);
+        Assert.Null(begun.FlowId);
+        Assert.Equal("busy", begun.Error!.Code);
+        Assert.Equal("center_credential_reenrollment_required", begun.Error.Details.State.Reason);
+        Assert.Null(link.Service.Storage.ReadLink()!.UseV2);
+        Assert.True(link.Service.AccountLinked);
+        Assert.False(link.Service.GetCenterStatus().ConnectionEnabled);
+    }
+
+    [Fact]
     public async Task CancelEndsAPendingFlowAndNothingElse()
     {
         await using var link = await LinkFixture.CreateAsync();

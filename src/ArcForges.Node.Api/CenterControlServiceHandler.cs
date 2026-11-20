@@ -20,15 +20,24 @@ internal sealed class CenterControlServiceHandler(NodeRuntime node, CloudLinkSer
     private const string Service = "CenterControlService.";
     private readonly SemaphoreSlim _mutations = new(1, 1);
     private bool _recoveryReady;
+    private volatile bool _linkLoaded;
 
     internal void RecoverAccepted(NodeStore store, SandboxManager manager)
     {
+        string revocation = "unknown";
         try
         {
             lock (manager.OwnershipGate)
             {
                 if (DurableCommandStore.HasExistingAuthority(store, manager.OwnerId))
+                {
                     manager.Receipts.RecoverInterruptedCenterControls();
+                    revocation = manager.Receipts.LatestCenterRemoteRevocation();
+                }
+                else
+                {
+                    revocation = "not_requested";
+                }
                 _recoveryReady = true;
             }
         }
@@ -37,31 +46,41 @@ internal sealed class CenterControlServiceHandler(NodeRuntime node, CloudLinkSer
             node.Log.Warning("center.control.recovery", new LogField("reason", "center_control_metadata_unavailable"),
                 new LogField("errorType", failure.GetType().Name));
         }
+
+        cloud.RestoreCenterRemoteRevocation(revocation);
     }
 
     public void Dispose() => _mutations.Dispose();
+
+    internal void MarkLinkLoaded() => _linkLoaded = true;
 
     public override Task<CenterControlServiceGetStatusResponse> GetStatus(
         CenterControlServiceGetStatusRequest request, ServerCallContext context) =>
         SandboxLocalCalls.Execute(node, context, request, request.Meta,
             value => IsRead(value.Meta) && Exact(value, CenterControlServiceGetStatusRequest.Parser),
-            (_, value, _) => new CenterControlServiceGetStatusResponse
-            {
-                Meta = Response(value.Meta),
-                Value = new() { Connection = cloud.GetCenterStatus() },
-            }, static (meta, error) => new() { Meta = meta, Error = error });
+            (_, value, _) => _linkLoaded
+                ? new CenterControlServiceGetStatusResponse { Meta = Response(value.Meta), Value = new() { Connection = cloud.GetCenterStatus() } }
+                : new CenterControlServiceGetStatusResponse { Meta = Response(value.Meta), Error = LinkStarting(value.Meta) },
+            static (meta, error) => new() { Meta = meta, Error = error });
 
     public override Task<CenterControlServiceGetConnectFlowResponse> GetConnectFlow(
         CenterControlServiceGetConnectFlowRequest request, ServerCallContext context) =>
         SandboxLocalCalls.Execute(node, context, request, request.Meta,
             value => IsRead(value.Meta) && Shapes.IsValid(value.FlowId) && Exact(value, CenterControlServiceGetConnectFlowRequest.Parser),
-            (_, value, _) => cloud.GetCenterFlow(value.FlowId) is { } flow
-                ? new CenterControlServiceGetConnectFlowResponse { Meta = Response(value.Meta), Value = new() { Flow = flow } }
-                : new CenterControlServiceGetConnectFlowResponse
-                {
-                    Meta = Response(value.Meta),
-                    Error = Error(value.Meta, ErrorCategory.State, "not_found", "center_flow_not_found"),
-                }, static (meta, error) => new() { Meta = meta, Error = error });
+            (_, value, _) =>
+            {
+                var meta = Response(value.Meta);
+                if (!_linkLoaded)
+                    return new CenterControlServiceGetConnectFlowResponse { Meta = meta, Error = LinkStarting(value.Meta) };
+                var flow = cloud.GetCenterFlow(value.FlowId);
+                return flow is null
+                    ? new CenterControlServiceGetConnectFlowResponse
+                    {
+                        Meta = meta,
+                        Error = Error(value.Meta, ErrorCategory.State, "not_found", "center_flow_not_found")
+                    }
+                    : new CenterControlServiceGetConnectFlowResponse { Meta = meta, Value = new() { Flow = flow } };
+            }, static (meta, error) => new() { Meta = meta, Error = error });
 
     public override Task<CenterControlServiceBeginConnectResponse> BeginConnect(
         CenterControlServiceBeginConnectRequest request, ServerCallContext context) =>
@@ -142,6 +161,8 @@ internal sealed class CenterControlServiceHandler(NodeRuntime node, CloudLinkSer
         byte[] canonical, Func<CancellationToken, Task<Effect>> action, Func<ResponseMeta, Result, TResponse> success,
         Func<ResponseMeta, ArcError, TResponse> failure, CancellationToken cancellationToken)
     {
+        if (!_linkLoaded)
+            return failure(Response(meta), LinkStarting(meta));
         if (!_recoveryReady)
             return failure(Response(meta), Error(meta, ErrorCategory.State, "busy", "center_control_recovery_unavailable"));
 
@@ -172,7 +193,13 @@ internal sealed class CenterControlServiceHandler(NodeRuntime node, CloudLinkSer
 
             var operation = observed.Value.Operation;
             var (connection, flow) = Projection(receipt?.ResponseJson);
-            return success(Response(meta), new(operation, connection ?? cloud.GetCenterStatus(), flow));
+            if (method != nameof(CancelConnect) && connection is null)
+            {
+                return failure(Response(meta), operation.Error ?? Error(meta, ErrorCategory.Execution, "outcome_unknown",
+                    "center_control_projection_unavailable", EffectCertainty.Unknown));
+            }
+
+            return success(Response(meta), new(operation, connection, flow));
         }
         catch (Exception error) when (StorageUnavailable(error))
         {
@@ -227,6 +254,9 @@ internal sealed class CenterControlServiceHandler(NodeRuntime node, CloudLinkSer
             ["centerConnection"] = connection is null ? null : Convert.ToBase64String(connection.ToByteArray()),
             ["centerFlowId"] = observation.FlowId is null ? null : Convert.ToHexStringLower(observation.FlowId.Value.Span),
         };
+        if (method == nameof(SignOut) && observation.RemoteRevocation is "unknown" or "confirmed" or "not_requested")
+            retained["centerRemoteRevocation"] = observation.RemoteRevocation;
+
         DurableReceipt receipt;
         lock (manager.OwnershipGate)
         {
@@ -288,6 +318,9 @@ internal sealed class CenterControlServiceHandler(NodeRuntime node, CloudLinkSer
 
     private static ResponseMeta Response(RequestMeta meta) => new() { CorrelationId = meta.CorrelationId.Clone() };
 
+    private static ArcError LinkStarting(RequestMeta meta) =>
+        Error(meta, ErrorCategory.State, "busy", "center_link_initializing");
+
     private static ArcError Error(RequestMeta meta, ErrorCategory category, string code, string reason,
         EffectCertainty effect = EffectCertainty.DidNotHappen) => new()
         {
@@ -303,5 +336,5 @@ internal sealed class CenterControlServiceHandler(NodeRuntime node, CloudLinkSer
         };
 
     private sealed record Effect(ArcError? Error, Id? FlowId = null, string? RemoteRevocation = null);
-    private sealed record Result(Operation Operation, CenterConnection Connection, Id? FlowId);
+    private sealed record Result(Operation Operation, CenterConnection? Connection, Id? FlowId);
 }

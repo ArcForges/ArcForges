@@ -572,6 +572,7 @@ public static class NodeHost
 
             housekeepingLoop = HousekeepAsync(node, keys, housekeeping, loops.Token);
             await cloud.StartAsync().ConfigureAwait(false);
+            centerControl.MarkLinkLoaded();
             if (OperatingSystem.IsLinux() && platform is ArcForges.Node.Platform.Linux.LinuxExecutionPlatform { UnitMode: true } linux)
             {
                 // 06 section 5: arcforges-guard.service guards the attempt units while the node is down; started when installed.

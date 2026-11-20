@@ -199,16 +199,19 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
                 return (null, CloudLinkService.CenterControlError(ErrorCategory.State, "busy", "center_flow_unsettled"));
             }
 
-            if (_link.ReserveSignIn(out var center) is not null)
+            if (_link.ReserveSignIn(out var center, ownerV2: true) is not null)
             {
                 return (null, CloudLinkService.CenterControlError(ErrorCategory.State, "busy", "center_sign_in_unavailable"));
             }
 
             var entered = _options.Clock.GetTimestamp();
+            var lifetime = method == SignInMethod.Browser ? BrowserLifetime : DeviceHardStop;
             var run = new Run(CommandIds.New(_options.Clock), center!, CancellationTokenSource.CreateLinkedTokenSource(_stop.Token), useV2: true)
             {
                 Method = method,
-                StartedAt = entered,
+                Received = entered,
+                Lifetime = lifetime,
+                ExpiresAt = ProtoTime.ToInstant(_options.Clock.GetUtcNow() + lifetime),
             };
             _current?.Dispose();
             _current = run;
@@ -236,6 +239,7 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
             var flow = new CenterConnectFlow
             {
                 FlowId = run.Id.Clone(),
+                ExpiresAt = run.ExpiresAt!.Clone(),
                 State = run.State switch
                 {
                     FlowPhase.SignedIn => "succeeded",
@@ -243,11 +247,6 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
                     _ => StateName(run.State),
                 },
             };
-            if (run.State is not FlowPhase.Starting)
-            {
-                flow.ExpiresAt = run.ExpiresAt?.Clone();
-            }
-
             if (run.State is FlowPhase.Pending or FlowPhase.Completing && RemainingLifetime(run, BrowserLifetime) > TimeSpan.Zero)
             {
                 if (run.Authorize is { } authorize) flow.VerificationUri = authorize.Value;
@@ -415,12 +414,12 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
     /// Ends the active flow before a sign-out (N2 decision N-2), so the sign-out never deletes the key under a flow: a reserved or pending
     /// flow is cancelled; a completing one is marked, so credentials it still brings are revoked instead of adopted.
     /// </summary>
-    public void CancelActive()
+    public void CancelActive(bool includeCenterFlow = false)
     {
         Run? run;
         lock (_lock)
         {
-            run = _current is { IsActive: true } active ? active : null;
+            run = _current is { IsActive: true } active && (includeCenterFlow || !active.UseV2) ? active : null;
             if (run is not null)
             {
                 run.CancelRequested = true;
@@ -441,7 +440,7 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
             return;
         }
 
-        CancelActive();
+        CancelActive(includeCenterFlow: true);
         Run? run;
         lock (_lock)
         {
@@ -617,7 +616,7 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
 
                 lock (_lock)
                 {
-                    if (!RecordFlowExpiry(run, value.ExpiresAt, BrowserLifetime))
+                    if (!RecordFlowExpiry(run, value.ExpiresAt))
                     {
                         return CloudLinkService.CenterControlError(ErrorCategory.Validation, "invalid_argument", "center_flow_expiry_invalid");
                     }
@@ -660,7 +659,7 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
 
                 lock (_lock)
                 {
-                    if (!RecordFlowExpiry(run, value.Authorization.ExpiresAt, DeviceHardStop))
+                    if (!RecordFlowExpiry(run, value.Authorization.ExpiresAt))
                     {
                         return CloudLinkService.CenterControlError(ErrorCategory.Validation, "invalid_argument", "center_flow_expiry_invalid");
                     }
@@ -690,11 +689,12 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
         return await call(bounded.Token).ConfigureAwait(false);
     }
 
-    private bool RecordFlowExpiry(Run run, Instant? providerExpiry, TimeSpan localLimit)
+    private bool RecordFlowExpiry(Run run, Instant? providerExpiry)
     {
-        run.Received = _options.Clock.GetTimestamp();
+        var received = _options.Clock.GetTimestamp();
         if (!run.UseV2)
         {
+            run.Received = received;
             run.ExpiresAt = providerExpiry;
             return true;
         }
@@ -705,16 +705,17 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
         }
 
         var now = _options.Clock.GetUtcNow();
-        var fromCenter = DateTimeOffset.FromUnixTimeSeconds(providerExpiry.UnixSeconds).AddTicks(providerExpiry.Nanos / 100) - now;
-        var fromLocal = localLimit - _options.Clock.GetElapsedTime(run.StartedAt, run.Received);
-        run.Lifetime = fromCenter < fromLocal ? fromCenter : fromLocal;
-        if (run.Lifetime <= TimeSpan.Zero)
-        {
-            return false;
-        }
+        var centerExpiry = DateTimeOffset.FromUnixTimeSeconds(providerExpiry.UnixSeconds).AddTicks(providerExpiry.Nanos / 100);
+        var localExpiry = ProtoTime.ToDateTimeOffset(run.ExpiresAt)!.Value;
+        var remaining = run.Lifetime - _options.Clock.GetElapsedTime(run.Received, received);
+        var monotonicExpiry = now + remaining;
+        var boundedExpiry = centerExpiry < localExpiry ? centerExpiry : localExpiry;
+        if (monotonicExpiry < boundedExpiry) boundedExpiry = monotonicExpiry;
 
-        run.ExpiresAt = ProtoTime.ToInstant(now + run.Lifetime);
-        return true;
+        run.Received = received;
+        run.Lifetime = boundedExpiry - now;
+        run.ExpiresAt = ProtoTime.ToInstant(boundedExpiry);
+        return run.Lifetime > TimeSpan.Zero;
     }
 
     private TimeSpan RemainingLifetime(Run run, TimeSpan legacyLifetime) =>
@@ -1457,8 +1458,6 @@ internal sealed class SignInOrchestrator : IAsyncDisposable
         public TimeSpan Interval { get; set; } = PollFloor;
 
         public long Received { get; set; }
-
-        public long StartedAt { get; init; }
 
         public TimeSpan Lifetime { get; set; }
 

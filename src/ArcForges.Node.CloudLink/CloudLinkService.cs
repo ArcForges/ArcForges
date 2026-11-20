@@ -204,7 +204,8 @@ internal sealed partial class CloudLinkService : ICloudLinkView, IChannelHost, I
     private CloudLinkFile? _reportedUnwritten;
     private CloudCredentialRecord? _pendingRecord;
     private string? _pendingTarget;
-    private bool _signOutPending;
+    private int _legacySignOutWaits;
+    private int _centerSignOutWaits;
     private bool _reload;
     private int _configurationInvalid;
     private TimeSpan _centerOffset;
@@ -223,6 +224,7 @@ internal sealed partial class CloudLinkService : ICloudLinkView, IChannelHost, I
     private long _stopDeadline;
     private int _idle;
     private bool _signingIn;
+    private bool _v2SignInReserved;
     private ChannelLoop? _channel;
 
     /// <summary>Creates the link (nothing is read until <see cref="StartAsync"/>).</summary>
@@ -316,43 +318,53 @@ internal sealed partial class CloudLinkService : ICloudLinkView, IChannelHost, I
     /// gate between a refresh and a report, so that is one call of at most its 10 s deadline); a call that outlasts it is cancelled (its
     /// outcome becomes unknown, which the ending makes moot), then the gate is taken.
     /// </summary>
-    public async Task<IDisposable> EnterForSignOutAsync(TimeSpan wait, CancellationToken cancellationToken)
+    public async Task<IDisposable> EnterForSignOutAsync(TimeSpan wait, CancellationToken cancellationToken, bool ownerV2 = false)
     {
         if (wait > TimeSpan.Zero && await _gate.WaitAsync(wait, cancellationToken).ConfigureAwait(false))
         {
             return new Held(_gate);
         }
 
-        CancellationTokenSource? work;
+        CancellationTokenSource? work = null;
+        bool interrupt;
         lock (_stateLock)
         {
-            // No new center call starts from now on (BeginWork hands out cancelled work) until the sign-out holds the gate.
-            _signOutPending = true;
-            work = _work;
+            interrupt = ownerV2 || !CenterControlOwnsLinkLocked;
+            if (interrupt)
+            {
+                // Only a sign-out authorized for the active protocol may interrupt Center traffic while waiting.
+                if (ownerV2) _centerSignOutWaits++;
+                else _legacySignOutWaits++;
+                work = _work;
+            }
         }
 
         try
         {
             if (work is not null)
             {
-                await work.CancelAsync().ConfigureAwait(false);
+                try
+                {
+                    await work.CancelAsync().ConfigureAwait(false);
+                    _options.Log.Info("cloud.sign_out.cancelled_call_in_flight");
+                }
+                catch (ObjectDisposedException)
+                {
+                    // The call ended meanwhile.
+                }
             }
-        }
-        catch (ObjectDisposedException)
-        {
-            // The call ended meanwhile.
-        }
 
-        _options.Log.Info("cloud.sign_out.cancelled_call_in_flight");
-        try
-        {
             await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
         {
-            lock (_stateLock)
+            if (interrupt)
             {
-                _signOutPending = false;
+                lock (_stateLock)
+                {
+                    if (ownerV2) _centerSignOutWaits--;
+                    else _legacySignOutWaits--;
+                }
             }
         }
 
@@ -605,7 +617,7 @@ internal sealed partial class CloudLinkService : ICloudLinkView, IChannelHost, I
     /// a successful sign-in replaces; a configured center (<c>center_url</c>). On success the phase is <c>SigningIn</c> (the <c>center_url</c>
     /// refusal) and the probe of a held credential pauses until the flow ends (<see cref="EndSignInReservation"/>).
     /// </summary>
-    internal ArcError? ReserveSignIn(out CenterEndpoint? center)
+    internal ArcError? ReserveSignIn(out CenterEndpoint? center, bool ownerV2 = false)
     {
         center = Configured(out var invalid);
         lock (_stateLock)
@@ -644,6 +656,7 @@ internal sealed partial class CloudLinkService : ICloudLinkView, IChannelHost, I
             }
 
             _signingIn = true;
+            _v2SignInReserved = ownerV2;
         }
 
         return null;
@@ -662,6 +675,7 @@ internal sealed partial class CloudLinkService : ICloudLinkView, IChannelHost, I
         lock (_stateLock)
         {
             _signingIn = false;
+            _v2SignInReserved = false;
         }
     }
 
@@ -850,13 +864,18 @@ internal sealed partial class CloudLinkService : ICloudLinkView, IChannelHost, I
     /// N2 decision R-3, review FX-3). A link of another node ID or secret-store backend is left alone by the remote form
     /// (<see cref="SignOutResult.NotSignedIn"/>) and abandoned only by the local one (<see cref="SignOutResult.Abandoned"/>).
     /// </summary>
-    public async Task<SignOutResult> SignOutHeldAsync(bool revokeRemote, TimeSpan? remoteBudget = null)
+    public async Task<SignOutResult> SignOutHeldAsync(bool revokeRemote, TimeSpan? remoteBudget = null, bool ownerV2 = false)
     {
         CloudCredentialRecord? record;
         CloudLinkFile? link;
         bool storeUnavailable;
         lock (_stateLock)
         {
+            if (!ownerV2 && CenterControlOwnsLinkLocked)
+            {
+                return SignOutResult.NotSignedIn;
+            }
+
             record = _record;
             link = _link;
             storeUnavailable = _warnings.Contains(Warnings.StoreUnavailable);
@@ -878,6 +897,11 @@ internal sealed partial class CloudLinkService : ICloudLinkView, IChannelHost, I
         if (link is null)
         {
             return storeUnavailable ? SignOutResult.StoreUnavailable : SignOutResult.NotSignedIn;
+        }
+
+        if (!ownerV2 && IsCenterControlLink(link))
+        {
+            return SignOutResult.NotSignedIn;
         }
 
         // N2 decision R-3 and review FX-3: while the store cannot be read (a locked keyring, any read error, an inconsistent or underived
@@ -1214,16 +1238,12 @@ internal sealed partial class CloudLinkService : ICloudLinkView, IChannelHost, I
             byte[] account = [];
             if (link.UseV2 == true)
             {
-                if (record.AccountId is not { Length: 32 } accountId || !accountId.All(char.IsAsciiHexDigitLower))
+                if (!IsV2AccountId(record.AccountId))
                 {
                     return (null, ChannelReasons.CredentialUnusable);
                 }
 
-                account = Convert.FromHexString(accountId);
-                if (account.All(static value => value == 0))
-                {
-                    return (null, ChannelReasons.CredentialUnusable);
-                }
+                account = Convert.FromHexString(record.AccountId!);
             }
 
             return (new ChannelTicket(bound, record.AccessToken, Generation, _options.NodeId, installation)
@@ -2318,7 +2338,7 @@ internal sealed partial class CloudLinkService : ICloudLinkView, IChannelHost, I
         lock (_stateLock)
         {
             _work = work;
-            if (_signOutPending)
+            if (_centerSignOutWaits > 0 || (_legacySignOutWaits > 0 && !CenterControlOwnsLinkLocked))
             {
                 work.Cancel();
             }
