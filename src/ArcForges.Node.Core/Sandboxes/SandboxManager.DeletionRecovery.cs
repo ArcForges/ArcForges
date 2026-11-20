@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Sandbox.V2;
+using ArcForges.Node.Core.Platform;
 using ArcForges.Node.Store;
 using Google.Protobuf;
 
@@ -20,6 +21,10 @@ internal sealed partial class SandboxManager
             catch (SandboxPrivateRootException failure)
             {
                 return DeleteError(request.Meta, Error(request.Meta, ErrorCategory.Conflict, "identity_changed", failure.Reason));
+            }
+            catch (WorkspacePathException failure)
+            {
+                return DeleteError(request.Meta, Error(request.Meta, ErrorCategory.Validation, "path_rejected", failure.Reason));
             }
             catch (Exception failure) when (IsStorageFailure(failure))
             {
@@ -58,7 +63,7 @@ internal sealed partial class SandboxManager
 
         if (request.ResumeCommandId is not { } originalCommand)
         {
-            return DeleteError(meta, Error(meta, ErrorCategory.State, "busy", "fresh_delete_unavailable"));
+            return AdmitFreshDeletion(request, intent, cancellationToken);
         }
 
         var (sandbox, deletion) = _store.Read(reader => (SandboxRecords.Get(reader, OwnerId, sandboxId),
@@ -73,7 +78,7 @@ internal sealed partial class SandboxManager
             return DeleteError(meta, RevisionError(meta, expected, sandbox.Revision));
         }
 
-        if (sandbox.State is not (StoredSandboxState.Deleting or StoredSandboxState.RecoveryRequired)
+        if (_deleteStopping || sandbox.State is not (StoredSandboxState.Deleting or StoredSandboxState.RecoveryRequired)
             || !ResumableDeletionPhase(deletion) || deletion.OriginalExpectedRevision <= 0
             || deletion.OriginalExpectedRevision >= expected
             || deletion.LatestSuccessorId is not null && (deletion.LatestExpectedRevision is not long previousRevision
@@ -90,15 +95,21 @@ internal sealed partial class SandboxManager
 
         // An accepted successor holds the journal until its action is settled.
         if (deletion.LatestSuccessorState == "ACCEPTED" ||
-            _store.Read(reader => SandboxRecords.HasUnresolvedUse(reader, OwnerId, sandboxId, epoch, continuation: deletion)))
+            HasDeletionUse(sandboxId, epoch, deletion))
         {
             return DeleteError(meta, Error(meta, ErrorCategory.State, "managed_use", "sandbox_managed_use"));
         }
 
-        using var held = _roots.InspectDeletion(sandboxId, deletion.RootIdentity, deletion.DeletionId, deletion.QuarantineIdentity);
+        RequireDeletionContinuation(sandbox, deletion);
         cancellationToken.ThrowIfCancellationRequested();
+        intent = intent with { Deletion = new DurableDeletionBinding(deletion.OriginalCommandId, deletion.DeletionId) };
         var admission = receipts.Admit(intent, transaction =>
             RequireChanged(SandboxDeletionRecords.TryLinkSuccessor(transaction, sandbox, epoch, deletion, ToHex(meta.CommandId))));
+        if (admission.Decision == DurableDecision.Execute)
+        {
+            ScheduleDeletion(sandboxId, epoch, deletion.OriginalCommandId);
+        }
+
         return ResolveDeletion(admission, request, CancellationToken.None);
     }
 
@@ -147,7 +158,7 @@ internal sealed partial class SandboxManager
         }
 
         var operation = observed.Value.Operation;
-        if (operation.State == OperationState.Accepted && request.ResumeCommandId is not null)
+        if (operation.State == OperationState.Accepted)
         {
             operation.Revision ??= new Revision { Value = checked(meta.ExpectedRev.Value + 1) };
         }

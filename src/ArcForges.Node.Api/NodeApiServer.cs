@@ -61,7 +61,7 @@ public static class NodeApiServer
             builder.RegisterMethod(SandboxNode, method, sandboxDeadline);
         }
 
-        foreach (var method in (ReadOnlySpan<string>)["Create", "Configure", "List", "Inspect"])
+        foreach (var method in (ReadOnlySpan<string>)["Create", "Configure", "List", "Inspect", "PlanDelete", "Delete"])
         {
             builder.RegisterMethod(Sandbox, method, sandboxDeadline);
         }

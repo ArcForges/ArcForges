@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace ArcForges.Node.Store;
 
@@ -15,16 +16,18 @@ internal sealed record DurableGrantPrecondition(long ExpectedRevision, DurableGr
 
 internal sealed record DurableProvisionBinding(string ParentGrantId, long ParentGrantRevision, string DerivedGrantId);
 
+internal sealed record DurableDeletionBinding(string OriginalCommandId, string DeletionId);
+
 internal sealed record DurableIntent(byte[] CommandId, byte[] OwnerEpoch, string Method, string? AggregateKind,
     string? AggregateId, byte[] CanonicalBody, long? ExpectedSandboxRevision = null, byte[]? SafetyParent = null,
     string? ExpectedSandboxId = null, DurableGrantPrecondition? Grant = null, int AdditionalSafetyReservations = 0,
-    DurableProvisionBinding? Provision = null);
+    DurableProvisionBinding? Provision = null, DurableDeletionBinding? Deletion = null);
 
 internal enum DurableDecision { Execute, Replay, InProgress, Compacted, Conflict, EpochRetired, RevisionConflict, Capacity, Maintenance }
 
 internal sealed record DurableReceipt(string CommandId, string Method, string? AggregateKind, string? AggregateId,
     string State, int Effect, string? ResponseJson, bool Compacted, string? SafetyParentCommandId = null,
-    DurableProvisionBinding? Provision = null);
+    DurableProvisionBinding? Provision = null, DurableDeletionBinding? Deletion = null);
 
 internal sealed record DurableAdmission(DurableDecision Decision, DurableReceipt? Receipt);
 
@@ -264,6 +267,7 @@ internal sealed partial class DurableCommandStore : IDisposable
             {
                 bool matches = existing.Method == intent.Method
                     && (existing.Provision is null || intent.Provision is null || existing.Provision == intent.Provision)
+                    && (existing.Deletion is null || intent.Deletion is null || existing.Deletion == intent.Deletion)
                     && _store.Read(reader =>
                     CryptographicOperations.FixedTimeEquals(digest, Convert.FromHexString((string)reader.Scalar(
                         "SELECT request_hmac_sha256 FROM command_receipt WHERE owner_id=$o AND owner_epoch=$e AND command_id=$c;",
@@ -280,17 +284,20 @@ internal sealed partial class DurableCommandStore : IDisposable
                 throw new ArgumentException("A new transfer effect requires its exact durable reservation.", nameof(intent));
             if (intent.AdditionalSafetyReservations != 0 && (observed is not null || intent.Provision is null))
                 throw new ArgumentException("New provisioning must persist its exact derived grant reservation before native work.", nameof(intent));
-            string? provisionBody = intent.Provision is { } provision ? WriteProvisionReservation(null, provision) : null;
-            int pendingBodyBytes = provisionBody is null ? PendingReceiptBodyBytes : Encoding.UTF8.GetByteCount(provisionBody);
+            if (intent.Deletion is not null && (observed is not null || metadataChanges is null))
+                throw new ArgumentException("A deletion successor must bind its exact journal before native work.", nameof(intent));
+            string? pendingBody = intent.Provision is { } provision ? WriteProvisionReservation(null, provision)
+                : intent.Deletion is { } deletion ? WriteDeletionBinding(null, deletion) : null;
+            int pendingBodyBytes = pendingBody is null ? PendingReceiptBodyBytes : Encoding.UTF8.GetByteCount(pendingBody);
             var admittedAt = _store.Clock.GetUtcNow();
             var precondition = _store.Read(reader => CanAdmit(reader, intent, admittedAt, pendingBodyBytes, observed));
             if (precondition != DurableDecision.Execute) return new(precondition, null);
-            // The server-generated child ID participates in the owner fence, while the original caller
-            // intent digest remains verifiable even after the response/reservation has been compacted.
+            // The specialized reservation participates in the owner fence without changing the
+            // caller intent digest used by historical, settled, and compacted receipts.
             byte[] proof = digest;
-            if (provisionBody is not null)
+            if (pendingBody is not null)
             {
-                byte[] reservationProof = [.. digest, .. Encoding.UTF8.GetBytes(provisionBody)];
+                byte[] reservationProof = [.. digest, .. Encoding.UTF8.GetBytes(pendingBody)];
                 proof = HMACSHA256.HashData(_key, reservationProof);
             }
             else if (observed is not null)
@@ -305,7 +312,7 @@ internal sealed partial class DurableCommandStore : IDisposable
                     throw new DurableStoreMaintenanceException();
                 string? parent = intent.SafetyParent is null ? null : Convert.ToHexStringLower(intent.SafetyParent);
                 bool grantRevoke = intent.Grant?.Action == DurableGrantAction.Revoke;
-                if (parent is not null || grantRevoke)
+                if (parent is not null || grantRevoke || intent.Deletion is not null)
                     tx.Execute("UPDATE owner_epoch_capacity SET reserve_storage=substr(reserve_storage,1,length(reserve_storage)-$n) WHERE owner_id=$o AND owner_epoch=$e;",
                         ("$n", _capacity.MaximumResponseBytes), ("$o", _owner), ("$e", _fence.Epoch));
                 string now = Now();
@@ -316,8 +323,11 @@ internal sealed partial class DurableCommandStore : IDisposable
                     """, ("$o", _owner), ("$e", _fence.Epoch), ("$c", id), ("$m", intent.Method),
                     ("$h", Convert.ToHexStringLower(digest)), ("$ak", intent.AggregateKind), ("$ai", intent.AggregateId),
                     ("$now", now), ("$seq", _fence.Sequence), ("$parent", parent), ("$reserve", _capacity.MaximumResponseBytes),
-                    ("$body", provisionBody ?? "{}"));
+                    ("$body", pendingBody ?? "{}"));
                 metadataChanges?.Invoke(tx);
+                if (intent.Deletion is { } bound
+                    && !SandboxDeletionRecords.IsBoundSuccessor(tx, _owner, _fence.Epoch, intent.AggregateId!, bound, id))
+                    throw new InvalidOperationException("The deletion admission did not link its exact original receipt and journal.");
                 if (IsGrantMutation(intent))
                     RequireGrantMutation(tx, intent, id);
                 if (IsImportStep(intent) && (observed is null or { State: "UNKNOWN" })
@@ -365,7 +375,10 @@ internal sealed partial class DurableCommandStore : IDisposable
         bool coveredImport = IsImportStep(intent) && (observed is null or { State: "UNKNOWN" });
         if (coveredImport && !HasImportCloseAnchor(reader, intent, admittedAt, pendingCommand: null))
             return DurableDecision.Conflict;
-        bool safety = intent.SafetyParent is not null || intent.Grant?.Action == DurableGrantAction.Revoke;
+        if (intent.Deletion is { } deletion
+            && !SandboxDeletionRecords.CanAdmitSuccessor(reader, _owner, _fence.Epoch, intent.AggregateId!, deletion))
+            return DurableDecision.Conflict;
+        bool safety = intent.SafetyParent is not null || intent.Grant?.Action == DurableGrantAction.Revoke || intent.Deletion is not null;
         long reserve = (long)reader.Scalar("SELECT length(reserve_storage) FROM owner_epoch_capacity WHERE owner_id=$o AND owner_epoch=$e;",
             ("$o", _owner), ("$e", _fence.Epoch))!;
         if (reserve < _capacity.MaximumResponseBytes) return DurableDecision.Capacity;
@@ -411,6 +424,15 @@ internal sealed partial class DurableCommandStore : IDisposable
                   AND t.owner_id=p.owner_id AND t.owner_epoch=p.owner_epoch AND t.transfer_id=p.aggregate_id
                   AND json_extract(t.manifest_json,'$.pending.commandId')=p.command_id
                   AND json_extract(t.manifest_json,'$.pending.phase')=CASE p.method WHEN $write THEN $chunk ELSE $publish END))
+              AND NOT (p.method=$delete AND p.aggregate_kind IS 'sandbox' AND EXISTS(
+                SELECT 1 FROM deletion_journal AS d
+                JOIN command_receipt AS original ON original.owner_id=d.owner_id AND original.owner_epoch=d.owner_epoch
+                    AND original.command_id=d.command_id AND original.method=$delete
+                    AND original.aggregate_kind='sandbox' AND original.aggregate_id=d.sandbox_id
+                WHERE d.owner_id=p.owner_id AND d.owner_epoch=p.owner_epoch AND d.sandbox_id=p.aggregate_id
+                  AND (d.latest_resume_command_id=p.command_id OR (
+                    d.deletion_id=json_extract(p.response_json,'$._deletionBinding.deletionId')
+                    AND d.command_id=json_extract(p.response_json,'$._deletionBinding.originalCommandId')))))
               AND (
                 p.state IN ('ACCEPTED','UNKNOWN')
                 OR (p.method='RunService.Start' AND EXISTS(
@@ -436,7 +458,8 @@ internal sealed partial class DurableCommandStore : IDisposable
             ("$create", SandboxCreateMethod), ("$deleted", (int)StoredSandboxState.Deleted),
             ("$grantActive", (int)StoredRemoteGrantState.Active), ("$unbound", TransferRecords.UnboundStage),
             ("$beginImport", TransferRecords.BeginImportMethod), ("$write", TransferRecords.WriteMethod), ("$commit", TransferRecords.CommitMethod),
-            ("$chunk", (int)StoredTransferPhase.Chunk), ("$publish", (int)StoredTransferPhase.Publish))!;
+            ("$chunk", (int)StoredTransferPhase.Chunk), ("$publish", (int)StoredTransferPhase.Publish),
+            ("$delete", SandboxDeletionRecords.Method))!;
         long pendingGrants = (long)reader.Scalar("""
             SELECT count(*) FROM command_receipt p WHERE p.owner_id=$o AND p.owner_epoch=$e
               AND p.method=$create AND p.aggregate_kind='sandbox' AND p.state IN ('ACCEPTED','UNKNOWN')
@@ -501,8 +524,10 @@ internal sealed partial class DurableCommandStore : IDisposable
         string? body = row.IsDBNull(6) ? null : row.GetString(6);
         var provision = method == SandboxCreateMethod && kind == "sandbox" && state is ("ACCEPTED" or "UNKNOWN") && body is not null
             ? ReadProvisionReservation(body) : null;
+        var deletion = method == SandboxDeletionRecords.Method && kind == "sandbox" && state is ("ACCEPTED" or "UNKNOWN") && body is not null
+            ? ReadDeletionBinding(body) : null;
         return new(row.GetString(0), method, kind, row.IsDBNull(3) ? null : row.GetString(3), state, row.GetInt32(5),
-            body, !row.IsDBNull(7), row.IsDBNull(8) ? null : row.GetString(8), provision);
+            body, !row.IsDBNull(7), row.IsDBNull(8) ? null : row.GetString(8), provision, deletion);
     }
 
     private void Advance(string kind, string command, ReadOnlySpan<byte> content, Action<StoreTransaction> write)
@@ -586,6 +611,15 @@ internal sealed partial class DurableCommandStore : IDisposable
         if (intent.Provision is { } provision
             && (intent.AdditionalSafetyReservations != 1 || !ValidProvisionBinding(provision)))
             throw new ArgumentException("A provision reservation binds its exact parent revision and preselected child grant.", nameof(intent));
+        if (intent.Deletion is { } deletion
+            && (intent is not
+            {
+                Method: SandboxDeletionRecords.Method, AggregateKind: "sandbox", ExpectedSandboxRevision: > 0,
+                SafetyParent: null, ExpectedSandboxId: null, Grant: null, Provision: null
+            }
+                || !IsGrantIdentity(intent.AggregateId) || !IsGrantIdentity(deletion.OriginalCommandId)
+                || !IsGrantIdentity(deletion.DeletionId) || deletion.OriginalCommandId == Convert.ToHexStringLower(intent.CommandId)))
+            throw new ArgumentException("A deletion successor requires the exact original command, journal, and Sandbox revision.", nameof(intent));
         ArgumentException.ThrowIfNullOrWhiteSpace(intent.Method);
         int separator = intent.Method.IndexOf('.');
         if (separator < 1 || separator != intent.Method.LastIndexOf('.') || separator == intent.Method.Length - 1
@@ -601,6 +635,33 @@ internal sealed partial class DurableCommandStore : IDisposable
     }
 
     private static bool IsGrantIdentity(string? id) => id is { Length: 32 } && id.All(char.IsAsciiHexDigitLower);
+
+    private static string WriteDeletionBinding(string? response, DurableDeletionBinding binding)
+    {
+        var result = response is null ? new JsonObject() : JsonNode.Parse(response)?.AsObject()
+            ?? throw new InvalidOperationException("The deletion result must be a bounded JSON object.");
+        result["_deletionBinding"] = new JsonObject
+        {
+            ["originalCommandId"] = binding.OriginalCommandId,
+            ["deletionId"] = binding.DeletionId,
+        };
+        return result.ToJsonString();
+    }
+
+    private static DurableDeletionBinding? ReadDeletionBinding(string body)
+    {
+        using var value = JsonDocument.Parse(body);
+        if (value.RootElement.ValueKind != JsonValueKind.Object
+            || !value.RootElement.TryGetProperty("_deletionBinding", out var binding))
+            return null;
+        if (binding.ValueKind != JsonValueKind.Object
+            || !binding.TryGetProperty("originalCommandId", out var original) || original.ValueKind != JsonValueKind.String
+            || !binding.TryGetProperty("deletionId", out var deletion) || deletion.ValueKind != JsonValueKind.String
+            || original.GetString() is not { } originalId || !IsGrantIdentity(originalId)
+            || deletion.GetString() is not { } deletionId || !IsGrantIdentity(deletionId))
+            throw new DurableStoreMaintenanceException();
+        return new(originalId, deletionId);
+    }
 
     private string Now() => _store.Clock.GetUtcNow().UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
 

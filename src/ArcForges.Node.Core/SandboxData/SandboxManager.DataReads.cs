@@ -26,6 +26,7 @@ internal sealed partial class SandboxManager
     private static readonly TimeSpan s_dataUsageFreshness = TimeSpan.FromSeconds(5);
     private readonly object _dataUsageGate = new();
     private readonly Dictionary<string, DataUsageScan> _dataUsage = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, int> _sandboxDataReaders = new(StringComparer.Ordinal);
     private int _dataUsageActive;
     private int _dataDirectoryReads;
     private bool _dataUsageStopped;
@@ -35,11 +36,13 @@ internal sealed partial class SandboxManager
         cancellationToken.ThrowIfCancellationRequested();
         try
         {
-            var row = ReadDataSandbox(request.SandboxId);
-            var grants = FromStored(row.Config).HostGrants;
-            SandboxPrivateRootLease? lease = _roots.Inspect(row.SandboxId, row.RootIdentity);
+            SandboxDataReadLease? read = AcquireDataReadLease(request.SandboxId, cancellationToken);
+            SandboxPrivateRootLease? lease = null;
             try
             {
+                var row = read.Row;
+                var grants = FromStored(row.Config).HostGrants;
+                lease = _roots.Inspect(row.SandboxId, row.RootIdentity);
                 cancellationToken.ThrowIfCancellationRequested();
                 DataUsageObservation? observed;
                 lock (_dataUsageGate)
@@ -52,13 +55,25 @@ internal sealed partial class SandboxManager
                     if (scan.Cancellation is null && _dataUsageActive < DataUsageConcurrency &&
                         (scan.CompletedAt == 0 || Stopwatch.GetElapsedTime(scan.CompletedAt) >= s_dataUsageFreshness))
                     {
+                        var ownedRead = read;
                         var ownedLease = lease;
                         var deadline = new CancellationTokenSource(s_dataReadBudget);
+                        try
+                        {
+                            // A completed request cannot cancel the shared scan or release its held root.
+                            _ = Task.Run(() => ObserveDataUsage(ownedRead, ownedLease, scan, deadline), CancellationToken.None);
+                        }
+                        catch
+                        {
+                            deadline.Dispose();
+                            throw;
+                        }
+
+                        // A scheduled observer enters this same lock before it can finish and remove its active slot.
                         scan.Cancellation = deadline;
                         _dataUsageActive++;
-                        // A completed request cannot cancel the shared scan or prevent disposal of its held root.
-                        _ = Task.Run(() => ObserveDataUsage(ownedLease, scan, deadline), CancellationToken.None);
                         lease = null;
+                        read = null;
                     }
                 }
 
@@ -79,7 +94,8 @@ internal sealed partial class SandboxManager
             }
             finally
             {
-                lease?.Dispose();
+                try { lease?.Dispose(); }
+                finally { read?.Dispose(); }
             }
         }
         catch (Exception failure) when (IsStorageFailure(failure))
@@ -110,7 +126,8 @@ internal sealed partial class SandboxManager
             if (request.HasLimit && request.Limit is < 1 or > 200)
                 throw new DataReadException(ErrorCategory.Validation, "invalid_argument", "limit_invalid");
             var limit = request.HasLimit ? checked((int)request.Limit) : 50;
-            var row = ReadDataSandbox(request.SandboxId);
+            using var read = AcquireDataReadLease(request.SandboxId, cancellationToken);
+            var row = read.Row;
             var path = request.RelativeDirectory;
             ValidateDataPath(path, allowRoot: true);
             if (!ReadDataCursor(request.Cursor, out var offset, out var priorVersion))
@@ -184,18 +201,44 @@ internal sealed partial class SandboxManager
         }
     }
 
-    private StoredSandbox ReadDataSandbox(Id? id)
+    private SandboxDataReadLease AcquireDataReadLease(Id? id, CancellationToken cancellationToken)
     {
         if (!ValidId(id)) throw new DataReadException(ErrorCategory.Validation, "invalid_argument", "sandbox_id_invalid");
         var sandboxId = ToHex(id!);
-        var row = _store.Read(reader => SandboxRecords.Get(reader, OwnerId, sandboxId));
-        if (row is null || row.State == StoredSandboxState.Deleted)
-            throw new DataReadException(ErrorCategory.State, "not_found", "sandbox_not_visible");
-        if (row.State != StoredSandboxState.Ready)
-            throw new DataReadException(ErrorCategory.State, "managed_use", "sandbox_data_not_ready");
-        if (row.RootRelative != SandboxPrivateRoots.RelativePath(sandboxId))
-            throw new DataReadException(ErrorCategory.Conflict, "identity_changed", "private_root_identity_changed");
-        return row;
+        lock (OwnershipGate)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_disposed) throw new DataReadException(ErrorCategory.State, "managed_use", "sandbox_data_stopping");
+
+            var row = _store.Read(reader => SandboxRecords.Get(reader, OwnerId, sandboxId));
+            if (row is null || row.State == StoredSandboxState.Deleted)
+                throw new DataReadException(ErrorCategory.State, "not_found", "sandbox_not_visible");
+            if (row.State != StoredSandboxState.Ready)
+                throw new DataReadException(ErrorCategory.State, "managed_use", "sandbox_data_not_ready");
+            if (row.RootRelative != SandboxPrivateRoots.RelativePath(sandboxId))
+                throw new DataReadException(ErrorCategory.Conflict, "identity_changed", "private_root_identity_changed");
+
+            var lease = new SandboxDataReadLease(this, row);
+            _sandboxDataReaders[sandboxId] = checked(_sandboxDataReaders.GetValueOrDefault(sandboxId) + 1);
+            return lease;
+        }
+    }
+
+    // Deletion checks this while holding the same gate used to issue new read leases.
+    private bool HasSandboxDataReaders(string sandboxId)
+    {
+        Debug.Assert(OwnershipGate.IsHeldByCurrentThread);
+        return _sandboxDataReaders.ContainsKey(sandboxId);
+    }
+
+    private void ReleaseDataReadLease(string sandboxId)
+    {
+        lock (OwnershipGate)
+        {
+            int remaining = _sandboxDataReaders[sandboxId] - 1;
+            if (remaining == 0) _sandboxDataReaders.Remove(sandboxId);
+            else _sandboxDataReaders[sandboxId] = remaining;
+        }
     }
 
     private static void ValidateDataPath(string path, bool allowRoot)
@@ -405,8 +448,11 @@ internal sealed partial class SandboxManager
         return scan;
     }
 
-    private void ObserveDataUsage(SandboxPrivateRootLease lease, DataUsageScan scan, CancellationTokenSource deadline)
+    private void ObserveDataUsage(SandboxDataReadLease read, SandboxPrivateRootLease lease, DataUsageScan scan,
+        CancellationTokenSource deadline)
     {
+        // Dispose after the native root and after releasing the usage lock, since disposal enters OwnershipGate.
+        using var retainedRead = read;
         var usage = new DataUsageTotals();
         try
         {
@@ -428,12 +474,30 @@ internal sealed partial class SandboxManager
                     if (usage.Observed) scan.Observation = usage.Snapshot(_clock.GetUtcNow(), usage.Partial);
                     else if (scan.Observation is { } prior) scan.Observation = prior with { Partial = true };
                 }
+                scan.CompletedRevision = usage.Observed && !usage.Partial ? read.Row.Revision : 0;
                 scan.CompletedAt = Stopwatch.GetTimestamp();
                 scan.Cancellation = null;
                 _dataUsageActive--;
                 deadline.Dispose();
                 if (_dataUsageStopped && _dataUsageActive == 0) Monitor.PulseAll(_dataUsageGate);
             }
+        }
+    }
+
+    private ulong? ObservedSandboxOwnedBytes(StoredSandbox row)
+    {
+        Debug.Assert(OwnershipGate.IsHeldByCurrentThread);
+        lock (_dataUsageGate)
+        {
+            if (!_dataUsage.TryGetValue(row.SandboxId, out var scan) || scan.RootIdentity != row.RootIdentity ||
+                scan.RootGeneration != row.RootGeneration || scan.CompletedRevision != row.Revision || scan.CompletedAt == 0 ||
+                Stopwatch.GetElapsedTime(scan.CompletedAt) >= s_dataUsageFreshness ||
+                scan.Observation is not { Partial: false } observation)
+            {
+                return null;
+            }
+
+            return observation.LogicalBytes;
         }
     }
 
@@ -513,9 +577,18 @@ internal sealed partial class SandboxManager
     {
         internal string RootIdentity { get; } = rootIdentity;
         internal long RootGeneration { get; } = rootGeneration;
+        internal long CompletedRevision { get; set; }
         internal long CompletedAt { get; set; }
         internal CancellationTokenSource? Cancellation { get; set; }
         internal DataUsageObservation? Observation { get; set; }
+    }
+
+    private sealed class SandboxDataReadLease(SandboxManager owner, StoredSandbox row) : IDisposable
+    {
+        private SandboxManager? _owner = owner;
+        internal StoredSandbox Row { get; } = row;
+
+        public void Dispose() => Interlocked.Exchange(ref _owner, null)?.ReleaseDataReadLease(Row.SandboxId);
     }
 
     private sealed class DataUsageTotals

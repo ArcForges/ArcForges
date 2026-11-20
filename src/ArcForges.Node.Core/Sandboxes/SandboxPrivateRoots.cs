@@ -25,6 +25,12 @@ internal sealed class SandboxPrivateRootLease(WorkspacePath dataRoot, WorkspaceP
 
     internal WorkspacePath OwnedWorkspace => root;
 
+    internal WorkspacePath OwnedParent => parent;
+
+    internal WorkspacePath OwnedAnchor => dataRoot;
+
+    internal void ReleaseOwnedRoot() => root.Dispose();
+
     internal WorkspacePath OpenTransferStaging() => SandboxPrivateRoots.OpenTransferStaging(dataRoot);
 
     internal IReadOnlyList<string> WritablePaths { get; } = writablePaths;
@@ -268,6 +274,94 @@ internal sealed class SandboxPrivateRoots(string dataRoot)
         }
     }
 
+    internal string QuarantineDeletion(string sandboxId, string originalIdentity, string deletionId, Action applied,
+        CancellationToken cancellationToken)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            throw new SandboxPrivateRootException("path_enforcement_unavailable");
+        }
+
+        using var original = Inspect(sandboxId, originalIdentity);
+        var expected = original.OwnedWorkspace.RootIdentity;
+        using var control = original.OwnedAnchor.OpenSandboxDirectory("control", configuredRoot: true);
+        using var quarantine = EnsureManagedDirectory(control, DeletionQuarantineName);
+        original.ReleaseOwnedRoot();
+        var movedIdentity = original.OwnedParent.QuarantineSandboxWindows(sandboxId, quarantine, deletionId,
+            expected, applied, cancellationToken);
+        using var moved = quarantine.OpenSandboxDirectory(deletionId);
+        if (!expected.SameObject(movedIdentity) || !expected.SameObject(moved.RootIdentity)
+            || !original.OwnedParent.InspectRemovalAbsent(sandboxId))
+        {
+            throw new SandboxPrivateRootException("deletion_quarantine_identity_changed");
+        }
+
+        return Identity(deletionId, ReadMarker(sandboxId, originalIdentity), original.OwnedAnchor, quarantine, moved);
+    }
+
+    internal string ObserveQuarantinedDeletion(string sandboxId, string originalIdentity, string deletionId)
+    {
+        var marker = ReadMarker(sandboxId, originalIdentity);
+        using var anchor = OpenDataRoot(requireControl: true);
+        using var source = anchor.OpenSandboxDirectory(ParentName);
+        using var control = anchor.OpenSandboxDirectory("control", configuredRoot: true);
+        using var quarantine = control.OpenSandboxDirectory(DeletionQuarantineName);
+        using var root = quarantine.OpenSandboxDirectory(deletionId);
+        if (!source.InspectRemovalAbsent(sandboxId) || originalIdentity != Identity(sandboxId, marker, anchor, source, root))
+        {
+            throw new SandboxPrivateRootException("deletion_quarantine_identity_changed");
+        }
+
+        return Identity(deletionId, marker, anchor, quarantine, root);
+    }
+
+    internal void VerifyRecordedRemoval(string sandboxId, string originalIdentity, string deletionId, string quarantineIdentity)
+    {
+        var marker = ReadMarker(sandboxId, originalIdentity);
+        if (ReadMarker(deletionId, quarantineIdentity) != marker)
+        {
+            throw new SandboxPrivateRootException("deletion_quarantine_identity_changed");
+        }
+
+        using var anchor = OpenDataRoot(requireControl: true);
+        using var source = anchor.OpenSandboxDirectory(ParentName);
+        using var control = anchor.OpenSandboxDirectory("control", configuredRoot: true);
+        using var quarantine = control.OpenSandboxDirectory(DeletionQuarantineName);
+        if (!originalIdentity.StartsWith(IdentityPrefix(sandboxId, marker, anchor, source), StringComparison.Ordinal)
+            || !quarantineIdentity.StartsWith(IdentityPrefix(deletionId, marker, anchor, quarantine), StringComparison.Ordinal)
+            || !source.InspectRemovalAbsent(sandboxId) || !quarantine.InspectRemovalAbsent(deletionId))
+        {
+            throw new SandboxPrivateRootException("deletion_verified_locations_changed");
+        }
+    }
+
+    internal SandboxRemovalBatchResult RemoveDeletionBatch(string sandboxId, string originalIdentity, string deletionId,
+        string quarantineIdentity, int maximumEntries, Action applied, CancellationToken cancellationToken)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            throw new SandboxPrivateRootException("path_enforcement_unavailable");
+        }
+
+        using var held = InspectDeletion(sandboxId, originalIdentity, deletionId, quarantineIdentity);
+        var expected = held.OwnedWorkspace.RootIdentity;
+        held.ReleaseOwnedRoot();
+        var batch = held.OwnedParent.RemoveSandboxQuarantineBatchWindows(deletionId, expected, maximumEntries,
+            applied, cancellationToken);
+        if (batch.RootAbsent)
+        {
+            using var source = held.OwnedAnchor.OpenSandboxDirectory(ParentName);
+            var marker = ReadMarker(sandboxId, originalIdentity);
+            if (!originalIdentity.StartsWith(IdentityPrefix(sandboxId, marker, held.OwnedAnchor, source), StringComparison.Ordinal)
+                || !source.InspectRemovalAbsent(sandboxId))
+            {
+                throw new SandboxPrivateRootException("deletion_original_location_changed");
+            }
+        }
+
+        return batch;
+    }
+
     private WorkspacePath OpenDataRoot(bool requireControl = false)
     {
         if (string.IsNullOrWhiteSpace(dataRoot) || !Path.IsPathFullyQualified(dataRoot))
@@ -333,11 +427,13 @@ internal sealed class SandboxPrivateRoots(string dataRoot)
     }
 
     private static string Identity(string sandboxId, string marker, WorkspacePath anchor, WorkspacePath parent, WorkspacePath root)
+        => IdentityPrefix(sandboxId, marker, anchor, parent) + Convert.ToBase64String(RegisteredWorkspaces.RootIdentity.Encode(root.RootIdentity).Bytes);
+
+    private static string IdentityPrefix(string sandboxId, string marker, WorkspacePath anchor, WorkspacePath parent)
     {
         var dataIdentity = RegisteredWorkspaces.RootIdentity.Encode(anchor.RootIdentity);
         var parentIdentity = RegisteredWorkspaces.RootIdentity.Encode(parent.RootIdentity);
-        var sandboxIdentity = RegisteredWorkspaces.RootIdentity.Encode(root.RootIdentity);
-        return FormattableString.Invariant($"1:{sandboxId}:{marker}:{dataIdentity.Platform}:{Convert.ToBase64String(dataIdentity.Bytes)}:{Convert.ToBase64String(parentIdentity.Bytes)}:{Convert.ToBase64String(sandboxIdentity.Bytes)}");
+        return FormattableString.Invariant($"1:{sandboxId}:{marker}:{dataIdentity.Platform}:{Convert.ToBase64String(dataIdentity.Bytes)}:{Convert.ToBase64String(parentIdentity.Bytes)}:");
     }
 
     private static string ReadMarker(string sandboxId, string identity)

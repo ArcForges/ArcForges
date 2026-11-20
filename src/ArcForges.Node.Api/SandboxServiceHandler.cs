@@ -41,11 +41,32 @@ internal sealed class SandboxServiceHandler(NodeRuntime node) : V2.SandboxServic
             static (manager, value, cancellation) => manager.Inspect(value, cancellation),
             static (meta, error) => new V2.SandboxServiceInspectResponse { Meta = meta, Error = error });
 
+    public override Task<V2.SandboxServicePlanDeleteResponse> PlanDelete(
+        V2.SandboxServicePlanDeleteRequest request, ServerCallContext context) =>
+        SandboxLocalCalls.Execute(node, context, request, request.Meta, ValidLocalDeletePlan,
+            static (manager, value, cancellation) => manager.PlanDelete(value, cancellation),
+            static (meta, error) => new V2.SandboxServicePlanDeleteResponse { Meta = meta, Error = error });
+
     public override Task<V2.SandboxServiceDeleteResponse> Delete(
         V2.SandboxServiceDeleteRequest request, ServerCallContext context) =>
-        SandboxLocalCalls.Execute(node, context, request, request.Meta, V2Shapes.IsValid,
+        SandboxLocalCalls.Execute(node, context, request, request.Meta, ValidLocalDelete,
             static (manager, value, cancellation) => manager.Delete(value, cancellation),
             static (meta, error) => new V2.SandboxServiceDeleteResponse { Meta = meta, Error = error });
+
+    private static bool ValidLocalDeletePlan(V2.SandboxServicePlanDeleteRequest request) =>
+        request.Meta is { ExpectedRev: null } meta
+        && ValidLocalDeletionScope(meta)
+        && V2Shapes.IsValid(request)
+        && SandboxLocalCalls.HasKnownFields(request, V2.SandboxServicePlanDeleteRequest.Parser);
+
+    private static bool ValidLocalDelete(V2.SandboxServiceDeleteRequest request) =>
+        request.Meta is { } meta
+        && ValidLocalDeletionScope(meta)
+        && V2Shapes.IsValid(request)
+        && SandboxLocalCalls.HasKnownFields(request, V2.SandboxServiceDeleteRequest.Parser);
+
+    private static bool ValidLocalDeletionScope(RequestMeta meta) =>
+        meta is { ExpectedNative: null, WorkspaceId: null, ApplicationScope: null, HasRecoveryGeneration: false };
 
     // The published whole-request validator requires TemplateRevision for routed provisioning.
     // Local creation uses the same field validators with the local contract's field presence.
@@ -101,14 +122,14 @@ internal sealed class SandboxNodeServiceHandler(NodeRuntime node) : V2.NodeServi
     public override Task<V2.NodeServiceListRemoteGrantsResponse> ListRemoteGrants(
         V2.NodeServiceListRemoteGrantsRequest request, ServerCallContext context) =>
         SandboxLocalCalls.Execute(node, context, request, request.Meta,
-            static value => V2Shapes.IsValid(value) && HasKnownFields(value, V2.NodeServiceListRemoteGrantsRequest.Parser),
+            static value => V2Shapes.IsValid(value) && SandboxLocalCalls.HasKnownFields(value, V2.NodeServiceListRemoteGrantsRequest.Parser),
             static (manager, value, cancellation) => manager.ListRemoteGrants(value, cancellation),
             static (meta, error) => new V2.NodeServiceListRemoteGrantsResponse { Meta = meta, Error = error });
 
     public override Task<V2.NodeServiceRevokeRemoteGrantResponse> RevokeRemoteGrant(
         V2.NodeServiceRevokeRemoteGrantRequest request, ServerCallContext context) =>
         SandboxLocalCalls.Execute(node, context, request, request.Meta,
-            static value => V2Shapes.IsValid(value) && HasKnownFields(value, V2.NodeServiceRevokeRemoteGrantRequest.Parser),
+            static value => V2Shapes.IsValid(value) && SandboxLocalCalls.HasKnownFields(value, V2.NodeServiceRevokeRemoteGrantRequest.Parser),
             static (manager, value, cancellation) => manager.RevokeRemoteGrant(value, cancellation),
             static (meta, error) => new V2.NodeServiceRevokeRemoteGrantResponse { Meta = meta, Error = error });
 
@@ -142,15 +163,15 @@ internal sealed class SandboxNodeServiceHandler(NodeRuntime node) : V2.NodeServi
         shape.GrantId ??= request.OwnerEpoch;
         shape.Revision ??= new Revision { Value = revision };
         shape.State = V2.GrantState.Active;
-        return V2Shapes.IsValid(shape) && HasKnownFields(request, V2.NodeServiceSetRemoteGrantRequest.Parser);
+        return V2Shapes.IsValid(shape) && SandboxLocalCalls.HasKnownFields(request, V2.NodeServiceSetRemoteGrantRequest.Parser);
     }
-
-    private static bool HasKnownFields<T>(T value, MessageParser<T> parser) where T : class, IMessage<T> =>
-        value.Equals(parser.WithDiscardUnknownFields(true).ParseFrom(value.ToByteArray()));
 }
 
 internal static class SandboxLocalCalls
 {
+    internal static bool HasKnownFields<T>(T value, MessageParser<T> parser) where T : class, IMessage<T> =>
+        value.Equals(parser.WithDiscardUnknownFields(true).ParseFrom(value.ToByteArray()));
+
     internal static Task<TResponse> Execute<TRequest, TResponse>(
         NodeRuntime node,
         ServerCallContext context,

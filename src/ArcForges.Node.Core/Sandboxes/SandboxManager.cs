@@ -555,6 +555,7 @@ internal sealed partial class SandboxManager : IDisposable
 
     public void Dispose()
     {
+        StopDeletionWorkers();
         lock (OwnershipGate)
         {
             if (_disposed)

@@ -513,6 +513,7 @@ public static class NodeHost
             {
                 await recoveredSandboxes.RecoverRunsAsync(recovery, node.Stopping).ConfigureAwait(false);
                 log.Info("node.recovery.done", new LogField("participant", "sandbox_runs"));
+                recoveredSandboxes.ReconcileDeletionReceipts();
                 recoveredSandboxes.StartDataRecovery();
                 sandboxResources = recoveredSandboxes.StartResourceSampling(sampler as IHostResourceSource, log);
             }
@@ -686,6 +687,7 @@ public static class NodeHost
             await execution.StopAsync().ConfigureAwait(false);
         }
 
+        node.Sandboxes?.StopDeletionWorkers();
         await processor.DisposeAsync().ConfigureAwait(false);
         node.Store.Checkpoint();
         var descriptorPath = NodeLocations.EndpointDescriptorFile(dataRoot);

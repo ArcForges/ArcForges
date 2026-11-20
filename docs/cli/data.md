@@ -56,3 +56,50 @@ arcforges sandbox transfer close "$TRANSFER_ID" --owner-epoch "$OWNER_EPOCH" --j
 Inspect shows current progress, completion and `closedAt` for a safely released transfer. An export can remain readable after completion until closure or safe expiry. An interrupted command leaves the identified transfer available for inspection. Explicit close releases a safely settled snapshot or cancels known unused staging. A transfer requiring recovery preserves its evidence.
 
 To replay a Close whose response was lost, also pass its original `--command-id` and `--expected-revision`.
+
+## Preview and delete a Sandbox
+
+```sh
+arcforges sandbox delete "$SANDBOX_ID" --plan-only --json
+arcforges sandbox delete "$SANDBOX_ID" --plan "$PLAN_ID" \
+  --expected-revision "$PLAN_REVISION" --yes --json
+```
+
+Review the preview's Sandbox ID, revision, expiry, owned data estimate and
+blocking Run and transfer IDs. Excluded host grants remain outside the
+deletion. A preview can be abandoned without deleting data. Stop active Runs
+or explicitly close retained transfers before requesting a new preview.
+
+The preview is valid for five minutes in the Node instance that issued it.
+Request a new preview after expiry or a Node restart. In an interactive
+terminal, type the Sandbox ID when prompted. For JSON output or redirected
+input, pass `--yes` after reviewing the plan. The Node rechecks the revision,
+owned root and managed use at execution. The receipt reports acceptance or
+the observed effect. Only a successful receipt confirms deletion.
+
+The current Linux deletion path checks the held root and refuses before
+admitting a filesystem effect. It reports `VALIDATION/path_rejected` with
+reason `linux_exact_directory_mutation_unavailable`. Native Windows deletion
+verification is pending.
+
+## Resume an accepted deletion
+
+```sh
+arcforges operation inspect "$ORIGINAL_COMMAND_ID" --owner-epoch "$OWNER_EPOCH" --json
+arcforges sandbox inspect "$SANDBOX_ID" --json
+arcforges sandbox delete "$SANDBOX_ID" --resume "$ORIGINAL_COMMAND_ID" \
+  --expected-revision "$CURRENT_SANDBOX_REVISION" --json
+```
+
+Use resume locally when inspection shows that the original deletion needs a
+continuation. It creates a new command in the current owner epoch and uses
+the original deletion journal. The value passed to `--resume` stays the
+original command ID even when an earlier successor was interrupted.
+An explicit successor can finalize the Sandbox tombstone from retained
+durable native proof of removal. An absent path without that proof leaves the
+outcome `UNKNOWN`.
+
+Cancellation or a deadline ends the CLI's wait. Inspect the receipt to
+determine the outcome. To replay the exact apply or successor, keep its
+original `--plan` or `--resume` selection and supply that mutation's own
+`--command-id`, `--owner-epoch` and `--expected-revision`.

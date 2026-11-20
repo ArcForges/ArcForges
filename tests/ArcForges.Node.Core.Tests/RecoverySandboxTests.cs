@@ -116,7 +116,7 @@ public sealed partial class SandboxRegistryTests
     [InlineData(true)]
     [Trait("env", "windows-real")]
     [Trait("env", "linux-real")]
-    public void DeleteSuccessorPreservesTheOriginalUnknownAndHeldNativeIdentity(bool quarantined)
+    public async Task DeleteSuccessorPreservesTheOriginalUnknownAndHeldNativeIdentity(bool quarantined)
     {
         string stage = QualifiedStage();
         var ct = TestContext.Current.CancellationToken;
@@ -137,15 +137,15 @@ public sealed partial class SandboxRegistryTests
         string deletionId = Hex(NewId());
         string originalIdentity = RootIdentity(store, sandbox.SandboxId);
         File.WriteAllText(Path.Combine(sandbox.DataLocation, "data", "owned.txt"), "still owned");
-        string quarantinePath = sandbox.DataLocation;
+        string controlPath = Path.Combine(fixture.DataRoot, "control");
+        string quarantinePath = Path.Combine(controlPath, SandboxPrivateRoots.DeletionQuarantineName, deletionId);
+        string seededPath = quarantined ? quarantinePath : sandbox.DataLocation;
         string? quarantineIdentity = null;
         if (quarantined)
         {
-            string controlPath = Path.Combine(fixture.DataRoot, "control");
             using (var control = WorkspacePath.OpenRoot(controlPath))
             using (var parent = control.CreateSandboxDirectory(SandboxPrivateRoots.DeletionQuarantineName))
             {
-                quarantinePath = Path.Combine(parent.RootPath, deletionId);
                 var components = originalIdentity.Split(':');
                 components[1] = deletionId;
                 components[5] = Convert.ToBase64String(RegisteredWorkspaces.RootIdentity.Encode(parent.RootIdentity).Bytes);
@@ -204,32 +204,66 @@ public sealed partial class SandboxRegistryTests
             stale.Meta.ExpectedRev.Value = 1;
             Assert.Equal("revision_mismatch", manager.Delete(stale, ct).Error.Code);
 
-            string moved = quarantinePath + "-moved";
-            Directory.Move(quarantinePath, moved);
+            string moved = seededPath + "-moved";
+            Directory.Move(seededPath, moved);
             try
             {
                 Assert.Equal("identity_changed", manager.Delete(resume, ct).Error.Code);
             }
             finally
             {
-                Directory.Move(moved, quarantinePath);
+                Directory.Move(moved, seededPath);
             }
 
-            var continued = manager.Delete(resume, ct);
-            Assert.True(continued.Value is not null, continued.Error?.ToString());
-            Assert.Equal(resume.Meta.CommandId, continued.Value!.Operation.CommandId);
-            Assert.Equal(OperationState.Accepted, continued.Value.Operation.State);
-            Assert.Equal(EffectCertainty.Unknown, continued.Value.Operation.Effect);
-            Assert.Equal(3L, continued.Value.Operation.Revision.Value);
-            Assert.Equal(continued.Value.Operation, manager.Delete(resume, ct).Value.Operation);
-            var second = resume.Clone();
-            second.Meta = Command(3);
-            Assert.Equal("managed_use", manager.Delete(second, ct).Error.Code);
+            if (OperatingSystem.IsWindows())
+            {
+                using var owned = File.Open(Path.Combine(seededPath, "data", "owned.txt"),
+                    FileMode.Open, FileAccess.Read, FileShare.Read);
+                lock (manager.OwnershipGate)
+                {
+                    var continued = manager.Delete(resume, ct);
+                    Assert.True(continued.Value is not null, continued.Error?.ToString());
+                    Assert.Equal(resume.Meta.CommandId, continued.Value!.Operation.CommandId);
+                    Assert.Equal(OperationState.Accepted, continued.Value.Operation.State);
+                    Assert.Equal(EffectCertainty.Unknown, continued.Value.Operation.Effect);
+                    Assert.Equal(3L, continued.Value.Operation.Revision.Value);
+                    Assert.Equal(continued.Value.Operation, manager.Delete(resume, ct).Value.Operation);
+                    var second = resume.Clone();
+                    second.Meta = Command(3);
+                    Assert.Equal("managed_use", manager.Delete(second, ct).Error.Code);
+                    Assert.Equal(SandboxState.Deleting,
+                        manager.Inspect(new() { Meta = Query(), SandboxId = sandbox.SandboxId }, ct).Value.Sandbox.State);
+                }
+
+                while (true)
+                {
+                    var observed = manager.GetOperation(new() { Meta = Query(), CommandId = resume.Meta.CommandId, OwnerEpoch = epoch }, ct);
+                    if (observed.Value.Operation.State != OperationState.Accepted)
+                    {
+                        Assert.Equal(OperationState.Unknown, observed.Value.Operation.State);
+                        Assert.Equal(EffectCertainty.Unknown, observed.Value.Operation.Effect);
+                        break;
+                    }
+
+                    await Task.Delay(25, ct);
+                }
+
+                manager.StopDeletionWorkers();
+            }
+            else
+            {
+                var refusal = manager.Delete(resume, ct).Error;
+                Assert.Equal("path_rejected", refusal.Code);
+                Assert.Equal(WorkspacePath.LinuxSandboxDeletionGuardUnavailable, refusal.Details.State.Reason);
+                Assert.Equal(EffectCertainty.DidNotHappen, refusal.Effect);
+                Assert.Equal(SandboxState.Deleting,
+                    manager.Inspect(new() { Meta = Query(), SandboxId = sandbox.SandboxId }, ct).Value.Sandbox.State);
+            }
+
             var after = manager.GetOperation(new() { Meta = Query(), CommandId = original, OwnerEpoch = epoch }, ct);
             Assert.Equal(before.Value.Operation.State, after.Value.Operation.State);
             Assert.Equal(before.Value.Operation.Effect, after.Value.Operation.Effect);
             Assert.Equal("original_cleanup_unconfirmed", after.Value.Operation.Error.Details.State.Reason);
-            Assert.Equal(SandboxState.Deleting, manager.Inspect(new() { Meta = Query(), SandboxId = sandbox.SandboxId }, ct).Value.Sandbox.State);
         }
 
         clock.Advance(TimeSpan.FromHours(25));
@@ -237,13 +271,40 @@ public sealed partial class SandboxRegistryTests
         _ = reopened.CompactKnownResponses();
         Assert.Equal("UNKNOWN", reopened.Inspect(original.Value.Span)!.State);
         Assert.False(reopened.Inspect(original.Value.Span)!.Compacted);
-        Assert.Equal("ACCEPTED", reopened.Inspect(resume.Meta.CommandId.Value.Span)!.State);
+        var successor = reopened.Inspect(resume.Meta.CommandId.Value.Span);
         var journal = store.Read(reader => SandboxDeletionRecords.ReadOriginal(reader, owner, epoch.Value.ToByteArray(),
             Hex(sandbox.SandboxId), Hex(original)))!;
         Assert.Equal(Hex(original), journal.OriginalCommandId);
-        Assert.Equal(Hex(resume.Meta.CommandId), journal.LatestSuccessorId);
-        Assert.Equal(quarantineIdentity, journal.QuarantineIdentity);
-        Assert.Equal("still owned", File.ReadAllText(Path.Combine(quarantinePath, "data", "owned.txt")));
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Equal("UNKNOWN", successor!.State);
+            Assert.False(successor.Compacted);
+            Assert.Equal(Hex(resume.Meta.CommandId), journal.LatestSuccessorId);
+        }
+        else
+        {
+            Assert.Null(successor);
+            Assert.Null(journal.LatestSuccessorId);
+        }
+
+        if (quarantined || !OperatingSystem.IsWindows())
+        {
+            Assert.Equal(quarantineIdentity, journal.QuarantineIdentity);
+        }
+
+        string retainedPath = Directory.Exists(quarantinePath) ? quarantinePath : sandbox.DataLocation;
+        Assert.False(Directory.Exists(quarantinePath) && Directory.Exists(sandbox.DataLocation));
+        if (!OperatingSystem.IsWindows())
+        {
+            Assert.Equal(seededPath, retainedPath);
+        }
+
+        if (journal.QuarantineIdentity is not null)
+        {
+            Assert.Equal(quarantinePath, retainedPath);
+        }
+
+        Assert.Equal("still owned", File.ReadAllText(Path.Combine(retainedPath, "data", "owned.txt")));
         Assert.Equal("keep foreign", File.ReadAllText(foreign));
     }
 
