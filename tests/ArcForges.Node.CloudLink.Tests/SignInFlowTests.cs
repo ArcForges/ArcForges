@@ -467,6 +467,142 @@ public sealed class SignInFlowTests
     }
 
     [Fact]
+    public async Task CenterDeviceFlowHidesTheOldCodeWhileItsReplacementIsStarting()
+    {
+        await using var link = await LinkFixture.CreateAsync();
+        await link.StartAsync();
+        link.Center.NextUserCodes.Enqueue("BCDFGHJK");
+        link.Center.NextUserCodes.Enqueue("LMNPQRST");
+        var id = await StartV2FlowAsync(link, SignInMethod.DeviceCode);
+        await Eventually.TrueAsync(() => link.Service.GetCenterFlow(id) is { HasNodeKeyFingerprint: true, HasUserCode: true }, "the first V2 device display");
+        var original = link.Service.GetCenterFlow(id)!;
+
+        var held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        link.Center.Script(Poll, new FakeFault.Refusal(KeyHeld()));
+        link.Center.Script("StartDeviceAuthorization", new FakeFault.Hold(held));
+        try
+        {
+            await Advance(link, TimeSpan.FromSeconds(30), () => link.Center.CallsOf("StartDeviceAuthorization").Count == 2, "the replacement device request");
+            var waiting = link.Service.GetCenterFlow(id)!;
+            Assert.Equal("pending", waiting.State);
+            Assert.False(waiting.HasNodeKeyFingerprint || waiting.HasUserCode || waiting.HasVerificationUri || waiting.HasPollAfterMs);
+            Assert.Equal(original.ExpiresAt, waiting.ExpiresAt);
+        }
+        finally
+        {
+            held.TrySetResult();
+        }
+
+        await Eventually.TrueAsync(() => link.Service.GetCenterFlow(id) is { HasNodeKeyFingerprint: true, HasUserCode: true }, "the replacement V2 device display");
+        var replacement = link.Service.GetCenterFlow(id)!;
+        var admitted = NodeEnrollmentServiceStartDeviceAuthorizationRequest.Parser.ParseFrom(
+            FakeCenter.Payload(link.Center.CallsOf("StartDeviceAuthorization")[1].Body));
+        Assert.Equal(CloudIdentity.Fingerprint(admitted.NodePublicKey.Span), replacement.NodeKeyFingerprint);
+        Assert.NotEqual(original.NodeKeyFingerprint, replacement.NodeKeyFingerprint);
+        Assert.NotEqual(original.UserCode, replacement.UserCode);
+        Assert.Null(await link.Service.CancelCenterConnectAsync(id, Cancel));
+    }
+
+    [Fact]
+    public async Task CenterBrowserFlowHidesApprovalDisplayAsSoonAsTheReceiverCompletes()
+    {
+        await using var link = await LinkFixture.CreateAsync();
+        await link.StartAsync();
+        var held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        link.Service.SignIn.BeforeWork = _ => held.Task;
+        try
+        {
+            var id = await StartV2FlowAsync(link, SignInMethod.Browser);
+            await Eventually.TrueAsync(() => link.Service.GetCenterFlow(id) is { HasNodeKeyFingerprint: true, HasVerificationUri: true }, "the V2 browser approval display");
+            var receiver = Assert.IsType<LoopbackReceiver>(link.Service.SignIn.Receiver);
+            Assert.Equal("HTTP/1.1 200 OK", await ScriptedBrowser.GetAsync(link.Center.ApproveFlow()));
+            await receiver.Result.WaitAsync(TimeSpan.FromSeconds(5), Cancel);
+
+            var accepted = link.Service.GetCenterFlow(id)!;
+            Assert.Equal("pending", accepted.State);
+            Assert.False(accepted.HasNodeKeyFingerprint || accepted.HasVerificationUri);
+            Assert.Null(await link.Service.CancelCenterConnectAsync(id, Cancel));
+        }
+        finally
+        {
+            held.TrySetResult();
+        }
+    }
+
+    [Fact]
+    public async Task CenterFlowRetainsItsExpiryAndRejectsLegacySignOutDuringSetup()
+    {
+        await using var link = await LinkFixture.CreateAsync();
+        await link.StartAsync();
+        var expected = ArcForges.Client.ProtoTime.ToInstant(link.Clock.GetUtcNow() + SignInOrchestrator.BrowserLifetime);
+        var held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        link.Center.Script("BeginNodeSignIn", new FakeFault.Hold(held));
+        try
+        {
+            Id id;
+            using (await link.Service.EnterAsync(Cancel))
+            {
+                var begun = link.Service.SignIn.StartCenterFlow(SignInMethod.Browser);
+                Assert.Null(begun.Error);
+                id = Assert.IsType<Id>(begun.FlowId);
+            }
+
+            await Eventually.TrueAsync(() => link.Center.CallsOf("BeginNodeSignIn").Count == 1, "V2 start in flight");
+            var starting = Assert.IsType<ArcForges.Contracts.Sandbox.V2.CenterConnectFlow>(link.Service.GetCenterFlow(id));
+            Assert.Equal("pending", starting.State);
+            Assert.Equal(expected, starting.ExpiresAt);
+            Assert.False(starting.HasVerificationUri);
+
+            link.Service.SignIn.CancelActive();
+            using (await link.Service.EnterForSignOutAsync(TimeSpan.Zero, Cancel))
+            {
+                Assert.Equal(SignOutResult.NotSignedIn, await link.Service.SignOutHeldAsync(revokeRemote: true));
+            }
+
+            Assert.Equal("pending", link.Service.GetCenterFlow(id)!.State);
+            Assert.Null(await link.Service.CancelCenterConnectAsync(id, Cancel));
+            var cancelled = link.Service.GetCenterFlow(id)!;
+            Assert.Equal("cancelled", cancelled.State);
+            Assert.Equal(expected, cancelled.ExpiresAt);
+            Assert.False(cancelled.HasVerificationUri);
+            Assert.Empty(link.Center.CallsOf("SignOutNode"));
+        }
+        finally
+        {
+            held.TrySetResult();
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CenterConnectPreservesLegacyCredentialWithUnusableAccountId(bool zero)
+    {
+        await using var link = await LinkFixture.CreateAsync();
+        var center = CenterEndpoint.Parse("https" + link.Center.Endpoint.Url["http".Length..]);
+        link.ConfiguredCenter = center;
+        await link.StartAsync();
+        var credential = link.Center.Issue(link.NodeId);
+        if (zero)
+        {
+            credential.Account!.AccountId = new Id { Value = Google.Protobuf.ByteString.CopyFrom(new byte[16]) };
+        }
+        else
+        {
+            credential.Account = null;
+        }
+
+        await link.Service.AdoptAsync(credential, center);
+        var begun = await link.Service.BeginCenterConnectAsync(center.Origin, "self_hosted", "device_code", Cancel);
+        Assert.Null(begun.FlowId);
+        Assert.Equal("busy", begun.Error!.Code);
+        Assert.Equal("center_credential_reenrollment_required", begun.Error.Details.State.Reason);
+        Assert.Null(link.Service.Storage.ReadLink()!.UseV2);
+        Assert.True(link.Service.AccountLinked);
+        Assert.False(link.Service.GetCenterStatus().ConnectionEnabled);
+    }
+
+    [Fact]
     public async Task CancelEndsAPendingFlowAndNothingElse()
     {
         await using var link = await LinkFixture.CreateAsync();
@@ -561,6 +697,33 @@ public sealed class SignInFlowTests
         Assert.Equal(link.Center.LatestDelivered, link.StoredRecord()!.RefreshToken);
         Assert.DoesNotContain("center_rejected_credential", link.Service.Status().Warnings);
         Assert.Equal(SignInFlowState.SignedIn, link.Service.SignIn.Get(flow.FlowId)!.State);
+    }
+
+    [Fact]
+    public async Task LegacyBeginLeavesARejectedCenterControlCredentialInPlace()
+    {
+        await using var link = await LinkFixture.CreateAsync();
+        await link.StartAsync();
+        var first = await link.SignInAsync();
+        var store = link.Service.Storage;
+        var selected = store.ReadLink()!;
+        await link.StopAsync();
+        selected.UseV2 = true;
+        store.WriteLink(selected);
+
+        await link.StartAsync();
+        link.Center.Script("RefreshNodeSession", new FakeFault.Refusal(Arc(ErrorCategory.Authentication, "unauthenticated")));
+        await Eventually.AdvanceUntilAsync(link, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(45),
+            () => link.Service.Status().Warnings.Contains("center_rejected_credential"), "the V2 link rejection");
+
+        var denied = await BeginAsync(link, SignInMethod.Browser);
+        Assert.Null(denied.Flow);
+        Assert.Equal("invalid_state", denied.Error!.Code);
+        Assert.Equal("center_control_required", denied.Error.Details.State.Reason);
+        Assert.Equal(CloudLinkPhase.SignedOut, link.Service.Phase);
+        Assert.True(store.ReadLink()!.UseV2);
+        Assert.Equal(first.RefreshToken, link.StoredRecord()!.RefreshToken);
+        Assert.Empty(link.Center.CallsOf("BeginNodeSignIn"));
     }
 
     [Fact]
@@ -686,6 +849,14 @@ public sealed class SignInFlowTests
 
     internal static Task<SignInReply> BeginAsync(LinkFixture link, SignInMethod method) =>
         link.Service.SignIn.BeginAsync(method, link.Clock.GetTimestamp(), Cancel);
+
+    private static async Task<Id> StartV2FlowAsync(LinkFixture link, SignInMethod method)
+    {
+        using var held = await link.Service.EnterAsync(Cancel);
+        var begun = link.Service.SignIn.StartCenterFlow(method);
+        Assert.Null(begun.Error);
+        return Assert.IsType<Id>(begun.FlowId);
+    }
 
     internal static ArcError Arc(ErrorCategory category, string code) => new()
     {

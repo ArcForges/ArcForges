@@ -409,8 +409,8 @@ public sealed partial class CenterSeamPolicyTests
         }
 
         // Sandbox V2 requires the newer Foundation package, which keeps the same V1 wire contract.
-        Assert.Contains("<PackageVersion Include=\"ArcForges.Contracts.Foundation\" Version=\"1.0.0-ci.481.1\" />", packages, StringComparison.Ordinal);
-        Assert.Contains("<PackageVersion Include=\"ArcForges.Contracts.Sandbox.V2\" Version=\"1.0.0-ci.481.1\" />", packages, StringComparison.Ordinal);
+        Assert.Contains("<PackageVersion Include=\"ArcForges.Contracts.Foundation\" Version=\"1.0.0-ci.486.1\" />", packages, StringComparison.Ordinal);
+        Assert.Contains("<PackageVersion Include=\"ArcForges.Contracts.Sandbox.V2\" Version=\"1.0.0-ci.486.1\" />", packages, StringComparison.Ordinal);
     }
 
     private static IEnumerable<string> Files(params string[] roots) => roots.SelectMany(root =>

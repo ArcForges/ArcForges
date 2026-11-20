@@ -102,7 +102,9 @@ public static class CliApplication
 
     private static bool IsLocalV2(Command command) =>
         IsLocalV2Group(command) || command.Parents.OfType<Command>().Any(IsLocalV2Group) ||
-        (command.Name is "start" or "status" or "stop" && command.Parents.OfType<Command>().Any(parent => parent.Name == "node"));
+        (command.Name is "start" or "status" or "stop" && command.Parents.OfType<Command>().Any(parent => parent.Name == "node")) ||
+        (command.Name is "status" or "connect" or "flow" or "cancel" or "disconnect" or "signout" &&
+            command.Parents.OfType<Command>().Any(parent => parent.Name == "center"));
 
     private static bool IsLocalV2Group(Command command) => command.Name is "sandbox" or "run" or "resources" or "grant" or "operation" or "doctor";
 }

@@ -21,13 +21,13 @@ internal sealed record DurableDeletionBinding(string OriginalCommandId, string D
 internal sealed record DurableIntent(byte[] CommandId, byte[] OwnerEpoch, string Method, string? AggregateKind,
     string? AggregateId, byte[] CanonicalBody, long? ExpectedSandboxRevision = null, byte[]? SafetyParent = null,
     string? ExpectedSandboxId = null, DurableGrantPrecondition? Grant = null, int AdditionalSafetyReservations = 0,
-    DurableProvisionBinding? Provision = null, DurableDeletionBinding? Deletion = null);
+    DurableProvisionBinding? Provision = null, DurableRemoteBinding? Remote = null, DurableDeletionBinding? Deletion = null);
 
 internal enum DurableDecision { Execute, Replay, InProgress, Compacted, Conflict, EpochRetired, RevisionConflict, Capacity, Maintenance }
 
 internal sealed record DurableReceipt(string CommandId, string Method, string? AggregateKind, string? AggregateId,
     string State, int Effect, string? ResponseJson, bool Compacted, string? SafetyParentCommandId = null,
-    DurableProvisionBinding? Provision = null, DurableDeletionBinding? Deletion = null);
+    DurableProvisionBinding? Provision = null, DurableRemoteBinding? Remote = null, DurableDeletionBinding? Deletion = null);
 
 internal sealed record DurableAdmission(DurableDecision Decision, DurableReceipt? Receipt);
 
@@ -49,9 +49,16 @@ internal sealed partial class DurableCommandStore : IDisposable
         FROM transfer AS t
         JOIN sandbox AS s ON s.sandbox_id=t.sandbox_id AND s.owner_id=t.owner_id
         JOIN command_receipt AS b ON b.owner_id=t.owner_id AND b.owner_epoch=t.owner_epoch AND b.command_id=t.command_id
+        LEFT JOIN remote_command_binding AS rb ON rb.owner_id=b.owner_id AND rb.owner_epoch=b.owner_epoch AND rb.command_id=b.command_id
         WHERE t.direction='import' AND t.state IN (1,2,5) AND t.closed_utc IS NULL
           AND t.staging_identity<>$unbound AND length(t.staging_identity)>0
-          AND json_extract(t.manifest_json,'$.actorId')=t.owner_id AND json_extract(t.manifest_json,'$.grantId') IS NULL
+          AND ((rb.command_id IS NULL AND json_extract(t.manifest_json,'$.actorId')=t.owner_id
+                  AND json_extract(t.manifest_json,'$.grantId') IS NULL)
+               OR (rb.scope_kind='sandbox' AND rb.sandbox_id=t.sandbox_id
+                  AND rb.actor_id=json_extract(t.manifest_json,'$.actorId')
+                  AND rb.grant_id=json_extract(t.manifest_json,'$.grantId')
+                  AND rb.grant_revision=json_extract(t.manifest_json,'$.grantRevision')
+                  AND rb.enrollment_id=json_extract(t.manifest_json,'$.enrollmentId')))
           AND b.method=$beginImport AND b.aggregate_kind='transfer' AND b.aggregate_id=t.transfer_id
           AND b.state='SUCCEEDED' AND b.effect_certainty=2 AND b.safety_parent_command_id IS NULL
           AND NOT EXISTS(SELECT 1 FROM command_receipt AS child
@@ -260,12 +267,16 @@ internal sealed partial class DurableCommandStore : IDisposable
             {
                 string? held = _store.Read(reader => reader.Scalar("SELECT command_id FROM command_receipt WHERE owner_id=$o AND owner_epoch=$e AND safety_parent_command_id=$p AND method=$m;",
                     ("$o", _owner), ("$e", _fence.Epoch), ("$p", Convert.ToHexStringLower(intent.SafetyParent)), ("$m", intent.Method)) as string);
-                if (held is not null) id = held;
+                if (held is not null)
+                {
+                    if (intent.Remote is not null && held != id) return new(DurableDecision.Conflict, null);
+                    id = held;
+                }
             }
             var existing = _store.Read(reader => ReadReceipt(reader, id));
             if (existing is not null)
             {
-                bool matches = existing.Method == intent.Method
+                bool matches = existing.Remote == intent.Remote && existing.Method == intent.Method
                     && (existing.Provision is null || intent.Provision is null || existing.Provision == intent.Provision)
                     && (existing.Deletion is null || intent.Deletion is null || existing.Deletion == intent.Deletion)
                     && _store.Read(reader =>
@@ -273,7 +284,8 @@ internal sealed partial class DurableCommandStore : IDisposable
                         "SELECT request_hmac_sha256 FROM command_receipt WHERE owner_id=$o AND owner_epoch=$e AND command_id=$c;",
                         ("$o", _owner), ("$e", _fence.Epoch), ("$c", id))!)));
                 return new(!matches ? DurableDecision.Conflict : existing.Compacted ? DurableDecision.Compacted
-                    : existing.State is "ACCEPTED" or "UNKNOWN" ? DurableDecision.InProgress : DurableDecision.Replay, existing);
+                    : existing.State is "ACCEPTED" or "UNKNOWN" ? DurableDecision.InProgress : DurableDecision.Replay,
+                    !matches && intent.Remote is not null ? null : existing);
             }
             if (IsGrantMutation(intent) && (observed is not { State: "SUCCEEDED", Effect: 2 } || metadataChanges is null))
                 throw new ArgumentException("A new grant mutation must atomically commit its observed SQLite effect.", nameof(intent));
@@ -324,6 +336,8 @@ internal sealed partial class DurableCommandStore : IDisposable
                     ("$h", Convert.ToHexStringLower(digest)), ("$ak", intent.AggregateKind), ("$ai", intent.AggregateId),
                     ("$now", now), ("$seq", _fence.Sequence), ("$parent", parent), ("$reserve", _capacity.MaximumResponseBytes),
                     ("$body", pendingBody ?? "{}"));
+                if (intent.Remote is { } remote)
+                    RecordRemoteBinding(tx, id, remote);
                 metadataChanges?.Invoke(tx);
                 if (intent.Deletion is { } bound
                     && !SandboxDeletionRecords.IsBoundSuccessor(tx, _owner, _fence.Epoch, intent.AggregateId!, bound, id))
@@ -356,6 +370,8 @@ internal sealed partial class DurableCommandStore : IDisposable
         if (intent.ExpectedSandboxRevision is { } revision &&
             !Equals(reader.Scalar("SELECT revision FROM sandbox WHERE owner_id=$o AND sandbox_id=$id;",
                 ("$o", _owner), ("$id", intent.ExpectedSandboxId ?? intent.AggregateId)), revision)) return DurableDecision.RevisionConflict;
+        if (intent.Remote is { } remote && !CanAdmitRemote(reader, intent, remote, admittedAt))
+            return DurableDecision.RevisionConflict;
         if (intent.Grant is { } grant
             && !RemoteGrantRecords.IsActiveRevision(reader, _owner, intent.AggregateId!, grant.ExpectedRevision, admittedAt))
             return DurableDecision.RevisionConflict;
@@ -512,8 +528,11 @@ internal sealed partial class DurableCommandStore : IDisposable
     private DurableReceipt? ReadReceipt(StoreReader reader, string id)
     {
         using var command = reader.CreateCommand("""
-            SELECT command_id,method,aggregate_kind,aggregate_id,state,effect_certainty,response_json,response_compacted_utc,safety_parent_command_id
-            FROM command_receipt WHERE owner_id=$o AND owner_epoch=$e AND command_id=$c;
+            SELECT c.command_id,c.method,c.aggregate_kind,c.aggregate_id,c.state,c.effect_certainty,c.response_json,
+                   c.response_compacted_utc,c.safety_parent_command_id,
+                   b.account_id,b.actor_id,b.enrollment_id,b.protocol_epoch,b.grant_id,b.grant_revision,b.scope_kind,b.sandbox_id
+            FROM command_receipt AS c LEFT JOIN remote_command_binding AS b USING(owner_id,owner_epoch,command_id)
+            WHERE c.owner_id=$o AND c.owner_epoch=$e AND c.command_id=$c;
             """);
         command.Parameters.AddWithValue("$o", _owner); command.Parameters.AddWithValue("$e", _fence.Epoch); command.Parameters.AddWithValue("$c", id);
         using var row = command.ExecuteReader();
@@ -524,10 +543,12 @@ internal sealed partial class DurableCommandStore : IDisposable
         string? body = row.IsDBNull(6) ? null : row.GetString(6);
         var provision = method == SandboxCreateMethod && kind == "sandbox" && state is ("ACCEPTED" or "UNKNOWN") && body is not null
             ? ReadProvisionReservation(body) : null;
+        var remote = row.IsDBNull(9) ? null : new DurableRemoteBinding(row.GetString(9), row.GetString(10), row.GetString(11),
+            row.GetString(12), row.GetString(13), row.GetInt64(14), row.GetString(15), row.IsDBNull(16) ? null : row.GetString(16));
         var deletion = method == SandboxDeletionRecords.Method && kind == "sandbox" && state is ("ACCEPTED" or "UNKNOWN") && body is not null
             ? ReadDeletionBinding(body) : null;
         return new(row.GetString(0), method, kind, row.IsDBNull(3) ? null : row.GetString(3), state, row.GetInt32(5),
-            body, !row.IsDBNull(7), row.IsDBNull(8) ? null : row.GetString(8), provision, deletion);
+            body, !row.IsDBNull(7), row.IsDBNull(8) ? null : row.GetString(8), provision, remote, deletion);
     }
 
     private void Advance(string kind, string command, ReadOnlySpan<byte> content, Action<StoreTransaction> write)
@@ -574,6 +595,8 @@ internal sealed partial class DurableCommandStore : IDisposable
                 writer.Write("remote_grant_reservation");
                 writer.Write(intent.AdditionalSafetyReservations);
             }
+            if (intent.Remote is { } remote)
+                WriteRemoteBinding(writer, remote);
         }
         return HMACSHA256.HashData(_key, stream.ToArray());
     }
@@ -611,11 +634,13 @@ internal sealed partial class DurableCommandStore : IDisposable
         if (intent.Provision is { } provision
             && (intent.AdditionalSafetyReservations != 1 || !ValidProvisionBinding(provision)))
             throw new ArgumentException("A provision reservation binds its exact parent revision and preselected child grant.", nameof(intent));
+        if (intent.Remote is { } remote)
+            ValidateRemoteIntent(intent, remote);
         if (intent.Deletion is { } deletion
             && (intent is not
             {
                 Method: SandboxDeletionRecords.Method, AggregateKind: "sandbox", ExpectedSandboxRevision: > 0,
-                SafetyParent: null, ExpectedSandboxId: null, Grant: null, Provision: null
+                SafetyParent: null, ExpectedSandboxId: null, Grant: null, Provision: null, Remote: null
             }
                 || !IsGrantIdentity(intent.AggregateId) || !IsGrantIdentity(deletion.OriginalCommandId)
                 || !IsGrantIdentity(deletion.DeletionId) || deletion.OriginalCommandId == Convert.ToHexStringLower(intent.CommandId)))

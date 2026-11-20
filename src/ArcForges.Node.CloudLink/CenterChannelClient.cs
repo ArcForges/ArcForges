@@ -52,6 +52,9 @@ internal sealed class CenterChannelClient : IAsyncDisposable
     /// <summary>The channel's path under the center URL.</summary>
     public const string ChannelPath = "/fleet/v1/node";
 
+    internal const string V2Subprotocol = "arcforges.relay.v2";
+    internal const string V2ChannelPath = "/fleet/v2/node";
+
     /// <summary>The frame bound (relay.proto ChannelLimits.max_frame_bytes: exactly 1,048,576).</summary>
     public const int MaxFrameBytes = 1_048_576;
 
@@ -60,29 +63,32 @@ internal sealed class CenterChannelClient : IAsyncDisposable
 
     private readonly ClientWebSocket _socket;
     private readonly HttpMessageInvoker _invoker;
+    private readonly bool _useV2;
     private readonly SemaphoreSlim _send = new(1, 1);
     private readonly byte[] _receive = new byte[64 * 1024];
     private long _sequence;
 
-    private CenterChannelClient(ClientWebSocket socket, HttpMessageInvoker invoker)
+    private CenterChannelClient(ClientWebSocket socket, HttpMessageInvoker invoker, bool useV2)
     {
         _socket = socket;
         _invoker = invoker;
+        _useV2 = useV2;
     }
 
     /// <summary>The WebSocket URI of <paramref name="center"/>'s channel.</summary>
-    public static Uri ChannelUri(CenterEndpoint center)
+    public static Uri ChannelUri(CenterEndpoint center, bool useV2 = false)
     {
         ArgumentNullException.ThrowIfNull(center);
         var scheme = center.Scheme == "https" ? "wss" : "ws";
-        return new Uri(scheme + "://" + center.Origin[(center.Scheme.Length + 3)..] + center.PathBase + ChannelPath);
+        return new Uri(scheme + "://" + center.Origin[(center.Scheme.Length + 3)..] + center.PathBase + (useV2 ? V2ChannelPath : ChannelPath));
     }
 
     /// <summary>
     /// Opens the channel to <paramref name="center"/> with <paramref name="accessToken"/>. A refusal before the upgrade throws
     /// <see cref="ChannelConnectException"/> with its reason (status and the center's refusal header; the body is never read).
     /// </summary>
-    public static async Task<CenterChannelClient> ConnectAsync(CenterEndpoint center, string accessToken, string? connectLog, CancellationToken cancellationToken)
+    public static async Task<CenterChannelClient> ConnectAsync(CenterEndpoint center, string accessToken, string? connectLog,
+        CancellationToken cancellationToken, bool useV2 = false)
     {
         ArgumentNullException.ThrowIfNull(center);
         ArgumentException.ThrowIfNullOrEmpty(accessToken);
@@ -99,7 +105,8 @@ internal sealed class CenterChannelClient : IAsyncDisposable
         var guard = new CenterHttpClient.AuthorityGuardHandler(center, connectLog) { InnerHandler = transport };
         var invoker = new HttpMessageInvoker(guard, disposeHandler: true);
         var socket = new ClientWebSocket();
-        socket.Options.AddSubProtocol(Subprotocol);
+        var protocol = useV2 ? V2Subprotocol : Subprotocol;
+        socket.Options.AddSubProtocol(protocol);
         socket.Options.SetRequestHeader("Authorization", "Bearer " + accessToken);
         socket.Options.KeepAliveInterval = TimeSpan.FromSeconds(30);
         socket.Options.HttpVersion = HttpVersion.Version11;
@@ -110,7 +117,9 @@ internal sealed class CenterChannelClient : IAsyncDisposable
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(TimeSpan.FromSeconds(15));
-            await socket.ConnectAsync(ChannelUri(center), invoker, timeout.Token).ConfigureAwait(false);
+            await (useV2
+                ? socket.ConnectAsync(ChannelUri(center, useV2: true), invoker, timeout.Token)
+                : socket.ConnectAsync(ChannelUri(center), invoker, timeout.Token)).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is WebSocketException or HttpRequestException or IOException
             || (exception is OperationCanceledException && !cancellationToken.IsCancellationRequested))
@@ -136,7 +145,7 @@ internal sealed class CenterChannelClient : IAsyncDisposable
             throw;
         }
 
-        if (socket.SubProtocol != Subprotocol)
+        if (socket.SubProtocol != protocol)
         {
             socket.Abort();
             socket.Dispose();
@@ -145,28 +154,67 @@ internal sealed class CenterChannelClient : IAsyncDisposable
         }
 
         socket.HttpResponseHeaders = null;
-        return new CenterChannelClient(socket, invoker);
+        return new CenterChannelClient(socket, invoker, useV2);
     }
 
     /// <summary>The close status the center sent, or <see langword="null"/>.</summary>
     public WebSocketCloseStatus? CloseStatus => _socket.CloseStatus;
 
     /// <summary>Sends one frame (frame_version 1, this direction's next frame_seq); sends are serialized.</summary>
-    public async Task SendAsync(RelayFrame frame, CancellationToken cancellationToken)
+    public Task SendAsync(RelayFrame frame, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(frame);
+        return SendFrameAsync(isV2: false, sequence =>
+        {
+            frame.FrameVersion = 1;
+            frame.FrameSeq = sequence;
+            return frame.ToByteArray();
+        }, cancellationToken);
+    }
+
+    internal Task SendV2Async(V2ChannelKind kind, ReadOnlyMemory<byte> payload, CancellationToken cancellationToken) =>
+        SendFrameAsync(isV2: true, sequence => V2ChannelProtocol.Encode(kind, sequence, payload.Span), cancellationToken);
+
+    internal Task SendV2DataResultAsync(V2ControlSelector selector, ReadOnlyMemory<byte> payload, uint maxFrameBytes,
+        CancellationToken cancellationToken)
+    {
+        RequireV2BaseFrameLimit(maxFrameBytes);
+        if (!V2ControlWire.IsData(selector))
+        {
+            throw new ArgumentOutOfRangeException(nameof(selector));
+        }
+
+        var limit = checked((int)V2ControlWire.ResultFrameLimit(selector, maxFrameBytes));
+        return SendFrameAsync(isV2: true, sequence => V2ChannelProtocol.Encode(V2ChannelKind.DataResult, sequence, payload.Span),
+            cancellationToken, limit);
+    }
+
+    private async Task SendFrameAsync(bool isV2, Func<ulong, byte[]> encode, CancellationToken cancellationToken,
+        int maxFrameBytes = MaxFrameBytes)
+    {
+        if (isV2 != _useV2)
+        {
+            throw new InvalidOperationException("The frame codec must match the authenticated WebSocket subprotocol.");
+        }
+
         await _send.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            frame.FrameVersion = 1;
-            frame.FrameSeq = (ulong)Interlocked.Increment(ref _sequence);
-            var bytes = frame.ToByteArray();
-            if (bytes.Length > MaxFrameBytes)
+            var sequence = checked(_sequence + 1);
+            _sequence = sequence;
+            var bytes = encode((ulong)sequence);
+            if (bytes.Length > maxFrameBytes)
             {
                 throw new InvalidOperationException("A frame larger than the channel's frame bound is never sent.");
             }
 
             await _socket.SendAsync(bytes, WebSocketMessageType.Binary, endOfMessage: true, cancellationToken).ConfigureAwait(false);
+        }
+        catch when (isV2)
+        {
+            // A partially transmitted frame cannot be safely replayed on a strictly sequenced connection.
+            _socket.Abort();
+            throw;
         }
         finally
         {
@@ -178,7 +226,24 @@ internal sealed class CenterChannelClient : IAsyncDisposable
     /// Receives one whole binary message of at most <see cref="MaxFrameBytes"/>; <see langword="null"/> when the center closed the
     /// channel. A larger or a text message throws <see cref="WebSocketException"/> (the channel then closes).
     /// </summary>
-    public async Task<byte[]?> ReceiveAsync(CancellationToken cancellationToken)
+    public Task<byte[]?> ReceiveAsync(CancellationToken cancellationToken) =>
+        ReceiveFrameAsync(MaxFrameBytes, 0, cancellationToken);
+
+    internal Task<byte[]?> ReceiveV2Async(uint maxFrameBytes, ulong largeWriteSequence, CancellationToken cancellationToken)
+    {
+        RequireV2BaseFrameLimit(maxFrameBytes);
+        return ReceiveFrameAsync((int)maxFrameBytes, largeWriteSequence, cancellationToken);
+    }
+
+    private void RequireV2BaseFrameLimit(uint maxFrameBytes)
+    {
+        if (!_useV2 || maxFrameBytes is 0 or > MaxFrameBytes)
+        {
+            throw new InvalidOperationException("The negotiated base frame limit must match an authenticated V2 connection.");
+        }
+    }
+
+    private async Task<byte[]?> ReceiveFrameAsync(int frameLimit, ulong largeWriteSequence, CancellationToken cancellationToken)
     {
         var buffer = new ArrayBufferWriter();
         while (true)
@@ -189,12 +254,30 @@ internal sealed class CenterChannelClient : IAsyncDisposable
                 return null;
             }
 
-            if (result.MessageType != WebSocketMessageType.Binary || buffer.Length + result.Count > MaxFrameBytes)
+            if (result.MessageType != WebSocketMessageType.Binary)
             {
-                throw new WebSocketException(WebSocketError.InvalidMessageType, "The channel carries binary frames of at most 1 MiB.");
+                throw new WebSocketException(WebSocketError.InvalidMessageType, "The channel carries only binary frames.");
             }
 
-            buffer.Write(_receive.AsSpan(0, result.Count));
+            var incoming = _receive.AsSpan(0, result.Count);
+            int total = buffer.Length + incoming.Length;
+            if (largeWriteSequence != 0 && total >= V2ControlWire.RequestPrefixBytes)
+            {
+                // Only the fixed prefix can select the extended frame bound, before buffering the remaining message.
+                if (buffer.HasLargeWritePrefix(incoming, largeWriteSequence))
+                {
+                    frameLimit = V2ControlWire.ExtendedFrameLimit;
+                }
+
+                largeWriteSequence = 0;
+            }
+
+            if (total > frameLimit)
+            {
+                throw new WebSocketException(WebSocketError.InvalidMessageType, "The frame exceeds its channel limit.");
+            }
+
+            buffer.Write(incoming, frameLimit);
             if (result.EndOfMessage)
             {
                 return buffer.ToArray();
@@ -243,11 +326,19 @@ internal sealed class CenterChannelClient : IAsyncDisposable
 
         public int Length { get; private set; }
 
-        public void Write(ReadOnlySpan<byte> data)
+        public bool HasLargeWritePrefix(ReadOnlySpan<byte> incoming, ulong sequence)
+        {
+            Span<byte> prefix = stackalloc byte[V2ControlWire.RequestPrefixBytes];
+            _bytes.AsSpan(0, Length).CopyTo(prefix);
+            incoming[..(prefix.Length - Length)].CopyTo(prefix[Length..]);
+            return V2ControlWire.IsLargeWritePrefix(prefix, sequence);
+        }
+
+        public void Write(ReadOnlySpan<byte> data, int frameLimit)
         {
             if (Length + data.Length > _bytes.Length)
             {
-                Array.Resize(ref _bytes, Math.Max(_bytes.Length * 2, Length + data.Length));
+                Array.Resize(ref _bytes, Math.Min(frameLimit, Math.Max(_bytes.Length * 2, Length + data.Length)));
             }
 
             data.CopyTo(_bytes.AsSpan(Length));

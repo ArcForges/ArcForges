@@ -741,31 +741,61 @@ public sealed partial class MxcRunServiceTests
                 {
                     foreach (var entry in _runs.Values)
                     {
-                        var current = await InspectAsync(Runs, entry.Run, CancellationToken.None);
+                        using var cleanup = new CancellationTokenSource(NativeBound);
+                        var current = await InspectAsync(Runs, entry.Run, cleanup.Token);
+                        Assert.Equal(entry.Run, current.RunId);
+                        var runEpoch = current.Epoch;
                         var cleanupStart = current.State;
                         var stopState = "already settling";
-                        if (current.State is RunState.Running or RunState.Starting)
+
+                        async Task<Run> RefreshRunAsync()
                         {
-                            var stop = await Runs.StopAsync(BuildStop(OwnerEpoch, current), deadline: Deadline, cancellationToken: CancellationToken.None);
-                            // Loss cases deliberately keep the old owner unbound. A typed unknown does not authorize native cleanup.
-                            if (stop.Error?.Code == "outcome_unknown") continue;
-                            current = Value(stop.Value, stop.Error).Run;
-                            stopState = current.State.ToString();
+                            var refreshed = await InspectAsync(Runs, entry.Run, cleanup.Token);
+                            Assert.Equal(entry.Run, refreshed.RunId);
+                            Assert.Equal(runEpoch, refreshed.Epoch);
+                            return refreshed;
                         }
 
-                        var cleanup = Stopwatch.StartNew();
-                        while (current.State is RunState.Stopping or RunState.Draining)
+                        try
                         {
-                            if (cleanup.Elapsed >= NativeBound)
+                            while (current.State is RunState.Running or RunState.Starting)
                             {
-                                var phases = ReadRunDiagnostics(Fixture, entry.Run);
-                                Assert.Fail($"Run {Hex(entry.Run)} did not drain after cleanup Stop. "
-                                    + $"Inspect initially reported {cleanupStart}. Stop reported {stopState}. "
-                                    + $"Last Inspect reported {current.State} at revision {current.Revision.Value}. {phases}");
+                                var request = BuildStop(OwnerEpoch, current);
+                                var stop = await Runs.StopAsync(request, deadline: Deadline, cancellationToken: cleanup.Token);
+                                // Loss cases deliberately keep the old owner unbound. A typed unknown does not authorize native cleanup.
+                                if (stop.Error?.Code == "outcome_unknown") break;
+                                if (stop.Error is
+                                    {
+                                        Category: ErrorCategory.Conflict,
+                                        Code: "revision_mismatch",
+                                        Effect: EffectCertainty.DidNotHappen,
+                                        Details.Revision: { Expected: { } expected, Actual: { } actual },
+                                    } && expected.Value == request.Meta.ExpectedRev.Value && actual.Value > expected.Value)
+                                {
+                                    stopState = $"revision conflict from {expected.Value} to {actual.Value}";
+                                    current = await RefreshRunAsync();
+                                    Assert.True(current.Revision.Value >= actual.Value, "Cleanup Inspect returned an older revision than the Stop refusal.");
+                                    continue;
+                                }
+
+                                current = Value(stop.Value, stop.Error).Run;
+                                stopState = current.State.ToString();
+                                break;
                             }
 
-                            await Task.Delay(100);
-                            current = await InspectAsync(Runs, entry.Run, CancellationToken.None);
+                            while (current.State is RunState.Stopping or RunState.Draining)
+                            {
+                                await Task.Delay(100, cleanup.Token);
+                                current = await RefreshRunAsync();
+                            }
+                        }
+                        catch (Exception error) when (cleanup.IsCancellationRequested &&
+                            error is OperationCanceledException or RpcException { StatusCode: StatusCode.Cancelled })
+                        {
+                            var phases = ReadRunDiagnostics(Fixture, entry.Run);
+                            Assert.Fail($"Run {Hex(entry.Run)} did not drain after cleanup Stop. "
+                                + $"Inspect initially reported {cleanupStart}. Stop reported {stopState}. "
+                                + $"Last Inspect reported {current.State} at revision {current.Revision.Value}. {phases}");
                         }
                     }
                 }

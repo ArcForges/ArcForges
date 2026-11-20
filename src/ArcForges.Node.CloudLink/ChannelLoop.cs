@@ -17,7 +17,12 @@ namespace ArcForges.Node.CloudLink;
 /// <param name="Generation">The link's rotation generation of that token.</param>
 /// <param name="NodeId">This node's ID.</param>
 /// <param name="InstallationId">The credential's installation ID (16 bytes).</param>
-internal sealed record ChannelTicket(CenterEndpoint Center, string AccessToken, long Generation, ReadOnlyMemory<byte> NodeId, ReadOnlyMemory<byte> InstallationId);
+internal sealed record ChannelTicket(CenterEndpoint Center, string AccessToken, long Generation, ReadOnlyMemory<byte> NodeId, ReadOnlyMemory<byte> InstallationId)
+{
+    internal bool UseV2 { get; init; }
+
+    internal ReadOnlyMemory<byte> AccountId { get; init; }
+}
 
 /// <summary>An assertion and the immutable canonical center of the channel that issued its nonce and signed it.</summary>
 internal sealed record BoundRelayAssertion(RelayAssertion Assertion, CenterEndpoint Center);
@@ -48,6 +53,18 @@ internal interface IChannelHost
 
     /// <summary>A notification of the channel (the center replaced this node's channel with another proved connection).</summary>
     void Notice(CloudNotice notice);
+
+    /// <summary>The exact current local V2 authority and observed capabilities.</summary>
+    V2ChannelSnapshot? V2Snapshot() => null;
+
+    /// <summary>The fixed Node API callback for verified private V2 control requests.</summary>
+    Func<V2ControlCall, CancellationToken, Task<ReadOnlyMemory<byte>>>? V2ControlDispatch => null;
+
+    /// <summary>The fixed callback for the separately negotiated stream and Sandbox data selectors.</summary>
+    Func<V2ControlCall, CancellationToken, Task<ReadOnlyMemory<byte>>>? V2StreamDataDispatch => null;
+
+    /// <summary>Publishes verified enrollment while the corresponding V2 session is live.</summary>
+    void V2EnrollmentChanged(V2ChannelEnrollment? enrollment) { }
 }
 
 /// <summary>
@@ -58,7 +75,7 @@ internal interface IChannelHost
 /// the node key (<see cref="ResultSigner"/>). States: DISABLED, CONNECTING, CONNECTED, BACKOFF (1 s doubling to 60 s, full jitter, reset
 /// after 60 s connected), REFUSED (retried after 1 h or at a credential refresh). Nothing of a frame, a token or a payload is logged.
 /// </summary>
-internal sealed class ChannelLoop : IAsyncDisposable
+internal sealed partial class ChannelLoop : IAsyncDisposable
 {
     /// <summary>The capability the node announces in its hello.</summary>
     public const string Capability = "routed.v1";
@@ -146,7 +163,7 @@ internal sealed class ChannelLoop : IAsyncDisposable
         if (session is not null)
         {
             var (ticket, _) = _host.Ticket();
-            if (ticket is null || ticket.Center.Url != session.Ticket.Center.Url || !ticket.InstallationId.Span.SequenceEqual(session.Ticket.InstallationId.Span))
+            if (!SameChannelAuthority(session.Ticket, ticket))
             {
                 _ = EndSessionAsync(session);
             }
@@ -181,6 +198,12 @@ internal sealed class ChannelLoop : IAsyncDisposable
     /// </summary>
     private void SendTokenRefresh(Session session)
     {
+        if (session.Ticket.UseV2)
+        {
+            StartV2TokenRefresh(session);
+            return;
+        }
+
         if (_host.Ticket().Ticket is { } ticket && ticket.Generation != session.Generation && ticket.Center.Url == session.Ticket.Center.Url
             && ticket.InstallationId.Span.SequenceEqual(session.Ticket.InstallationId.Span))
         {
@@ -238,7 +261,9 @@ internal sealed class ChannelLoop : IAsyncDisposable
             session = _session;
         }
 
-        return session is { Accepted: true } ? RequestRelayNonceAsync(session, cancellationToken) : Task.FromResult<RelayNonce?>(null);
+        return session is { Accepted: true, Ticket.UseV2: false }
+            ? RequestRelayNonceAsync(session, cancellationToken)
+            : Task.FromResult<RelayNonce?>(null);
     }
 
     /// <summary>A relay nonce of <paramref name="session"/>'s connection only (review A N-7); null when that connection is no longer the live one.</summary>
@@ -290,7 +315,7 @@ internal sealed class ChannelLoop : IAsyncDisposable
             session = _session;
         }
 
-        if (session is not { Accepted: true })
+        if (session is not { Accepted: true, Ticket.UseV2: false })
         {
             return null;
         }
@@ -403,7 +428,7 @@ internal sealed class ChannelLoop : IAsyncDisposable
 
                 if (end.State == Contracts.Node.V1.RelayState.Disabled)
                 {
-                    Set(end.State, end.Reason);
+                    Set(end.State, end.Reason, end.V2Reason);
                     await WaitAsync(null, wake, null, stop).ConfigureAwait(false);
                     Reset();
                     continue;
@@ -430,7 +455,7 @@ internal sealed class ChannelLoop : IAsyncDisposable
                         Interlocked.Exchange(ref _rotated, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
                     }
 
-                    Set(end.State, end.Reason);
+                    Set(end.State, end.Reason, end.V2Reason);
                     await WaitAsync(ChannelPolicy.RefusedRetry, wake, Volatile.Read(ref _rotated).Task, stop).ConfigureAwait(false);
                     Reset();
                     continue;
@@ -438,7 +463,7 @@ internal sealed class ChannelLoop : IAsyncDisposable
 
                 var failures = Interlocked.Increment(ref _failures);
                 var delay = end.Delay is { } asked ? ChannelPolicy.CenterDelay(asked, _random()) : ChannelPolicy.Backoff(failures, _random());
-                Set(Contracts.Node.V1.RelayState.Backoff, end.Reason);
+                Set(Contracts.Node.V1.RelayState.Backoff, end.Reason, end.V2Reason);
                 _nodeLog.Info("cloud.channel.backoff", new LogField("reason", end.Reason), new LogField("delayMs", (long)delay.TotalMilliseconds),
                     new LogField("failures", failures));
                 await WaitAsync(delay, wake, null, stop).ConfigureAwait(false);
@@ -513,12 +538,16 @@ internal sealed class ChannelLoop : IAsyncDisposable
         CenterChannelClient client;
         try
         {
-            client = await CenterChannelClient.ConnectAsync(ticket.Center, ticket.AccessToken, _connectLog, stop).ConfigureAwait(false);
+            client = await CenterChannelClient.ConnectAsync(ticket.Center, ticket.AccessToken, _connectLog, stop, ticket.UseV2).ConfigureAwait(false);
         }
         catch (ChannelConnectException refused)
         {
-            _nodeLog.Info("cloud.channel.connect_refused", new LogField("failure", refused.Failure), new LogField("code", refused.Code ?? string.Empty));
-            return ChannelPolicy.Refused(refused.Failure);
+            _nodeLog.Info("cloud.channel.connect_refused", new LogField("failure", refused.Failure), new LogField("code", refused.Code ?? string.Empty),
+                new LogField("protocol", ticket.UseV2 ? 2 : 1));
+            var end = ChannelPolicy.Refused(refused.Failure);
+            return ticket.UseV2 && refused.Failure == ChannelConnectFailure.Refused && refused.Code == V2ChannelProtocol.UpgradeRequired
+                ? end with { V2Reason = V2ChannelProtocol.UpgradeRequired }
+                : end;
         }
         catch (Exception exception) when (exception is HttpRequestException or WebSocketException or IOException)
         {
@@ -534,7 +563,7 @@ internal sealed class ChannelLoop : IAsyncDisposable
         var connectedAt = (long?)null;
         try
         {
-            var end = await HandshakeAsync(session).ConfigureAwait(false);
+            var end = await (ticket.UseV2 ? HandshakeV2Async(session) : HandshakeAsync(session)).ConfigureAwait(false);
             if (end is not null)
             {
                 return end;
@@ -542,8 +571,8 @@ internal sealed class ChannelLoop : IAsyncDisposable
 
             connectedAt = _clock.GetTimestamp();
             Set(Contracts.Node.V1.RelayState.Connected, ChannelReasons.Connected);
-            _nodeLog.Info("cloud.channel.connected", new LogField("center", ticket.Center.Url));
-            return await ServeAsync(session).ConfigureAwait(false);
+            _nodeLog.Info("cloud.channel.connected", new LogField("center", ticket.Center.Url), new LogField("protocol", ticket.UseV2 ? 2 : 1));
+            return await (ticket.UseV2 ? ServeV2Async(session) : ServeAsync(session)).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!stop.IsCancellationRequested)
         {
@@ -556,6 +585,13 @@ internal sealed class ChannelLoop : IAsyncDisposable
         }
         finally
         {
+            if (ticket.UseV2)
+            {
+                // Fence waiting effect calls before the enrollment callback can wait on Core's ownership gate.
+                session.Ending = true;
+                PublishV2Enrollment(session, null);
+            }
+
             lock (_gate)
             {
                 if (_session == session)
@@ -570,7 +606,7 @@ internal sealed class ChannelLoop : IAsyncDisposable
             {
                 session.SentClose = true;
                 // The node's own end of an accepted connection, as the center's nodetest peer sends it: RelayClose 1000, then the close.
-                await SendQuietlyAsync(client, new RelayFrame { Close = new RelayClose { Code = 1000, Reason = "node_closed" } }, CancellationToken.None).ConfigureAwait(false);
+                await SendNodeCloseAsync(session).ConfigureAwait(false);
             }
 
             await client.CloseAsync(1000, "node_closed").ConfigureAwait(false);
@@ -995,15 +1031,19 @@ internal sealed class ChannelLoop : IAsyncDisposable
     /// The node ends a connection itself (the link ended or was switched off): RelayClose 1000 first, while the connection is still whole
     /// (cancelling its pending receive aborts a ClientWebSocket), then the session's cancellation.
     /// </summary>
-    private static async Task EndSessionAsync(Session session)
+    private async Task EndSessionAsync(Session session)
     {
         // N1 review A C-N1: a call that arrives while the close is sent is not dispatched.
         session.Ending = true;
+        if (session.Ticket.UseV2)
+        {
+            PublishV2Enrollment(session, null);
+        }
+
         if (session.Accepted && session.Client.CloseStatus is null && !session.SentClose)
         {
             session.SentClose = true;
-            await SendQuietlyAsync(session.Client, new RelayFrame { Close = new RelayClose { Code = 1000, Reason = "node_closed" } }, CancellationToken.None)
-                .ConfigureAwait(false);
+            await SendNodeCloseAsync(session).ConfigureAwait(false);
         }
 
         session.Cancel();
@@ -1024,16 +1064,16 @@ internal sealed class ChannelLoop : IAsyncDisposable
         }
     }
 
-    private void Set(Contracts.Node.V1.RelayState state, string reason)
+    private void Set(Contracts.Node.V1.RelayState state, string reason, string? v2Reason = null)
     {
         lock (_gate)
         {
-            if (_status.State == state && _status.Reason == reason)
+            if (_status.State == state && _status.Reason == reason && _status.V2Reason == v2Reason)
             {
                 return;
             }
 
-            _status = new ChannelStatus(state, reason);
+            _status = new ChannelStatus(state, reason, v2Reason);
         }
 
         _nodeLog.Info("cloud.channel.state", new LogField("state", state), new LogField("reason", reason));
@@ -1059,7 +1099,13 @@ internal sealed class ChannelLoop : IAsyncDisposable
 
         public long Generation { get; set; } = ticket.Generation;
 
-        public bool Accepted { get; set; }
+        public bool Accepted
+        {
+            get => Volatile.Read(ref _accepted);
+            set => Volatile.Write(ref _accepted, value);
+        }
+
+        private bool _accepted;
 
         public bool RefreshedForKeys { get; set; }
 
@@ -1079,6 +1125,22 @@ internal sealed class ChannelLoop : IAsyncDisposable
         private bool _ending;
 
         public ChannelLimits? Limits { get; set; }
+
+        public V2ChannelLimits V2Limits { get; set; }
+
+        public ulong V2ReceivedSequence { get; set; }
+
+        public V2ChannelEnrollment? V2Enrollment { get; set; }
+
+        public Func<V2ControlCall, CancellationToken, Task<ReadOnlyMemory<byte>>>? V2ControlDispatch { get; set; }
+
+        public Func<V2ControlCall, CancellationToken, Task<ReadOnlyMemory<byte>>>? V2StreamDataDispatch { get; set; }
+
+        public SemaphoreSlim V2Refresh { get; } = new(1, 1);
+
+        public SemaphoreSlim V2ControlSlots { get; } = new(MaxV2ControlCalls, MaxV2ControlCalls);
+
+        public Lock V2ControlSigning { get; } = new();
 
         public CallTasks Calls { get; } = new();
 
@@ -1102,6 +1164,8 @@ internal sealed class ChannelLoop : IAsyncDisposable
 
         public void Dispose()
         {
+            V2ControlSlots.Dispose();
+            V2Refresh.Dispose();
             _effectsEnding.Dispose();
             cancel.Dispose();
         }

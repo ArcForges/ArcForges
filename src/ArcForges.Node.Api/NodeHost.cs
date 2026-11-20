@@ -17,6 +17,7 @@ using ArcForges.Node.Platform;
 using ArcForges.Node.Platform.Linux.Mxc;
 using ArcForges.Node.Platform.Windows.Mxc;
 using ArcForges.Node.Store;
+using V2 = ArcForges.Contracts.Sandbox.V2;
 
 namespace ArcForges.Node.Api;
 
@@ -430,6 +431,11 @@ public static class NodeHost
             Secrets = secretStore,
             Keys = options.NodeKeys?.Invoke(dataRoot) ?? NodeKeyStores.ForNode(dataRoot, options.TestMode),
             Center = settings.Center,
+            ConfigureCenter = center => processor.ExecuteAsync(_ => settings.Update(null, LogLevel.Unspecified, null, center.Url).Error),
+            V2Snapshot = () => DescribeV2Channel(sandboxes),
+            V2EnrollmentChanged = enrollment => ObserveV2Enrollment(sandboxes, enrollment),
+            V2ControlDispatch = routed.DispatchV2Async,
+            V2StreamDataDispatch = routed.DispatchV2StreamDataAsync,
             Log = log,
             Clock = clock,
             NodeInfo = () => store.Read(reader => DescribeNode(node, reader)),
@@ -454,6 +460,7 @@ public static class NodeHost
             Version = NodeContract.ProductVersion,
         });
         await using var cloudScope = cloud.ConfigureAwait(false);
+        using var centerControl = new CenterControlServiceHandler(node, cloud);
         node.CloudLink = cloud;
         if (testCenter is not null)
         {
@@ -513,6 +520,7 @@ public static class NodeHost
             {
                 await recoveredSandboxes.RecoverRunsAsync(recovery, node.Stopping).ConfigureAwait(false);
                 log.Info("node.recovery.done", new LogField("participant", "sandbox_runs"));
+                centerControl.RecoverAccepted(store, recoveredSandboxes);
                 recoveredSandboxes.ReconcileDeletionReceipts();
                 recoveredSandboxes.StartDataRecovery();
                 sandboxResources = recoveredSandboxes.StartResourceSampling(sampler as IHostResourceSource, log);
@@ -524,7 +532,7 @@ public static class NodeHost
                 Closed = session => execution.CallerDisconnected(new CallerKey(session.Peer.ProcessId, session.Peer.ProcessStartTime.UtcTicks)),
             };
             server = NodeApiServer.Build(endpoint, node, sessions, options.StreamBuffer, ClientImages.ForNode(ClientImages.TestHookApplies(options.TestMode, endpoint.Address, configPath, dataRoot)),
-                cloud);
+                cloud, centerControl);
             try
             {
                 await server.StartAsync(node.Stopping).ConfigureAwait(false);
@@ -567,6 +575,7 @@ public static class NodeHost
 
             housekeepingLoop = HousekeepAsync(node, keys, housekeeping, loops.Token);
             await cloud.StartAsync().ConfigureAwait(false);
+            centerControl.MarkLinkLoaded();
             if (OperatingSystem.IsLinux() && platform is ArcForges.Node.Platform.Linux.LinuxExecutionPlatform { UnitMode: true } linux)
             {
                 // 06 section 5: arcforges-guard.service guards the attempt units while the node is down; started when installed.
@@ -886,6 +895,35 @@ public static class NodeHost
             // After the finding's commit, never before it; and always, so a failed commit never loses the fact.
             node.SetFact(VersionIntegrity.FactName, report.Fact);
         }
+    }
+
+    private static V2ChannelSnapshot? DescribeV2Channel(SandboxManager? manager)
+    {
+        byte platform = OperatingSystem.IsWindows() ? (byte)1 : OperatingSystem.IsLinux() ? (byte)2 : (byte)0;
+        var handshake = manager?.Handshake(new V2.NodeServiceHandshakeRequest(), CancellationToken.None).Value;
+        if (platform == 0 || handshake?.OwnerEpoch?.Value.Length != 16 || string.IsNullOrEmpty(handshake.NodeEpoch))
+            return null;
+
+        var qualified = handshake.Capabilities.Any(capability => capability.Key == "mxc.profile" &&
+            capability.State == V2.CapabilityState.Available && !string.IsNullOrEmpty(capability.EvidenceId));
+        IReadOnlyList<string> profiles = !qualified ? [] : platform == 1
+            ? ["windows-process-executor-v1", "win-wrapper-local-v1"] : ["linux-bubblewrap-sdk-v1"];
+        return new(handshake.OwnerEpoch.Value.Memory, handshake.NodeEpoch, platform, profiles);
+    }
+
+    private static void ObserveV2Enrollment(SandboxManager? manager, V2ChannelEnrollment? enrollment)
+    {
+        if (manager is null)
+            return;
+
+        if (enrollment is not { Center.Scheme: "https" } active)
+        {
+            manager.UpdateRemoteEnrollment(null);
+            return;
+        }
+
+        var (authority, channel) = RoutedDispatcher.V2Authority(manager, active);
+        manager.UpdateRemoteEnrollment(authority, channel);
     }
 
     private static SandboxManager? CreateSandboxManager(NodeStore store, string dataRoot, NodeSecretStore secrets, TimeProvider clock, NodeLog log,

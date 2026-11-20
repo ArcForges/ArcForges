@@ -3,6 +3,7 @@ using System.CommandLine;
 using System.Text.Json.Nodes;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
+using Grpc.Core;
 using V1 = ArcForges.Contracts.Node.V1;
 using V2 = ArcForges.Contracts.Sandbox.V2;
 
@@ -107,10 +108,43 @@ internal static class V2NodeCommands
                 };
             }
 
+            report["center"] = await ObserveCenterAsync(cli, session, ct).ConfigureAwait(false);
             return V2Cli.Print(cli, report);
         });
         return command;
     }
+
+    private static async Task<JsonObject> ObserveCenterAsync(Cli cli, V2CliSession session, CancellationToken ct)
+    {
+        var request = new V2.CenterControlServiceGetStatusRequest { Meta = Cli.Meta() };
+        try
+        {
+            var response = await cli.CallAsync("CenterControlService.GetStatus", request.Meta,
+                () => session.CenterControl.GetStatusAsync(request, deadline: cli.Deadline(UnaryDeadline), cancellationToken: ct)).ConfigureAwait(false);
+            if (response.Error is null && response.Value?.Connection is { } connection)
+            {
+                return new JsonObject
+                {
+                    ["available"] = true,
+                    ["serviceMode"] = connection.ServiceMode is "official" or "self_hosted" ? connection.ServiceMode : null,
+                    ["state"] = connection.State is "signed_out" or "sign_in_pending" or "linked" or "disconnected" or "ending" or "recovery_required"
+                        ? connection.State : null,
+                    ["connectionEnabled"] = connection.HasConnectionEnabled ? connection.ConnectionEnabled : (bool?)null,
+                    ["channelState"] = connection.ChannelState is "offline" or "connecting" or "online" or "stale" ? connection.ChannelState : null,
+                    ["remoteRevocation"] = connection.RemoteRevocation is "not_requested" or "confirmed" or "unknown" ? connection.RemoteRevocation : null,
+                    ["observedAt"] = connection.ObservedAt is { } observedAt ? CliOutput.ToJsonNode(observedAt) : null,
+                };
+            }
+
+            return CenterUnavailable(response.Error?.Category.ToString() ?? "no_response");
+        }
+        catch (RpcException error) when (!ct.IsCancellationRequested)
+        {
+            return CenterUnavailable(error.StatusCode.ToString());
+        }
+    }
+
+    private static JsonObject CenterUnavailable(string reason) => new() { ["available"] = false, ["reason"] = reason };
 
     private static async Task<JsonObject> ReadStatusAsync(Cli cli, V2CliSession session, CancellationToken ct)
     {

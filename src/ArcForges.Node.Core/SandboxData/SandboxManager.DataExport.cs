@@ -16,14 +16,17 @@ internal sealed partial class SandboxManager
     private const int ExportCopyBufferSize = 128 * 1024;
 
     internal DataServiceBeginExportResponse BeginDataExport(
-        DataServiceBeginExportRequest request, CancellationToken cancellationToken)
+        DataServiceBeginExportRequest request, CancellationToken cancellationToken) => BeginDataExport(request, null, cancellationToken);
+
+    private DataServiceBeginExportResponse BeginDataExport(DataServiceBeginExportRequest request, RemoteDataCall? remote,
+        CancellationToken cancellationToken)
     {
         var canonical = request.Clone();
         canonical.Meta = null;
         canonical.OwnerEpoch = null;
         var result = StartDataTransfer(request.Meta, request.OwnerEpoch, request.SandboxId, request.RelativePath,
             StoredTransferDirection.Export, null, string.Empty, overwrite: false,
-            request.HasExpectedFileVersion ? request.ExpectedFileVersion : null, canonical, cancellationToken);
+            request.HasExpectedFileVersion ? request.ExpectedFileVersion : null, canonical, remote, cancellationToken);
         var response = new DataServiceBeginExportResponse { Meta = DataResponseMeta(request.Meta, result.Row) };
         if (result.Error is { } error)
         {
@@ -42,7 +45,10 @@ internal sealed partial class SandboxManager
     }
 
     internal DataServiceReadExportResponse ReadDataExport(
-        DataServiceReadExportRequest request, CancellationToken cancellationToken)
+        DataServiceReadExportRequest request, CancellationToken cancellationToken) => ReadDataExport(request, null, cancellationToken);
+
+    private DataServiceReadExportResponse ReadDataExport(DataServiceReadExportRequest request, RemoteDataCall? remote,
+        CancellationToken cancellationToken)
     {
         var meta = request.Meta;
         if (!ValidId(request.TransferId) || !request.HasOffset || !request.HasMaxBytes
@@ -57,7 +63,7 @@ internal sealed partial class SandboxManager
             StoredTransfer? row = null;
             try
             {
-                row = FindDataTransfer(request.TransferId);
+                row = FindDataTransferForCall(request.TransferId, remote);
                 if (row is null || row.Direction != StoredTransferDirection.Export)
                 {
                     return Failed(NotFound(meta));

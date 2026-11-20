@@ -23,6 +23,13 @@ public sealed class SignInCommandLineTests
     [InlineData("center show --json")]
     [InlineData("center set https://center.example.test/api")]
     [InlineData("center set --default")]
+    [InlineData("center status --json")]
+    [InlineData("center connect https://center.example.test --mode self_hosted --flow device_code")]
+    [InlineData("center connect https://arcforges.com --mode official")]
+    [InlineData("center flow 01H00000000000000000000000")]
+    [InlineData("center cancel 01H00000000000000000000000 --owner-epoch 01H00000000000000000000001 --command-id 01H00000000000000000000002")]
+    [InlineData("center disconnect")]
+    [InlineData("center signout")]
     [InlineData("account status")]
     [InlineData("account status --json")]
     [InlineData("account login")]
@@ -42,6 +49,14 @@ public sealed class SignInCommandLineTests
     [InlineData("center")]
     [InlineData("center reset")]
     [InlineData("center set a b")]
+    [InlineData("center connect https://center.example.test")]
+    [InlineData("center connect https://center.example.test --mode unspecified")]
+    [InlineData("center connect https://center.example.test --mode self_hosted --flow unsupported")]
+    [InlineData("center connect https://center.example.test --mode self_hosted --flow ")]
+    [InlineData("center flow")]
+    [InlineData("center cancel")]
+    [InlineData("center disconnect --owner-epoch 01H00000000000000000000001")]
+    [InlineData("center signout --command-id 01H00000000000000000000002")]
     [InlineData("account")]
     public async Task TheSignInGrammarRefusesOtherForms(string line)
     {
@@ -55,6 +70,8 @@ public sealed class SignInCommandLineTests
     [InlineData("arcforges lo", "logout")]
     [InlineData("arcforges cen", "center")]
     [InlineData("arcforges center ", "set")]
+    [InlineData("arcforges center ", "connect")]
+    [InlineData("arcforges center ", "signout")]
     [InlineData("arcforges account ", "status")]
     public async Task TheSignInCommandsAreSuggested(string line, string expected)
     {

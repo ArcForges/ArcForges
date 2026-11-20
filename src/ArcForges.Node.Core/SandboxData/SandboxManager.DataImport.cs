@@ -13,7 +13,11 @@ namespace ArcForges.Node.Core.Sandboxes;
 
 internal sealed partial class SandboxManager
 {
-    internal DataServiceBeginImportResponse BeginDataImport(DataServiceBeginImportRequest request, CancellationToken cancellationToken)
+    internal DataServiceBeginImportResponse BeginDataImport(DataServiceBeginImportRequest request, CancellationToken cancellationToken) =>
+        BeginDataImport(request, null, cancellationToken);
+
+    private DataServiceBeginImportResponse BeginDataImport(DataServiceBeginImportRequest request, RemoteDataCall? remote,
+        CancellationToken cancellationToken)
     {
         var canonical = request.Clone();
         canonical.Meta = null;
@@ -22,10 +26,10 @@ internal sealed partial class SandboxManager
             ? DataFailure(request.Meta, ErrorCategory.Resource, "disk_space", "transfer_storage_limit")
             : StartDataTransfer(request.Meta, request.OwnerEpoch, request.SandboxId, request.RelativePath,
                 StoredTransferDirection.Import, checked((long)request.ByteLength), request.Sha256, request.Overwrite,
-                request.HasExpectedFileVersion ? request.ExpectedFileVersion : null, canonical, cancellationToken);
+                request.HasExpectedFileVersion ? request.ExpectedFileVersion : null, canonical, remote, cancellationToken);
         if (result is { Error: null, Row: { } row, Receipt.State: "ACCEPTED" })
         {
-            result = AwaitDataImportStage(request.Meta, row, cancellationToken);
+            result = AwaitDataImportStage(request.Meta, row, remote?.Binding, cancellationToken);
         }
 
         var response = new DataServiceBeginImportResponse { Meta = DataResponseMeta(request.Meta, result.Row) };
@@ -41,7 +45,8 @@ internal sealed partial class SandboxManager
         return response;
     }
 
-    private DataMutation AwaitDataImportStage(RequestMeta meta, StoredTransfer row, CancellationToken cancellationToken)
+    private DataMutation AwaitDataImportStage(RequestMeta meta, StoredTransfer row, DurableRemoteBinding? remote,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -64,7 +69,8 @@ internal sealed partial class SandboxManager
                     return new(row, receipt, pending);
                 }
 
-                return ResolveDataAdmission(meta, new(receipt?.Compacted == true ? DurableDecision.Compacted : DurableDecision.Replay, receipt));
+                return ResolveDataAdmission(meta, new(receipt?.Compacted == true ? DurableDecision.Compacted : DurableDecision.Replay, receipt),
+                    remote);
             }
         }
         catch (Exception failure) when (IsDataFailure(failure))
@@ -73,7 +79,11 @@ internal sealed partial class SandboxManager
         }
     }
 
-    internal DataServiceWriteImportResponse WriteDataImport(DataServiceWriteImportRequest request, CancellationToken cancellationToken)
+    internal DataServiceWriteImportResponse WriteDataImport(DataServiceWriteImportRequest request, CancellationToken cancellationToken) =>
+        WriteDataImport(request, null, cancellationToken);
+
+    private DataServiceWriteImportResponse WriteDataImport(DataServiceWriteImportRequest request, RemoteDataCall? remote,
+        CancellationToken cancellationToken)
     {
         var chunkHash = SHA256.HashData(request.Chunk.Span);
         Span<byte> contentIdentity = stackalloc byte[sizeof(int) + SHA256.HashSizeInBytes];
@@ -85,8 +95,8 @@ internal sealed partial class SandboxManager
         // The private intent contains the exact content identity, not a second wire-sized payload.
         canonical.Chunk = ByteString.CopyFrom(contentIdentity);
         var result = ExecuteDataMutation(request.Meta, request.OwnerEpoch, request.TransferId, TransferRecords.WriteMethod,
-            canonical, (row, intent) => WriteDataChunk(request.Meta, row, intent, request.Offset, request.Chunk, chunkHash, cancellationToken),
-            cancellationToken);
+            canonical, (row, intent) => WriteDataChunk(request.Meta, row, intent, request.Offset, request.Chunk, chunkHash, remote, cancellationToken),
+            remote, cancellationToken);
         var response = new DataServiceWriteImportResponse { Meta = DataResponseMeta(request.Meta, result.Row) };
         if (result.Error is { } error)
         {
@@ -100,13 +110,17 @@ internal sealed partial class SandboxManager
         return response;
     }
 
-    internal DataServiceCommitImportResponse CommitDataImport(DataServiceCommitImportRequest request, CancellationToken cancellationToken)
+    internal DataServiceCommitImportResponse CommitDataImport(DataServiceCommitImportRequest request, CancellationToken cancellationToken) =>
+        CommitDataImport(request, null, cancellationToken);
+
+    private DataServiceCommitImportResponse CommitDataImport(DataServiceCommitImportRequest request, RemoteDataCall? remote,
+        CancellationToken cancellationToken)
     {
         var canonical = request.Clone();
         canonical.Meta = DataCanonicalMeta(request.Meta);
         canonical.OwnerEpoch = null;
         var result = ExecuteDataMutation(request.Meta, request.OwnerEpoch, request.TransferId, TransferRecords.CommitMethod,
-            canonical, (row, intent) => PublishDataImport(request.Meta, row, intent, cancellationToken), cancellationToken);
+            canonical, (row, intent) => PublishDataImport(request.Meta, row, intent, remote, cancellationToken), remote, cancellationToken);
         var response = new DataServiceCommitImportResponse { Meta = DataResponseMeta(request.Meta, result.Row) };
         if (result.Error is { } error)
         {
@@ -121,12 +135,16 @@ internal sealed partial class SandboxManager
         return response;
     }
 
-    internal DataServiceInspectTransferResponse InspectDataTransfer(DataServiceInspectTransferRequest request, CancellationToken cancellationToken)
+    internal DataServiceInspectTransferResponse InspectDataTransfer(DataServiceInspectTransferRequest request, CancellationToken cancellationToken) =>
+        InspectDataTransfer(request, null, cancellationToken);
+
+    private DataServiceInspectTransferResponse InspectDataTransfer(DataServiceInspectTransferRequest request,
+        RemoteDataCall? remote, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         try
         {
-            var row = FindDataTransfer(request.TransferId);
+            var row = FindDataTransferForCall(request.TransferId, remote);
             return row is null
                 ? new() { Meta = Response(request.Meta), Error = NotFound(request.Meta) }
                 : new() { Meta = DataResponseMeta(request.Meta, row), Value = new() { Transfer = DataTransferView(row) } };
@@ -137,13 +155,17 @@ internal sealed partial class SandboxManager
         }
     }
 
-    internal DataServiceCloseTransferResponse CloseDataTransfer(DataServiceCloseTransferRequest request, CancellationToken cancellationToken)
+    internal DataServiceCloseTransferResponse CloseDataTransfer(DataServiceCloseTransferRequest request, CancellationToken cancellationToken) =>
+        CloseDataTransfer(request, null, cancellationToken);
+
+    private DataServiceCloseTransferResponse CloseDataTransfer(DataServiceCloseTransferRequest request, RemoteDataCall? remote,
+        CancellationToken cancellationToken)
     {
         var canonical = request.Clone();
         canonical.Meta = DataCanonicalMeta(request.Meta);
         canonical.OwnerEpoch = null;
         var result = ExecuteDataMutation(request.Meta, request.OwnerEpoch, request.TransferId, TransferRecords.CloseMethod,
-            canonical, (row, intent) => CloseDataEffect(request.Meta, row, intent, cancellationToken), cancellationToken);
+            canonical, (row, intent) => CloseDataEffect(request.Meta, row, intent, remote, cancellationToken), remote, cancellationToken);
         var response = new DataServiceCloseTransferResponse { Meta = DataResponseMeta(request.Meta, result.Row) };
         if (result.Error is { } error)
         {
@@ -160,7 +182,7 @@ internal sealed partial class SandboxManager
     private static RequestMeta DataCanonicalMeta(RequestMeta original) => new() { ExpectedRev = original.ExpectedRev.Clone() };
 
     private DataMutation ExecuteDataMutation(RequestMeta meta, Id epoch, Id id, string method, IMessage canonical,
-        Func<StoredTransfer, DurableIntent, DataMutation> execute, CancellationToken cancellationToken)
+        Func<StoredTransfer, DurableIntent, DataMutation> execute, RemoteDataCall? remote, CancellationToken cancellationToken)
     {
         var transferId = ToHex(id);
         var command = meta.CommandId.Value.ToByteArray();
@@ -173,8 +195,13 @@ internal sealed partial class SandboxManager
                 DurableIntent intent;
                 lock (OwnershipGate)
                 {
+                    if (remote is not null && !EpochMatches(epoch)) return new(null, null, RetiredRunEpoch(meta));
+
                     var previous = Receipts.Inspect(command);
-                    row = FindDataTransfer(id);
+                    row = FindDataTransferForCall(id, remote);
+                    if (remote is not null && (row is null || previous is not null && previous.Remote != remote.Binding))
+                        return new(null, null, GrantDenied(meta));
+
                     string? safetyParent = null;
                     if (method == TransferRecords.CloseMethod)
                     {
@@ -185,10 +212,10 @@ internal sealed partial class SandboxManager
 
                     intent = new DurableIntent(command, epoch.Value.ToByteArray(), method, TransferRecords.Aggregate,
                         transferId, canonical.ToByteArray(),
-                        SafetyParent: safetyParent is null ? null : Convert.FromHexString(safetyParent));
+                        SafetyParent: safetyParent is null ? null : Convert.FromHexString(safetyParent), Remote: remote?.Binding);
                     if (previous is not null || !EpochMatches(epoch))
                     {
-                        return ResolveDataAdmission(meta, Receipts.Admit(intent));
+                        return ResolveDataAdmission(meta, TrackDataAdmission(remote, () => Receipts.Admit(intent)), intent.Remote);
                     }
 
                     if (row is null || !row.OwnerEpoch.AsSpan().SequenceEqual(epoch.Value.Span))
@@ -204,7 +231,7 @@ internal sealed partial class SandboxManager
                     if (row.Manifest.Pending is not null || row.State == StoredTransferState.RecoveryRequired)
                     {
                         return new(row, null, Error(meta, ErrorCategory.State, "managed_use", "transfer_effect_unresolved",
-                            row.Effect == (int)EffectCertainty.Unknown ? EffectCertainty.Unknown : EffectCertainty.DidNotHappen));
+                            remote is null && row.Effect == (int)EffectCertainty.Unknown ? EffectCertainty.Unknown : EffectCertainty.DidNotHappen));
                     }
 
                     if (method != TransferRecords.CloseMethod && (row.ClosedAt is not null || row.ExpiresAt <= _clock.GetUtcNow()))
@@ -228,7 +255,7 @@ internal sealed partial class SandboxManager
     }
 
     private DataMutation WriteDataChunk(RequestMeta meta, StoredTransfer row, DurableIntent intent, ulong offset,
-        ByteString bytes, byte[] chunkHash, CancellationToken cancellationToken)
+        ByteString bytes, byte[] chunkHash, RemoteDataCall? remote, CancellationToken cancellationToken)
     {
         if (row.Direction != StoredTransferDirection.Import || row.State is not (StoredTransferState.Open or StoredTransferState.Streaming)
             || offset > (ulong)row.VerifiedOffset || bytes.Length is <= 0 or > 1_048_576
@@ -269,8 +296,10 @@ internal sealed partial class SandboxManager
 
             lock (OwnershipGate)
             {
-                return ResolveDataAdmission(meta, Receipts.AdmitObserved(intent, "SUCCEEDED", (int)EffectCertainty.Happened,
+                RequireRemoteDataCallCurrent(remote);
+                var observed = TrackDataAdmission(remote, () => Receipts.AdmitObserved(intent, "SUCCEEDED", (int)EffectCertainty.Happened,
                     DataReceiptBody(row)));
+                return ResolveDataAdmission(meta, observed, intent.Remote);
             }
         }
 
@@ -281,10 +310,10 @@ internal sealed partial class SandboxManager
             checked((long)offset), bytes.Length, Convert.ToHexStringLower(chunkHash),
             TargetIdentity: DataFileVersion(row.TransferId, "import-stage", checkpoint));
         var pending = NextDataRow(row, recorded);
-        var admission = AdmitDataStep(intent, row, pending);
+        var admission = AdmitDataStep(intent, row, pending, remote);
         if (admission.Decision != DurableDecision.Execute)
         {
-            return ResolveDataAdmission(meta, admission);
+            return ResolveDataAdmission(meta, admission, intent.Remote);
         }
 
         try
@@ -309,7 +338,8 @@ internal sealed partial class SandboxManager
         return new(after, SettleData(intent.CommandId, pending, after, "SUCCEEDED", EffectCertainty.Happened), null);
     }
 
-    private DataMutation PublishDataImport(RequestMeta meta, StoredTransfer row, DurableIntent intent, CancellationToken cancellationToken)
+    private DataMutation PublishDataImport(RequestMeta meta, StoredTransfer row, DurableIntent intent, RemoteDataCall? remote,
+        CancellationToken cancellationToken)
     {
         if (row.Direction != StoredTransferDirection.Import || row.State is not (StoredTransferState.Open or StoredTransferState.Streaming)
             || row.VerifiedOffset != row.ByteLength)
@@ -328,12 +358,12 @@ internal sealed partial class SandboxManager
 
         lock (OwnershipGate)
         {
-            return PublishValidatedDataImport(meta, row, intent, staging, stage, worker.Token);
+            return PublishValidatedDataImport(meta, row, intent, staging, stage, remote, worker.Token);
         }
     }
 
     private DataMutation PublishValidatedDataImport(RequestMeta meta, StoredTransfer row, DurableIntent intent,
-        WorkspacePath staging, SafeFileHandle stage, CancellationToken cancellationToken)
+        WorkspacePath staging, SafeFileHandle stage, RemoteDataCall? remote, CancellationToken cancellationToken)
     {
         var path = row.Manifest.RelativePath;
         using var root = InspectDataRoot(row);
@@ -351,10 +381,12 @@ internal sealed partial class SandboxManager
             TargetIdentity: row.StagingIdentity, ParentIdentity: parentIdentity);
         var pending = NextDataRow(row, recorded);
         HoldRunFault("hold-data-before-commit-intent");
-        var admission = Receipts.Admit(intent, transaction => RequireChanged(TransferRecords.Advance(transaction, row, pending)));
+        var admission = remote is null
+            ? Receipts.Admit(intent, transaction => RequireChanged(TransferRecords.Advance(transaction, row, pending)))
+            : AdmitDataStep(intent, row, pending, remote);
         if (admission.Decision != DurableDecision.Execute)
         {
-            return ResolveDataAdmission(meta, admission);
+            return ResolveDataAdmission(meta, admission, intent.Remote);
         }
 
         var applied = false;
@@ -413,11 +445,13 @@ internal sealed partial class SandboxManager
         return new(after, receipt, null);
     }
 
-    private DurableAdmission AdmitDataStep(DurableIntent intent, StoredTransfer before, StoredTransfer after)
+    private DurableAdmission AdmitDataStep(DurableIntent intent, StoredTransfer before, StoredTransfer after, RemoteDataCall? remote)
     {
         lock (OwnershipGate)
         {
-            return Receipts.Admit(intent, transaction => RequireChanged(TransferRecords.Advance(transaction, before, after)));
+            RequireRemoteDataCallCurrent(remote);
+            return TrackDataAdmission(remote, () => Receipts.Admit(intent,
+                transaction => RequireChanged(TransferRecords.Advance(transaction, before, after))));
         }
     }
 

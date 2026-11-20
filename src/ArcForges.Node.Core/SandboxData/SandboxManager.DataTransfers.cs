@@ -77,6 +77,7 @@ internal sealed partial class SandboxManager
             _ => OperationState.Unknown,
         },
         Effect = (EffectCertainty)receipt.Effect,
+        ResponseCompacted = receipt.Compacted,
         Revision = new Revision { Value = ReadResult(receipt.ResponseJson).Revision ?? row.Manifest.Revision },
         UpdatedAt = ProtoTime.ToInstant(_store.Read(reader => reader.Scalar("""
             SELECT updated_utc FROM command_receipt WHERE owner_id=$owner AND owner_epoch=$epoch AND command_id=$command;
@@ -87,7 +88,7 @@ internal sealed partial class SandboxManager
 
     private DataMutation StartDataTransfer(RequestMeta meta, Id ownerEpoch, Id sandbox, string relativePath,
         StoredTransferDirection direction, long? length, string sha256, bool overwrite, string? expectedFileVersion,
-        IMessage canonical, CancellationToken cancellationToken)
+        IMessage canonical, RemoteDataCall? remote, CancellationToken cancellationToken)
     {
         var command = meta.CommandId.Value.ToByteArray();
         var epoch = ownerEpoch.Value.ToByteArray();
@@ -98,13 +99,22 @@ internal sealed partial class SandboxManager
             lock (OwnershipGate)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                if (remote is not null)
+                {
+                    if (!EpochMatches(ownerEpoch)) return new(null, null, RetiredRunEpoch(meta));
+                    if (!AuthorizeRemoteData(remote, id)) return new(null, null, GrantDenied(meta));
+                }
+
                 var previous = Receipts.Inspect(command);
                 var transferId = previous?.AggregateId ?? Guid.NewGuid().ToString("N");
                 var intent = new DurableIntent(command, epoch, method, TransferRecords.Aggregate,
-                    transferId, canonical.ToByteArray(), meta.ExpectedRev.Value, ExpectedSandboxId: id);
+                    transferId, canonical.ToByteArray(), meta.ExpectedRev.Value, ExpectedSandboxId: id, Remote: remote?.Binding);
                 if (previous is not null || !EpochMatches(ownerEpoch))
                 {
-                    return ResolveDataAdmission(meta, Receipts.Admit(intent));
+                    if (remote is not null && previous is not null && previous.Remote != remote.Binding)
+                        return new(null, null, GrantDenied(meta));
+
+                    return ResolveDataAdmission(meta, TrackDataAdmission(remote, () => Receipts.Admit(intent)), intent.Remote);
                 }
 
                 var row = _store.Read(reader => SandboxRecords.Get(reader, OwnerId, id));
@@ -177,21 +187,24 @@ internal sealed partial class SandboxManager
                 }
 
                 var beginCommand = ToHex(meta.CommandId);
-                var manifest = new StoredTransferManifest(1, OwnerId, row.Revision, row.RootIdentity,
+                var binding = intent.Remote;
+                var manifest = new StoredTransferManifest(1, binding?.ActorId ?? OwnerId, row.Revision, row.RootIdentity,
                     row.RootGeneration, relativePath, overwrite, expectedFileVersion,
+                    GrantId: binding?.GrantId, GrantRevision: binding?.GrantRevision, EnrollmentId: binding?.EnrollmentId,
                     Pending: new(StoredTransferPhase.Begin, beginCommand, TargetIdentity: sourceVersion, ParentIdentity: parentIdentity),
                     TargetParentIdentity: parentIdentity,
                     StageRootIdentity: WorkspacePath.EncodeDataIdentity(staging.RootIdentity, directory: true));
                 var reserved = new StoredTransfer(transferId, id, OwnerId, epoch, beginCommand, direction,
                     StoredTransferState.Open, manifest, TransferRecords.UnboundStage, requested, 0, sha256,
                     _clock.GetUtcNow() + DataLifetime);
-                var admission = Receipts.Admit(intent, transaction => TransferRecords.Reserve(transaction, reserved));
+                RequireRemoteDataCallCurrent(remote);
+                var admission = TrackDataAdmission(remote, () => Receipts.Admit(intent, transaction => TransferRecords.Reserve(transaction, reserved)));
                 if (admission.Decision != DurableDecision.Execute)
                 {
-                    return ResolveDataAdmission(meta, admission);
+                    return ResolveDataAdmission(meta, admission, binding);
                 }
 
-                var work = Task.Run(() => RunDataBegin(reserved, command), CancellationToken.None);
+                var work = Task.Run(() => RunDataBegin(reserved, command, binding), CancellationToken.None);
                 _dataWorkers.Add(transferId, work);
                 return new(reserved, admission.Receipt, null);
             }
@@ -208,7 +221,7 @@ internal sealed partial class SandboxManager
                 WHERE s.owner_id=$owner AND r.sandbox_id=$id AND r.state IN (1,2,3,4,7));
             """, ("$owner", OwnerId), ("$id", sandboxId)), 1L);
 
-    private void RunDataBegin(StoredTransfer reserved, byte[] command)
+    private void RunDataBegin(StoredTransfer reserved, byte[] command, DurableRemoteBinding? remote)
     {
         try
         {
@@ -223,8 +236,10 @@ internal sealed partial class SandboxManager
                 try
                 {
                     worker.Token.ThrowIfCancellationRequested();
+                    RequireDataWorkerGrant(current, remote);
                     using var root = InspectDataRoot(current);
                     using var staging = OpenDataStaging(current);
+                    RequireDataWorkerGrant(current, remote);
                     attemptingCreate = true;
                     using (var stage = staging.CreateSandboxDataStage(current.TransferId))
                     {
@@ -238,6 +253,7 @@ internal sealed partial class SandboxManager
                         current = bound;
                         if (current.Direction == StoredTransferDirection.Export)
                         {
+                            RequireDataWorkerGrant(current, remote);
                             var materialized = MaterializeDataExport(current, root.OwnedWorkspace, stage, worker.Token);
                             worker.Token.ThrowIfCancellationRequested();
                             stage.Dispose();
@@ -249,6 +265,8 @@ internal sealed partial class SandboxManager
                             };
                         }
                     }
+
+                    RequireDataWorkerGrant(current, remote);
                 }
                 catch (Exception failure) when (!binding && (IsDataFailure(failure) || failure is OperationCanceledException))
                 {
@@ -344,9 +362,12 @@ internal sealed partial class SandboxManager
         }
     }
 
-    private DataMutation ResolveDataAdmission(RequestMeta meta, DurableAdmission admission)
+    private DataMutation ResolveDataAdmission(RequestMeta meta, DurableAdmission admission, DurableRemoteBinding? remote = null)
     {
         var receipt = admission.Receipt;
+        if (remote is not null && receipt is not null && receipt.Remote != remote)
+            return new(null, null, GrantDenied(meta));
+
         switch (admission.Decision)
         {
             case DurableDecision.Conflict:
@@ -371,7 +392,7 @@ internal sealed partial class SandboxManager
             return new(null, null, StorageFailure(meta));
         }
 
-        var row = FindDataTransfer(FromHex(id));
+        var row = remote is null ? FindDataTransfer(FromHex(id)) : FindRemoteDataTransfer(id, remote);
         if (row is not null && receipt.ResponseJson is { } body && receipt.State is "SUCCEEDED" or "FAILED")
         {
             row = ReadDataReceiptObservation(row, body);
@@ -380,7 +401,13 @@ internal sealed partial class SandboxManager
         if (receipt.State == "FAILED")
         {
             var result = ReadResult(receipt.ResponseJson);
-            return new(row, receipt, Error(meta, result.Category, result.Code, result.Reason));
+            var error = remote is null ? Error(meta, result.Category, result.Code, result.Reason) : result.Code switch
+            {
+                "deadline" => Error(meta, ErrorCategory.State, "busy", result.Reason),
+                "store_corrupt" => Error(meta, ErrorCategory.Internal, "internal", result.Reason),
+                _ => Error(meta, result.Category, result.Code, result.Reason),
+            };
+            return new(row, receipt, error);
         }
 
         if (receipt.State == "UNKNOWN" && receipt.Method != TransferRecords.CommitMethod)
