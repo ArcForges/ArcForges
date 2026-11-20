@@ -98,6 +98,10 @@ output settles or the command is interrupted or times out. The terminal
 transcript contains retained bytes, so use the application's redraw command
 if a reattached full-screen display is incomplete.
 
+On Windows, the local renderer keeps the caller's keyboard mode independent
+of the inner ConPTY's private Win32 input negotiation. Redirected output
+and retained logs preserve the original bytes.
+
 A `GAP` diagnostic gives the requested and earliest retained offsets. The CLI
 continues from that retained offset for the same Run epoch and reports an
 epoch change as lost continuity. Track each piped stream's offset

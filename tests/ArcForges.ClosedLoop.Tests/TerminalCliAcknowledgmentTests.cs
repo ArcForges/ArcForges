@@ -25,7 +25,7 @@ public sealed partial class MxcRunServiceTests
             await using var errors = new TerminalCliCanvas(child.StandardError.BaseStream, token);
             var run = await fixture.OnlyNewRunAsync(null, token);
             Assert.Equal(TerminalMode.Pipes, run.TerminalMode);
-            await errors.WaitForLeaseAsync(IdText.Format(run.RunId), token);
+            var originalLease = await errors.WaitForLeaseAsync(IdText.Format(run.RunId), token);
             await TestNode.WaitAsync(() => File.Exists(ready), NativeBound, "the gated native payload to hold stdin open");
 
             // Distinct input bytes expose duplicate dispatch when the payload is eventually allowed to read.
@@ -52,8 +52,12 @@ public sealed partial class MxcRunServiceTests
             await File.WriteAllTextAsync(release, "read stdin", token);
             await TestNode.WaitAsync(() => File.Exists(captured) && new FileInfo(captured).Length > 0, NativeBound,
                 "the native payload to read the original input prefix");
-            await CloseWithFreshWriterAsync(fixture, run);
-            RequireObservedCliExit(await fixture.WaitExitedAsync(run.RunId, token), 0);
+            var fresh = await WaitForExclusiveWriterAsync(fixture.Runs, run);
+            Assert.NotEqual(originalLease, IdText.Format(fresh.LeaseId));
+            Assert.Equal(0UL, fresh.LastInputSequence);
+            // A fresh lease does not settle the previous native write. Stop the test Run separately.
+            await InstalledCliSuccessAsync(fixture.Node, "run", "stop", IdText.Format(run.RunId));
+            Assert.True((await fixture.WaitExitedAsync(run.RunId, token)).Exit.GroupEmptyVerified);
 
             var received = await File.ReadAllBytesAsync(captured, token);
             Assert.InRange(received.Length, 1, input.Length - 1);
@@ -61,7 +65,7 @@ public sealed partial class MxcRunServiceTests
                 "The real pipe consumer saw bytes outside the original, ordered input prefix.");
             Assert.Equal(run.RunId, Assert.Single(await ListAsync(fixture.Runs, run.SandboxId)).RunId);
             TestContext.Current.TestOutputHelper?.WriteLine(
-                $"Lost CLI write acknowledgment with the read gate closed; explicit fresh EOF drained an original prefix of {received.Length} bytes.");
+                $"Lost CLI write acknowledgment with the read gate closed. A fresh writer acquired sequence zero, and explicit Stop verified cleanup after capturing an original prefix of {received.Length} bytes.");
         }
         finally
         {
@@ -150,28 +154,6 @@ public sealed partial class MxcRunServiceTests
     private static Task<TerminalCliOuter> OpenAcknowledgmentTerminalAsync(InstalledTerminal installed, string run, CancellationToken token) =>
         TerminalCliOuter.StartAsync(InstalledCliHost, [NodeLocations.TestModeOption, "run", "attach", run],
             installed.Fixture.Root, installed.Fixture.Environment, 24, 80, token);
-
-    private static async Task CloseWithFreshWriterAsync(TerminalCliFixture fixture, Run run)
-    {
-        var writer = await WaitForExclusiveWriterAsync(fixture.Runs, run);
-        Assert.Equal(0UL, writer.LastInputSequence);
-        await TestNode.WaitAsync(async () =>
-        {
-            var eof = Input(run, writer, 1, bytes: null);
-            eof.CloseStdin = true;
-            var reply = await WriteAsync(fixture.Runs, eof);
-            if (reply.Value is null)
-            {
-                // The original native write can still be draining. Busy precedes admission.
-                Assert.Equal("busy", reply.Error?.Code);
-                return false;
-            }
-
-            Assert.True(reply.Value.HasAcceptedBytes);
-            Assert.Equal(0U, reply.Value.AcceptedBytes);
-            return true;
-        }, TimeSpan.FromSeconds(8), "the fresh writer's separately acknowledged EOF");
-    }
 
     private static string[] GatedInputWorkload(TerminalCliFixture fixture, string ready, string release, string captured)
     {

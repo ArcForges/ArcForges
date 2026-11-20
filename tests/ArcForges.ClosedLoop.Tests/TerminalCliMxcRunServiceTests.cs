@@ -74,6 +74,14 @@ public sealed partial class MxcRunServiceTests
         RequireObservedCliExit(tuiExit, 0);
         var transcript = await WatchAsync(fixture.Runs, tuiExit, StreamKind.Terminal);
         Assert.Null(transcript.Gap);
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.True(transcript.Bytes.AsSpan().IndexOf("\u001b[?9001h"u8) >= 0,
+                "The exact native Win32 input-mode enable must remain in retained output.");
+            Assert.True(transcript.Bytes.AsSpan().IndexOf("\u001b[?9001l"u8) >= 0,
+                "The exact native Win32 input-mode disable must remain in retained output.");
+        }
+
         var ownedCanvas = Encoding.UTF8.GetString(transcript.Bytes);
         Assert.Contains("\u001b[?1049h", ownedCanvas, StringComparison.Ordinal);
         Assert.Contains("\u001b[?1049l", ownedCanvas, StringComparison.Ordinal);

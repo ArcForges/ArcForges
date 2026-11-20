@@ -529,15 +529,18 @@ internal sealed partial class WindowsCallerTerminal : ICallerTerminal
     private sealed class OutputEncoding(SafeFileHandle output)
     {
         private readonly Decoder _decoder = Encoding.UTF8.GetDecoder();
+        private readonly WindowsTerminalInputModeFilter _inputMode = new();
 
         internal unsafe void Write(ReadOnlySpan<byte> bytes, CancellationToken cancellationToken)
         {
             Span<char> characters = stackalloc char[2048];
+            Span<char> filtered = stackalloc char[characters.Length + WindowsTerminalInputModeFilter.MaxDeferredCharacters];
             while (!bytes.IsEmpty)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 _decoder.Convert(bytes, characters, flush: false, out int used, out int rendered, out _);
-                var text = characters[..rendered];
+                int count = _inputMode.Filter(characters[..rendered], filtered);
+                var text = filtered[..count];
                 while (!text.IsEmpty)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
