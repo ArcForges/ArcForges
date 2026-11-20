@@ -2,12 +2,13 @@
 using System.CommandLine;
 using System.Globalization;
 using ArcForges.Client;
+using ArcForges.CommandLine;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using Google.Protobuf;
 using Grpc.Core;
 
-namespace ArcForges.CommandLine;
+namespace ArcForges.LegacyCliFixture;
 
 /// <summary>
 /// <c>arcforges resources</c>, <c>ps</c> and <c>samples</c> (experience/cli.md C-03): the resource snapshot (once, or streamed with
@@ -49,7 +50,7 @@ internal static class ResourceCommands
                 return ExitCodes.NotFound;
             }
 
-            await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            await using var session = await cli.ConnectAsync(autoStart: false, cancellationToken).ConfigureAwait(false);
             var request = new ResourceServiceAdoptProcessRequest { Meta = Cli.Meta(), Process = process };
             if (result.GetValue(title) is { } text)
             {
@@ -101,7 +102,7 @@ internal static class ResourceCommands
                 return ExitCodes.NotFound;
             }
 
-            await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            await using var session = await cli.ConnectAsync(autoStart: false, cancellationToken).ConfigureAwait(false);
             var request = new ResourceServiceTerminateProcessRequest { Meta = Cli.Meta(), Process = process };
             if (result.GetValue(reason) is { } text)
             {
@@ -149,7 +150,7 @@ internal static class ResourceCommands
                 every = parsed;
             }
 
-            await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            await using var session = await cli.ConnectAsync(autoStart: false, cancellationToken).ConfigureAwait(false);
             if (!result.GetValue(watch))
             {
                 var meta = Cli.Meta();
@@ -253,7 +254,7 @@ internal static class ResourceCommands
                 filter.SessionId = new Id { Value = ByteString.CopyFrom(sessionId) };
             }
 
-            await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            await using var session = await cli.ConnectAsync(autoStart: false, cancellationToken).ConfigureAwait(false);
             if (result.GetValue(task) is { } taskText)
             {
                 var (taskId, exit) = await TaskText.ResolveAsync(cli, session, taskText, cancellationToken).ConfigureAwait(false);
@@ -341,7 +342,7 @@ internal static class ResourceCommands
                 request.MaxPoints = (uint)Math.Clamp(max, 0, 100_000);
             }
 
-            await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            await using var session = await cli.ConnectAsync(autoStart: false, cancellationToken).ConfigureAwait(false);
             if (attemptText is not null)
             {
                 var (attemptId, exit) = await TaskText.ResolveAttemptAsync(cli, session, attemptText, cancellationToken).ConfigureAwait(false);

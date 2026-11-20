@@ -3,11 +3,12 @@ using System.CommandLine;
 using System.Globalization;
 using System.Text;
 using ArcForges.Client;
+using ArcForges.CommandLine;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using Grpc.Core;
 
-namespace ArcForges.CommandLine;
+namespace ArcForges.LegacyCliFixture;
 
 /// <summary>
 /// <c>arcforges tasks ...</c> (experience/cli.md C-01): list, show, wait, attach, logs, cancel, retry, priority, pause, resume, pin, unpin, purge and attempts.
@@ -23,7 +24,7 @@ internal static class TaskCommands
         var (nodeOption, localOption) = AddRouteOptions(tasks);
         Actions.Set(tasks, factory, async (cli, result, cancellationToken) =>
         {
-            await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            await using var session = await cli.ConnectAsync(autoStart: false, cancellationToken).ConfigureAwait(false);
             var (route, exit) = await TaskRoute.ResolveAsync(cli, session, result.GetValue(nodeOption), result.GetValue(localOption), cancellationToken)
                 .ConfigureAwait(false);
             if (route is null)
@@ -200,7 +201,7 @@ internal static class TaskCommands
                 request.Page = new PageRequest { Limit = count };
             }
 
-            await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            await using var session = await cli.ConnectAsync(autoStart: false, cancellationToken).ConfigureAwait(false);
             var (route, routeExit) = await TaskRoute.ResolveAsync(cli, session, result.GetValue(nodeOption), result.GetValue(localOption), cancellationToken)
                 .ConfigureAwait(false);
             if (route is null)
@@ -253,7 +254,7 @@ internal static class TaskCommands
         var (nodeOption, localOption) = AddRouteOptions(command);
         Actions.Set(command, factory, async (cli, result, cancellationToken) =>
         {
-            await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            await using var session = await cli.ConnectAsync(autoStart: false, cancellationToken).ConfigureAwait(false);
             var (route, routeExit) = await TaskRoute.ResolveAsync(cli, session, result.GetValue(nodeOption), result.GetValue(localOption), cancellationToken)
                 .ConfigureAwait(false);
             if (route is null)
@@ -387,7 +388,7 @@ internal static class TaskCommands
         var (nodeOption, localOption) = AddRouteOptions(command);
         Actions.Set(command, factory, async (cli, result, cancellationToken) =>
         {
-            await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            await using var session = await cli.ConnectAsync(autoStart: false, cancellationToken).ConfigureAwait(false);
             var (route, routeExit) = await TaskRoute.ResolveAsync(cli, session, result.GetValue(nodeOption), result.GetValue(localOption), cancellationToken)
                 .ConfigureAwait(false);
             if (route is null)
@@ -483,7 +484,7 @@ internal static class TaskCommands
         var (nodeOption, localOption) = AddRouteOptions(command);
         Actions.Set(command, factory, async (cli, result, cancellationToken) =>
         {
-            await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            await using var session = await cli.ConnectAsync(autoStart: false, cancellationToken).ConfigureAwait(false);
             var (route, routeExit) = await TaskRoute.ResolveAsync(cli, session, result.GetValue(nodeOption), result.GetValue(localOption), cancellationToken)
                 .ConfigureAwait(false);
             if (route is null)
@@ -515,7 +516,7 @@ internal static class TaskCommands
         var command = new Command("attach", "Mirror a task's output until it finishes (detaching never stops it)") { id, fromStart };
         Actions.Set(command, factory, async (cli, result, cancellationToken) =>
         {
-            await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            await using var session = await cli.ConnectAsync(autoStart: false, cancellationToken).ConfigureAwait(false);
             var (taskId, exit) = await TaskText.ResolveAsync(cli, session, result.GetValue(id)!, cancellationToken).ConfigureAwait(false);
             return taskId is null
                 ? exit
@@ -535,7 +536,7 @@ internal static class TaskCommands
         var command = new Command("logs", "Print a task's captured output") { id, attemptNumber, stream, follow, tail };
         Actions.Set(command, factory, async (cli, result, cancellationToken) =>
         {
-            await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            await using var session = await cli.ConnectAsync(autoStart: false, cancellationToken).ConfigureAwait(false);
             var (taskId, exit) = await TaskText.ResolveAsync(cli, session, result.GetValue(id)!, cancellationToken).ConfigureAwait(false);
             if (taskId is null)
             {
@@ -627,7 +628,7 @@ internal static class TaskCommands
         var (nodeOption, localOption) = AddRouteOptions(command);
         Actions.Set(command, factory, async (cli, result, cancellationToken) =>
         {
-            await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            await using var session = await cli.ConnectAsync(autoStart: false, cancellationToken).ConfigureAwait(false);
             var (route, routeExit) = await TaskRoute.ResolveAsync(cli, session, result.GetValue(nodeOption), result.GetValue(localOption), cancellationToken)
                 .ConfigureAwait(false);
             if (route is null)
@@ -698,7 +699,7 @@ internal static class TaskCommands
                 throw new UsageException("give a class, --pool, or both.");
             }
 
-            await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            await using var session = await cli.ConnectAsync(autoStart: false, cancellationToken).ConfigureAwait(false);
             var (taskId, exit) = await TaskText.ResolveAsync(cli, session, result.GetValue(id)!, cancellationToken).ConfigureAwait(false);
             if (taskId is null)
             {
@@ -769,7 +770,7 @@ internal static class TaskCommands
                 return ExitCodes.Failed;
             }
 
-            await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            await using var session = await cli.ConnectAsync(autoStart: false, cancellationToken).ConfigureAwait(false);
             var (taskId, exit) = await TaskText.ResolveAsync(cli, session, result.GetValue(id)!, cancellationToken).ConfigureAwait(false);
             if (taskId is null)
             {
@@ -822,7 +823,7 @@ internal static class TaskCommands
         var command = new Command("retry", "Start a new attempt of a failed, cancelled or lost task") { id, mem };
         Actions.Set(command, factory, async (cli, result, cancellationToken) =>
         {
-            await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            await using var session = await cli.ConnectAsync(autoStart: false, cancellationToken).ConfigureAwait(false);
             var (taskId, exit) = await TaskText.ResolveAsync(cli, session, result.GetValue(id)!, cancellationToken).ConfigureAwait(false);
             if (taskId is null)
             {
@@ -868,7 +869,7 @@ internal static class TaskCommands
         var command = new Command(pinned ? "pin" : "unpin", pinned ? "Keep a task's records and output past retention" : "Let retention apply again") { id };
         Actions.Set(command, factory, async (cli, result, cancellationToken) =>
         {
-            await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            await using var session = await cli.ConnectAsync(autoStart: false, cancellationToken).ConfigureAwait(false);
             var (taskId, exit) = await TaskText.ResolveAsync(cli, session, result.GetValue(id)!, cancellationToken).ConfigureAwait(false);
             if (taskId is null)
             {
@@ -904,7 +905,7 @@ internal static class TaskCommands
         var command = new Command("purge", "Delete a finished task's output and detailed records (HUMAN only)") { id };
         Actions.Set(command, factory, async (cli, result, cancellationToken) =>
         {
-            await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            await using var session = await cli.ConnectAsync(autoStart: false, cancellationToken).ConfigureAwait(false);
             var (taskId, exit) = await TaskText.ResolveAsync(cli, session, result.GetValue(id)!, cancellationToken).ConfigureAwait(false);
             if (taskId is null)
             {
@@ -950,7 +951,7 @@ internal static class TaskCommands
         var command = new Command("attempts", "List a task's attempts, oldest first") { id };
         Actions.Set(command, factory, async (cli, result, cancellationToken) =>
         {
-            await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            await using var session = await cli.ConnectAsync(autoStart: false, cancellationToken).ConfigureAwait(false);
             var (taskId, exit) = await TaskText.ResolveAsync(cli, session, result.GetValue(id)!, cancellationToken).ConfigureAwait(false);
             if (taskId is null)
             {

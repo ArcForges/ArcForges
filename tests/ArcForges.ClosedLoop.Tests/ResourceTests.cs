@@ -49,7 +49,7 @@ public sealed partial class ResourceTests
         JsonElement snapshot = default;
         async Task<JsonElement> ReadAsync()
         {
-            var run = await node.CliAsync("resources", "--json");
+            var run = await node.LegacyCliAsync("resources", "--json");
             Assert.Equal(0, run.ExitCode);
             return snapshot = run.Json();
         }
@@ -152,25 +152,25 @@ public sealed partial class ResourceTests
         Assert.Contains(processes, process => process.Process.Pid == (uint)Environment.ProcessId && process.Label == ProcessLabel.Unmanaged);
 
         // ps through the CLI: the task filter shows only its processes, all managed.
-        var ps = (await node.CliAsync("ps", "--task", IdText.Format(task), "--json")).Json();
+        var ps = (await node.LegacyCliAsync("ps", "--task", IdText.Format(task), "--json")).Json();
         var listed = ps.GetProperty("processes").EnumerateArray().ToList();
         Assert.NotEmpty(listed);
         Assert.All(listed, process => Assert.Equal("PROCESS_LABEL_MANAGED", process.GetProperty("label").GetString()));
-        Assert.Equal(0, (await node.CliAsync("resources")).ExitCode);
+        Assert.Equal(0, (await node.LegacyCliAsync("resources")).ExitCode);
 
         // The attempt's 1 s samples and the machine's 5 s samples.
         await TestNode.WaitAsync(async () => (await SamplesAsync(channel, SampleScope.Machine, null)).Samples.Count >= 1, Bound, "a machine sample");
         var samples = await SamplesAsync(channel, SampleScope.Attempt, attempt);
         Assert.Equal(1_000ul, samples.ResolutionMs);
         Assert.True(samples.Samples.Count >= 2, $"{samples.Samples.Count} attempt samples");
-        var cli = await node.CliAsync("samples", "--attempt", IdText.Format(attempt), "--json");
+        var cli = await node.LegacyCliAsync("samples", "--attempt", IdText.Format(attempt), "--json");
         Assert.True(cli.ExitCode == 0, cli.ToString());
 
         // A unique prefix names the attempt too (cli.md section 1: at least 6 characters); a shorter one is a usage error.
-        var prefixed = await node.CliAsync("samples", "--attempt", IdText.Format(attempt)[..12], "--json");
+        var prefixed = await node.LegacyCliAsync("samples", "--attempt", IdText.Format(attempt)[..12], "--json");
         Assert.True(prefixed.ExitCode == 0, prefixed.ToString());
         Assert.Equal(cli.Json().GetProperty("resolutionMs").GetRawText(), prefixed.Json().GetProperty("resolutionMs").GetRawText());
-        Assert.Equal(2, (await node.CliAsync("samples", "--attempt", IdText.Format(attempt)[..5])).ExitCode);
+        Assert.Equal(2, (await node.LegacyCliAsync("samples", "--attempt", IdText.Format(attempt)[..5])).ExitCode);
         unmanaged.Kill();
         await CancelAsync(channel, task);
     }

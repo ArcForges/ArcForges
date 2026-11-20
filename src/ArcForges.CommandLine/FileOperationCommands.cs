@@ -96,7 +96,7 @@ internal static class FileOperationCommands
             if (!NodeShapes.IsValid(response) || response.Meta?.CorrelationId is not { } responseCorrelation ||
                 !responseCorrelation.Equals(request.Meta.CorrelationId) ||
                 response.Error is { } error && !error.CorrelationId.Equals(request.Meta.CorrelationId))
-                return cli.Output.Fail(TaskRoute.MalformedResponse(), request.Meta.CorrelationId);
+                return cli.Output.Fail(WorkspaceRoute.MalformedResponse(), request.Meta.CorrelationId);
             if (response.Error is { } failure) return cli.Output.Fail(failure, request.Meta.CorrelationId);
             if (response.Value?.Receipt is not { Effect: EffectCertainty.Happened } receipt ||
                 !receipt.CommandId.Equals(request.Meta.CommandId) || response.Value.Operation is not { } acknowledged ||
@@ -105,7 +105,7 @@ internal static class FileOperationCommands
                 !Equals(acknowledged.WorkspacePath, operation.WorkspacePath) || !Equals(acknowledged.AttemptId, operation.AttemptId) ||
                 !Equals(acknowledged.Error, operation.Error) || !Equals(acknowledged.CreatedAt, operation.CreatedAt) ||
                 !CryptographicOperations.FixedTimeEquals(acknowledged.RequestSha256.Span, requestedDigest))
-                return cli.Output.Fail(TaskRoute.MalformedResponse(), request.Meta.CorrelationId);
+                return cli.Output.Fail(WorkspaceRoute.MalformedResponse(), request.Meta.CorrelationId);
 
             if (cli.Output.Json) cli.Output.Document(acknowledged);
             else cli.Output.Essential("The hold was released. The earlier file effect remains UNKNOWN.");
@@ -123,12 +123,12 @@ internal static class FileOperationCommands
         if (!NodeShapes.IsValid(response) || response.Meta?.CorrelationId is not { } correlation ||
             !correlation.Equals(request.Meta.CorrelationId) ||
             response.Error is { } error && !error.CorrelationId.Equals(request.Meta.CorrelationId))
-            return (null, cli.Output.Fail(TaskRoute.MalformedResponse(), request.Meta.CorrelationId), []);
+            return (null, cli.Output.Fail(WorkspaceRoute.MalformedResponse(), request.Meta.CorrelationId), []);
         if (response.Meta.Warnings.Any(warning => warning.StartsWith(StageWarningPrefix, StringComparison.Ordinal) && !TryStageWarning(warning, out _)))
-            return (null, cli.Output.Fail(TaskRoute.MalformedResponse(), request.Meta.CorrelationId), []);
+            return (null, cli.Output.Fail(WorkspaceRoute.MalformedResponse(), request.Meta.CorrelationId), []);
         if (response.Error is { } failure) return (null, cli.Output.Fail(failure, request.Meta.CorrelationId), response.Meta.Warnings.ToArray());
         if (response.Value?.Operation is not { } operation || !operation.CommandId.Equals(id))
-            return (null, cli.Output.Fail(TaskRoute.MalformedResponse(), request.Meta.CorrelationId), []);
+            return (null, cli.Output.Fail(WorkspaceRoute.MalformedResponse(), request.Meta.CorrelationId), []);
         return (operation, ExitCodes.Success, response.Meta.Warnings.ToArray());
     }
 

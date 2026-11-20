@@ -328,7 +328,7 @@ public sealed class CliOutput
                         continue;
                     }
 
-                    if (key.EndsWith("Id", StringComparison.Ordinal) && AsId(child) is { } text)
+                    if ((key.EndsWith("Id", StringComparison.Ordinal) || key == "ownerEpoch") && AsId(child) is { } text)
                     {
                         obj[key] = text;
                     }

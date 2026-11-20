@@ -2,6 +2,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using ArcForges.Client;
+using ArcForges.CommandLine;
 using ArcForges.Contracts.Fleet.V1;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
@@ -9,7 +10,7 @@ using Google.Protobuf;
 using Grpc.Core;
 using NodeShapes = ArcForges.Contracts.Node.Shapes.ContractShapeValidation;
 
-namespace ArcForges.CommandLine;
+namespace ArcForges.LegacyCliFixture;
 
 /// <summary>One command's local diagnostic or center-routed task destination.</summary>
 internal sealed class TaskRoute(Cli cli, NodeSession session, Id nodeId, bool local, TimeSpan? unaryTimeout)

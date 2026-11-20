@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.CommandLine;
 using ArcForges.Client;
+using ArcForges.CommandLine;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using Google.Protobuf;
 
-namespace ArcForges.CommandLine;
+namespace ArcForges.LegacyCliFixture;
 
 /// <summary>
 /// <c>arcforges jobs list|show|cancel</c> (experience/cli.md C-08): node jobs through <c>ListJobs</c>, <c>GetJob</c> and <c>CancelJob</c>.
@@ -48,7 +49,7 @@ internal static class JobCommands
                 request.Page = new PageRequest { Limit = count };
             }
 
-            await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            await using var session = await cli.ConnectAsync(autoStart: false, cancellationToken).ConfigureAwait(false);
             var response = await cli.CallAsync("ListJobs", request.Meta, () => session.Channel.Node.ListJobsAsync(request,
                 deadline: cli.Deadline(Unary), cancellationToken: cancellationToken)).ConfigureAwait(false);
             if (response.Error is { } error)
@@ -82,7 +83,7 @@ internal static class JobCommands
         var command = new Command("show", "Show one node job") { id };
         Actions.Set(command, factory, async (cli, result, cancellationToken) =>
         {
-            await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            await using var session = await cli.ConnectAsync(autoStart: false, cancellationToken).ConfigureAwait(false);
             var (jobId, exit) = await ResolveAsync(cli, session, result.GetValue(id)!, cancellationToken).ConfigureAwait(false);
             if (jobId is null)
             {
@@ -109,7 +110,7 @@ internal static class JobCommands
         var command = new Command("cancel", "Cancel a pending or running node job") { id };
         Actions.Set(command, factory, async (cli, result, cancellationToken) =>
         {
-            await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            await using var session = await cli.ConnectAsync(autoStart: false, cancellationToken).ConfigureAwait(false);
             var (jobId, exit) = await ResolveAsync(cli, session, result.GetValue(id)!, cancellationToken).ConfigureAwait(false);
             if (jobId is null)
             {

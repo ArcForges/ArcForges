@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Globalization;
 using ArcForges.Client;
+using ArcForges.CommandLine;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using Google.Protobuf;
 
-namespace ArcForges.CommandLine;
+namespace ArcForges.LegacyCliFixture;
 
 /// <summary>Shared pieces of <c>run</c> and <c>tasks</c>: words, exit codes, ID resolution and output mirroring.</summary>
 internal static class TaskText

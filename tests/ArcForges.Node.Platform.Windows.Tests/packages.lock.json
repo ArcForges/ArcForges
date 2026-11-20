@@ -111,6 +111,7 @@
           "ArcForges.Client": "[0.1.0-dev, )",
           "ArcForges.Contracts.Fleet": "[1.0.0-ci.450.1, )",
           "ArcForges.Contracts.Node": "[1.0.0-ci.450.1, )",
+          "ArcForges.Contracts.Sandbox.V2": "[1.0.0-ci.481.1, )",
           "System.CommandLine": "[3.0.0, )"
         }
       },

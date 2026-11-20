@@ -211,7 +211,7 @@ public sealed class Benchmarks
         var cpu = process.TotalProcessorTime - before;
         var elapsed = watch.Elapsed;
         var percent = cpu.TotalMilliseconds / elapsed.TotalMilliseconds * 100;
-        var samples = (await node.CliAsync("samples", "--scope", "machine", "--range", (seconds + 60).ToString(System.Globalization.CultureInfo.InvariantCulture) + "s",
+        var samples = (await node.LegacyCliAsync("samples", "--scope", "machine", "--range", (seconds + 60).ToString(System.Globalization.CultureInfo.InvariantCulture) + "s",
             "--max-points", "10000", "--json")).Json();
         var stored = samples.TryGetProperty("samples", out var list) ? list.GetArrayLength() : 0;
         var result = new System.Text.Json.Nodes.JsonObject

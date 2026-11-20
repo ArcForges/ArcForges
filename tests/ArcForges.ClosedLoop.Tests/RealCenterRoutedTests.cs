@@ -345,7 +345,8 @@ public sealed class RealCenterRoutedTests
         try
         {
             // Exclusive, isolated nodes only: allow their literal PTY CLI to verify as HUMAN.
-            Environment.SetEnvironmentVariable(ClientImages.TestVariable, CloudNode.HelperExecutable);
+            Environment.SetEnvironmentVariable(ClientImages.TestVariable, string.Join(Path.PathSeparator,
+                CloudNode.HelperExecutable, TestNode.LegacyCli));
             await relay.StartAsync();
             await target.StartAsync();
         }
@@ -472,7 +473,8 @@ public sealed class RealCenterRoutedTests
             try
             {
                 // The restarted target must still verify its own literal PTY CLI as HUMAN.
-                Environment.SetEnvironmentVariable(ClientImages.TestVariable, CloudNode.HelperExecutable);
+                Environment.SetEnvironmentVariable(ClientImages.TestVariable, string.Join(Path.PathSeparator,
+                    CloudNode.HelperExecutable, TestNode.LegacyCli));
                 await target.StartAsync();
             }
             finally
@@ -850,7 +852,8 @@ public sealed class RealCenterRoutedTests
         var imageBefore = Environment.GetEnvironmentVariable(ClientImages.TestVariable);
         try
         {
-            Environment.SetEnvironmentVariable(ClientImages.TestVariable, CloudNode.HelperExecutable);
+            Environment.SetEnvironmentVariable(ClientImages.TestVariable, string.Join(Path.PathSeparator,
+                CloudNode.HelperExecutable, TestNode.LegacyCli));
             await node.StartAsync();
         }
         finally
@@ -1078,7 +1081,7 @@ public sealed class RealCenterRoutedTests
     private static async Task<ProcessRun> CliWithBudgetAsync(CloudNode node, bool pty, TimeSpan budget, CancellationToken cancellationToken, params string[] args)
     {
         static string ShellQuote(string value) => "'" + value.Replace("'", "'\"'\"'", StringComparison.Ordinal) + "'";
-        var start = new ProcessStartInfo(pty ? "/usr/bin/script" : CloudNode.HelperExecutable)
+        var start = new ProcessStartInfo(pty ? "/usr/bin/script" : TestNode.LegacyCli)
         {
             UseShellExecute = false,
             RedirectStandardOutput = true,
@@ -1089,7 +1092,7 @@ public sealed class RealCenterRoutedTests
         if (pty)
         {
             start.ArgumentList.Add("-qefc");
-            start.ArgumentList.Add(string.Join(' ', new[] { CloudNode.HelperExecutable, NodeLocations.TestModeOption }.Concat(args).Select(ShellQuote)));
+            start.ArgumentList.Add(string.Join(' ', new[] { TestNode.LegacyCli, NodeLocations.TestModeOption }.Concat(args).Select(ShellQuote)));
             start.ArgumentList.Add("/dev/null");
         }
         else

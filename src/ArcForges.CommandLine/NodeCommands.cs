@@ -18,7 +18,9 @@ internal static class NodeCommands
     {
         var node = new Command("node", "Run, stop and inspect the node");
         node.Subcommands.Add(Run(factory, nodeRunner));
-        node.Subcommands.Add(Stop(factory));
+        node.Subcommands.Add(V2NodeCommands.Start(factory));
+        node.Subcommands.Add(V2NodeCommands.Status(factory));
+        node.Subcommands.Add(V2NodeStopCommand.Build(factory));
         node.Subcommands.Add(WaitReady(factory));
         node.Subcommands.Add(Info(factory));
         node.Subcommands.Add(Health(factory));
@@ -67,69 +69,6 @@ internal static class NodeCommands
                 .ConfigureAwait(false);
             cli.Output.Note("node started (" + start.Detail + ")");
             cli.Output.Essential(session.Endpoint.Endpoint.Address);
-            return ExitCodes.Success;
-        });
-        return command;
-    }
-
-    /// <summary><c>node stop [--cancel-running] [--timeout d] [--reason r]</c>: <c>StopNode</c>, then waits until the node is gone.</summary>
-    private static Command Stop(Func<ParseResult, Cli> factory)
-    {
-        var cancelRunning = new Option<bool>("--cancel-running") { Description = "Cancel running executions (otherwise they continue)" };
-        var timeout = new Option<string?>("--timeout") { Description = "How long to wait for the node to stop (default 60s)", HelpName = "dur" };
-        var reason = new Option<string?>("--reason") { Description = "Why the node is stopped (recorded)" };
-        var command = new Command("stop", "Stop the node") { cancelRunning, timeout, reason };
-        Actions.Set(command, factory, async (cli, result, cancellationToken) =>
-        {
-            var wait = ParseDuration(result.GetValue(timeout), TimeSpan.FromSeconds(60), "--timeout");
-            NodeSession session;
-            try
-            {
-                session = await cli.ConnectAsync(autoStart: false, cancellationToken).ConfigureAwait(false);
-            }
-            catch (NodeUnavailableException exception) when (exception.Reason == NodeUnavailableReason.NotRunning)
-            {
-                cli.Output.Line("The node is not running.");
-                return ExitCodes.Success;
-            }
-
-            await using (session.ConfigureAwait(false))
-            {
-                var request = new NodeServiceStopNodeRequest
-                {
-                    Meta = Cli.Meta(),
-                    CancelRunning = result.GetValue(cancelRunning),
-                    TimeoutMs = (ulong)wait.TotalMilliseconds,
-                };
-                if (result.GetValue(reason) is { Length: > 0 } text)
-                {
-                    request.Reason = text;
-                }
-
-                var action = CommandIds.Begin(request, r => r.Meta, (r, m) => r.Meta = m);
-                var response = await cli.MutateAsync("StopNode", request.Meta.CommandId, action, r => session.Channel.Node.StopNodeAsync(r,
-                    deadline: cli.Deadline(TimeSpan.FromSeconds(10)), cancellationToken: cancellationToken), cancellationToken).ConfigureAwait(false);
-                if (response.Error is { } error)
-                {
-                    return cli.Output.Fail(error, request.Meta.CorrelationId);
-                }
-            }
-
-            if (!await WaitStoppedAsync(cli, wait, cancellationToken).ConfigureAwait(false))
-            {
-                cli.Output.Error.WriteLine($"arcforges: the stop was recorded, but the node was still running after {wait.TotalSeconds:0} s");
-                return ExitCodes.Failed;
-            }
-
-            if (cli.Output.Json)
-            {
-                cli.Output.Document(new System.Text.Json.Nodes.JsonObject { ["stopped"] = true });
-            }
-            else
-            {
-                cli.Output.Line("The node stopped.");
-            }
-
             return ExitCodes.Success;
         });
         return command;
@@ -299,7 +238,7 @@ internal static class NodeCommands
     }
 
     /// <summary>Waits until no node answers on the endpoint (the stop completed) or the time is up.</summary>
-    private static async Task<bool> WaitStoppedAsync(Cli cli, TimeSpan wait, CancellationToken cancellationToken)
+    internal static async Task<bool> WaitStoppedAsync(Cli cli, TimeSpan wait, CancellationToken cancellationToken)
     {
         var started = TimeProvider.System.GetTimestamp();
         while (TimeProvider.System.GetElapsedTime(started) < wait)

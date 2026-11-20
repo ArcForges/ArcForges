@@ -25,6 +25,8 @@ public sealed class TestNodeArgumentTests
         { ["--unknown", "run"], ["--unknown", "run"] },
         { ["--timeout"], ["--timeout"] },
         { ["events", "--topic=tasks"], ["events", "--topic=tasks"] },
+        { ["run", "--json", "start", "sandbox", "--", "--local"], ["run", "--json", "start", "sandbox", "--", "--local"] },
+        { ["run", "stop", "run-id"], ["run", "stop", "run-id"] },
     };
 
     [Theory]
@@ -35,4 +37,35 @@ public sealed class TestNodeArgumentTests
         TestNode.AddLocalDiagnosticOption(actual);
         Assert.Equal(expected, actual);
     }
+
+    public static TheoryData<string[], bool> ExecutableSelection => new()
+    {
+        { ["--test-mode", "run", "--", "start"], true },
+        { ["--test-mode", "run", "--json", "start", "sandbox", "--", "tasks", "--local"], false },
+        { ["run", "list", "--sandbox", "sandbox"], false },
+        { ["run", "inspect", "run-id"], false },
+        { ["run", "stop", "run-id"], false },
+        { ["resources", "--watch"], true },
+        { ["resources", "--json", "watch", "--scope", "node"], false },
+        { ["resources", "show"], false },
+        { ["resources", "set"], false },
+        { ["--timeout", "run", "sandbox", "inspect", "sandbox"], false },
+        { ["tasks", "list"], true },
+        { ["queue", "list"], true },
+        { ["jobs", "list"], true },
+        { ["samples", "--scope", "machine"], true },
+        { ["workspace", "list"], false },
+        { ["file-operation", "show"], false },
+        { ["login"], true },
+        { ["events", "--topic", "tasks"], false },
+        { ["node", "run", "--test-mode"], false },
+        { ["node", "wait-ready", "--test-mode"], false },
+        { ["node", "stop", "--test-mode"], false },
+        { ["--help"], false },
+    };
+
+    [Theory]
+    [MemberData(nameof(ExecutableSelection))]
+    public void LegacySelectionUsesTheCommandAndKeepsTheV2HostRoute(string[] input, bool expected) =>
+        Assert.Equal(expected, TestNode.UsesLegacyCli(input.ToList()));
 }

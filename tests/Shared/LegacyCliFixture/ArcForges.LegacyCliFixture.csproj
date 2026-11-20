@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>ArcForges.LegacyCliFixture</AssemblyName>
+    <RootNamespace>ArcForges.LegacyCliFixture</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../../src/ArcForges.CommandLine/ArcForges.CommandLine.csproj" />
+    <InternalsVisibleTo Include="ArcForges.Client.Tests" />
+    <InternalsVisibleTo Include="ArcForges.Node.CloudLink.Tests" />
+    <RuntimeHostConfigurationOption Include="ArcForges.Security.Secrets.DenyOsStores" Value="true" />
+  </ItemGroup>
+</Project>

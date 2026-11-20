@@ -161,8 +161,8 @@ public sealed class CloudSignInHostTests
             },
         };
         center.Script("ListNodeTasks", new FakeFault.Raw([.. FakeCenter.DataFrame(response), .. FakeCenter.TrailerFrame(0, null)]));
-        using var cli = node.Start(TestNode.Host, [NodeLocations.TestModeOption, "tasks", "list"]);
-        Assert.Equal(Path.GetFullPath(TestNode.Host), Path.GetFullPath(cli.StartInfo.FileName), comparer);
+        using var cli = node.Start(TestNode.LegacyCli, [NodeLocations.TestModeOption, "tasks", "list"]);
+        Assert.Equal(Path.GetFullPath(TestNode.LegacyCli), Path.GetFullPath(cli.StartInfo.FileName), comparer);
         var result = await TestNode.CompleteAsync(cli, TimeSpan.FromSeconds(30));
         Assert.True(result.ExitCode == 0, result.ToString());
         Assert.Equal("No tasks.", result.Output.Trim());
@@ -207,7 +207,7 @@ public sealed class CloudSignInHostTests
             },
         };
         center.Script("SubmitNodeTask", new FakeFault.Raw([.. FakeCenter.DataFrame(accepted), .. FakeCenter.TrailerFrame(0, null)]));
-        using var run = node.Start(TestNode.Host, [NodeLocations.TestModeOption, "run", "--detach", "--", "test-program"]);
+        using var run = node.Start(TestNode.LegacyCli, [NodeLocations.TestModeOption, "run", "--detach", "--", "test-program"]);
         var runResult = await TestNode.CompleteAsync(run, TimeSpan.FromSeconds(30));
         Assert.True(runResult.ExitCode == 0, "routed default submit must succeed against the scripted center");
         var submitted = FleetServiceSubmitNodeTaskRequest.Parser.ParseFrom(FakeCenter.Payload(Assert.Single(center.CallsOf("SubmitNodeTask")).Body));
@@ -449,9 +449,13 @@ public sealed class CloudSignInHostTests
 
     private static RequestMeta Command() => new() { CommandId = CommandIds.New(), CorrelationId = CommandIds.New() };
 
-    /// <summary>Starts <c>arcforges --test-mode &lt;arguments&gt;</c> inside a pseudo-terminal (<c>script -qefc</c>): a HUMAN CLI.</summary>
+    /// <summary>Starts the selected test-mode CLI inside a pseudo-terminal (<c>script -qefc</c>) as a HUMAN caller.</summary>
     internal static PtyProcess Pty(TestNode node, string arguments, bool defaultInterrupt = false)
     {
+        // The command strings in these fixtures spell their options as separate words before the shell argument boundary.
+        var executable = TestNode.UsesLegacyCli(arguments.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList())
+            ? TestNode.LegacyCli : TestNode.Host;
+        var quoted = "'" + executable.Replace("'", "'\"'\"'", StringComparison.Ordinal) + "'";
         var start = new ProcessStartInfo("/usr/bin/script")
         {
             UseShellExecute = false,
@@ -461,7 +465,7 @@ public sealed class CloudSignInHostTests
         };
         start.ArgumentList.Add("-qefc");
         // `env --default-signal=INT` gives the CLI SIGINT at its default disposition even when the test run inherited it ignored.
-        start.ArgumentList.Add((defaultInterrupt ? "exec env --default-signal=INT '" : "'") + TestNode.Host + "' --test-mode " + arguments);
+        start.ArgumentList.Add((defaultInterrupt ? "exec env --default-signal=INT " : "") + quoted + " --test-mode " + arguments);
         start.ArgumentList.Add("/dev/null");
         foreach (var (name, value) in node.Environment)
         {

@@ -2,10 +2,11 @@
 using System.CommandLine;
 using System.Globalization;
 using ArcForges.Client;
+using ArcForges.CommandLine;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 
-namespace ArcForges.CommandLine;
+namespace ArcForges.LegacyCliFixture;
 
 /// <summary>
 /// <c>arcforges queue ...</c> (experience/cli.md C-02; queue.proto): the queue in admission order with the budget summary
@@ -39,7 +40,7 @@ internal static class QueueCommands
         var command = new Command("show", "The pools, the queued tasks in admission order and the budget") { pool };
         Actions.Set(command, factory, async (cli, result, cancellationToken) =>
         {
-            await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            await using var session = await cli.ConnectAsync(autoStart: false, cancellationToken).ConfigureAwait(false);
             var request = new QueueServiceGetQueueRequest { Meta = Cli.Meta() };
             if (result.GetValue(pool) is { } name)
             {
@@ -99,7 +100,7 @@ internal static class QueueCommands
         var command = new Command("explain", "Why a task waits and what would admit it") { id };
         Actions.Set(command, factory, async (cli, result, cancellationToken) =>
         {
-            await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            await using var session = await cli.ConnectAsync(autoStart: false, cancellationToken).ConfigureAwait(false);
             var (taskId, exit) = await TaskText.ResolveAsync(cli, session, result.GetValue(id)!, cancellationToken).ConfigureAwait(false);
             if (taskId is null)
             {
@@ -169,7 +170,7 @@ internal static class QueueCommands
         var command = new Command("pools", "List the pools with their limits and live counts");
         Actions.Set(command, factory, async (cli, result, cancellationToken) =>
         {
-            await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            await using var session = await cli.ConnectAsync(autoStart: false, cancellationToken).ConfigureAwait(false);
             var request = new QueueServiceListPoolsRequest { Meta = Cli.Meta() };
             var response = await cli.CallAsync("ListPools", request.Meta, () => session.Channel.Queue.ListPoolsAsync(request, deadline: cli.Deadline(Unary),
                 cancellationToken: cancellationToken)).ConfigureAwait(false);
@@ -203,7 +204,7 @@ internal static class QueueCommands
         Actions.Set(command, factory, async (cli, result, cancellationToken) =>
         {
             var (mode, fixedLimit) = result.GetValue(max) is { } maxText ? Mode(maxText, "--max") : ((ParallelismMode?)null, (uint?)null);
-            await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            await using var session = await cli.ConnectAsync(autoStart: false, cancellationToken).ConfigureAwait(false);
             if (verb == "create")
             {
                 var request = new QueueServiceCreatePoolRequest { Meta = Cli.Meta(), Name = result.GetValue(name)! };
@@ -232,7 +233,7 @@ internal static class QueueCommands
         var command = new Command("delete", "Delete an empty pool") { name };
         Actions.Set(command, factory, async (cli, result, cancellationToken) =>
         {
-            await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            await using var session = await cli.ConnectAsync(autoStart: false, cancellationToken).ConfigureAwait(false);
             var request = new QueueServiceDeletePoolRequest { Meta = Cli.Meta(), Name = result.GetValue(name)! };
             var action = CommandIds.Begin(request, r => r.Meta, (r, m) => r.Meta = m);
             var response = await cli.MutateAsync("DeletePool", request.Meta.CommandId, action, r => session.Channel.Queue.DeletePoolAsync(r,
@@ -255,7 +256,7 @@ internal static class QueueCommands
                 throw new UsageException("name a pool or give --all.");
             }
 
-            await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            await using var session = await cli.ConnectAsync(autoStart: false, cancellationToken).ConfigureAwait(false);
             if (pause)
             {
                 var request = new QueueServicePausePoolRequest { Meta = Cli.Meta(), All = name is null };
@@ -315,7 +316,7 @@ internal static class QueueCommands
                 request.Fixed = value;
             }
 
-            await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            await using var session = await cli.ConnectAsync(autoStart: false, cancellationToken).ConfigureAwait(false);
             var action = CommandIds.Begin(request, r => r.Meta, (r, m) => r.Meta = m);
             var response = await cli.MutateAsync("SetParallelism", request.Meta.CommandId, action, r => session.Channel.Queue.SetParallelismAsync(r,
                 deadline: cli.Deadline(Unary), cancellationToken: cancellationToken), cancellationToken).ConfigureAwait(false);

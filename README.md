@@ -2,17 +2,16 @@
 
 **Your machine. Your rules.**
 
-ArcForges is migrating to a general CLI Sandbox/Run platform: a local Node and CLI,
-with optional remote management. C# and Native AOT provide the local runtime.
-The current Node/CLI execution, data-safety and Windows supervisor/Linux systemd
-lifecycle remain while their V2 replacements are qualified. No standalone desktop
-application is built or packaged.
+ArcForges is migrating to a general CLI Sandbox/Run platform with a local Node
+and CLI and optional remote management. C# and Native AOT provide the local
+runtime. The existing Windows supervisor and Linux systemd infrastructure remain
+during the cutover. The package contains the Node and CLI.
 
-The existing `arcforges` executable runs the node (`arcforges node run`) and CLI.
-The commands below describe that current implementation; they do not claim that
-V2 MXC isolation, Sandbox/Run APIs or offline execution cutover is already delivered.
-Product design: [ArcForges-Design](https://github.com/ArcForges/ArcForges-Design);
-delivery plan: [Plan](https://github.com/ArcForges/Plan).
+The `arcforges` executable hosts the Node and the CLI. This development candidate
+includes the V2 offline Core and administration commands described in the
+[offline CLI guide](docs/cli/offline.md). The delivery plan records verification,
+migration and release status. [ArcForges-Design](https://github.com/ArcForges/ArcForges-Design) ·
+[Plan](https://github.com/ArcForges/Plan).
 
 The repository has no separate product MCP adapter, hook-handler, cache-platform
 or toolchain-registry project to delete. Legacy client kinds, roles and dormant
@@ -31,6 +30,7 @@ modules. Shared DesktopPlatform/Contracts and independent applications stay inta
 | `src/ArcForges.Node.Platform.Linux` | Linux execution: transient user units through the user manager's D-Bus API, the slice's limits, freeze and kill, the `node exec-launch`, `node exec-stop`, `node exit-record` and `node guard` roles |
 | `src/ArcForges.Client` | The client library of the CLI: endpoint resolution, auto-start, hello, NodeStreamCache, command IDs, connection state |
 | `src/ArcForges.CommandLine` | The CLI (System.CommandLine): global options, human and JSON output, exit codes |
+| `src/ArcForges.RunSupervisor` | Per-Run ownership, official MXC execution, terminal and output |
 | `src/ArcForges.Supervisor` | `arcforges-supervisor.exe`: the Windows GUI-subsystem supervisor that starts the node and restarts it after a crash |
 | `src/ArcForges.Node.Store` | The node store: SQLite schema, migrations, backups, idempotency, sealed task secrets, default policy |
 | `tools/ArcForges.TestLoad` | `arcforges-testload`: deterministic CPU, memory, output and process-tree workloads |
@@ -74,60 +74,49 @@ Packaging reads only those component outputs; old desktop publish caches are exc
 Linux executables are published on Linux, for example
 `dotnet publish src/ArcForges.Host -c Release -r linux-x64 -warnaserror`.
 
-## The node and the CLI
+## The Node and the CLI
+
+The local CLI uses the current user's Node. Sandbox creation, Run execution,
+resource management and operation inspection work without a Center account or
+connection. Use a configuration for the installed MXC profile. The guide includes
+the exact JSON fields and profile names for Windows and Linux.
+[Offline CLI guide](docs/cli/offline.md).
 
 ```sh
-arcforges status                 # starts the node when it is absent (not in CI jobs or sandboxes), then reports it
-arcforges status --json          # one JSON document (canonical protobuf JSON mapping; IDs as base32)
-arcforges node run               # run the node in this terminal (exit 3 if one already runs)
-arcforges node stop
-arcforges node info | health | capabilities [--reevaluate] | rename <name> | wait-ready [--timeout 30s]
-arcforges config list | get <key> | set logLevel debug
-arcforges events --topic node --since <cursor>    # JSON Lines; resumes after the cursor
-arcforges jobs list | show <id> | cancel <id>
-arcforges run -- dotnet build    # routed through the center; output and the task's exit code are returned
-arcforges run --node build-box --detach -- cmake --build out  # target by exact name; print the task ID
-arcforges run --client-timeout 10m -- cargo test    # hands off with exit 124 before the caller's own timeout
-arcforges run --local -- dotnet build                # HUMAN-only local diagnostic submission
-arcforges tasks [list] | show <id> | wait <id> [--output tail|all|none] | cancel <id>
-arcforges output <id> --from-offset 0 --follow       # resume captured output by byte offset
-arcforges tasks attach | logs | retry | pin | unpin | purge | attempts
-arcforges version
-eval "$(arcforges completion bash)"                # also zsh, fish, pwsh
+arcforges node start
+arcforges node status --json
+arcforges doctor
+arcforges sandbox create build --file sandbox.json --json
+arcforges sandbox list
+arcforges resources show
+arcforges resources watch --once --json
 ```
 
-`run`, `tasks [list]`, `tasks show`, `tasks wait`, `tasks cancel`, and `output` use the signed-in node's center connection by
-default, including for this node. Add `--node <name-or-id>` to select an enrolled node by exact, case-sensitive name or canonical UUID;
-ambiguous names require the UUID. When `run --node` selects another node, `--cwd` is required and must be an absolute path on the target;
-`--stdin file:` and `--ready-file` also require target-absolute paths. Windows drive/UNC and POSIX paths are passed unchanged for the
-target to validate. For this node, including an explicit `--node` that resolves to it, relative paths and the default current directory
-retain their local behavior. `output --json` writes one protobuf `TaskServiceReadTaskOutputValue` per JSON line, with binary data encoded
-as base64 and stream index, next offset, retention and EOF metadata. For routed commands `--timeout` sets the unary RPC deadline;
-`tasks wait` also bounds its target wait, while `run --timeout` sets the task's execution limit. Add `--local` for the local diagnostic
-path. Routed `run` defaults to the target node's environment; `run --local` defaults to the caller's environment. Explicit `--env-inherit`
-`caller` is not filtered: a routed submission to this node is refused if any carried name matches the default or local secret policy.
-For another node, its policy is unknown, so routed submissions cannot carry caller environment or `--env` values; use target-side
-`--env-inherit node` or `none`. Explicit values are never silently removed. Local submissions require a HUMAN caller; local task reads
-remain available for management and recovery. Routed `run --stdin stream` is not supported; use the local diagnostic path when a streamed
-stdin is needed.
+Use the Sandbox ID returned by `sandbox create`. This Linux example passes
+`two words` as one argument and prints the Start receipt. Inspect the Run ID in
+that receipt to check the outcome.
 
-A node that is signed out, cannot reach the center or has no channel exits 4 with diagnostic guidance. A target reported offline exits
-75. An uncertain routed mutation retains its command ID and request bytes for at most five transport retries within two minutes; if its
-outcome remains uncertain, the CLI prints the command ID so the existing operation can be investigated rather than submitted again.
-After an uncertain outcome, it waits within that window for its own node channel to reconnect before retrying. It does not resend a
-mutation under a different center or installation; if the local node connection is lost, it stops and keeps the outcome uncertain.
-If an interrupted mutation might have reached the node or an approval is pending, the CLI warns that it may have run and prints its
-original command ID. Ctrl+C exits 130; a lost local connection retains its existing transport-failure exit.
-An explicit `--wait-approval` may wait for a human decision separately and restart that retry window; its wait is not included in the
-two-minute transport bound.
+```sh
+arcforges run start "$SANDBOX_ID" --terminal off -- /usr/bin/dash -c 'printf "%s\n" "$1"' _ 'two words'
+arcforges run inspect "$RUN_ID"
+arcforges operation inspect "$COMMAND_ID" --owner-epoch "$OWNER_EPOCH" --json
+arcforges node stop
+```
 
-On Windows the auto-start launches `arcforges-supervisor.exe` beside `arcforges.exe`; on Linux it runs
-`systemctl --user start arcforges-node.service` (see `eng/systemd/arcforges-node.service` for a development unit),
-or a `setsid` launch when no systemd user manager runs. On Linux every task runs as its own transient unit
-`arcforges-a-<attempt>.service` in `arcforges.slice` (the user manager is its parent, so it survives a node crash or
-`systemctl --user restart`, and `exit.json` is written by the unit's `ExecStopPost`); without a user manager the node is
-DEGRADED (observe only): tasks that require enforcement are refused and the others run as child processes, labelled `unenforced`. Exit codes follow ArcForges-Design `experience/cli.md` section 3.
-Tests isolate each node with `--test-mode` and the `ARCFORGES_ENDPOINT` / `ARCFORGES_CONFIG_DIR` test hooks.
+A durable mutation prints its command ID and owner epoch. It also reports the
+expected revision when one was sent, and the resolved terminal option for
+`run start`. If a reply is lost, inspect the original operation with those IDs.
+`node stop` leaves active Runs under their existing supervisors.
+`node stop --stop-runs` stops and checks Runs found in its inventory before
+requesting service shutdown. A concurrent Start can remain active.
+
+Windows startup uses `arcforges-supervisor.exe` beside `arcforges.exe`. Linux
+startup uses the systemd user service when available. The existing bootstrap can
+start the Node using `setsid` without a user manager. The Linux MXC Run profile
+requires its qualified user manager and cgroup controllers. The development unit
+is shipped in [eng/systemd](eng/systemd). The test fixtures isolate each Node
+using the existing `--test-mode`, `ARCFORGES_ENDPOINT` and `ARCFORGES_CONFIG_DIR`
+hooks.
 
 ## Tools
 

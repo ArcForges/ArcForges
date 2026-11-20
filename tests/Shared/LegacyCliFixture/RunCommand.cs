@@ -4,12 +4,13 @@ using System.CommandLine;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using ArcForges.Client;
+using ArcForges.CommandLine;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using Google.Protobuf;
 using Grpc.Core;
 
-namespace ArcForges.CommandLine;
+namespace ArcForges.LegacyCliFixture;
 
 /// <summary>
 /// <c>arcforges run [run options] -- &lt;program&gt; [args...]</c> and <c>run --shell &lt;kind&gt; -- "&lt;script&gt;"</c> (experience/cli.md
@@ -258,7 +259,7 @@ internal static class RunCommand
                 throw new UsageException("--wait without a duration cannot be combined with --detach.");
             }
 
-            await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
+            await using var session = await cli.ConnectAsync(autoStart: false, cancellationToken).ConfigureAwait(false);
             var (route, routeExit) = await TaskRoute.ResolveAsync(cli, session, result.GetValue(nodeOption), result.GetValue(localOption), cancellationToken, timeoutIsTaskLimit: true)
                 .ConfigureAwait(false);
             if (route is null)
