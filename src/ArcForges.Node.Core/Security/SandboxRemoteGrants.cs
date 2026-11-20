@@ -19,9 +19,12 @@ namespace ArcForges.Node.Core.Security
     internal sealed record ActiveRemoteEnrollment(string OwnerId, string EnrollmentId, string AccountId, string Audience,
         string Issuer, string Epoch);
 
+    internal sealed record ActiveRemoteChannel(string ConnectionId, ulong HubFence);
+
     // The adapter verifies the signed action and exact body (including command identity) before entering Core.
     internal sealed record VerifiedRemoteGrantCall(ActiveRemoteEnrollment Enrollment, string ActorId, string GrantId,
-        long Revision, RemoteGrantAction Action, DateTimeOffset IssuedAt, DateTimeOffset ExpiresAt, ByteString BodySha256);
+        long Revision, RemoteGrantAction Action, DateTimeOffset IssuedAt, DateTimeOffset ExpiresAt, ByteString BodySha256,
+        ActiveRemoteChannel? Channel = null, ReadOnlyMemory<byte> OriginalOwnerEpoch = default);
 }
 
 namespace ArcForges.Node.Core.Sandboxes
@@ -32,20 +35,28 @@ namespace ArcForges.Node.Core.Sandboxes
         private const string RevokeGrantMethod = "NodeService.RevokeRemoteGrant";
         private const string GrantAggregate = "grant";
         private ActiveRemoteEnrollment? _activeEnrollment;
+        private ActiveRemoteChannel? _activeRemoteChannel;
 
         // Serialize link replacement/disconnect with grant admission. The retained V1 link does not publish this authority.
-        internal void UpdateRemoteEnrollment(ActiveRemoteEnrollment? enrollment)
+        internal void UpdateRemoteEnrollment(ActiveRemoteEnrollment? enrollment, ActiveRemoteChannel? channel = null)
         {
-            if (enrollment is not null && (enrollment.OwnerId != OwnerId || !IsSandboxId(enrollment.EnrollmentId)
-                || !IsSandboxId(enrollment.AccountId) || !IsSandboxId(enrollment.Epoch)
+            if (enrollment is not null && (enrollment.OwnerId != OwnerId || !IsRemoteGrantIdentity(enrollment.EnrollmentId)
+                || !IsRemoteGrantIdentity(enrollment.AccountId) || !IsRemoteGrantIdentity(enrollment.Epoch)
                 || !ValidRemoteAudience(enrollment.Audience) || !ValidRemoteAudience(enrollment.Issuer)))
             {
                 throw new ArgumentException("Invalid verified enrollment projection.", nameof(enrollment));
             }
 
+            if (channel is not null && (enrollment is null || !IsRemoteGrantIdentity(channel.ConnectionId)
+                || channel.HubFence is 0 or > long.MaxValue))
+            {
+                throw new ArgumentException("Invalid verified channel projection.", nameof(channel));
+            }
+
             lock (OwnershipGate)
             {
                 _activeEnrollment = enrollment;
+                _activeRemoteChannel = channel;
             }
         }
 
@@ -243,7 +254,7 @@ namespace ArcForges.Node.Core.Sandboxes
                 cancellationToken.ThrowIfCancellationRequested();
                 try
                 {
-                    var (value, error) = RevokeGrantLocked(request, remote);
+                    var (value, error) = RevokeGrantLocked(request, remote, cancellationToken);
                     return value is null ? new() { Meta = Response(request.Meta), Error = error }
                         : new() { Meta = Response(request.Meta, value.Revision.Value), Value = new() { Grant = value } };
                 }
@@ -254,10 +265,13 @@ namespace ArcForges.Node.Core.Sandboxes
             }
         }
 
-        private (RemoteGrant?, ArcError?) RevokeGrantLocked(NodeServiceRevokeRemoteGrantRequest request, VerifiedRemoteGrantCall? remote)
+        private (RemoteGrant?, ArcError?) RevokeGrantLocked(NodeServiceRevokeRemoteGrantRequest request, VerifiedRemoteGrantCall? remote,
+            CancellationToken cancellationToken)
         {
             if (!ValidGrantMutation(request.Meta, request.OwnerEpoch) || !ValidGrantId(request.GrantId)
-                || request.Meta.ExpectedRev is not { Value: > 0 and < long.MaxValue })
+                || request.Meta.ExpectedRev is not { Value: > 0 and < long.MaxValue }
+                || remote is not null && (!Shape.IsValid(request) || !MatchesRemoteOwnerEpoch(remote, request.OwnerEpoch)
+                    || !KnownRemoteFields(request, NodeServiceRevokeRemoteGrantRequest.Parser)))
             {
                 return (null, InvalidGrant(request.Meta, "grant_revoke_shape_invalid"));
             }
@@ -272,10 +286,26 @@ namespace ArcForges.Node.Core.Sandboxes
                 return (null, GrantDenied(request.Meta));
             }
 
+            if (remote is not null && !EpochMatches(request.OwnerEpoch))
+            {
+                return (null, RetiredRunEpoch(request.Meta));
+            }
+
             var intent = GrantIntent(request.Meta, request.OwnerEpoch, id, RevokeGrantMethod, request.GrantId.ToByteArray(),
                 remote?.Enrollment, new(expected, DurableGrantAction.Revoke), remote?.ActorId);
-            if (Receipts.Inspect(intent.CommandId) is not null || !EpochMatches(request.OwnerEpoch))
+            if (remote is not null)
             {
+                intent = intent with { Remote = RemoteReceiptBinding(remote, row!) };
+            }
+
+            var prior = Receipts.Inspect(intent.CommandId);
+            if (prior is not null || !EpochMatches(request.OwnerEpoch))
+            {
+                if (remote is not null && prior is not null && prior.Remote != intent.Remote)
+                {
+                    return (null, GrantDenied(request.Meta));
+                }
+
                 return GrantMutationResult(Receipts.Admit(intent), request.Meta);
             }
 
@@ -291,6 +321,15 @@ namespace ArcForges.Node.Core.Sandboxes
 
             var updated = row with { Revision = row.Revision + 1, State = StoredRemoteGrantState.Revoked, RevokedAt = now };
             var value = GrantSummary(GrantView(updated, now));
+            if (remote is not null)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!RemoteSandboxAdmissionCurrent(remote, row, ObserveGrantTime()))
+                {
+                    return (null, GrantDenied(request.Meta));
+                }
+            }
+
             var outcome = Receipts.AdmitObserved(intent, "SUCCEEDED", (int)EffectCertainty.Happened, GrantResultJson(value),
                 tx =>
                 {
@@ -313,7 +352,7 @@ namespace ArcForges.Node.Core.Sandboxes
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var meta = Response(request.Meta);
-                if (!Shape.IsValid(request))
+                if (!Shape.IsValid(request) || remote is not null && !KnownRemoteFields(request, NodeServiceListRemoteGrantsRequest.Parser))
                 {
                     return new() { Meta = meta, Error = InvalidGrant(request.Meta, "grant_list_shape_invalid") };
                 }
@@ -330,6 +369,11 @@ namespace ArcForges.Node.Core.Sandboxes
                             if (row is null || sandbox is not null && row.SandboxId != sandbox)
                             {
                                 return new NodeServiceListRemoteGrantsResponse { Meta = meta, Error = GrantDenied(request.Meta) };
+                            }
+
+                            if (!CurrentRemoteOwnerEpoch(remote))
+                            {
+                                return new NodeServiceListRemoteGrantsResponse { Meta = meta, Error = RetiredRunEpoch(request.Meta) };
                             }
 
                             if (request.Cursor.Length != 0)
@@ -373,8 +417,9 @@ namespace ArcForges.Node.Core.Sandboxes
         private StoredRemoteGrant? AuthorizedGrant(StoreReader reader, VerifiedRemoteGrantCall remote, IMessage request,
             RemoteGrantAction action, string requiredGrantId, DateTimeOffset now)
         {
-            if (remote.Enrollment != _activeEnrollment || !IsSandboxId(remote.ActorId) || !IsSandboxId(remote.GrantId)
+            if (!RemoteChannelCurrent(remote) || !IsRemoteGrantIdentity(remote.ActorId) || !IsRemoteGrantIdentity(remote.GrantId)
                 || remote.GrantId != requiredGrantId || remote.Revision <= 0 || remote.Action != action
+                || remote.OriginalOwnerEpoch.Length != 16 || !remote.OriginalOwnerEpoch.Span.ContainsAnyExcept((byte)0)
                 || remote.IssuedAt > now || remote.ExpiresAt <= now || remote.ExpiresAt - remote.IssuedAt > TimeSpan.FromMinutes(5)
                 || request.CalculateSize() > 1_048_576
                 || !CryptographicOperations.FixedTimeEquals(remote.BodySha256.Span, SHA256.HashData(request.ToByteArray())))
@@ -404,6 +449,9 @@ namespace ArcForges.Node.Core.Sandboxes
             return row;
         }
 
+        private bool RemoteChannelCurrent(VerifiedRemoteGrantCall remote) => remote.Channel is not null
+            && remote.Channel == _activeRemoteChannel && remote.Enrollment == _activeEnrollment;
+
         private DateTimeOffset ObserveGrantTime()
         {
             var now = _clock.GetUtcNow();
@@ -416,6 +464,14 @@ namespace ArcForges.Node.Core.Sandboxes
 
         private static bool ValidGrantId(Id? value) => value?.Value is { Length: 16 } bytes
             && bytes.Span.ContainsAnyExcept((byte)0);
+
+        private static bool IsRemoteGrantIdentity(string id) => IsSandboxId(id) && id.AsSpan().ContainsAnyExcept('0');
+
+        private static bool MatchesRemoteOwnerEpoch(VerifiedRemoteGrantCall remote, Id? epoch) =>
+            ValidGrantId(epoch) && remote.OriginalOwnerEpoch.Span.SequenceEqual(epoch!.Value.Span);
+
+        private bool CurrentRemoteOwnerEpoch(VerifiedRemoteGrantCall remote) =>
+            Receipts.OwnerEpoch.Span.SequenceEqual(remote.OriginalOwnerEpoch.Span);
 
         private static bool IsActiveGrant(StoredRemoteGrant row, DateTimeOffset now) =>
             row.State == StoredRemoteGrantState.Active && (row.ExpiresAt is null || row.ExpiresAt > now);

@@ -434,6 +434,7 @@ public static class NodeHost
             ConfigureCenter = center => processor.ExecuteAsync(_ => settings.Update(null, LogLevel.Unspecified, null, center.Url).Error),
             V2Snapshot = () => DescribeV2Channel(sandboxes),
             V2EnrollmentChanged = enrollment => ObserveV2Enrollment(sandboxes, enrollment),
+            V2ControlDispatch = routed.DispatchV2Async,
             Log = log,
             Clock = clock,
             NodeInfo = () => store.Read(reader => DescribeNode(node, reader)),
@@ -912,10 +913,14 @@ public static class NodeHost
         if (manager is null)
             return;
 
-        manager.UpdateRemoteEnrollment(enrollment is { Center.Scheme: "https" } active
-            ? new ActiveRemoteEnrollment(manager.OwnerId, active.EnrollmentId, active.AccountId, active.Center.Url,
-                active.Center.Url, active.ProtocolEpoch)
-            : null);
+        if (enrollment is not { Center.Scheme: "https" } active)
+        {
+            manager.UpdateRemoteEnrollment(null);
+            return;
+        }
+
+        var (authority, channel) = RoutedDispatcher.V2Authority(manager, active);
+        manager.UpdateRemoteEnrollment(authority, channel);
     }
 
     private static SandboxManager? CreateSandboxManager(NodeStore store, string dataRoot, NodeSecretStore secrets, TimeProvider clock, NodeLog log,

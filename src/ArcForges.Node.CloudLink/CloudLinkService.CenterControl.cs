@@ -209,6 +209,8 @@ internal sealed partial class CloudLinkService
 
     V2ChannelSnapshot? IChannelHost.V2Snapshot() => _options.V2Snapshot?.Invoke();
 
+    Func<V2ControlCall, CancellationToken, Task<ReadOnlyMemory<byte>>>? IChannelHost.V2ControlDispatch => _options.V2ControlDispatch;
+
     void IChannelHost.V2EnrollmentChanged(V2ChannelEnrollment? enrollment) => SetV2Enrollment(enrollment, resetHistory: false);
 
     private void SetV2Enrollment(V2ChannelEnrollment? enrollment, bool resetHistory)

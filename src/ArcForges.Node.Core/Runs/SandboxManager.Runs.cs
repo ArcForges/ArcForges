@@ -7,9 +7,11 @@ using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Sandbox.V2;
 using ArcForges.Node.Core.Execution;
+using ArcForges.Node.Core.Security;
 using ArcForges.Node.Store;
 using ArcForges.RunSupervisor.Protocol;
 using Google.Protobuf;
+using Shape = ArcForges.Contracts.Sandbox.V2.Shapes.ContractShapeValidation;
 
 namespace ArcForges.Node.Core.Sandboxes;
 
@@ -34,11 +36,29 @@ internal sealed partial class SandboxManager
         }
     }
 
-    internal RunServiceStartResponse Start(RunServiceStartRequest request, CancellationToken cancellationToken)
+    internal RunServiceStartResponse Start(RunServiceStartRequest request, CancellationToken cancellationToken) =>
+        Start(request, null, cancellationToken);
+
+    internal RunServiceStartResponse StartFromCenter(RunServiceStartRequest request, VerifiedRemoteGrantCall verified,
+        CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(verified);
+        return Start(request, verified, cancellationToken);
+    }
+
+    private RunServiceStartResponse Start(RunServiceStartRequest request, VerifiedRemoteGrantCall? remote,
+        CancellationToken cancellationToken)
+    {
+        if (remote is not null && (!Shape.IsValid(request) || !ValidGrantMutation(request.Meta, request.OwnerEpoch)
+            || !MatchesRemoteOwnerEpoch(remote, request.OwnerEpoch)
+            || !KnownRemoteFields(request, RunServiceStartRequest.Parser)))
+        {
+            return new() { Meta = Response(request.Meta), Error = InvalidRun(request.Meta) };
+        }
+
         try
         {
-            var result = StartWithResourceBudget(request, secrets: null, cancellationToken);
+            var result = StartWithResourceBudget(request, secrets: null, remote, cancellationToken);
 
             if (result.SecretReferences is { } references)
             {
@@ -58,7 +78,7 @@ internal sealed partial class SandboxManager
                         secrets.Add(reference, value);
                     }
 
-                    result = StartWithResourceBudget(request, secrets, cancellationToken);
+                    result = StartWithResourceBudget(request, secrets, remote, cancellationToken);
                 }
                 finally
                 {
@@ -81,14 +101,14 @@ internal sealed partial class SandboxManager
     }
 
     private RunMutationResult StartWithResourceBudget(RunServiceStartRequest request,
-        IReadOnlyDictionary<string, string>? secrets, CancellationToken cancellationToken)
+        IReadOnlyDictionary<string, string>? secrets, VerifiedRemoteGrantCall? remote, CancellationToken cancellationToken)
     {
         var monitor = _resourceMonitor;
         long? afterTimestamp;
         lock (OwnershipGate)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var result = StartRunLocked(request, secrets, allowBudgetWait: monitor is not null);
+            var result = StartRunLocked(request, secrets, allowBudgetWait: monitor is not null, remote, cancellationToken);
             if (!result.AwaitingResourceBudget)
             {
                 return result;
@@ -103,17 +123,25 @@ internal sealed partial class SandboxManager
         lock (OwnershipGate)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            return StartRunLocked(request, secrets, allowBudgetWait: false);
+            return StartRunLocked(request, secrets, allowBudgetWait: false, remote, cancellationToken);
         }
     }
 
     private RunMutationResult StartRunLocked(RunServiceStartRequest request, IReadOnlyDictionary<string, string>? secrets,
-        bool allowBudgetWait)
+        bool allowBudgetWait, VerifiedRemoteGrantCall? remote, CancellationToken cancellationToken)
     {
         var meta = request.Meta;
         if (!ValidId(meta?.CommandId) || !ValidId(request.OwnerEpoch) || !ValidId(request.SandboxId) || meta?.ExpectedRev is not { Value: > 0 } expected)
         {
             return RunFailure(InvalidRun(meta));
+        }
+
+        string sandboxId = ToHex(request.SandboxId);
+        var now = remote is null ? default : ObserveGrantTime();
+        var grant = remote is null ? null : AuthorizeRemoteTarget(remote, request, RemoteGrantAction.RunStart, "sandbox", sandboxId, now);
+        if (remote is not null && grant is null)
+        {
+            return RunFailure(GrantDenied(meta));
         }
 
         if (!EpochMatches(request.OwnerEpoch))
@@ -123,7 +151,6 @@ internal sealed partial class SandboxManager
 
         var command = meta.CommandId.Value.ToByteArray();
         var epoch = request.OwnerEpoch.Value.ToByteArray();
-        string sandboxId = ToHex(request.SandboxId);
         var previous = Receipts.Inspect(command);
         string runId = previous?.AggregateId ?? Guid.NewGuid().ToString("N");
         var body = request.Clone();
@@ -133,7 +160,7 @@ internal sealed partial class SandboxManager
         try
         {
             return AdmitStartRunLocked(request, expected.Value, command, epoch, sandboxId, previous, runId, canonical,
-                secrets, allowBudgetWait);
+                secrets, allowBudgetWait, remote, grant, now, cancellationToken);
         }
         finally
         {
@@ -143,15 +170,22 @@ internal sealed partial class SandboxManager
 
     private RunMutationResult AdmitStartRunLocked(RunServiceStartRequest request, long expected, byte[] command,
         byte[] epoch, string sandboxId, DurableReceipt? previous, string runId, byte[] canonical,
-        IReadOnlyDictionary<string, string>? secrets, bool allowBudgetWait)
+        IReadOnlyDictionary<string, string>? secrets, bool allowBudgetWait, VerifiedRemoteGrantCall? remote,
+        StoredRemoteGrant? grant, DateTimeOffset grantTime, CancellationToken cancellationToken)
     {
         var meta = request.Meta;
-        var intent = new DurableIntent(command, epoch, StartRunMethod, RunAggregate, runId, canonical, expected,
-            ExpectedSandboxId: sandboxId);
+        var intent = new DurableIntent(command, epoch, StartRunMethod, RunAggregate, runId,
+            remote is null ? canonical : RemoteSandboxIntent(canonical, remote), expected, ExpectedSandboxId: sandboxId,
+            Remote: remote is null ? null : RemoteReceiptBinding(remote, grant!));
 
         // The original identity and keyed intent are resolved before checking today's Sandbox or host.
         if (previous is not null)
         {
+            if (remote is not null && !CanReplayRemoteMutation(previous, intent.Remote, grant!, grantTime))
+            {
+                return RunFailure(GrantDenied(meta));
+            }
+
             return ResolveRunMutation(Receipts.Admit(intent), meta, request.OwnerEpoch);
         }
 
@@ -169,6 +203,19 @@ internal sealed partial class SandboxManager
         if (row.State != StoredSandboxState.Ready || row.RootRelative != SandboxPrivateRoots.RelativePath(sandboxId))
         {
             return RunFailure(Error(meta, ErrorCategory.State, "busy", "sandbox_not_ready"));
+        }
+
+        ResourcePolicy? remoteCeiling = null;
+        if (grant is not null)
+        {
+            remoteCeiling = GrantView(grant, grantTime).ResourceCeiling;
+            var config = FromStored(row.Config);
+            if (ReadGrantBounds(grant) is not { } bounds || remoteCeiling is null || !RemoteGrantPolicy.IsNarrower(config, bounds)
+                || request.Environment.Any(entry => entry.HasSecretRef)
+                || !RemoteResourceRequestWithin(request.RequestedResources, remoteCeiling))
+            {
+                return RunFailure(GrantDenied(meta));
+            }
         }
 
         if (_store.Read(reader => TransferRecords.HasMutationGate(reader, OwnerId, sandboxId)))
@@ -223,17 +270,40 @@ internal sealed partial class SandboxManager
             }
 
             unowned = granted;
+            if (remoteCeiling is not null && ((remoteCeiling.HasCpuMaxMillicores && commitment.CpuCeilingMillicores > remoteCeiling.CpuMaxMillicores)
+                || (remoteCeiling.HasMemoryMaxBytes && granted.MemoryMaxBytes > remoteCeiling.MemoryMaxBytes)
+                || (remoteCeiling.HasMaxConcurrentRuns && _store.Read(reader => SandboxRecords.ListNonterminalRunIds(reader, sandboxId).Count)
+                    >= remoteCeiling.MaxConcurrentRuns)))
+            {
+                return RunFailure(GrantDenied(meta));
+            }
+
             var snapshot = RunSnapshotJson(granted, Convert.ToHexStringLower(command), commitment);
             var started = new StoredRun(runId, sandboxId, row.Revision, 1, StoredRunState.Starting, generation,
                 launchDigest, snapshot, StoredPayloadStart.Unknown, _clock.GetUtcNow());
             var recovery = new StoredRunRecovery(RunRecoveryBootIdentity, granted.SupervisorPath,
                 granted.SupervisorSha256, granted.InstallationRoot);
             HoldRunFault("hold-run-before-start-receipt");
+            if (remote is not null)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                grantTime = ObserveGrantTime();
+                if (!RemoteSandboxAdmissionCurrent(remote, grant!, grantTime))
+                {
+                    return RunFailure(GrantDenied(meta));
+                }
+            }
+
             var admitted = Receipts.Admit(intent, transaction =>
             {
                 RequireChanged(RunRecords.InsertStarting(transaction, OwnerId, started));
                 RequireChanged(RunRecoveryRecords.Insert(transaction, OwnerId, started, recovery));
                 RecordRunResourceGrant(transaction, started, granted, commitment);
+                if (remote is not null)
+                {
+                    RecordRemoteAdmission(transaction, meta, StartRunMethod, runId, started.Revision, remote,
+                        EffectCertainty.Unknown, "run_start_admitted", grantTime);
+                }
             });
             if (admitted.Decision == DurableDecision.Execute)
             {
@@ -288,6 +358,16 @@ internal sealed partial class SandboxManager
                 return RunFailure(error ?? InvalidRun(meta));
             }
 
+            if (remote is not null)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                grantTime = ObserveGrantTime();
+                if (!RemoteSandboxAdmissionCurrent(remote, grant!, grantTime))
+                {
+                    return RunFailure(GrantDenied(meta));
+                }
+            }
+
             var body = ResultBody(null, null, error.Category, error.Code, error.Details?.State?.Reason);
             if (budget is not null)
             {
@@ -308,19 +388,32 @@ internal sealed partial class SandboxManager
                 body = envelope.ToJsonString();
             }
 
-            var refused = Receipts.AdmitObserved(intent, "FAILED", (int)error.Effect, body);
+            var refused = Receipts.AdmitObserved(intent, "FAILED", (int)error.Effect, body,
+                remote is null ? null : transaction => RecordRemoteAdmission(transaction, meta, StartRunMethod, runId,
+                    row.Revision, remote, error.Effect, "run_start_budget_refused", grantTime));
             return ResolveRunMutation(refused, meta, request.OwnerEpoch);
         }
     }
 
-    internal RunServiceStopResponse Stop(RunServiceStopRequest request, CancellationToken cancellationToken)
+    internal RunServiceStopResponse Stop(RunServiceStopRequest request, CancellationToken cancellationToken) =>
+        Stop(request, null, cancellationToken);
+
+    internal RunServiceStopResponse StopFromCenter(RunServiceStopRequest request, VerifiedRemoteGrantCall verified,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(verified);
+        return Stop(request, verified, cancellationToken);
+    }
+
+    private RunServiceStopResponse Stop(RunServiceStopRequest request, VerifiedRemoteGrantCall? remote,
+        CancellationToken cancellationToken)
     {
         lock (OwnershipGate)
         {
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                var result = StopRunLocked(request);
+                var result = StopRunLocked(request, remote: remote, cancellationToken: cancellationToken);
                 return result.Error is { } error
                     ? new() { Meta = Response(request.Meta), Error = error }
                     : new() { Meta = Response(request.Meta, result.Run!.Revision.Value), Value = new() { Run = result.Run, Operation = result.Operation } };
@@ -332,13 +425,25 @@ internal sealed partial class SandboxManager
         }
     }
 
-    private RunMutationResult StopRunLocked(RunServiceStopRequest request, bool pressureRequested = false)
+    private RunMutationResult StopRunLocked(RunServiceStopRequest request, bool pressureRequested = false,
+        VerifiedRemoteGrantCall? remote = null, CancellationToken cancellationToken = default)
     {
         var meta = request.Meta;
         if (!ValidId(meta?.CommandId) || !ValidId(request.OwnerEpoch) || !ValidId(request.RunId) || meta?.ExpectedRev is not { Value: > 0 } expected
-            || request.HasGraceMs && request.GraceMs > 60000)
+            || request.HasGraceMs && request.GraceMs > 60000
+            || remote is not null && (!Shape.IsValid(request) || !ValidGrantMutation(meta, request.OwnerEpoch)
+                || !MatchesRemoteOwnerEpoch(remote, request.OwnerEpoch)
+                || !KnownRemoteFields(request, RunServiceStopRequest.Parser)))
         {
             return RunFailure(InvalidRun(meta));
+        }
+
+        string runId = ToHex(request.RunId);
+        var grantTime = remote is null ? default : ObserveGrantTime();
+        var grant = remote is null ? null : AuthorizeRemoteTarget(remote, request, RemoteGrantAction.RunStop, "run", runId, grantTime);
+        if (remote is not null && grant is null)
+        {
+            return RunFailure(GrantDenied(meta));
         }
 
         if (!EpochMatches(request.OwnerEpoch))
@@ -347,8 +452,13 @@ internal sealed partial class SandboxManager
         }
 
         var command = meta.CommandId.Value.ToByteArray();
-        string runId = ToHex(request.RunId);
         var existing = Receipts.Inspect(command);
+        var binding = remote is null ? null : RemoteReceiptBinding(remote, grant!);
+        if (remote is not null && existing is not null && !CanReplayRemoteMutation(existing, binding, grant!, grantTime))
+        {
+            return RunFailure(GrantDenied(meta));
+        }
+
         if (existing is not null && (existing.Method != StopRunMethod || existing.AggregateKind != RunAggregate || existing.AggregateId != runId))
         {
             return RunFailure(Error(meta, ErrorCategory.Conflict, "command_id_reused", "command_intent_changed"));
@@ -367,7 +477,7 @@ internal sealed partial class SandboxManager
         var parent = existing is null ? Convert.FromHexString(ReadRunSnapshot(run).StartCommandId)
             : existing.SafetyParentCommandId is { } linked ? Convert.FromHexString(linked) : null;
         var intent = new DurableIntent(command, request.OwnerEpoch.Value.ToByteArray(), StopRunMethod, RunAggregate, runId,
-            canonical, SafetyParent: parent);
+            remote is null ? canonical : RemoteSandboxIntent(canonical, remote), SafetyParent: parent, Remote: binding);
         if (existing is not null)
         {
             return ResolveRunMutation(Receipts.Admit(intent), meta, request.OwnerEpoch);
@@ -378,10 +488,22 @@ internal sealed partial class SandboxManager
             return RunFailure(RevisionError(meta, expected.Value, run.Revision));
         }
 
+        if (remote is not null)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            grantTime = ObserveGrantTime();
+            if (!RemoteSandboxAdmissionCurrent(remote, grant!, grantTime))
+            {
+                return RunFailure(GrantDenied(meta));
+            }
+        }
+
         if (run.State is StoredRunState.Exited or StoredRunState.Failed)
         {
             var settled = Receipts.AdmitObserved(intent with { SafetyParent = null }, "SUCCEEDED", (int)EffectCertainty.DidNotHappen,
-                ResultBody(run.Revision, null));
+                ResultBody(run.Revision, null), remote is null ? null : transaction =>
+                    RecordRemoteAdmission(transaction, meta, StopRunMethod, runId, run.Revision, remote,
+                        EffectCertainty.DidNotHappen, "run_already_stopped", grantTime));
             return ResolveRunMutation(settled, meta, request.OwnerEpoch);
         }
 
@@ -403,6 +525,12 @@ internal sealed partial class SandboxManager
                         RequireChanged(RunRecords.TryAdvance(transaction, OwnerId, runId, run.Epoch, run.Revision, run.State,
                             new StoredRunObservation(StoredRunState.RecoveryRequired, run.PayloadStarted, run.EffectCertainty)));
                     }
+
+                    if (remote is not null)
+                    {
+                        RecordRemoteAdmission(transaction, meta, StopRunMethod, runId, recoveryRevision, remote,
+                            EffectCertainty.Unknown, "run_stop_recovery_required", grantTime);
+                    }
                 });
             return ResolveRunMutation(unresolved, meta, request.OwnerEpoch);
         }
@@ -415,6 +543,12 @@ internal sealed partial class SandboxManager
                 RequireChanged(RunRecords.TryAdvance(transaction, OwnerId, runId, run.Epoch, run.Revision, run.State,
                     new StoredRunObservation(StoredRunState.Stopping, run.PayloadStarted, run.EffectCertainty,
                         TerminationReason: pressureRequested ? "pressure_stop_requested" : null)));
+            }
+
+            if (remote is not null)
+            {
+                RecordRemoteAdmission(transaction, meta, StopRunMethod, runId, run.Revision, remote,
+                    EffectCertainty.Unknown, "run_stop_admitted", grantTime);
             }
         });
         if (admission.Decision == DurableDecision.Execute)
@@ -482,6 +616,7 @@ internal sealed partial class SandboxManager
             Revision = new Revision { Value = run.Revision },
             UpdatedAt = ProtoTime.ToInstant(updated is null ? run.CreatedAt
                 : DateTimeOffset.Parse(updated, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind)),
+            ResponseCompacted = receipt.Compacted,
         };
         return new(RunView(run), operation);
     }

@@ -57,6 +57,9 @@ internal interface IChannelHost
     /// <summary>The exact current local V2 authority and observed capabilities.</summary>
     V2ChannelSnapshot? V2Snapshot() => null;
 
+    /// <summary>The fixed Node API callback for verified private V2 control requests.</summary>
+    Func<V2ControlCall, CancellationToken, Task<ReadOnlyMemory<byte>>>? V2ControlDispatch => null;
+
     /// <summary>Publishes verified enrollment while the corresponding V2 session is live.</summary>
     void V2EnrollmentChanged(V2ChannelEnrollment? enrollment) { }
 }
@@ -581,6 +584,8 @@ internal sealed partial class ChannelLoop : IAsyncDisposable
         {
             if (ticket.UseV2)
             {
+                // Fence waiting effect calls before the enrollment callback can wait on Core's ownership gate.
+                session.Ending = true;
                 PublishV2Enrollment(session, null);
             }
 
@@ -1122,7 +1127,15 @@ internal sealed partial class ChannelLoop : IAsyncDisposable
 
         public ulong V2ReceivedSequence { get; set; }
 
+        public V2ChannelEnrollment? V2Enrollment { get; set; }
+
+        public Func<V2ControlCall, CancellationToken, Task<ReadOnlyMemory<byte>>>? V2ControlDispatch { get; set; }
+
         public SemaphoreSlim V2Refresh { get; } = new(1, 1);
+
+        public SemaphoreSlim V2ControlSlots { get; } = new(MaxV2ControlCalls, MaxV2ControlCalls);
+
+        public Lock V2ControlSigning { get; } = new();
 
         public CallTasks Calls { get; } = new();
 
@@ -1146,6 +1159,7 @@ internal sealed partial class ChannelLoop : IAsyncDisposable
 
         public void Dispose()
         {
+            V2ControlSlots.Dispose();
             V2Refresh.Dispose();
             _effectsEnding.Dispose();
             cancel.Dispose();

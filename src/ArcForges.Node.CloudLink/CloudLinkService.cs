@@ -77,6 +77,8 @@ internal sealed record CloudLinkOptions
 
     internal Action<V2ChannelEnrollment?>? V2EnrollmentChanged { get; init; }
 
+    internal Func<V2ControlCall, CancellationToken, Task<ReadOnlyMemory<byte>>>? V2ControlDispatch { get; init; }
+
     /// <summary>The node log.</summary>
     public required NodeLog Log { get; init; }
 

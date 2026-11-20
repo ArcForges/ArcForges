@@ -324,6 +324,8 @@ internal sealed class CallVerifier(RoutedCallLog log, TimeProvider clock)
     /// <summary>The expiry window (and the re-check immediately before the effect, Plan PN-15): <c>expires_at + 120 s</c> has not passed.</summary>
     public static bool StillValid(DateTimeOffset expires, DateTimeOffset now) => expires + Skew > now;
 
+    internal static byte[]? CurrentCommandKey(CallBinding binding, string kid, DateTimeOffset now) => Key(binding, kid, now, any: false);
+
     /// <summary>
     /// The SPKI of <paramref name="kid"/> in the command key set, when the set is bound to the binding's center and installation and the key's
     /// validity includes <paramref name="now"/> plus or minus 120 s (<paramref name="any"/>: whatever its validity).

@@ -20,6 +20,8 @@ internal enum V2ChannelKind : byte
     Heartbeat,
     Refresh,
     Close,
+    ControlRequest,
+    ControlResult,
 }
 
 internal readonly record struct V2ChannelFrame(V2ChannelKind Kind, ReadOnlyMemory<byte> Payload);
@@ -67,13 +69,14 @@ internal static class V2ChannelProtocol
         return bytes;
     }
 
-    public static bool TryDecode(ReadOnlyMemory<byte> bytes, ulong expectedSequence, out V2ChannelFrame frame)
+    public static bool TryDecode(ReadOnlyMemory<byte> bytes, ulong expectedSequence, out V2ChannelFrame frame, bool controlEnabled = false)
     {
         frame = default;
         var input = bytes.Span;
         if (input.Length is < HeaderBytes or > CenterChannelClient.MaxFrameBytes || input[0] != Version || expectedSequence == 0 ||
             BinaryPrimitives.ReadUInt64BigEndian(input[2..]) != expectedSequence ||
-            input[1] is < (byte)V2ChannelKind.Challenge or > (byte)V2ChannelKind.Close)
+            input[1] < (byte)V2ChannelKind.Challenge ||
+            input[1] > (byte)(controlEnabled ? V2ChannelKind.ControlResult : V2ChannelKind.Close))
         {
             return false;
         }
