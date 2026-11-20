@@ -52,7 +52,8 @@ public static class CliApplication
         var command = result.CommandResult.Command;
         // The fixed Node process and sign-in handle their own shutdown.
         var handlesInterrupts = command.Name == "login"
-            || command.Name == "run" && command.Parents.OfType<Command>().Any(parent => parent.Name == "node");
+            || command.Name == "run" && command.Parents.OfType<Command>().Any(parent => parent.Name == "node")
+            || command.Name is "start" or "attach" or "logs" && command.Parents.OfType<Command>().Any(parent => parent.Name == "run");
         return await result.InvokeAsync(new InvocationConfiguration
         {
             Output = output,

@@ -18,6 +18,17 @@ internal static partial class TerminalScenario
 
     public static async Task<int> RunAsync(string[] args)
     {
+        if (args is ["observe-console-modes", var directory] && OperatingSystem.IsWindows())
+        {
+            return await ObserveConsoleModesAsync(directory).ConfigureAwait(false);
+        }
+
+        if (args is ["share-linux-cli-console", var image, var first, var second, var coordination, "--test-mode"]
+            && OperatingSystem.IsLinux())
+        {
+            return await ShareLinuxCliConsoleAsync(image, first, second, coordination).ConfigureAwait(false);
+        }
+
         if (args is ["slow-output", var marker, var prefixGate, var tailGate])
         {
             return await SlowOutputAsync(marker, prefixGate, tailGate).ConfigureAwait(false);
@@ -30,15 +41,21 @@ internal static partial class TerminalScenario
 
         var mode = args[0] switch
         {
-            "tui" when args.Length == 2 => Mode.Tui,
+            "tui" when args.Length is 2 or 3 => Mode.Tui,
             "signal" when args.Length == 2 => Mode.Signal,
             "quiet" when args.Length is 3 or 4 => Mode.Quiet,
             _ => throw new UsageException("Invalid terminal probe arguments."),
         };
         int expected = mode == Mode.Quiet ? ReadBoundedInt(args[2], 1, 4 * 1024 * 1024) : 0;
         int linger = args.Length == 4 ? ReadBoundedInt(args[3], 0, 15_000) : 0;
+        string? quitGate = mode == Mode.Tui && args.Length == 3 ? args[2] : null;
+        if (quitGate is not null && !Path.IsPathFullyQualified(quitGate))
+        {
+            throw new UsageException("The TUI quit gate must be an absolute path.");
+        }
+
         using var markers = new StreamWriter(new FileStream(args[1], FileMode.CreateNew, FileAccess.Write, FileShare.Read)) { AutoFlush = true };
-        var probe = new Probe(mode, expected, TimeSpan.FromMilliseconds(linger), markers);
+        var probe = new Probe(mode, expected, TimeSpan.FromMilliseconds(linger), quitGate, markers);
         try
         {
             if (OperatingSystem.IsWindows())
@@ -59,6 +76,129 @@ internal static partial class TerminalScenario
             markers.WriteLine(FormattableString.Invariant($"error {error.Operation} {error.NativeCode}"));
             return ExitCodes.Failure;
         }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static async Task<int> ObserveConsoleModesAsync(string directory)
+    {
+        if (!Path.IsPathFullyQualified(directory) || !Directory.Exists(directory)
+            || (File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0)
+        {
+            throw new UsageException("The console observer requires an existing private fixture directory.");
+        }
+
+        nint input = GetStdHandle(-10);
+        nint output = GetStdHandle(-11);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+        var token = deadline.Token;
+        try
+        {
+            // A retained observer samples the same console across exact CLI process exit.
+            // It does not read/write terminal data or change its input/output modes.
+            for (int sequence = 0; sequence <= 512; sequence++)
+            {
+                if (sequence != 0)
+                {
+                    string request = Path.Combine(directory, FormattableString.Invariant($"request-{sequence}"));
+                    await WaitForFileAsync(request, token).ConfigureAwait(false);
+                }
+
+                Require(GetConsoleMode(input, out uint inputMode), "observe-input-mode");
+                Require(GetConsoleMode(output, out uint outputMode), "observe-output-mode");
+                var size = WindowsSize(output);
+                string value = FormattableString.Invariant($"v1 {Environment.ProcessId} {inputMode} {outputMode} {size.Rows} {size.Columns}");
+                string staging = Path.Combine(directory, "snapshot.tmp");
+                string snapshot = Path.Combine(directory, FormattableString.Invariant($"snapshot-{sequence}.txt"));
+                await File.WriteAllTextAsync(staging, value, token).ConfigureAwait(false);
+                File.Move(staging, snapshot);
+            }
+
+            return ExitCodes.Success;
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            return ExitCodes.Success;
+        }
+        catch (TerminalFailure)
+        {
+            return ExitCodes.Failure;
+        }
+    }
+
+    [SupportedOSPlatform("linux")]
+    private static async Task<int> ShareLinuxCliConsoleAsync(string image, string first, string second, string directory)
+    {
+        if (!Path.IsPathFullyQualified(image) || Path.GetFileName(image) != "arcforges" || !File.Exists(image)
+            || !Path.IsPathFullyQualified(directory) || !Directory.Exists(directory) || first == second
+            || first.Length != 26 || second.Length != 26 || !first.All(char.IsAsciiLetterOrDigit) || !second.All(char.IsAsciiLetterOrDigit))
+        {
+            throw new UsageException("The Linux console fixture requires the installed CLI, two distinct Run IDs and a private directory.");
+        }
+
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        using var terminate = PosixSignalRegistration.Create(PosixSignal.SIGTERM, context =>
+        {
+            context.Cancel = true;
+            deadline.Cancel();
+        });
+        var token = deadline.Token;
+        using var owner = StartAttach(image, first, directory);
+        try
+        {
+            await WaitForFileAsync(Path.Combine(directory, "contend"), token).ConfigureAwait(false);
+            using var contender = StartAttach(image, second, directory);
+            try
+            {
+                await contender.WaitForExitAsync(token).ConfigureAwait(false);
+                string staging = Path.Combine(directory, "contender.tmp");
+                await File.WriteAllTextAsync(staging, contender.ExitCode.ToString(CultureInfo.InvariantCulture), token).ConfigureAwait(false);
+                File.Move(staging, Path.Combine(directory, "contender.status"));
+            }
+            finally
+            {
+                await EndConsolePeerAsync(contender).ConfigureAwait(false);
+            }
+
+            await owner.WaitForExitAsync(token).ConfigureAwait(false);
+            return owner.ExitCode;
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            return ExitCodes.Failure;
+        }
+        finally
+        {
+            await EndConsolePeerAsync(owner).ConfigureAwait(false);
+        }
+    }
+
+    private static Process StartAttach(string image, string run, string directory)
+    {
+        // Both exact CLI children inherit this fixture's existing foreground process group and PTY descriptors.
+        var start = new ProcessStartInfo(image) { UseShellExecute = false, WorkingDirectory = directory };
+        start.ArgumentList.Add("--test-mode");
+        start.ArgumentList.Add("run");
+        start.ArgumentList.Add("attach");
+        start.ArgumentList.Add(run);
+        return Process.Start(start) ?? throw new IOException("The fixture CLI did not start.");
+    }
+
+    private static async Task EndConsolePeerAsync(Process peer)
+    {
+        if (!peer.HasExited)
+        {
+            try
+            {
+                peer.Kill();
+            }
+            catch (InvalidOperationException) when (peer.HasExited)
+            {
+                // The exact held child exited concurrently.
+            }
+        }
+
+        using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(4));
+        await peer.WaitForExitAsync(cleanup.Token).ConfigureAwait(false);
     }
 
     private static async Task<int> SlowOutputAsync(string marker, string prefixGate, string tailGate)
@@ -105,11 +245,12 @@ internal static partial class TerminalScenario
         int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out int result) && result >= minimum && result <= maximum
             ? result : throw new UsageException("A terminal probe count or delay is outside its bounds.");
 
-    private sealed class Probe(Mode mode, int expected, TimeSpan linger, TextWriter markers)
+    private sealed class Probe(Mode mode, int expected, TimeSpan linger, string? quitGate, TextWriter markers)
     {
         private int _consumed;
         private int _reported;
         private int _unicodePrefix;
+        private bool _detachPrefix;
         private bool _quit;
 
         public Mode Scenario { get; } = mode;
@@ -129,6 +270,12 @@ internal static partial class TerminalScenario
 
             foreach (var value in bytes)
             {
+                if (_detachPrefix && value == 'd')
+                {
+                    markers.WriteLine("literal-detach");
+                }
+
+                _detachPrefix = value == 29;
                 ReadOnlySpan<byte> unicode = "星"u8;
                 _unicodePrefix = value == unicode[_unicodePrefix] ? _unicodePrefix + 1 : value == unicode[0] ? 1 : 0;
                 if (_unicodePrefix == unicode.Length)
@@ -141,9 +288,10 @@ internal static partial class TerminalScenario
                 {
                     markers.WriteLine("raw-etx");
                 }
-                else if (value == 'q')
+                else if (value == 'q' && !_quit)
                 {
                     _quit = true;
+                    if (quitGate is not null) markers.WriteLine("quit-wait");
                 }
             }
         }
@@ -182,6 +330,11 @@ internal static partial class TerminalScenario
         public async Task<int> DriveAsync(Func<Geometry> size, Action<string> display, Action read, Func<bool> interrupted)
         {
             var previous = size();
+            if (Scenario == Mode.Signal)
+            {
+                display("CORE03 foreground ready\r\n");
+            }
+
             markers.WriteLine(FormattableString.Invariant($"ready {previous.Rows} {previous.Columns}"));
             var runtime = Stopwatch.StartNew();
             TimeSpan? firstComplete = null;
@@ -204,7 +357,7 @@ internal static partial class TerminalScenario
                         display(FormattableString.Invariant($"\u001b[2;1HCORE03 redraw 星 {current.Rows}x{current.Columns}\u001b[K"));
                     }
 
-                    if (_quit)
+                    if (_quit && (quitGate is null || File.Exists(quitGate)))
                     {
                         return ExitCodes.Success;
                     }

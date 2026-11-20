@@ -6,11 +6,10 @@ socket or Windows named pipe. Local Sandbox and Run operations work without an
 account, enrollment or network connection. Remote grants are the exception.
 They manage access for an existing enrollment.
 
-This guide covers the CLI-01 development candidate. CLI-02 covers terminal
-attachment and output viewing. The filesystem delivery tasks cover data
-transfers and Sandbox deletion, and CENTER-02 covers Center connection commands.
-The Plan records native verification, merge and release status. [Design and
-command map](https://github.com/ArcForges/ArcForges-Design/blob/main/docs/architecture/06-local-node-cli.md) ·
+This guide covers the offline CLI in the CLI-02 development candidate. The
+filesystem delivery tasks cover data transfers and Sandbox deletion, and
+CENTER-02 covers Center connection commands. The Plan records native
+verification, merge and release status. [Design and command map](https://github.com/ArcForges/ArcForges-Design/blob/main/docs/architecture/06-local-node-cli.md) ·
 [Delivery plan](https://github.com/ArcForges/Plan).
 
 ## Start and inspect the local Node
@@ -99,7 +98,7 @@ Run needs to stay alive.
 Linux example with one argument containing a space:
 
 ```sh
-arcforges run start "$SANDBOX_ID" --terminal off --json -- /usr/bin/dash -c 'printf "%s\n" "$1"' _ 'two words'
+arcforges run start "$SANDBOX_ID" --terminal off -- /usr/bin/dash -c 'printf "%s\n" "$1"' _ 'two words'
 ```
 
 Windows PowerShell example:
@@ -111,16 +110,19 @@ arcforges run start $env:SANDBOX_ID --terminal off --json -- "$env:WINDIR\System
 | `--terminal` | Requested mode |
 | --- | --- |
 | `auto` | Select interactive mode when stdin and stdout are terminals and the Sandbox reports qualified terminal support. Otherwise use pipes. |
-| `on` | Request the interactive terminal explicitly. Core can refuse an unsupported combination. |
+| `on` | Request the interactive terminal explicitly. A foreground writer requires a native local input and output terminal. Core can refuse an unsupported Sandbox combination. |
 | `off` | Request separate pipes. |
 
-CLI-01 `run start` returns the Run and its operation receipt. A successful
-command may report an accepted operation while the Run is still starting.
-Check the Run identity and state independently of the CLI process's exit code.
+By default, `run start` prints the accepted Run and command identities on stderr
+and attaches in the foreground. The selected terminal or pipes carry program
+output. Use `--detach` to return the receipt and leave the Run under Node
+management, or `--json` for a machine-readable receipt on stdout. An accepted
+receipt can arrive while the Run is still starting.
+
 Run inspection shows the redacted command summary, bound Sandbox revision and
-profile, verified limits, and exit provenance when observed.
-For a terminal Run, the exit source identifies whose status was observed.
-The raw code or signal is present only when the Node has that evidence.
+profile, verified limits, and observed exit provenance. See the [terminal
+guide](terminal.md) for reattaching, releasing a lease, reading logs and
+understanding a foreground exit code.
 
 ```sh
 arcforges run list --sandbox "$SANDBOX_ID"
@@ -174,7 +176,7 @@ arcforges grant revoke "$GRANT_ID" --expected-revision "$REVISION"
 
 ## Receipts and uncertain outcomes
 
-The human and JSON forms show the same outcome. Normal command data goes to
+The human and JSON receipt forms show the same outcome. Receipt data goes to
 stdout. Human mutation diagnostics include the original command ID and owner
 epoch on stderr. In JSON these are `commandId` and `ownerEpoch` in the result
 document. The CLI also reports `expectedRevision` when present and the literal
@@ -202,7 +204,11 @@ configuration used in the original rename, the original display name and
 revision. Keep the original file because Sandbox inspection redacts environment
 values. Use operation inspection to read the receipt.
 
-| Exit | CLI-01 outcome |
+These codes cover CLI query and receipt results. A [foreground Run](terminal.md#foreground-exit-status)
+can return an observed payload or executor code, including values that overlap
+this table.
+
+| Exit | CLI outcome |
 | --- | --- |
 | `0` | The query succeeded or the reported mutation was accepted or succeeded |
 | `2` | Invalid arguments or object unavailable to the request |
