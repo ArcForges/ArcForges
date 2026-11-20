@@ -120,8 +120,12 @@ internal static class DataCommands
                 var identity = await BeginIdentityAsync(cli, session, selection, sandbox, activeEpoch, ct).ConfigureAwait(false);
                 var request = new DataServiceBeginImportRequest
                 {
-                    SandboxId = sandbox, RelativePath = path, ByteLength = length, Sha256 = digest,
-                    OwnerEpoch = activeEpoch, Meta = identity.Meta,
+                    SandboxId = sandbox,
+                    RelativePath = path,
+                    ByteLength = length,
+                    Sha256 = digest,
+                    OwnerEpoch = activeEpoch,
+                    Meta = identity.Meta,
                 };
                 if (replace)
                 {
@@ -313,8 +317,11 @@ internal static class DataCommands
                 var identity = NewIdentity(epoch, expected: progress.Revision);
                 var request = new DataServiceWriteImportRequest
                 {
-                    Meta = identity.Meta, OwnerEpoch = epoch, TransferId = transfer.TransferId,
-                    Offset = offset, Chunk = ByteString.CopyFrom(buffer.AsSpan(0, count)),
+                    Meta = identity.Meta,
+                    OwnerEpoch = epoch,
+                    TransferId = transfer.TransferId,
+                    Offset = offset,
+                    Chunk = ByteString.CopyFrom(buffer.AsSpan(0, count)),
                 };
                 var reply = await SendAsync(cli, "DataService.WriteImport", identity, progress,
                     () => session.Data.WriteImportAsync(request, deadline: cli.Deadline(s_deadline), cancellationToken: ct),
@@ -377,7 +384,10 @@ internal static class DataCommands
         {
             var request = new DataServiceReadExportRequest
             {
-                Meta = Cli.Meta(), TransferId = transfer.TransferId, Offset = offset, MaxBytes = ChunkBytes,
+                Meta = Cli.Meta(),
+                TransferId = transfer.TransferId,
+                Offset = offset,
+                MaxBytes = ChunkBytes,
             };
             var reply = await QueryAsync(() => session.Data.ReadExportAsync(request, deadline: cli.Deadline(s_deadline),
                 cancellationToken: ct)).ConfigureAwait(false);

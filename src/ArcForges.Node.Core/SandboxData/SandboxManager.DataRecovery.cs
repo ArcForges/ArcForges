@@ -257,7 +257,9 @@ internal sealed partial class SandboxManager
         if (WorkspacePath.FileStamp(stage) != stamp) return false;
         var verified = NextDataRow(row, null) with
         {
-            State = StoredTransferState.Streaming, VerifiedOffset = end, Effect = (int)EffectCertainty.DidNotHappen,
+            State = StoredTransferState.Streaming,
+            VerifiedOffset = end,
+            Effect = (int)EffectCertainty.DidNotHappen,
         };
         SettleData(command, row, verified, "SUCCEEDED", EffectCertainty.Happened);
         return true;
@@ -353,7 +355,8 @@ internal sealed partial class SandboxManager
         {
             AdvanceDataRow(row, NextDataRow(row, row.Manifest.Pending) with
             {
-                State = StoredTransferState.RecoveryRequired, Effect = (int)EffectCertainty.Unknown,
+                State = StoredTransferState.RecoveryRequired,
+                Effect = (int)EffectCertainty.Unknown,
             });
         }
     }

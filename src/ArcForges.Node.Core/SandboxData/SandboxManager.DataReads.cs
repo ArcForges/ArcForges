@@ -94,8 +94,12 @@ internal sealed partial class SandboxManager
         if (Interlocked.Increment(ref _dataDirectoryReads) > DataDirectoryReadConcurrency)
         {
             Interlocked.Decrement(ref _dataDirectoryReads);
-            return new() { Meta = Response(request.Meta), Error = Error(request.Meta, ErrorCategory.State,
-                "managed_use", "sandbox_data_read_busy") };
+            return new()
+            {
+                Meta = Response(request.Meta),
+                Error = Error(request.Meta, ErrorCategory.State,
+                "managed_use", "sandbox_data_read_busy")
+            };
         }
 
         using var budget = new CancellationTokenSource(s_dataReadBudget);
@@ -157,8 +161,12 @@ internal sealed partial class SandboxManager
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && budget.IsCancellationRequested)
         {
-            return new() { Meta = Response(request.Meta), Error = Error(request.Meta, ErrorCategory.Validation,
-                "path_rejected", "directory_observation_limit") };
+            return new()
+            {
+                Meta = Response(request.Meta),
+                Error = Error(request.Meta, ErrorCategory.Validation,
+                "path_rejected", "directory_observation_limit")
+            };
         }
         catch (WorkspacePathException failure) when (continuation &&
             failure.Reason is "directory_changed" or "path_not_directory" or "native_2" or "native_3")

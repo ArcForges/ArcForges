@@ -92,8 +92,11 @@ internal static class TransferRecords
     internal static void Reserve(StoreTransaction transaction, StoredTransfer row)
     {
         RequireFull(transaction);
-        if (!Valid(row) || row is not { State: StoredTransferState.Open, StagingIdentity: UnboundStage, VerifiedOffset: 0,
-                ClosedAt: null, Manifest: { Revision: 1, Pending.Phase: StoredTransferPhase.Begin } })
+        if (!Valid(row) || row is not
+            {
+                State: StoredTransferState.Open, StagingIdentity: UnboundStage, VerifiedOffset: 0,
+                ClosedAt: null, Manifest: { Revision: 1, Pending.Phase: StoredTransferPhase.Begin }
+            })
             throw new ArgumentException("A transfer reservation requires its unbound stage and exact Begin journal.", nameof(row));
 
         if (transaction.Execute("""
@@ -231,8 +234,12 @@ internal static class TransferRecords
         var oldManifest = before.Manifest;
         var newManifest = after.Manifest;
         if (before.ClosedAt.HasValue || newManifest.Revision != checked(oldManifest.Revision + 1)
-            || newManifest with { Revision = oldManifest.Revision, Pending = oldManifest.Pending,
-                SnapshotVersion = oldManifest.SnapshotVersion } != oldManifest
+            || newManifest with
+            {
+                Revision = oldManifest.Revision,
+                Pending = oldManifest.Pending,
+                SnapshotVersion = oldManifest.SnapshotVersion
+            } != oldManifest
             || oldManifest.SnapshotVersion != newManifest.SnapshotVersion && (oldManifest.SnapshotVersion is not null
                 || before.Direction != StoredTransferDirection.Export || after.State != StoredTransferState.Complete)
             || before.TransferId != after.TransferId || before.SandboxId != after.SandboxId || before.OwnerId != after.OwnerId

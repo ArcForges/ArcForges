@@ -368,7 +368,10 @@ internal sealed partial class LocalTransferFile : IDisposable
             var name = new NtName { Length = length, Maximum = length, Buffer = (nint)buffer };
             var attributes = new NtAttributes
             {
-                Length = sizeof(NtAttributes), Root = parent.DangerousGetHandle(), Name = (nint)(&name), Flags = 0x40 | 0x1000,
+                Length = sizeof(NtAttributes),
+                Root = parent.DangerousGetHandle(),
+                Name = (nint)(&name),
+                Flags = 0x40 | 0x1000,
                 Security = (nint)security,
             };
             int status = NtCreateFile(out var raw, stage ? 0xc0110000u : 0x80100000u, in attributes,

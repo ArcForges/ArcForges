@@ -222,7 +222,9 @@ public sealed partial class MxcRunServiceTests
                 Assert.Equal(staged, Value(ready.Value, ready.Error).Transfer);
                 commit = new DataServiceCommitImportRequest
                 {
-                    Meta = Mutation(TransferRevision(ready.Meta)), OwnerEpoch = epoch, TransferId = staged.TransferId,
+                    Meta = Mutation(TransferRevision(ready.Meta)),
+                    OwnerEpoch = epoch,
+                    TransferId = staged.TransferId,
                 };
 
                 using var pending = data.CommitImportAsync(commit, deadline: DateTime.UtcNow.AddSeconds(55), cancellationToken: token);
@@ -364,7 +366,9 @@ public sealed partial class MxcRunServiceTests
         {
             var missing = await node.GetOperationAsync(new NodeServiceGetOperationRequest
             {
-                Meta = Query(), OwnerEpoch = commit.OwnerEpoch, CommandId = commit.Meta.CommandId,
+                Meta = Query(),
+                OwnerEpoch = commit.OwnerEpoch,
+                CommandId = commit.Meta.CommandId,
             }, deadline: Deadline, cancellationToken: token);
             Assert.Null(missing.Value);
             RequireDataRefusal(missing.Error, ErrorCategory.State, "not_found");
@@ -444,7 +448,9 @@ public sealed partial class MxcRunServiceTests
     {
         var reply = await data.CloseTransferAsync(new DataServiceCloseTransferRequest
         {
-            Meta = Mutation(TransferRevision(observed)), OwnerEpoch = commit.OwnerEpoch, TransferId = commit.TransferId,
+            Meta = Mutation(TransferRevision(observed)),
+            OwnerEpoch = commit.OwnerEpoch,
+            TransferId = commit.TransferId,
         }, deadline: Deadline, cancellationToken: token);
         var result = Value(reply.Value, reply.Error).Transfer;
         Assert.Equal(commit.TransferId, result.TransferId);
@@ -511,13 +517,17 @@ public sealed partial class MxcRunServiceTests
         {
             var list = await data.ListEntriesAsync(new DataServiceListEntriesRequest
             {
-                Meta = Query(), SandboxId = sandbox.SandboxId, RelativeDirectory = "data/linked-dir",
+                Meta = Query(),
+                SandboxId = sandbox.SandboxId,
+                RelativeDirectory = "data/linked-dir",
             }, deadline: Deadline, cancellationToken: token);
             Assert.Null(list.Value);
             RequireDataRefusal(list.Error, ErrorCategory.Validation, "path_rejected");
             var export = await data.BeginExportAsync(new DataServiceBeginExportRequest
             {
-                Meta = Mutation(sandbox.Revision), OwnerEpoch = epoch, SandboxId = sandbox.SandboxId,
+                Meta = Mutation(sandbox.Revision),
+                OwnerEpoch = epoch,
+                SandboxId = sandbox.SandboxId,
                 RelativePath = "data/linked-dir/sentinel.bin",
             }, deadline: Deadline, cancellationToken: token);
             Assert.Null(export.Value);
@@ -578,7 +588,10 @@ public sealed partial class MxcRunServiceTests
         config.HostGrants.Add(new HostGrant { HostPath = outside, SandboxPath = outside, Writable = false });
         var created = await sandboxes.CreateAsync(new SandboxServiceCreateRequest
         {
-            Meta = Mutation(), OwnerEpoch = epoch, DisplayName = "Installed file exclusion fixture", Config = config,
+            Meta = Mutation(),
+            OwnerEpoch = epoch,
+            DisplayName = "Installed file exclusion fixture",
+            Config = config,
         }, deadline: Deadline, cancellationToken: token);
         var sandbox = Value(created.Value, created.Error).Sandbox;
         var bound = Assert.Single(sandbox.Config.HostGrants);
@@ -619,7 +632,10 @@ public sealed partial class MxcRunServiceTests
         RequireDataRefusal(import.Error, ErrorCategory.State, "managed_use");
         var export = await data.BeginExportAsync(new DataServiceBeginExportRequest
         {
-            Meta = Mutation(sandbox.Revision), OwnerEpoch = epoch, SandboxId = sandbox.SandboxId, RelativePath = "data/CaseOwner.bin",
+            Meta = Mutation(sandbox.Revision),
+            OwnerEpoch = epoch,
+            SandboxId = sandbox.SandboxId,
+            RelativePath = "data/CaseOwner.bin",
         }, deadline: Deadline, cancellationToken: token);
         Assert.Null(export.Value);
         RequireDataRefusal(export.Error, ErrorCategory.State, "managed_use");
@@ -640,8 +656,11 @@ public sealed partial class MxcRunServiceTests
         var transfer = Value(opened.Value, opened.Error).Transfer;
         var written = await data.WriteImportAsync(new DataServiceWriteImportRequest
         {
-            Meta = Mutation(TransferRevision(opened.Meta)), OwnerEpoch = epoch, TransferId = transfer.TransferId,
-            Offset = 0, Chunk = ByteString.CopyFrom(offered),
+            Meta = Mutation(TransferRevision(opened.Meta)),
+            OwnerEpoch = epoch,
+            TransferId = transfer.TransferId,
+            Offset = 0,
+            Chunk = ByteString.CopyFrom(offered),
         }, deadline: Deadline, cancellationToken: token);
         var staged = Value(written.Value, written.Error).Transfer;
         Assert.Equal((ulong)offered.Length, staged.VerifiedOffset);
@@ -651,7 +670,9 @@ public sealed partial class MxcRunServiceTests
         await File.WriteAllBytesAsync(destination, newOwnerFile, token);
         var declined = await data.CommitImportAsync(new DataServiceCommitImportRequest
         {
-            Meta = Mutation(TransferRevision(written.Meta)), OwnerEpoch = epoch, TransferId = transfer.TransferId,
+            Meta = Mutation(TransferRevision(written.Meta)),
+            OwnerEpoch = epoch,
+            TransferId = transfer.TransferId,
         }, deadline: Deadline, cancellationToken: token);
         Assert.Null(declined.Value);
         RequireDataRefusal(declined.Error, ErrorCategory.Conflict, "identity_changed");
@@ -663,7 +684,9 @@ public sealed partial class MxcRunServiceTests
         Assert.Equal(staged, Value(current.Value, current.Error).Transfer);
         var close = await data.CloseTransferAsync(new DataServiceCloseTransferRequest
         {
-            Meta = Mutation(TransferRevision(current.Meta)), OwnerEpoch = epoch, TransferId = transfer.TransferId,
+            Meta = Mutation(TransferRevision(current.Meta)),
+            OwnerEpoch = epoch,
+            TransferId = transfer.TransferId,
         }, deadline: Deadline, cancellationToken: token);
         var canceled = Value(close.Value, close.Error).Transfer;
         Assert.Equal(TransferState.Failed, canceled.State);
@@ -752,8 +775,11 @@ public sealed partial class MxcRunServiceTests
         Assert.False(File.Exists(destination));
         var first = new DataServiceWriteImportRequest
         {
-            Meta = Mutation(TransferRevision(opened.Meta)), OwnerEpoch = epoch, TransferId = stage.TransferId,
-            Offset = 0, Chunk = ByteString.CopyFrom(original.AsSpan(0, initialBytes)),
+            Meta = Mutation(TransferRevision(opened.Meta)),
+            OwnerEpoch = epoch,
+            TransferId = stage.TransferId,
+            Offset = 0,
+            Chunk = ByteString.CopyFrom(original.AsSpan(0, initialBytes)),
         };
         var written = await data.WriteImportAsync(first, deadline: Deadline, cancellationToken: token);
         var partial = Value(written.Value, written.Error).Transfer;
@@ -773,8 +799,11 @@ public sealed partial class MxcRunServiceTests
         Assert.InRange(progress.VerifiedOffset, 1UL, (ulong)original.Length - 1);
         var final = new DataServiceWriteImportRequest
         {
-            Meta = Mutation(TransferRevision(checkpoint.Meta)), OwnerEpoch = epoch, TransferId = id,
-            Offset = progress.VerifiedOffset, Chunk = ByteString.CopyFrom(original.AsSpan(checked((int)progress.VerifiedOffset))),
+            Meta = Mutation(TransferRevision(checkpoint.Meta)),
+            OwnerEpoch = epoch,
+            TransferId = id,
+            Offset = progress.VerifiedOffset,
+            Chunk = ByteString.CopyFrom(original.AsSpan(checked((int)progress.VerifiedOffset))),
         };
         var written = await resumed.WriteImportAsync(final, deadline: Deadline, cancellationToken: token);
         var verified = Value(written.Value, written.Error).Transfer;
@@ -790,7 +819,9 @@ public sealed partial class MxcRunServiceTests
 
         var commit = new DataServiceCommitImportRequest
         {
-            Meta = Mutation(TransferRevision(written.Meta)), OwnerEpoch = epoch, TransferId = id,
+            Meta = Mutation(TransferRevision(written.Meta)),
+            OwnerEpoch = epoch,
+            TransferId = id,
         };
         var committed = await resumed.CommitImportAsync(commit, deadline: Deadline, cancellationToken: token);
         var receipt = Value(committed.Value, committed.Error).Operation;
@@ -815,7 +846,9 @@ public sealed partial class MxcRunServiceTests
         Assert.True(original.AsSpan().SequenceEqual(actual));
         var closeRequest = new DataServiceCloseTransferRequest
         {
-            Meta = Mutation(TransferRevision(finished.Meta)), OwnerEpoch = epoch, TransferId = id,
+            Meta = Mutation(TransferRevision(finished.Meta)),
+            OwnerEpoch = epoch,
+            TransferId = id,
         };
         var close = await resumed.CloseTransferAsync(closeRequest, deadline: Deadline, cancellationToken: token);
         var closed = Value(close.Value, close.Error).Transfer;
@@ -824,7 +857,9 @@ public sealed partial class MxcRunServiceTests
 
         var reused = new DataServiceCommitImportRequest
         {
-            Meta = Mutation(TransferRevision(close.Meta)), OwnerEpoch = epoch, TransferId = id,
+            Meta = Mutation(TransferRevision(close.Meta)),
+            OwnerEpoch = epoch,
+            TransferId = id,
         };
         reused.Meta.CommandId = closeRequest.Meta.CommandId;
         var wrongMethod = await resumed.CommitImportAsync(reused, deadline: Deadline, cancellationToken: token);
@@ -906,7 +941,10 @@ public sealed partial class MxcRunServiceTests
     {
         var listed = await data.ListEntriesAsync(new DataServiceListEntriesRequest
         {
-            Meta = Query(), SandboxId = sandbox, RelativeDirectory = path[..path.LastIndexOf('/')], Limit = 20,
+            Meta = Query(),
+            SandboxId = sandbox,
+            RelativeDirectory = path[..path.LastIndexOf('/')],
+            Limit = 20,
         }, deadline: Deadline, cancellationToken: token);
         var entry = Assert.Single(Value(listed.Value, listed.Error).Entries, row => row.RelativePath == path);
         Assert.Equal("regular_file", entry.Kind);
@@ -1015,7 +1053,10 @@ public sealed partial class MxcRunServiceTests
     {
         var initial = new DataServiceReadExportRequest
         {
-            Meta = Query(), TransferId = retained.TransferId, Offset = 0, MaxBytes = TransferChunkSize,
+            Meta = Query(),
+            TransferId = retained.TransferId,
+            Offset = 0,
+            MaxBytes = TransferChunkSize,
         };
         var first = await data.ReadExportAsync(initial, deadline: Deadline, cancellationToken: token);
         var firstChunk = Value(first.Value, first.Error).Chunk;
@@ -1026,7 +1067,10 @@ public sealed partial class MxcRunServiceTests
 
         var final = new DataServiceReadExportRequest
         {
-            Meta = Query(), TransferId = retained.TransferId, Offset = (ulong)firstChunk.Data.Length, MaxBytes = TransferChunkSize,
+            Meta = Query(),
+            TransferId = retained.TransferId,
+            Offset = (ulong)firstChunk.Data.Length,
+            MaxBytes = TransferChunkSize,
         };
         await using (var abandoned = OpenChannel(fixture))
         {
@@ -1053,7 +1097,9 @@ public sealed partial class MxcRunServiceTests
         Assert.True(inspected.Meta.ResultRev.Value > 0);
         var close = new DataServiceCloseTransferRequest
         {
-            Meta = Mutation(inspected.Meta.ResultRev), TransferId = retained.TransferId, OwnerEpoch = epoch,
+            Meta = Mutation(inspected.Meta.ResultRev),
+            TransferId = retained.TransferId,
+            OwnerEpoch = epoch,
         };
         var settledRuns = await ListAsync(runs, sandbox.SandboxId);
         Assert.Equal(2, settledRuns.Length);
