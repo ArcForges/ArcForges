@@ -541,6 +541,7 @@ internal sealed partial class SandboxManager
             State = OperationState.Succeeded,
             Effect = EffectCertainty.Happened,
             UpdatedAt = ProtoTime.ToInstant(DateTimeOffset.Parse(storedTime.GetString()!, CultureInfo.InvariantCulture)),
+            ResponseCompacted = receipt.Compacted,
         };
 
         return new() { Meta = Response(request.Meta, operation.Revision.Value), Value = new() { Snapshot = snapshot, Operation = operation } };

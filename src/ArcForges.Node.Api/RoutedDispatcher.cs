@@ -326,7 +326,10 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
 
             if (node.Sandboxes is not { } manager || call.Enrollment.Center.Scheme != "https")
             {
-                return Refused(NodeErrors.EnforcementUnavailable("remote_control_unavailable"));
+                var failure = NodeErrors.EnforcementUnavailable("remote_control_unavailable");
+                failure.Code = "enforcement_failed";
+                failure.MessageKey = "error.resource.enforcement_failed";
+                return Refused(failure);
             }
 
             var (enrollment, channel) = V2Authority(manager, call.Enrollment);
@@ -336,7 +339,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
                 Convert.ToHexStringLower(header.GrantId.Span), checked((long)header.GrantRevision), action,
                 call.ReceivedAt, call.Deadline, ByteString.CopyFrom(SHA256.HashData(request.ToByteArray())), channel, header.OriginalOwnerEpoch);
             var response = execute(manager, request, remote, cancellationToken);
-            CompleteV2StateDetail(V2ReplyError(response));
+            CompleteV2Error(V2ReplyError(response), node.Clock.GetUtcNow());
             return response.ToByteArray();
 
             ReadOnlyMemory<byte> Refused(ArcError error)
@@ -345,7 +348,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
                 var correlation = V2Shapes.IsValid(requested) ? requested.Clone() :
                     new Id { Value = ByteString.CopyFrom(header.CallId.Span) };
                 error.CorrelationId = correlation.Clone();
-                CompleteV2StateDetail(error);
+                CompleteV2Error(error, node.Clock.GetUtcNow());
                 node.Log.Warning("center.control.routed_refused", new LogField("method", action.ToString()),
                     new LogField("callId", Convert.ToHexStringLower(header.CallId.Span)), new LogField("code", error.Code));
                 return refuse(new ResponseMeta { CorrelationId = correlation }, error).ToByteArray();
@@ -371,12 +374,51 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
         _ => null,
     };
 
-    private static void CompleteV2StateDetail(ArcError? error)
+    internal static void CompleteV2Error(ArcError? error, DateTimeOffset now)
     {
+        if (error is null)
+        {
+            return;
+        }
+
         // The published V2 wire shape requires both a state and a reason when state details are present.
-        if (error?.Details?.State is { HasState: false } state)
+        if (error.Details?.State is { HasState: false } state)
         {
             state.State = "operation";
+        }
+
+        switch (error.Category, error.Code, error.Effect)
+        {
+            case (ErrorCategory.State, "busy", EffectCertainty.DidNotHappen):
+            case (ErrorCategory.Resource, "budget_unavailable", EffectCertainty.DidNotHappen):
+            case (ErrorCategory.Resource, "disk_space", EffectCertainty.DidNotHappen)
+                when error.Details?.State?.Reason == "durable_receipt_capacity":
+                if (error.Retry is not
+                    {
+                        Mode: RetryMode.AfterTime,
+                        HasReconciliationOperation: false,
+                        RetryAt: { HasUnixSeconds: true, UnixSeconds: >= -62_135_596_800L and <= 253_402_300_799L,
+                            HasNanos: true, Nanos: <= 999_999_999 },
+                    })
+                {
+                    error.Retry = NodeErrors.Overloaded(now).Retry;
+                }
+
+                break;
+            case (ErrorCategory.Internal, "store_corrupt", EffectCertainty.Unknown):
+                if (error.Retry is not { Mode: RetryMode.Never, RetryAt: null, HasReconciliationOperation: false })
+                {
+                    error.Retry = new RetryAdvice { Mode = RetryMode.Never };
+                }
+
+                break;
+            case (ErrorCategory.State, "receipt_compacted", EffectCertainty.DidNotHappen or EffectCertainty.Happened):
+                if (error.Retry is { Mode: RetryMode.Never } retry)
+                {
+                    retry.ClearReconciliationOperation();
+                }
+
+                break;
         }
     }
 

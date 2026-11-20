@@ -22,6 +22,53 @@ public sealed class SandboxSecurityGrantTests
     private const string SecretReference = "v1:00000000000000000000000000000001:1";
     private const string SecretVariable = "AFV2_GRANT_FIXTURE_REFERENCE";
 
+    [Theory]
+    [InlineData(ErrorCategory.State, "busy", "fixture_reason")]
+    [InlineData(ErrorCategory.Resource, "budget_unavailable", "fixture_reason")]
+    [InlineData(ErrorCategory.Resource, "disk_space", "durable_receipt_capacity")]
+    public void RoutedNoEffectCapacityRefusalsHavePublishedRetryShape(ErrorCategory category, string code, string reason)
+    {
+        var now = DateTimeOffset.UnixEpoch.AddSeconds(100);
+        var response = RoutedRefusal(category, code, EffectCertainty.DidNotHappen, new() { Mode = RetryMode.Never }, reason);
+        Assert.False(Shape.IsValid(response));
+
+        RoutedDispatcher.CompleteV2Error(response.Error, now);
+        Assert.True(Shape.IsValid(response), response.ToString());
+        Assert.Equal(code, response.Error.Code);
+        Assert.Equal(EffectCertainty.DidNotHappen, response.Error.Effect);
+        Assert.Equal("fixture_state", response.Error.Details.State.State);
+        Assert.Equal(reason, response.Error.Details.State.Reason);
+        Assert.Equal(RetryMode.AfterTime, response.Error.Retry.Mode);
+        Assert.Equal(now.AddSeconds(1), ProtoTime.ToDateTimeOffset(response.Error.Retry.RetryAt));
+
+        var explicitAdvice = new RetryAdvice { Mode = RetryMode.AfterTime, RetryAt = ProtoTime.ToInstant(now.AddSeconds(7)) };
+        response.Error.Retry = explicitAdvice;
+        RoutedDispatcher.CompleteV2Error(response.Error, now);
+        Assert.Same(explicitAdvice, response.Error.Retry);
+    }
+
+    [Theory]
+    [InlineData(ErrorCategory.Internal, "store_corrupt", EffectCertainty.Unknown, RetryMode.Reconcile)]
+    [InlineData(ErrorCategory.State, "receipt_compacted", EffectCertainty.DidNotHappen, RetryMode.Never)]
+    [InlineData(ErrorCategory.State, "receipt_compacted", EffectCertainty.Happened, RetryMode.Never)]
+    public void RoutedReceiptRefusalsKeepOriginalEffectAndAggregate(ErrorCategory category, string code, EffectCertainty effect,
+        RetryMode originalRetry)
+    {
+        var response = RoutedRefusal(category, code, effect,
+            new() { Mode = originalRetry, ReconciliationOperation = "NodeService.GetOperation" });
+        var original = response.Error.Details.Clone();
+        Assert.False(Shape.IsValid(response));
+
+        RoutedDispatcher.CompleteV2Error(response.Error, DateTimeOffset.UnixEpoch);
+        Assert.True(Shape.IsValid(response), response.ToString());
+        Assert.Equal(code, response.Error.Code);
+        Assert.Equal(effect, response.Error.Effect);
+        Assert.Equal(original, response.Error.Details);
+        Assert.Equal(RetryMode.Never, response.Error.Retry.Mode);
+        Assert.Null(response.Error.Retry.RetryAt);
+        Assert.False(response.Error.Retry.HasReconciliationOperation);
+    }
+
     [Fact(Timeout = 120_000)]
     [Trait("env", "windows-real")]
     [Trait("env", "linux-real")]
@@ -173,6 +220,9 @@ public sealed class SandboxSecurityGrantTests
                 Verified(enrollment, connection, epoch, actor, child.GrantId, 1, RemoteGrantAction.ResourceSetPolicy, resourceEdit), ct);
             Assert.True(lowered.Value is not null, lowered.Error?.ToString());
             Assert.Equal(2, lowered.Value!.Snapshot.PolicyRevision.Value);
+            Assert.True(Shape.IsValid(lowered), lowered.ToString());
+            Assert.True(lowered.Value.Operation.HasResponseCompacted);
+            Assert.False(lowered.Value.Operation.ResponseCompacted);
             var widenResource = resourceEdit.Clone();
             widenResource.Meta = Command(2);
             widenResource.Policy.MemoryMaxBytes = config.Resources.MemoryMaxBytes;
@@ -405,6 +455,26 @@ public sealed class SandboxSecurityGrantTests
         Assert.True(error.Category == ErrorCategory.Authorization, error.ToString());
         Assert.Equal("permission_denied", error.Code);
         Assert.Equal(EffectCertainty.DidNotHappen, error.Effect);
+    }
+
+    private static SandboxServiceCreateResponse RoutedRefusal(ErrorCategory category, string code, EffectCertainty effect,
+        RetryAdvice retry, string reason = "fixture_reason")
+    {
+        var correlation = NewId();
+        return new()
+        {
+            Meta = new() { CorrelationId = correlation.Clone() },
+            Error = new ArcError
+            {
+                Category = category,
+                Code = code,
+                MessageKey = "sandbox." + code,
+                CorrelationId = correlation,
+                Effect = effect,
+                Retry = retry,
+                Details = new() { State = new() { State = "fixture_state", Reason = reason, Resource = new() { Kind = "sandbox", Id = NewId() } } },
+            },
+        };
     }
 
     private static RequestMeta Query() => new() { CorrelationId = NewId() };

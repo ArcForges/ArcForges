@@ -616,6 +616,7 @@ internal sealed partial class SandboxManager
             Revision = new Revision { Value = run.Revision },
             UpdatedAt = ProtoTime.ToInstant(updated is null ? run.CreatedAt
                 : DateTimeOffset.Parse(updated, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind)),
+            ResponseCompacted = receipt.Compacted,
         };
         return new(RunView(run), operation);
     }
