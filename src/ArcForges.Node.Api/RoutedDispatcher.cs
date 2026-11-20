@@ -397,8 +397,13 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
                     {
                         Mode: RetryMode.AfterTime,
                         HasReconciliationOperation: false,
-                        RetryAt: { HasUnixSeconds: true, UnixSeconds: >= -62_135_596_800L and <= 253_402_300_799L,
-                            HasNanos: true, Nanos: <= 999_999_999 },
+                        RetryAt:
+                        {
+                            HasUnixSeconds: true,
+                            UnixSeconds: >= -62_135_596_800L and <= 253_402_300_799L,
+                            HasNanos: true,
+                            Nanos: <= 999_999_999
+                        },
                     })
                 {
                     error.Retry = NodeErrors.Overloaded(now).Retry;
