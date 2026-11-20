@@ -141,6 +141,14 @@
       "sha256": "1a2985ef51885cf6539fd5b82a87cc1a81ac90499df5779321b6286003a7561c",
       "source": "AFV2-REC-01 Run controller generations and durable Stop intent.",
       "addedBy": "AFV2-REC-01"
+    },
+    {
+      "version": 18,
+      "minReaderVersion": 18,
+      "file": "0018-v2-remote-command-binding.sql",
+      "sha256": "ae5418be78ead33e4490a10710eebc504cbdcc87dfcff1b51554423254b51136",
+      "source": "AFV2-CENTER-03 original authenticated remote command binding and target scope.",
+      "addedBy": "AFV2-CENTER-03"
     }
   ]
 }

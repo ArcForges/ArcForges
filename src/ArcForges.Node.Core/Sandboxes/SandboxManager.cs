@@ -98,7 +98,7 @@ internal sealed partial class SandboxManager : IDisposable
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                var outcome = CreateLocked(request, remote);
+                var outcome = CreateLocked(request, remote, cancellationToken);
                 return outcome.Value is { } value
                     ? new()
                     {
@@ -118,9 +118,10 @@ internal sealed partial class SandboxManager : IDisposable
         }
     }
 
-    private MutationOutcome CreateLocked(SandboxServiceCreateRequest request, VerifiedRemoteGrantCall? remote)
+    private MutationOutcome CreateLocked(SandboxServiceCreateRequest request, VerifiedRemoteGrantCall? remote,
+        CancellationToken cancellationToken)
     {
-        if ((remote is not null && !ValidRemoteCreationWire(request))
+        if ((remote is not null && (!ValidRemoteCreationWire(request) || !MatchesRemoteOwnerEpoch(remote, request.OwnerEpoch)))
             || request.Meta is null || !ValidId(request.Meta.CommandId) || request.Meta.ExpectedRev is not null
             || !ValidId(request.OwnerEpoch) || request.Config is null
             || !NormalizeName(request.DisplayName, out var name, out var normalized))
@@ -159,6 +160,11 @@ internal sealed partial class SandboxManager : IDisposable
                 return Fail(GrantDenied(request.Meta));
             }
 
+            if (!EpochMatches(request.OwnerEpoch))
+            {
+                return Fail(RetiredRunEpoch(request.Meta));
+            }
+
             template = GetGrantTemplate(parent);
             ceiling = GrantView(parent, now).ResourceCeiling;
         }
@@ -174,10 +180,11 @@ internal sealed partial class SandboxManager : IDisposable
         var id = previous?.AggregateId ?? Convert.ToHexStringLower(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16));
         var body = canonical.ToByteArray();
         var intent = new DurableIntent(command, request.OwnerEpoch.Value.ToByteArray(), CreateMethod, Aggregate,
-            id, remote is null ? body : RemoteSandboxIntent(body, remote), AdditionalSafetyReservations: remote is null ? 0 : 1);
+            id, remote is null ? body : RemoteSandboxIntent(body, remote), AdditionalSafetyReservations: remote is null ? 0 : 1,
+            Remote: remote is null ? null : RemoteReceiptBinding(remote, parent!));
         if (previous is not null || !EpochMatches(request.OwnerEpoch))
         {
-            if (remote is not null && previous is not null && !CanReplayRemoteSandbox(previous, parent!, now))
+            if (remote is not null && previous is not null && (previous.Remote != intent.Remote || !CanReplayRemoteSandbox(previous, parent!, now)))
             {
                 return Fail(GrantDenied(request.Meta));
             }
@@ -208,9 +215,13 @@ internal sealed partial class SandboxManager : IDisposable
         }
 
         now = remote is null ? _clock.GetUtcNow() : ObserveGrantTime();
-        if (remote is not null && !RemoteSandboxAdmissionCurrent(remote, parent!, now))
+        if (remote is not null)
         {
-            return Fail(GrantDenied(request.Meta));
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!RemoteSandboxAdmissionCurrent(remote, parent!, now))
+            {
+                return Fail(GrantDenied(request.Meta));
+            }
         }
 
         var reservation = new StoredSandbox(id, OwnerId, name, normalized, 1, StoredSandboxState.Creating,
@@ -277,7 +288,7 @@ internal sealed partial class SandboxManager : IDisposable
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                var outcome = ConfigureLocked(request, remote);
+                var outcome = ConfigureLocked(request, remote, cancellationToken);
                 return outcome.Value is { } value
                     ? new()
                     {
@@ -297,9 +308,10 @@ internal sealed partial class SandboxManager : IDisposable
         }
     }
 
-    private MutationOutcome ConfigureLocked(SandboxServiceConfigureRequest request, VerifiedRemoteGrantCall? remote)
+    private MutationOutcome ConfigureLocked(SandboxServiceConfigureRequest request, VerifiedRemoteGrantCall? remote,
+        CancellationToken cancellationToken)
     {
-        if ((remote is not null && !ValidRemoteConfigurationWire(request))
+        if ((remote is not null && (!ValidRemoteConfigurationWire(request) || !MatchesRemoteOwnerEpoch(remote, request.OwnerEpoch)))
             || request.Meta is null || !ValidId(request.Meta.CommandId) || !ValidId(request.OwnerEpoch)
             || !ValidId(request.SandboxId) || request.Config is null
             || request.Meta.ExpectedRev is not { Value: > 0 and < long.MaxValue })
@@ -341,18 +353,24 @@ internal sealed partial class SandboxManager : IDisposable
             {
                 return Fail(GrantDenied(request.Meta));
             }
+
+            if (!EpochMatches(request.OwnerEpoch))
+            {
+                return Fail(RetiredRunEpoch(request.Meta));
+            }
         }
 
         var expected = request.Meta.ExpectedRev.Value;
         var command = request.Meta.CommandId.Value.ToByteArray();
         var body = canonical.ToByteArray();
         var intent = new DurableIntent(command, request.OwnerEpoch.Value.ToByteArray(), ConfigureMethod, Aggregate,
-            id, remote is null ? body : RemoteSandboxIntent(body, remote), expected);
+            id, remote is null ? body : RemoteSandboxIntent(body, remote), expected,
+            Remote: remote is null ? null : RemoteReceiptBinding(remote, grant!));
         var receipts = Receipts;
         var previous = receipts.Inspect(command);
         if (previous is not null || !EpochMatches(request.OwnerEpoch))
         {
-            if (remote is not null && previous is not null && !CanReplayRemoteSandbox(previous, grant!, now))
+            if (remote is not null && previous is not null && (previous.Remote != intent.Remote || !CanReplayRemoteSandbox(previous, grant!, now)))
             {
                 return Fail(GrantDenied(request.Meta));
             }
@@ -427,6 +445,7 @@ internal sealed partial class SandboxManager : IDisposable
             using var root = _roots.Inspect(id, row.RootIdentity);
             if (remote is not null)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 now = ObserveGrantTime();
                 if (!RemoteSandboxAdmissionCurrent(remote, grant!, now))
                 {

@@ -37,6 +37,7 @@ public sealed class SandboxSecurityGrantTests
             var manager = fixture.Runtime.Sandboxes ?? throw new InvalidOperationException("Sandbox Core was not loaded.");
             var store = fixture.Runtime.Store;
             var enrollment = Enrollment(manager.OwnerId);
+            var connection = new ActiveRemoteChannel(Hex(NewId()), 1);
             var actor = Hex(NewId());
             var template = DefaultConfig();
             string mountPath = Directory.CreateDirectory(Path.Combine(fixture.Root, "template-mounted")).FullName;
@@ -44,7 +45,7 @@ public sealed class SandboxSecurityGrantTests
             template.Environment.Add(new EnvironmentEntry { Name = SecretVariable, SecretRef = SecretReference });
             var set = ProvisionRequest(epoch, enrollment, template);
             var create = CreateRequest(epoch, set.Grant.GrantId, 1, template, "protected provision");
-            var createCall = Verified(enrollment, actor, set.Grant.GrantId, 1, RemoteGrantAction.SandboxCreate, create);
+            var createCall = Verified(enrollment, connection, epoch, actor, set.Grant.GrantId, 1, RemoteGrantAction.SandboxCreate, create);
 
             // A valid local owner connection without a logged-in Center can query grants, but no
             // enrollment alone can authorize a remote command or enable a grant.
@@ -65,6 +66,8 @@ public sealed class SandboxSecurityGrantTests
             var provision = setReply.Value!.Grant;
             Assert.Equal(set.Grant.GrantId, provision.GrantId);
             Assert.Equal(1, provision.TemplateRevision.Value);
+            Denied(manager.CreateFromCenter(create, createCall, ct).Error);
+            AssertNoReceipt(store, create.Meta.CommandId);
             var setReplay = await node.SetRemoteGrantAsync(set, cancellationToken: ct);
             Assert.Null(setReplay.Error);
             Assert.Equal(provision, setReplay.Value.Grant);
@@ -78,7 +81,7 @@ public sealed class SandboxSecurityGrantTests
             Denied((await node.SetRemoteGrantAsync(freshWhileDisconnected, cancellationToken: ct)).Error);
             AssertNoReceipt(store, freshWhileDisconnected.Meta.CommandId);
             Assert.Equal(1L, Count(store, "SELECT count(*) FROM remote_grant;"));
-            manager.UpdateRemoteEnrollment(enrollment);
+            manager.UpdateRemoteEnrollment(enrollment, connection);
 
             using (var saved = JsonDocument.Parse(Receipt(store, set.Meta.CommandId)))
             {
@@ -94,10 +97,13 @@ public sealed class SandboxSecurityGrantTests
             Assert.True(localTemplate.HostGrants[0].HasNativeIdentity);
             Assert.Equal(SecretReference, Assert.Single(localTemplate.Environment).SecretRef);
 
-            var remoteList = manager.ListRemoteGrantsFromCenter(list,
-                Verified(enrollment, actor, provision.GrantId, 1, RemoteGrantAction.ListRemoteGrants, list), ct);
+            var listCall = Verified(enrollment, connection, epoch, actor, provision.GrantId, 1, RemoteGrantAction.ListRemoteGrants, list);
+            var remoteList = manager.ListRemoteGrantsFromCenter(list, listCall, ct);
             Assert.Null(remoteList.Error);
             AssertPrivateTemplateRedacted(Assert.Single(remoteList.Value.Grants).CreationTemplate);
+            var retiredList = manager.ListRemoteGrantsFromCenter(list, listCall with { OriginalOwnerEpoch = NewId().Value.Memory }, ct);
+            Assert.Equal("owner_epoch_retired", retiredList.Error.Code);
+            Assert.Null(retiredList.Value);
 
             var created = manager.CreateFromCenter(create, createCall, ct);
             Assert.True(created.Value is not null, created.Error?.ToString());
@@ -110,6 +116,16 @@ public sealed class SandboxSecurityGrantTests
             Assert.Equal(sandbox.SandboxId, replay.Value.Sandbox.SandboxId);
             Assert.False(replay.Value.Sandbox.HasDataLocation);
             Assert.Equal(1L, Count(store, "SELECT count(*) FROM sandbox;"));
+
+            var reconcile = new NodeServiceGetOperationRequest { Meta = Query(), OwnerEpoch = epoch, CommandId = create.Meta.CommandId };
+            var reconcileCall = Verified(enrollment, connection, epoch, actor, provision.GrantId, 1, RemoteGrantAction.GetOperation, reconcile);
+            connection = new ActiveRemoteChannel(Hex(NewId()), 2);
+            manager.UpdateRemoteEnrollment(enrollment, connection);
+            Denied(manager.GetOperationFromCenter(reconcile, reconcileCall, ct).Error);
+            var reconnectedCall = reconcileCall with { Channel = connection };
+            Assert.Equal(sandbox.SandboxId, manager.GetOperationFromCenter(reconcile, reconnectedCall, ct).Value.Operation.AggregateId);
+            Assert.Equal("not_found", manager.GetOperationFromCenter(reconcile, reconnectedCall with { ActorId = Hex(NewId()) }, ct).Error.Code);
+            createCall = createCall with { Channel = connection };
 
             var inspect = new SandboxServiceInspectRequest { Meta = Query(), SandboxId = sandbox.SandboxId };
             var owned = (await sandboxes.InspectAsync(inspect, cancellationToken: ct)).Value.Sandbox;
@@ -137,19 +153,38 @@ public sealed class SandboxSecurityGrantTests
             config.Resources.MemoryMaxBytes /= 2;
             var configure = ConfigureRequest(epoch, sandbox.SandboxId, 1, config);
             var configured = manager.ConfigureFromCenter(configure,
-                Verified(enrollment, actor, child.GrantId, 1, RemoteGrantAction.SandboxConfigure, configure), ct);
+                Verified(enrollment, connection, epoch, actor, child.GrantId, 1, RemoteGrantAction.SandboxConfigure, configure), ct);
             Assert.True(configured.Value is not null, configured.Error?.ToString());
             Assert.Equal(2, configured.Value!.Sandbox.Revision.Value);
             Assert.False(configured.Value.Sandbox.HasDataLocation);
 
+            var resourceEdit = new ResourceServiceSetPolicyRequest
+            {
+                Meta = Command(1),
+                OwnerEpoch = epoch,
+                ScopeKind = "sandbox",
+                ScopeId = sandbox.SandboxId,
+                Policy = new() { PressureAction = PressureAction.Throttle, MemoryMaxBytes = config.Resources.MemoryMaxBytes / 2 },
+            };
+            var lowered = manager.SetResourcePolicyFromCenter(resourceEdit,
+                Verified(enrollment, connection, epoch, actor, child.GrantId, 1, RemoteGrantAction.ResourceSetPolicy, resourceEdit), ct);
+            Assert.True(lowered.Value is not null, lowered.Error?.ToString());
+            Assert.Equal(2, lowered.Value!.Snapshot.PolicyRevision.Value);
+            var widenResource = resourceEdit.Clone();
+            widenResource.Meta = Command(2);
+            widenResource.Policy.MemoryMaxBytes = config.Resources.MemoryMaxBytes;
+            Denied(manager.SetResourcePolicyFromCenter(widenResource,
+                Verified(enrollment, connection, epoch, actor, child.GrantId, 1, RemoteGrantAction.ResourceSetPolicy, widenResource), ct).Error);
+            AssertNoReceipt(store, widenResource.Meta.CommandId);
+
             var expand = ConfigureRequest(epoch, sandbox.SandboxId, 2, owned.Config);
             Denied(manager.ConfigureFromCenter(expand,
-                Verified(enrollment, actor, child.GrantId, 1, RemoteGrantAction.SandboxConfigure, expand), ct).Error);
+                Verified(enrollment, connection, epoch, actor, child.GrantId, 1, RemoteGrantAction.SandboxConfigure, expand), ct).Error);
             AssertNoReceipt(store, expand.Meta.CommandId);
             var repair = ConfigureRequest(epoch, sandbox.SandboxId, 2, config);
             repair.RepairError = true;
             Denied(manager.ConfigureFromCenter(repair,
-                Verified(enrollment, actor, child.GrantId, 1, RemoteGrantAction.SandboxConfigure, repair), ct).Error);
+                Verified(enrollment, connection, epoch, actor, child.GrantId, 1, RemoteGrantAction.SandboxConfigure, repair), ct).Error);
             AssertNoReceipt(store, repair.Meta.CommandId);
 
             var revoke = RevokeRequest(epoch, provision.GrantId, 1);
@@ -162,7 +197,7 @@ public sealed class SandboxSecurityGrantTests
             Denied(manager.CreateFromCenter(create, createCall, ct).Error);
             var afterRevoke = ConfigureRequest(epoch, sandbox.SandboxId, 2, config);
             Denied(manager.ConfigureFromCenter(afterRevoke,
-                Verified(enrollment, actor, child.GrantId, 1, RemoteGrantAction.SandboxConfigure, afterRevoke), ct).Error);
+                Verified(enrollment, connection, epoch, actor, child.GrantId, 1, RemoteGrantAction.SandboxConfigure, afterRevoke), ct).Error);
             AssertNoReceipt(store, afterRevoke.Meta.CommandId);
             var settled = (await sandboxes.InspectAsync(inspect, cancellationToken: ct)).Value.Sandbox;
             Assert.Equal(owned.DataLocation, settled.DataLocation);
@@ -203,7 +238,8 @@ public sealed class SandboxSecurityGrantTests
             var manager = fixture.Runtime.Sandboxes ?? throw new InvalidOperationException("Sandbox Core was not loaded.");
             var store = fixture.Runtime.Store;
             var enrollment = Enrollment(manager.OwnerId);
-            manager.UpdateRemoteEnrollment(enrollment);
+            var connection = new ActiveRemoteChannel(Hex(NewId()), 1);
+            manager.UpdateRemoteEnrollment(enrollment, connection);
             var actor = Hex(NewId());
             var template = DefaultConfig();
             var set = ProvisionRequest(epoch, enrollment, template);
@@ -218,12 +254,13 @@ public sealed class SandboxSecurityGrantTests
             Assert.Equal(1, provision.Revision.Value);
 
             var create = CreateRequest(epoch, provision.GrantId, 1, template, "denied provision");
-            var call = Verified(enrollment, actor, provision.GrantId, 1, RemoteGrantAction.SandboxCreate, create);
+            var call = Verified(enrollment, connection, epoch, actor, provision.GrantId, 1, RemoteGrantAction.SandboxCreate, create);
             var foreign = enrollment with { EnrollmentId = Hex(NewId()) };
             Denied(manager.CreateFromCenter(create, call with { Enrollment = foreign }, ct).Error);
             Denied(manager.CreateFromCenter(create, call with { Enrollment = enrollment with { Epoch = Hex(NewId()) } }, ct).Error);
             Denied(manager.CreateFromCenter(create, call with { Action = RemoteGrantAction.SandboxConfigure }, ct).Error);
             Denied(manager.CreateFromCenter(create, call with { Revision = 2 }, ct).Error);
+            Denied(manager.CreateFromCenter(create, call with { Channel = connection with { HubFence = 2 } }, ct).Error);
             var past = TimeProvider.System.GetUtcNow().AddMinutes(-1);
             Denied(manager.CreateFromCenter(create, call with { IssuedAt = past.AddSeconds(-10), ExpiresAt = past }, ct).Error);
             var changedBody = create.Clone();
@@ -232,7 +269,7 @@ public sealed class SandboxSecurityGrantTests
             var widened = create.Clone();
             widened.Config.Resources.ClearMemoryMaxBytes();
             Denied(manager.CreateFromCenter(widened,
-                Verified(enrollment, actor, provision.GrantId, 1, RemoteGrantAction.SandboxCreate, widened), ct).Error);
+                Verified(enrollment, connection, epoch, actor, provision.GrantId, 1, RemoteGrantAction.SandboxCreate, widened), ct).Error);
             AssertNoReceipt(store, create.Meta.CommandId);
             Assert.Equal(0L, Count(store, "SELECT count(*) FROM sandbox;"));
 
@@ -250,10 +287,10 @@ public sealed class SandboxSecurityGrantTests
 
             Denied(manager.CreateFromCenter(create, call, ct).Error);
             Denied(manager.CreateFromCenter(create,
-                Verified(enrollment, actor, provision.GrantId, 2, RemoteGrantAction.SandboxCreate, create), ct).Error);
+                Verified(enrollment, connection, epoch, actor, provision.GrantId, 2, RemoteGrantAction.SandboxCreate, create), ct).Error);
             AssertNoReceipt(store, create.Meta.CommandId);
             var revoke = RevokeRequest(epoch, provision.GrantId, 2);
-            var revokeCall = Verified(enrollment, actor, provision.GrantId, 2, RemoteGrantAction.RevokeRemoteGrant, revoke);
+            var revokeCall = Verified(enrollment, connection, epoch, actor, provision.GrantId, 2, RemoteGrantAction.RevokeRemoteGrant, revoke);
             Denied(manager.RevokeRemoteGrantFromCenter(revoke, revokeCall with { GrantId = Hex(NewId()) }, ct).Error);
             AssertNoReceipt(store, revoke.Meta.CommandId);
             var revoked = manager.RevokeRemoteGrantFromCenter(revoke, revokeCall, ct);
@@ -283,7 +320,7 @@ public sealed class SandboxSecurityGrantTests
         };
         grant.Methods.AddRange(["/arcforges.sandbox.v2.SandboxService/Create", "/arcforges.sandbox.v2.SandboxService/Configure",
             "/arcforges.sandbox.v2.NodeService/GetOperation", "/arcforges.sandbox.v2.NodeService/ListRemoteGrants",
-            "/arcforges.sandbox.v2.NodeService/RevokeRemoteGrant"]);
+            "/arcforges.sandbox.v2.NodeService/RevokeRemoteGrant", "/arcforges.sandbox.v2.ResourceService/SetPolicy"]);
         return new() { Meta = Command(), OwnerEpoch = epoch, Grant = grant };
     }
 
@@ -321,12 +358,13 @@ public sealed class SandboxSecurityGrantTests
 
     // This is the typed Core boundary used after the Center adapter verifies a message. No Center
     // channel or claimed localhost session is involved in this fixture.
-    private static VerifiedRemoteGrantCall Verified(ActiveRemoteEnrollment enrollment, string actor, Id grant,
+    private static VerifiedRemoteGrantCall Verified(ActiveRemoteEnrollment enrollment, ActiveRemoteChannel connection, Id ownerEpoch,
+        string actor, Id grant,
         long revision, RemoteGrantAction action, IMessage request)
     {
         var now = TimeProvider.System.GetUtcNow();
         return new(enrollment, actor, Hex(grant), revision, action, now.AddSeconds(-1), now.AddMinutes(3),
-            ByteString.CopyFrom(SHA256.HashData(request.ToByteArray())));
+            ByteString.CopyFrom(SHA256.HashData(request.ToByteArray())), connection, ownerEpoch.Value.Memory);
     }
 
     private static void AssertPrivateTemplateRedacted(SandboxConfig config)

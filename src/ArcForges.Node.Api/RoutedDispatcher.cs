@@ -1,15 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Contracts.Relay.V1;
 using ArcForges.Node.CloudLink;
 using ArcForges.Node.Core;
+using ArcForges.Node.Core.Sandboxes;
 using ArcForges.Node.Core.Scheduling;
 using ArcForges.Node.Core.Security;
 using ArcForges.Node.Store;
 using Google.Protobuf;
+using V2 = ArcForges.Contracts.Sandbox.V2;
+using V2Shapes = ArcForges.Contracts.Sandbox.V2.Shapes.ContractShapeValidation;
 
 namespace ArcForges.Node.Api;
 
@@ -214,6 +218,145 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
 
     // Coordinates real policy changes around a file read in the in-process native fixture.
     internal FileServiceHandler? FileHandlerForTests => Volatile.Read(ref _files);
+
+    /// <summary>Dispatches a request admitted by the authenticated V2 channel on its exact live connection.</summary>
+    internal Task<ReadOnlyMemory<byte>> DispatchV2Async(V2ControlCall call, CancellationToken cancellationToken)
+    {
+        node.CountCall();
+        ReadOnlyMemory<byte> result = call.Request.Header.Selector switch
+        {
+            V2ControlSelector.NodeGetOperation => Route(RemoteGrantAction.GetOperation, V2.NodeServiceGetOperationRequest.Parser, V2Shapes.IsValid,
+                static request => (request.Meta, request.OwnerEpoch, request.CommandId),
+                static (manager, request, remote, token) => manager.GetOperationFromCenter(request, remote, token),
+                static (meta, error) => new V2.NodeServiceGetOperationResponse { Meta = meta, Error = error }),
+            V2ControlSelector.NodeListRemoteGrants => Route(RemoteGrantAction.ListRemoteGrants, V2.NodeServiceListRemoteGrantsRequest.Parser, V2Shapes.IsValid,
+                static request => (request.Meta, null, null),
+                static (manager, request, remote, token) => manager.ListRemoteGrantsFromCenter(request, remote, token),
+                static (meta, error) => new V2.NodeServiceListRemoteGrantsResponse { Meta = meta, Error = error }),
+            V2ControlSelector.NodeRevokeRemoteGrant => Route(RemoteGrantAction.RevokeRemoteGrant, V2.NodeServiceRevokeRemoteGrantRequest.Parser, V2Shapes.IsValid,
+                static request => (request.Meta, request.OwnerEpoch, request.Meta?.CommandId),
+                static (manager, request, remote, token) => manager.RevokeRemoteGrantFromCenter(request, remote, token),
+                static (meta, error) => new V2.NodeServiceRevokeRemoteGrantResponse { Meta = meta, Error = error }),
+            V2ControlSelector.SandboxCreate => Route(RemoteGrantAction.SandboxCreate, V2.SandboxServiceCreateRequest.Parser, V2Shapes.IsValid,
+                static request => (request.Meta, request.OwnerEpoch, request.Meta?.CommandId),
+                static (manager, request, remote, token) => manager.CreateFromCenter(request, remote, token),
+                static (meta, error) => new V2.SandboxServiceCreateResponse { Meta = meta, Error = error }),
+            V2ControlSelector.SandboxConfigure => Route(RemoteGrantAction.SandboxConfigure, V2.SandboxServiceConfigureRequest.Parser, V2Shapes.IsValid,
+                static request => (request.Meta, request.OwnerEpoch, request.Meta?.CommandId),
+                static (manager, request, remote, token) => manager.ConfigureFromCenter(request, remote, token),
+                static (meta, error) => new V2.SandboxServiceConfigureResponse { Meta = meta, Error = error }),
+            V2ControlSelector.SandboxList => Route(RemoteGrantAction.SandboxList, V2.SandboxServiceListRequest.Parser, V2Shapes.IsValid,
+                static request => (request.Meta, null, null),
+                static (manager, request, remote, token) => manager.ListFromCenter(request, remote, token),
+                static (meta, error) => new V2.SandboxServiceListResponse { Meta = meta, Error = error }),
+            V2ControlSelector.SandboxInspect => Route(RemoteGrantAction.SandboxInspect, V2.SandboxServiceInspectRequest.Parser, V2Shapes.IsValid,
+                static request => (request.Meta, null, null),
+                static (manager, request, remote, token) => manager.InspectFromCenter(request, remote, token),
+                static (meta, error) => new V2.SandboxServiceInspectResponse { Meta = meta, Error = error }),
+            V2ControlSelector.RunStart => Route(RemoteGrantAction.RunStart, V2.RunServiceStartRequest.Parser, V2Shapes.IsValid,
+                static request => (request.Meta, request.OwnerEpoch, request.Meta?.CommandId),
+                static (manager, request, remote, token) => manager.StartFromCenter(request, remote, token),
+                static (meta, error) => new V2.RunServiceStartResponse { Meta = meta, Error = error }),
+            V2ControlSelector.RunStop => Route(RemoteGrantAction.RunStop, V2.RunServiceStopRequest.Parser, V2Shapes.IsValid,
+                static request => (request.Meta, request.OwnerEpoch, request.Meta?.CommandId),
+                static (manager, request, remote, token) => manager.StopFromCenter(request, remote, token),
+                static (meta, error) => new V2.RunServiceStopResponse { Meta = meta, Error = error }),
+            V2ControlSelector.RunList => Route(RemoteGrantAction.RunList, V2.RunServiceListRequest.Parser, V2Shapes.IsValid,
+                static request => (request.Meta, null, null),
+                static (manager, request, remote, token) => manager.ListRunsFromCenter(request, remote, token),
+                static (meta, error) => new V2.RunServiceListResponse { Meta = meta, Error = error }),
+            V2ControlSelector.RunInspect => Route(RemoteGrantAction.RunInspect, V2.RunServiceInspectRequest.Parser, V2Shapes.IsValid,
+                static request => (request.Meta, null, null),
+                static (manager, request, remote, token) => manager.InspectRunFromCenter(request, remote, token),
+                static (meta, error) => new V2.RunServiceInspectResponse { Meta = meta, Error = error }),
+            V2ControlSelector.ResourceGetBudget => Route(RemoteGrantAction.ResourceGetBudget, V2.ResourceServiceGetBudgetRequest.Parser, V2Shapes.IsValid,
+                static request => (request.Meta, null, null),
+                static (manager, request, remote, token) => manager.GetResourceBudgetFromCenter(request, remote, token),
+                static (meta, error) => new V2.ResourceServiceGetBudgetResponse { Meta = meta, Error = error }),
+            V2ControlSelector.ResourceSetPolicy => Route(RemoteGrantAction.ResourceSetPolicy, V2.ResourceServiceSetPolicyRequest.Parser, V2Shapes.IsValid,
+                static request => (request.Meta, request.OwnerEpoch, request.Meta?.CommandId),
+                static (manager, request, remote, token) => manager.SetResourcePolicyFromCenter(request, remote, token),
+                static (meta, error) => new V2.ResourceServiceSetPolicyResponse { Meta = meta, Error = error }),
+            _ => ReadOnlyMemory<byte>.Empty,
+        };
+        return Task.FromResult(result);
+
+        ReadOnlyMemory<byte> Route<TRequest, TResponse>(RemoteGrantAction action, MessageParser<TRequest> parser, Func<TRequest, bool> valid,
+            Func<TRequest, (RequestMeta? Meta, Id? OwnerEpoch, Id? CommandId)> identify,
+            Func<SandboxManager, TRequest, VerifiedRemoteGrantCall, CancellationToken, TResponse> execute,
+            Func<ResponseMeta, ArcError, TResponse> refuse)
+            where TRequest : class, IMessage<TRequest>
+            where TResponse : class, IMessage<TResponse>
+        {
+            var header = call.Request.Header;
+            RequestMeta? meta = null;
+            cancellationToken.ThrowIfCancellationRequested();
+            TRequest request;
+            Id? ownerEpoch;
+            Id? commandId;
+            try
+            {
+                var exactBody = call.Request.Body.Span;
+                request = parser.ParseFrom(exactBody);
+                (meta, ownerEpoch, commandId) = identify(request);
+                if (!valid(request) || !V2Shapes.IsValid(meta?.CorrelationId) ||
+                    !request.Equals(parser.WithDiscardUnknownFields(true).ParseFrom(exactBody)) ||
+                    ((commandId is null || action == RemoteGrantAction.GetOperation) && meta?.CommandId is not null))
+                {
+                    return Refused(NodeErrors.InvalidArgument("remote_request_shape_invalid"));
+                }
+            }
+            catch (InvalidProtocolBufferException)
+            {
+                return Refused(NodeErrors.InvalidArgument("remote_request_shape_invalid"));
+            }
+
+            bool hasSignedCommand = header.CommandId.Span.IndexOfAnyExcept((byte)0) >= 0;
+            if (hasSignedCommand != (commandId is not null && ownerEpoch is not null) ||
+                (ownerEpoch is not null && !ownerEpoch.Value.Span.SequenceEqual(header.OriginalOwnerEpoch.Span)) ||
+                (commandId is not null && !commandId.Value.Span.SequenceEqual(header.CommandId.Span)))
+            {
+                return Refused(NodeErrors.PermissionDenied("remote_request_identity_mismatch"));
+            }
+
+            if (node.Lifecycle.IsStopping)
+            {
+                return Refused(NodeErrors.NodeStopping(node.Clock.GetUtcNow()));
+            }
+
+            if (node.Sandboxes is not { } manager || call.Enrollment.Center.Scheme != "https")
+            {
+                return Refused(NodeErrors.EnforcementUnavailable("remote_control_unavailable"));
+            }
+
+            var (enrollment, channel) = V2Authority(manager, call.Enrollment);
+            // The channel verifies the signature and digest of the received bytes before dispatch. Core separately
+            // checks this digest of its typed request, independent of the sender's protobuf field order.
+            var remote = new VerifiedRemoteGrantCall(enrollment, Convert.ToHexStringLower(header.ActorId.Span),
+                Convert.ToHexStringLower(header.GrantId.Span), checked((long)header.GrantRevision), action,
+                call.ReceivedAt, call.Deadline, ByteString.CopyFrom(SHA256.HashData(request.ToByteArray())), channel, header.OriginalOwnerEpoch);
+            return execute(manager, request, remote, cancellationToken).ToByteArray();
+
+            ReadOnlyMemory<byte> Refused(ArcError error)
+            {
+                var requested = meta?.CorrelationId;
+                var correlation = V2Shapes.IsValid(requested) ? requested.Clone() :
+                    new Id { Value = ByteString.CopyFrom(header.CallId.Span) };
+                error.CorrelationId = correlation.Clone();
+                if (error.Details?.State is { HasState: false } state)
+                {
+                    state.State = "sandbox";
+                }
+                node.Log.Warning("center.control.routed_refused", new LogField("method", action.ToString()),
+                    new LogField("callId", Convert.ToHexStringLower(header.CallId.Span)), new LogField("code", error.Code));
+                return refuse(new ResponseMeta { CorrelationId = correlation }, error).ToByteArray();
+            }
+        }
+    }
+
+    internal static (ActiveRemoteEnrollment Enrollment, ActiveRemoteChannel Channel) V2Authority(SandboxManager manager,
+        V2ChannelEnrollment accepted) => (new(manager.OwnerId, accepted.EnrollmentId, accepted.AccountId, accepted.Center.Url,
+            accepted.Center.Url, accepted.ProtocolEpoch), new(accepted.ConnectionId, accepted.HubFence));
 
     /// <inheritdoc />
     public async Task<RoutedAnswer?> DispatchAsync(VerifiedCall call, IRoutedLink link, CancellationToken cancellationToken)

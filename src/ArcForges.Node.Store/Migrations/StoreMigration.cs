@@ -84,7 +84,7 @@ public sealed class MigrationPlan
 public static class StoreMigrations
 {
     /// <summary>The schema version this binary writes; it reads stores whose <c>min_reader_version</c> is at most this.</summary>
-    public const int SupportedSchemaVersion = 17;
+    public const int SupportedSchemaVersion = 18;
 
     /// <summary>The released steps, loaded from the embedded <c>Schema/*.sql</c> resources.</summary>
     public static MigrationPlan Released { get; } = new([
@@ -141,6 +141,9 @@ public static class StoreMigrations
 
         // Older readers cannot coordinate durable Run Stop and controller-generation recovery.
         Load(17, 17, "0017-v2-run-recovery.sql"),
+
+        // Remote command identity and receipts must be reserved and replayed with the original authenticated binding.
+        Load(18, 18, "0018-v2-remote-command-binding.sql"),
     ]);
 
     private static StoreMigration Load(int version, int minReaderVersion, string name)

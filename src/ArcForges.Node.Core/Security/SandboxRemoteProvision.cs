@@ -61,10 +61,14 @@ internal sealed partial class SandboxManager
         }.ToJsonString());
 
     private bool RemoteSandboxAdmissionCurrent(VerifiedRemoteGrantCall remote, StoredRemoteGrant grant, DateTimeOffset now) =>
-        remote.Enrollment == _activeEnrollment && remote.IssuedAt <= now && remote.ExpiresAt > now
+        RemoteChannelCurrent(remote) && remote.IssuedAt <= now && remote.ExpiresAt > now
         && _store.Read(reader => RemoteGrantRecords.IsActiveRevision(reader, OwnerId, grant.GrantId, grant.Revision, now)
             && (grant.ParentGrantId is null || (grant.ParentGrantRevision is { } revision
                 && RemoteGrantRecords.IsActiveRevision(reader, OwnerId, grant.ParentGrantId, revision, now))));
+
+    private static DurableRemoteBinding RemoteReceiptBinding(VerifiedRemoteGrantCall remote, StoredRemoteGrant grant) =>
+        new(remote.Enrollment.AccountId, remote.ActorId, remote.Enrollment.EnrollmentId, remote.Enrollment.Epoch,
+            grant.GrantId, grant.Revision, grant.Scope == StoredRemoteGrantScope.Sandbox ? "sandbox" : "provision", grant.SandboxId);
 
     private bool CanReplayRemoteSandbox(DurableReceipt receipt, StoredRemoteGrant grant, DateTimeOffset now)
     {

@@ -6,9 +6,11 @@ using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Sandbox.V2;
 using ArcForges.Node.Core.Resources;
+using ArcForges.Node.Core.Security;
 using ArcForges.Node.Platform;
 using ArcForges.Node.Store;
 using Google.Protobuf;
+using Shape = ArcForges.Contracts.Sandbox.V2.Shapes.ContractShapeValidation;
 
 namespace ArcForges.Node.Core.Sandboxes;
 
@@ -17,7 +19,17 @@ internal sealed partial class SandboxManager
     private const string SetResourcePolicyMethod = "ResourceService.SetPolicy";
 
     internal ResourceServiceSetPolicyResponse SetResourcePolicy(ResourceServiceSetPolicyRequest request,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken) => SetResourcePolicy(request, null, cancellationToken);
+
+    internal ResourceServiceSetPolicyResponse SetResourcePolicyFromCenter(ResourceServiceSetPolicyRequest request,
+        VerifiedRemoteGrantCall verified, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(verified);
+        return SetResourcePolicy(request, verified, cancellationToken);
+    }
+
+    private ResourceServiceSetPolicyResponse SetResourcePolicy(ResourceServiceSetPolicyRequest request,
+        VerifiedRemoteGrantCall? remote, CancellationToken cancellationToken)
     {
         var meta = request.Meta;
         string scope = request.ScopeKind;
@@ -25,7 +37,9 @@ internal sealed partial class SandboxManager
             || !ValidGrantId(meta.CommandId) || !ValidGrantId(request.OwnerEpoch)
             || scope is not ("node" or "sandbox" or "run")
             || (scope == "node" ? request.ScopeId is not null : !ValidGrantId(request.ScopeId))
-            || !ValidResourceEdit(scope, request.Policy))
+            || !ValidResourceEdit(scope, request.Policy)
+            || remote is not null && (!Shape.IsValid(request) || !MatchesRemoteOwnerEpoch(remote, request.OwnerEpoch)
+                || !KnownRemoteFields(request, ResourceServiceSetPolicyRequest.Parser)))
         {
             return ResourceEditError(meta, Error(meta, ErrorCategory.Validation, "invalid_argument", "resource_policy_invalid"));
         }
@@ -35,7 +49,7 @@ internal sealed partial class SandboxManager
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                return SetResourcePolicyLocked(request, cancellationToken);
+                return SetResourcePolicyLocked(request, remote, cancellationToken);
             }
             catch (Exception failure) when (IsStorageFailure(failure))
             {
@@ -45,13 +59,22 @@ internal sealed partial class SandboxManager
     }
 
     private ResourceServiceSetPolicyResponse SetResourcePolicyLocked(ResourceServiceSetPolicyRequest request,
-        CancellationToken cancellationToken)
+        VerifiedRemoteGrantCall? remote, CancellationToken cancellationToken)
     {
         var meta = request.Meta;
         string scope = request.ScopeKind;
         string? id = request.ScopeId is null ? null : ToHex(request.ScopeId);
         long expected = meta.ExpectedRev.Value;
         byte[] commandId = meta.CommandId.Value.ToByteArray();
+        var grantTime = remote is null ? default : ObserveGrantTime();
+        var grant = remote is not null && id is not null
+            ? AuthorizeRemoteTarget(remote, request, RemoteGrantAction.ResourceSetPolicy, scope, id, grantTime) : null;
+        var remoteCeiling = grant is null ? null : GrantView(grant, grantTime).ResourceCeiling;
+        if (remote is not null && (grant is null || remoteCeiling is null))
+        {
+            return ResourceEditError(meta, GrantDenied(meta));
+        }
+
         var canonical = new ResourceServiceSetPolicyRequest
         {
             ScopeKind = scope,
@@ -59,11 +82,24 @@ internal sealed partial class SandboxManager
             Policy = request.Policy,
             Meta = new() { ExpectedRev = meta.ExpectedRev },
         };
+        var bodyBytes = canonical.ToByteArray();
         var intent = new DurableIntent(commandId, request.OwnerEpoch.Value.ToByteArray(), SetResourcePolicyMethod,
-            scope, id ?? OwnerId, canonical.ToByteArray());
-        if (!EpochMatches(request.OwnerEpoch) || Receipts.Inspect(commandId) is not null)
+            scope, id ?? OwnerId, remote is null ? bodyBytes : RemoteSandboxIntent(bodyBytes, remote),
+            Remote: remote is null ? null : RemoteReceiptBinding(remote, grant!));
+        var prior = EpochMatches(request.OwnerEpoch) ? Receipts.Inspect(commandId) : null;
+        if (!EpochMatches(request.OwnerEpoch) || prior is not null)
         {
+            if (remote is not null && prior is not null && !CanReplayRemoteMutation(prior, intent.Remote, grant!, grantTime))
+            {
+                return ResourceEditError(meta, GrantDenied(meta));
+            }
+
             return ResourceEditAdmission(Receipts.Admit(intent), request);
+        }
+
+        if (remoteCeiling is not null && !RemoteResourceCapsWithin(request.Policy, remoteCeiling))
+        {
+            return ResourceEditError(meta, GrantDenied(meta));
         }
 
         var frame = _resourceMonitor?.Latest;
@@ -85,7 +121,7 @@ internal sealed partial class SandboxManager
         var desired = new StoredResourcePolicy(scope, id, checked(current + 1), JsonFormatter.Default.Format(policy));
         if (scope == "run")
         {
-            return ApplyRunResourceEdit(request, intent, previous, desired, snapshot, frame, cancellationToken);
+            return ApplyRunResourceEdit(request, intent, previous, desired, snapshot, frame, remote, grant, cancellationToken);
         }
 
         if (CheckResourcePolicyCeiling(scope, id, policy, meta, frame) is { } refused)
@@ -105,19 +141,49 @@ internal sealed partial class SandboxManager
                 return ResourceEditError(meta, NotFound(meta));
             }
 
+            if (remoteCeiling is not null)
+            {
+                // Transient host capacity must not authorize a broader persisted policy.
+                var unbounded = PolicyHardGrant(null, defaultRuns: ulong.MaxValue);
+                var proposed = SandboxHardGrant(sandbox, policy, unbounded);
+                var currentCeiling = SandboxHardGrant(sandbox, DecodeResourcePolicy(previous), unbounded);
+                var delegatedCeiling = PolicyHardGrant(remoteCeiling, defaultRuns: ulong.MaxValue);
+                if (proposed.Exceeded(currentCeiling.Limit(delegatedCeiling)) is not null)
+                {
+                    return ResourceEditError(meta, GrantDenied(meta));
+                }
+            }
+
             ApplySandboxGrantCeiling(snapshot, sandbox, policy, frame);
         }
 
         snapshot.PolicyRevision = new() { Value = desired.Revision };
         string body = ResourceEditResult(snapshot, _clock.GetUtcNow());
         cancellationToken.ThrowIfCancellationRequested();
+        if (remote is not null)
+        {
+            grantTime = ObserveGrantTime();
+            if (!RemoteSandboxAdmissionCurrent(remote, grant!, grantTime))
+            {
+                return ResourceEditError(meta, GrantDenied(meta));
+            }
+        }
+
         return ResourceEditAdmission(Receipts.AdmitObserved(intent, "SUCCEEDED", (int)EffectCertainty.Happened, body,
-            transaction => RequireChanged(ResourceStateRecords.TryWritePolicy(transaction, OwnerId, desired, previous?.Revision))), request);
+            transaction =>
+            {
+                RequireChanged(ResourceStateRecords.TryWritePolicy(transaction, OwnerId, desired, previous?.Revision));
+                if (remote is not null)
+                {
+                    RecordRemoteAdmission(transaction, meta, SetResourcePolicyMethod, id!, desired.Revision, remote,
+                        EffectCertainty.Happened, "sandbox_resource_policy_committed", grantTime);
+                }
+            }), request);
     }
 
     private ResourceServiceSetPolicyResponse ApplyRunResourceEdit(ResourceServiceSetPolicyRequest request, DurableIntent intent,
         StoredResourcePolicy? previous, StoredResourcePolicy desired, ResourceSnapshot snapshot, SandboxResourceFrame? frame,
-        CancellationToken cancellationToken)
+        VerifiedRemoteGrantCall? remote, StoredRemoteGrant? grant, CancellationToken cancellationToken)
     {
         var meta = request.Meta;
         string runId = desired.ScopeId!;
@@ -158,6 +224,30 @@ internal sealed partial class SandboxManager
             AddRunLimitEdit(changes, limits, initial, control, RunResourceDimension.Memory, "memory", admittedPolicy.MemoryMaxBytes);
         }
 
+        var grantTime = remote is null ? default : ObserveGrantTime();
+        if (grant is not null)
+        {
+            var ceiling = GrantView(grant, grantTime).ResourceCeiling;
+            var currentCeiling = new HardGrant(
+                oldPolicy?.HasCpuMaxMillicores == true ? oldPolicy.CpuMaxMillicores : launch.CpuCeilingMillicores,
+                oldPolicy?.HasMemoryMaxBytes == true ? oldPolicy.MemoryMaxBytes : launch.MemoryMaxBytes,
+                ulong.MaxValue);
+            if (ceiling is null)
+            {
+                return ResourceEditError(meta, GrantDenied(meta));
+            }
+
+            var delegated = currentCeiling.Limit(PolicyHardGrant(ceiling, defaultRuns: ulong.MaxValue));
+            if (changes.Any(change =>
+                {
+                    var allowed = delegated.Amount(change.Name);
+                    return change.Requested > allowed || change.Target > allowed;
+                }))
+            {
+                return ResourceEditError(meta, GrantDenied(meta));
+            }
+        }
+
         if (changes.Any(change => change.Previous is null || change.Previous.BoundaryIdentity != boundary
             || change.Previous.Status == StoredRunLimitStatus.Pending))
         {
@@ -170,6 +260,15 @@ internal sealed partial class SandboxManager
         }
 
         cancellationToken.ThrowIfCancellationRequested();
+        if (remote is not null)
+        {
+            grantTime = ObserveGrantTime();
+            if (!RemoteSandboxAdmissionCurrent(remote, grant!, grantTime))
+            {
+                return ResourceEditError(meta, GrantDenied(meta));
+            }
+        }
+
         var admission = Receipts.Admit(intent, transaction =>
         {
             RequireChanged(ResourceStateRecords.TryWritePolicy(transaction, OwnerId, desired, previous?.Revision));
@@ -178,6 +277,12 @@ internal sealed partial class SandboxManager
                 var prior = change.Previous!;
                 RequireChanged(ResourceStateRecords.TrySetLimitDesired(transaction, OwnerId, runId, row.Epoch,
                     boundary, prior.DesiredRevision, new(prior.Dimension, prior.Unit, desired.Revision, LimitText(change.Requested))));
+            }
+
+            if (remote is not null)
+            {
+                RecordRemoteAdmission(transaction, meta, SetResourcePolicyMethod, runId, desired.Revision, remote,
+                    EffectCertainty.Unknown, "run_resource_policy_admitted", grantTime);
             }
         });
         if (admission.Decision != DurableDecision.Execute)
@@ -208,6 +313,12 @@ internal sealed partial class SandboxManager
             {
                 RequireChanged(ResourceStateRecords.TryObserveLimit(transaction, OwnerId, runId, row.Epoch,
                     boundary, dimension, desired.Revision, result.Facts));
+            }
+
+            if (remote is not null)
+            {
+                RecordRemoteAdmission(transaction, meta, SetResourcePolicyMethod, runId, desired.Revision, remote, effect,
+                    uncertain ? "run_resource_policy_unconfirmed" : "run_resource_policy_observed", _clock.GetUtcNow());
             }
         });
         return ResourceEditReceipt(receipt, request);
