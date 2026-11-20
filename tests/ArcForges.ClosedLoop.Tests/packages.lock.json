@@ -105,7 +105,7 @@
         "dependencies": {
           "ArcForges.Contracts.Foundation": "[1.0.0-ci.486.1, )",
           "ArcForges.Contracts.Node": "[1.0.0-ci.450.1, )",
-          "ArcForges.LocalRpc": "[1.0.0-ci.150.1, )"
+          "ArcForges.LocalRpc": "[1.0.0-ci.151.1, )"
         }
       },
       "arcforges.commandline": {
@@ -127,7 +127,7 @@
       "arcforges.node.api": {
         "type": "Project",
         "dependencies": {
-          "ArcForges.LocalRpc": "[1.0.0-ci.150.1, )",
+          "ArcForges.LocalRpc": "[1.0.0-ci.151.1, )",
           "ArcForges.Node.CloudLink": "[0.1.0-dev, )",
           "ArcForges.Node.Core": "[0.1.0-dev, )",
           "ArcForges.Node.Platform.Linux": "[0.1.0-dev, )",
@@ -243,9 +243,9 @@
       },
       "ArcForges.LocalRpc": {
         "type": "CentralTransitive",
-        "requested": "[1.0.0-ci.150.1, )",
-        "resolved": "1.0.0-ci.150.1",
-        "contentHash": "V+jwDvspCBPniEsil+nwla7jaxuiCgRDzEGGRA5uZ0itNyi7A2jBFw4S0IMo9U0cbkq2wNGBpC1Gs7joT84Rww==",
+        "requested": "[1.0.0-ci.151.1, )",
+        "resolved": "1.0.0-ci.151.1",
+        "contentHash": "PzyUQ/4Q85qEBf5La2ZSuT6ERIQQSqe6JR+dUewppEslXnBzPIvEGNXOD44Io/FwIb6zbluWAm58nTuT5vJz6A==",
         "dependencies": {
           "Grpc.AspNetCore.Server": "[2.85.0]",
           "Grpc.Core.Api": "[2.85.0]",
