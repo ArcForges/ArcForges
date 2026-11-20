@@ -24,12 +24,14 @@ public sealed partial class MxcRunServiceTests
         DeleteDuringRemoval, DeleteBeforeRemovalProof, DeleteBeforeTombstone];
 
     [Fact(Timeout = 145_000, DisableParallelization = true)]
-    public async Task InstalledSandboxDeletePreservesSiblingAndHostGrantAfterManagedUseClears()
+    public Task InstalledSandboxDeletePreservesSiblingAndHostGrantAfterManagedUseClears() =>
+        VerifyInstalledDeleteAfterManagedUseAsync(provisionedDataRoot: null, TestContext.Current.CancellationToken);
+
+    internal static async Task VerifyInstalledDeleteAfterManagedUseAsync(string? provisionedDataRoot, CancellationToken token)
     {
-        var token = TestContext.Current.CancellationToken;
         token.ThrowIfCancellationRequested();
         RequireExtractedPackage();
-        await using var fixture = TestNode.Create();
+        await using var fixture = TestNode.Create(provisionedDataRoot: provisionedDataRoot);
         PrepareInstalledCliFixture(fixture);
         var process = await fixture.StartNodeAsync();
         Id? cleanupEpoch = null;
@@ -43,6 +45,11 @@ public sealed partial class MxcRunServiceTests
             var data = new DataService.DataServiceClient(connection.CallInvoker);
             var epoch = (await HandshakeAsync(node)).OwnerEpoch;
             cleanupEpoch = epoch;
+            if (provisionedDataRoot is not null)
+            {
+                await RequireProtectedLinuxLocalRegistrationsAsync(connection, token);
+                await PrepareInstalledDeleteCustodyQuarantineAsync(node, sandboxes, epoch, token);
+            }
 
             var sibling = await CreateSandboxAsync(sandboxes, epoch);
             var externalRoot = Directory.CreateDirectory(Path.Combine(fixture.Root, "delete external fixture")).FullName;
@@ -63,6 +70,10 @@ public sealed partial class MxcRunServiceTests
             await File.WriteAllBytesAsync(ownedFile, owned, token);
             await File.WriteAllBytesAsync(siblingFile, siblingBytes, token);
             await File.WriteAllBytesAsync(externalFile, externalBytes, token);
+            if (OperatingSystem.IsLinux() && provisionedDataRoot is not null)
+            {
+                Directory.CreateSymbolicLink(Path.Combine(ownedParent, "external link"), externalRoot);
+            }
 
             var abandoned = (await InstalledCliSuccessAsync(fixture, "sandbox", "delete", id, "--plan-only")).GetProperty("plan");
             Assert.Equal(sandbox.SandboxId, InstalledCliId(abandoned, "sandboxId"));
@@ -103,8 +114,14 @@ public sealed partial class MxcRunServiceTests
             var image = CopySecurityTestLoad(working);
             var release = Path.Combine(working, "delete-run-release");
             var marker = Path.Combine(working, "delete-run-ready.log");
-            var start = BuildStart(sandbox, epoch,
-                [image, "hold", "--hold-ms", "60000", "--until-file", release, "--marker", marker]);
+            var custodyMarker = Path.Combine(working, "delete-run-custody.log");
+            string[] arguments = [image, "hold", "--hold-ms", "60000", "--until-file", release, "--marker", marker];
+            if (provisionedDataRoot is not null)
+            {
+                arguments = await ObserveLinuxCustodyFromRunAsync(fixture, siblingFile, custodyMarker, arguments);
+            }
+
+            var start = BuildStart(sandbox, epoch, arguments);
             start.TerminalMode = TerminalMode.Pipes;
             start.TerminalSize = null;
             var started = await runs.StartAsync(start, deadline: Deadline, cancellationToken: token);
@@ -112,6 +129,11 @@ public sealed partial class MxcRunServiceTests
             await WaitForStateAsync(fixture, runs, heldRun, RunState.Running, token);
             await TestNode.WaitAsync(() => ReadLines(marker).Any(line => line.StartsWith("ready ", StringComparison.Ordinal)),
                 NativeBound, "the native Run marker in the installed Delete fixture");
+            if (provisionedDataRoot is not null)
+            {
+                Assert.Equal(["source denied", "control denied", "quarantine denied", "sibling denied"], ReadLines(custodyMarker));
+            }
+
             var runPlan = await RequireBlockedDeletePlanAsync(sandboxes, epoch, sandbox, heldRun, expectedTransfer: null, token);
             Assert.Equal(rootDigest, runPlan.RootIdentityDigest);
             Assert.Equal(RunState.Running, (await InspectAsync(runs, heldRun, token)).State);
@@ -135,7 +157,7 @@ public sealed partial class MxcRunServiceTests
             Assert.Equal(boundGrant.HostPath, Assert.Single(fresh.GetProperty("excludedHostGrants").EnumerateArray()).GetString());
             string[] apply = ["sandbox", "delete", id, "--plan", IdText.Format(freshId),
                 "--expected-revision", CliRevision(sandbox.Revision), "--yes"];
-            if (OperatingSystem.IsLinux())
+            if (OperatingSystem.IsLinux() && provisionedDataRoot is null)
             {
                 var denied = await RequireLinuxDeleteRefusalAsync(fixture, node, sandboxes, sandbox, epoch, freshId, token);
                 var refused = await InstalledCliRefusalAsync(fixture, 2, "path_rejected", [.. apply, "--command-id",
@@ -201,6 +223,79 @@ public sealed partial class MxcRunServiceTests
         }
     }
 
+    private static async Task RequireProtectedLinuxLocalRegistrationsAsync(NodeChannel connection, CancellationToken token)
+    {
+        var legacy = await Assert.ThrowsAsync<RpcException>(async () =>
+        {
+            await connection.Tasks.ListTasksAsync(new() { Meta = Query() }, deadline: Deadline, cancellationToken: token);
+        });
+        Assert.Equal(StatusCode.Unimplemented, legacy.StatusCode);
+        var control = new CenterControlService.CenterControlServiceClient(connection.CallInvoker);
+        var center = await Assert.ThrowsAsync<RpcException>(async () =>
+        {
+            await control.GetStatusAsync(new() { Meta = Query() }, deadline: Deadline, cancellationToken: token);
+        });
+        Assert.Equal(StatusCode.Unimplemented, center.StatusCode);
+    }
+
+    private static async Task PrepareInstalledDeleteCustodyQuarantineAsync(NodeService.NodeServiceClient node,
+        SandboxService.SandboxServiceClient sandboxes, Id epoch, CancellationToken token)
+    {
+        // The Node creates the actual quarantine through the qualified deletion path. The test never provisions it directly.
+        var seed = await CreateSandboxAsync(sandboxes, epoch);
+        var plan = await ReadDeletePlanAsync(sandboxes, seed, token);
+        var request = new SandboxServiceDeleteRequest
+        {
+            Meta = Mutation(seed.Revision),
+            OwnerEpoch = epoch,
+            SandboxId = seed.SandboxId,
+            PlanId = plan.PlanId,
+        };
+        var accepted = await sandboxes.DeleteAsync(request, deadline: Deadline, cancellationToken: token);
+        Assert.Equal(request.Meta.CommandId, Value(accepted.Value, accepted.Error).Operation.CommandId);
+        await WaitForInstalledDeleteReceiptAsync(node, epoch, request.Meta.CommandId, seed.SandboxId, token);
+        RequireInstalledDeleteNameAbsent(seed.DataLocation);
+    }
+
+    private static async Task<string[]> ObserveLinuxCustodyFromRunAsync(TestNode fixture, string siblingFile,
+        string custodyMarker, string[] payload)
+    {
+        var source = Path.Combine(fixture.DataRoot, "sandboxes");
+        var control = Path.Combine(fixture.DataRoot, "control");
+        var quarantine = Path.Combine(control, SandboxPrivateRoots.DeletionQuarantineName);
+        using var host = fixture.Start("/usr/bin/stat", ["-Lc", "%d:%i", "--", source, control, quarantine]);
+        var observed = await TestNode.CompleteAsync(host, NativeBound);
+        Assert.True(observed.ExitCode == 0, observed.ToString());
+        var identities = observed.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        Assert.Equal(3, identities.Length);
+
+        // Bubblewrap can create synthetic parent directories for a Run's writable mounts. Compare native
+        // identity to distinguish that view from a real protected parent, and directly check the sibling file.
+        const string script = """
+            marker=$1
+            sibling=$2
+            shift 2
+            : > "$marker" || exit 74
+            /usr/bin/stat -Lc '%d:%i' -- "$marker" >/dev/null || exit 74
+            for label in source control quarantine; do
+              if actual=$(/usr/bin/stat -Lc '%d:%i' -- "$1" 2>/dev/null) && [ "$actual" = "$2" ]; then
+                printf '%s exposed\n' "$label" >> "$marker"
+                exit 74
+              fi
+              printf '%s denied\n' "$label" >> "$marker"
+              shift 2
+            done
+            if [ -e "$sibling" ] || [ -r "$sibling" ] || [ -w "$sibling" ]; then
+              printf 'sibling exposed\n' >> "$marker"
+              exit 74
+            fi
+            printf 'sibling denied\n' >> "$marker"
+            exec "$@"
+            """;
+        return ["/usr/bin/dash", "-c", script, "custody-observation", custodyMarker, siblingFile,
+            source, identities[0], control, identities[1], quarantine, identities[2], .. payload];
+    }
+
     [Fact(Timeout = 300_000, DisableParallelization = true)]
     public async Task InstalledSandboxDeleteReconcilesInterruptedOwnedBoundaries()
     {
@@ -214,9 +309,15 @@ public sealed partial class MxcRunServiceTests
         }
 
         Assert.True(OperatingSystem.IsWindows());
+        await VerifyInstalledDeleteRecoveryAsync(token);
+    }
+
+    internal static async Task VerifyInstalledDeleteRecoveryAsync(CancellationToken token, Func<string, string>? provisionedDataRoot = null)
+    {
+        RequireExtractedPackage();
         foreach (var checkpoint in DeleteRecoveryCheckpoints)
         {
-            await VerifyInterruptedInstalledDeletionAsync(checkpoint, token);
+            await VerifyInterruptedInstalledDeletionAsync(checkpoint, token, provisionedDataRoot?.Invoke(checkpoint));
         }
     }
 
@@ -280,9 +381,9 @@ public sealed partial class MxcRunServiceTests
         return request.Meta.CommandId;
     }
 
-    private static async Task VerifyInterruptedInstalledDeletionAsync(string checkpoint, CancellationToken token)
+    private static async Task VerifyInterruptedInstalledDeletionAsync(string checkpoint, CancellationToken token, string? provisionedDataRoot = null)
     {
-        await using var fixture = TestNode.Create();
+        await using var fixture = TestNode.Create(provisionedDataRoot: provisionedDataRoot);
         PrepareInstalledCliFixture(fixture);
         bool cancelOriginalCall = checkpoint == DeleteAfterLock;
         fixture.Environment[ExecutionFaults.Variable] = checkpoint + "=60" +
@@ -299,8 +400,12 @@ public sealed partial class MxcRunServiceTests
             WorkspaceObjectIdentity originalRoot;
             string[] initialEntries;
             string siblingFile;
+            var externalRoot = Directory.CreateDirectory(Path.Combine(fixture.Root, "delete checkpoint external fixture")).FullName;
+            var externalFile = Path.Combine(externalRoot, "external-checkpoint.bin");
             string firstNodeEpoch;
             byte[] sentinel = BuildFileBytes(695, 57);
+            byte[] externalSentinel = BuildFileBytes(163, 31);
+            await File.WriteAllBytesAsync(externalFile, externalSentinel, token);
             await using (var channel = OpenChannel(fixture))
             {
                 var node = new NodeService.NodeServiceClient(channel.CallInvoker);
@@ -308,8 +413,8 @@ public sealed partial class MxcRunServiceTests
                 var hello = await HandshakeAsync(node);
                 cleanupEpoch = hello.OwnerEpoch;
                 firstNodeEpoch = hello.NodeEpoch;
-                sandbox = await CreateSandboxAsync(sandboxes, hello.OwnerEpoch);
-                sibling = await CreateDeleteSandboxAsync(sandboxes, hello.OwnerEpoch, sandbox.Config, externalRoot: null, token);
+                sibling = await CreateSandboxAsync(sandboxes, hello.OwnerEpoch);
+                sandbox = await CreateDeleteSandboxAsync(sandboxes, hello.OwnerEpoch, sibling.Config, externalRoot, token);
                 var nested = Directory.CreateDirectory(Path.Combine(sandbox.DataLocation, "data", "owned checkpoint subtree")).FullName;
                 _ = Directory.CreateDirectory(Path.Combine(sandbox.DataLocation, "work", "quoted directory"));
                 await File.WriteAllBytesAsync(Path.Combine(nested, "first.bin"), sentinel, token);
@@ -358,8 +463,9 @@ public sealed partial class MxcRunServiceTests
                     var cancelled = await Assert.ThrowsAsync<RpcException>(() => pendingCall.ResponseAsync.WaitAsync(NativeBound, token));
                     Assert.Equal(StatusCode.Cancelled, cancelled.StatusCode);
                     var runs = new RunService.RunServiceClient(channel.CallInvoker);
-                    var start = BuildStart(sandbox, original.OwnerEpoch,
-                        [Path.Combine(Environment.SystemDirectory, "cmd.exe"), "/d", "/c", "exit 0"]);
+                    var start = BuildStart(sandbox, original.OwnerEpoch, OperatingSystem.IsWindows()
+                        ? [Path.Combine(Environment.SystemDirectory, "cmd.exe"), "/d", "/c", "exit 0"]
+                        : ["/usr/bin/true"]);
                     start.Meta.ExpectedRev = new Revision { Value = observed.Row.Revision };
                     var fenced = await runs.StartAsync(start, deadline: Deadline, cancellationToken: token);
                     Assert.Null(fenced.Value);
@@ -378,6 +484,7 @@ public sealed partial class MxcRunServiceTests
             var interruptedEntries = await RequireInterruptedDeleteTreeAsync(checkpoint, sandbox.DataLocation, quarantine,
                 originalRoot, initialEntries, waitForClosedHandles: true, token);
             Assert.Equal(sentinel, await File.ReadAllBytesAsync(siblingFile, token));
+            Assert.Equal(externalSentinel, await File.ReadAllBytesAsync(externalFile, token));
             fixture.Environment.Remove(ExecutionFaults.Variable);
             string? alternateSentinel = null;
             if (checkpoint == DeleteAfterQuarantine)
@@ -471,6 +578,7 @@ public sealed partial class MxcRunServiceTests
             RequireInstalledDeleteNameAbsent(sandbox.DataLocation);
             RequireInstalledDeleteNameAbsent(quarantine);
             Assert.Equal(sentinel, await File.ReadAllBytesAsync(siblingFile, token));
+            Assert.Equal(externalSentinel, await File.ReadAllBytesAsync(externalFile, token));
             if (alternateSentinel is not null) Assert.Equal(sentinel, await File.ReadAllBytesAsync(alternateSentinel, token));
             await RequireDeleteSandboxReadyAsync(recoveredSandboxes, sibling, token);
         }

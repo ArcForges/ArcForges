@@ -159,8 +159,8 @@ internal sealed partial class SandboxManager
 
     private static bool IsMissingDeletionSource(Exception error) => error switch
     {
-        WorkspacePathException path => path.Reason is "native_2" or "native_3",
-        SandboxPrivateRootException root => root.Reason is "native_2" or "native_3",
+        WorkspacePathException path => WorkspacePath.IsMissingRemovalEntry(path),
+        SandboxPrivateRootException root => root.Reason == "native_2" || (OperatingSystem.IsWindows() && root.Reason == "native_3"),
         _ => false,
     };
 

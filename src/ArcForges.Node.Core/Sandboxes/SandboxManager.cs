@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Sandbox.V2;
+using ArcForges.Node.Core.Platform;
 using ArcForges.Node.Core.Security;
 using ArcForges.Node.Platform.Capabilities;
 using ArcForges.Node.Store;
@@ -28,7 +29,7 @@ internal sealed partial class SandboxManager : IDisposable
 
     internal SandboxManager(NodeStore store, string dataRoot, string ownerId, NodeSecretStore secrets,
         TimeProvider clock, string? nodeEpoch = null, string? mxcInstallationRoot = null,
-        SandboxProtectedEndpoint? protectedEndpoint = null)
+        SandboxProtectedEndpoint? protectedEndpoint = null, LinuxSandboxDeletionAuthority? linuxDeletionAuthority = null)
     {
         _store = store;
         _dataRoot = dataRoot;
@@ -36,7 +37,7 @@ internal sealed partial class SandboxManager : IDisposable
         _nodeEpoch = nodeEpoch ?? Guid.NewGuid().ToString("N");
         _mxcInstallationRoot = mxcInstallationRoot ?? Path.Combine(AppContext.BaseDirectory, "mxc");
         OwnerId = ownerId;
-        _roots = new(dataRoot);
+        _roots = new(dataRoot, linuxDeletionAuthority);
         _runSecrets = new SandboxRunSecrets(secrets, dataRoot, ownerId);
         _protectedEndpoint = protectedEndpoint;
         _receipts = new(() => OpenReceipts(secrets));

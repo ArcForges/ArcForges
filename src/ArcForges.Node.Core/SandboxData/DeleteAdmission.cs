@@ -50,7 +50,7 @@ internal sealed partial class SandboxManager
 
         using (var held = _roots.Inspect(sandboxId, row.RootIdentity))
         {
-            RequireDeletionPlatform(held, sandboxId);
+            _roots.RequireDeletionPlatform(held, sandboxId);
         }
 
         cancellationToken.ThrowIfCancellationRequested();
@@ -85,26 +85,9 @@ internal sealed partial class SandboxManager
             SandboxRecords.HasUnresolvedUse(reader, OwnerId, sandboxId, epoch, continuation: continuation)
             || _liveRuns.Keys.Any(runId => RunRecords.Get(reader, OwnerId, runId)?.SandboxId == sandboxId));
 
-    private static void RequireDeletionPlatform(SandboxPrivateRootLease held, string name)
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            held.OwnedParent.RequireSandboxDeleteWindowsGuard();
-            return;
-        }
-
-        if (OperatingSystem.IsLinux())
-        {
-            held.OwnedParent.RequireSandboxDeleteLinuxGuard(name, held.OwnedWorkspace.RootIdentity);
-            return;
-        }
-
-        throw new WorkspacePathException("path_enforcement_unavailable");
-    }
-
     private void RequireDeletionContinuation(StoredSandbox row, StoredSandboxDeletion journal)
     {
-        if (OperatingSystem.IsWindows() && journal is { RemovalVerified: true, QuarantineIdentity: { } removed })
+        if (journal is { RemovalVerified: true, QuarantineIdentity: { } removed })
         {
             _roots.VerifyRecordedRemoval(row.SandboxId, journal.RootIdentity, journal.DeletionId, removed);
             return;
@@ -113,10 +96,10 @@ internal sealed partial class SandboxManager
         try
         {
             using var held = _roots.InspectDeletion(row.SandboxId, journal.RootIdentity, journal.DeletionId, journal.QuarantineIdentity);
-            RequireDeletionPlatform(held, journal.QuarantineIdentity is null ? row.SandboxId : journal.DeletionId);
+            _roots.RequireDeletionPlatform(held, journal.QuarantineIdentity is null ? row.SandboxId : journal.DeletionId);
         }
-        catch (SandboxPrivateRootException failure) when (OperatingSystem.IsWindows()
-            && journal.QuarantineIdentity is null && failure.Reason is "native_2" or "native_3" or "deletion_quarantine_location_occupied")
+        catch (SandboxPrivateRootException failure) when (journal.QuarantineIdentity is null &&
+            (IsMissingDeletionSource(failure) || failure.Reason == "deletion_quarantine_location_occupied"))
         {
             // A prior attempt may have moved the exact root before the quarantine identity was committed.
             try

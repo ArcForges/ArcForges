@@ -49,13 +49,61 @@ internal sealed class SandboxPrivateRootLease(WorkspacePath dataRoot, WorkspaceP
 }
 
 /// <summary>Creates and reopens private Sandbox data without using a display name or accepting a preexisting root.</summary>
-internal sealed class SandboxPrivateRoots(string dataRoot)
+internal sealed class SandboxPrivateRoots(string dataRoot, LinuxSandboxDeletionAuthority? linuxDeletionAuthority = null)
 {
     private const string ParentName = "sandboxes";
     internal const string DeletionQuarantineName = "deletion-quarantine";
     private static readonly string[] WritableNames = ["home", "config", "cache", "tmp", "work", "data"];
     internal static IReadOnlyList<string> OwnedDataDirectoryNames { get; } = Array.AsReadOnly(WritableNames);
     private static readonly string[] ProtectedDirectories = ["store", "control", "credentials"];
+
+    internal void RequireDeletionPlatform(SandboxPrivateRootLease held, string name)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            held.OwnedParent.RequireSandboxDeleteWindowsGuard();
+            return;
+        }
+
+        if (OperatingSystem.IsLinux())
+        {
+            if (linuxDeletionAuthority is { } authority)
+            {
+                using var control = held.OwnedAnchor.OpenSandboxDirectory("control", configuredRoot: true);
+                authority.RequirePath(control);
+                WorkspacePath? quarantine = null;
+                try
+                {
+                    quarantine = control.OpenSandboxDirectory(DeletionQuarantineName);
+                }
+                catch (WorkspacePathException error) when (WorkspacePath.IsMissingRemovalEntry(error))
+                {
+                    // A fresh store may not have created quarantine yet. The worker creates it under this checked control directory.
+                }
+
+                using (quarantine)
+                {
+                    if (quarantine is not null)
+                    {
+                        authority.RequirePath(quarantine);
+                    }
+                }
+
+                held.OwnedParent.RequireAdmittedSandboxDeleteLinuxGuard(name, held.OwnedWorkspace.RootIdentity, authority);
+            }
+            else
+            {
+                held.OwnedParent.RequireSandboxDeleteLinuxGuard(name, held.OwnedWorkspace.RootIdentity);
+            }
+
+            return;
+        }
+
+        throw new WorkspacePathException("path_enforcement_unavailable");
+    }
+
+    private LinuxSandboxDeletionAuthority RequireLinuxDeletionAuthority() => linuxDeletionAuthority
+        ?? throw new WorkspacePathException(WorkspacePath.LinuxSandboxDeletionGuardUnavailable);
 
     internal static WorkspacePath OpenTransferStaging(WorkspacePath dataRoot)
     {
@@ -265,7 +313,7 @@ internal sealed class SandboxPrivateRoots(string dataRoot)
         {
             parent = control.OpenSandboxDirectory(DeletionQuarantineName);
         }
-        catch (WorkspacePathException error) when (error.Reason is "native_2" or "native_3")
+        catch (WorkspacePathException error) when (WorkspacePath.IsMissingRemovalEntry(error))
         {
             return;
         }
@@ -282,7 +330,7 @@ internal sealed class SandboxPrivateRoots(string dataRoot)
     internal string QuarantineDeletion(string sandboxId, string originalIdentity, string deletionId, Action applied,
         CancellationToken cancellationToken)
     {
-        if (!OperatingSystem.IsWindows())
+        if (!OperatingSystem.IsWindows() && !OperatingSystem.IsLinux())
         {
             throw new SandboxPrivateRootException("path_enforcement_unavailable");
         }
@@ -290,10 +338,22 @@ internal sealed class SandboxPrivateRoots(string dataRoot)
         using var original = Inspect(sandboxId, originalIdentity);
         var expected = original.OwnedWorkspace.RootIdentity;
         using var control = original.OwnedAnchor.OpenSandboxDirectory("control", configuredRoot: true);
+        if (OperatingSystem.IsLinux())
+        {
+            var authority = RequireLinuxDeletionAuthority();
+            authority.RequirePath(control);
+            authority.RequirePath(original.OwnedParent);
+        }
+
         using var quarantine = EnsureManagedDirectory(control, DeletionQuarantineName);
         original.ReleaseOwnedRoot();
-        var movedIdentity = original.OwnedParent.QuarantineSandboxWindows(sandboxId, quarantine, deletionId,
-            expected, applied, cancellationToken);
+        var movedIdentity = OperatingSystem.IsLinux()
+            ? original.OwnedParent.QuarantineSandboxLinux(sandboxId, quarantine, deletionId, expected,
+                RequireLinuxDeletionAuthority(), applied, cancellationToken)
+            : OperatingSystem.IsWindows()
+                ? original.OwnedParent.QuarantineSandboxWindows(sandboxId, quarantine, deletionId, expected,
+                    applied, cancellationToken)
+                : throw new SandboxPrivateRootException("path_enforcement_unavailable");
         using var moved = quarantine.OpenSandboxDirectory(deletionId);
         if (!expected.SameObject(movedIdentity) || !expected.SameObject(moved.RootIdentity)
             || !original.OwnedParent.InspectRemovalAbsent(sandboxId))
@@ -311,10 +371,24 @@ internal sealed class SandboxPrivateRoots(string dataRoot)
         using var source = anchor.OpenSandboxDirectory(ParentName);
         using var control = anchor.OpenSandboxDirectory("control", configuredRoot: true);
         using var quarantine = control.OpenSandboxDirectory(DeletionQuarantineName);
+        if (OperatingSystem.IsLinux())
+        {
+            var authority = RequireLinuxDeletionAuthority();
+            authority.RequirePath(source);
+            authority.RequirePath(quarantine);
+        }
+
         using var root = quarantine.OpenSandboxDirectory(deletionId);
         if (!source.InspectRemovalAbsent(sandboxId) || originalIdentity != Identity(sandboxId, marker, anchor, source, root))
         {
             throw new SandboxPrivateRootException("deletion_quarantine_identity_changed");
+        }
+
+        if (OperatingSystem.IsLinux())
+        {
+            var authority = RequireLinuxDeletionAuthority();
+            source.SyncAdmittedSandboxDeleteLinuxParent(authority);
+            quarantine.SyncAdmittedSandboxDeleteLinuxParent(authority);
         }
 
         return Identity(deletionId, marker, anchor, quarantine, root);
@@ -332,6 +406,13 @@ internal sealed class SandboxPrivateRoots(string dataRoot)
         using var source = anchor.OpenSandboxDirectory(ParentName);
         using var control = anchor.OpenSandboxDirectory("control", configuredRoot: true);
         using var quarantine = control.OpenSandboxDirectory(DeletionQuarantineName);
+        if (OperatingSystem.IsLinux())
+        {
+            var authority = RequireLinuxDeletionAuthority();
+            authority.RequirePath(source);
+            authority.RequirePath(quarantine);
+        }
+
         if (!originalIdentity.StartsWith(IdentityPrefix(sandboxId, marker, anchor, source), StringComparison.Ordinal)
             || !quarantineIdentity.StartsWith(IdentityPrefix(deletionId, marker, anchor, quarantine), StringComparison.Ordinal)
             || !source.InspectRemovalAbsent(sandboxId) || !quarantine.InspectRemovalAbsent(deletionId))
@@ -343,7 +424,7 @@ internal sealed class SandboxPrivateRoots(string dataRoot)
     internal SandboxRemovalBatchResult RemoveDeletionBatch(string sandboxId, string originalIdentity, string deletionId,
         string quarantineIdentity, int maximumEntries, Action applied, CancellationToken cancellationToken)
     {
-        if (!OperatingSystem.IsWindows())
+        if (!OperatingSystem.IsWindows() && !OperatingSystem.IsLinux())
         {
             throw new SandboxPrivateRootException("path_enforcement_unavailable");
         }
@@ -351,11 +432,21 @@ internal sealed class SandboxPrivateRoots(string dataRoot)
         using var held = InspectDeletion(sandboxId, originalIdentity, deletionId, quarantineIdentity);
         var expected = held.OwnedWorkspace.RootIdentity;
         held.ReleaseOwnedRoot();
-        var batch = held.OwnedParent.RemoveSandboxQuarantineBatchWindows(deletionId, expected, maximumEntries,
-            applied, cancellationToken);
+        var batch = OperatingSystem.IsLinux()
+            ? held.OwnedParent.RemoveSandboxQuarantineBatchLinux(deletionId, expected, maximumEntries,
+                RequireLinuxDeletionAuthority(), applied, cancellationToken)
+            : OperatingSystem.IsWindows()
+                ? held.OwnedParent.RemoveSandboxQuarantineBatchWindows(deletionId, expected, maximumEntries,
+                    applied, cancellationToken)
+                : throw new SandboxPrivateRootException("path_enforcement_unavailable");
         if (batch.RootAbsent)
         {
             using var source = held.OwnedAnchor.OpenSandboxDirectory(ParentName);
+            if (OperatingSystem.IsLinux())
+            {
+                RequireLinuxDeletionAuthority().RequirePath(source);
+            }
+
             var marker = ReadMarker(sandboxId, originalIdentity);
             if (!originalIdentity.StartsWith(IdentityPrefix(sandboxId, marker, held.OwnedAnchor, source), StringComparison.Ordinal)
                 || !source.InspectRemovalAbsent(sandboxId))

@@ -127,7 +127,7 @@ internal sealed class SandboxNodeServiceHandler(NodeRuntime node) : V2.NodeServi
                 node, context, request, request.Meta,
                 static value => V2Shapes.IsValid(value) && value.Meta is
                 { CommandId: null, ExpectedRev: null, ExpectedNative: null, WorkspaceId: null, ApplicationScope: null, HasRecoveryGeneration: false } &&
-                    HasKnownFields(value, V2.NodeServiceWatchEventsRequest.Parser),
+                    SandboxLocalCalls.HasKnownFields(value, V2.NodeServiceWatchEventsRequest.Parser),
                 (manager, value, _) => (manager.WatchEventsAsync(value, stop.Token), null),
                 static (meta, error) => (null, new() { Meta = meta, Error = error })).ConfigureAwait(false);
             if (watch.Refusal is { } refusal)

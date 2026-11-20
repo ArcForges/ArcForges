@@ -38,12 +38,14 @@ internal sealed class TestNode : IAsyncDisposable
     private readonly DateTime _created = DateTime.Now.AddSeconds(-1);
     private readonly HashSet<string> _uninspectable = [];
     private readonly List<Process> _children = [];
+    private readonly bool _ownsDataRoot;
 
-    private TestNode(string root)
+    private TestNode(string root, string? provisionedDataRoot)
     {
         Root = root;
         ConfigDirectory = Path.Combine(root, "config");
-        DataRoot = Path.Combine(root, "data");
+        DataRoot = provisionedDataRoot ?? Path.Combine(root, "data");
+        _ownsDataRoot = provisionedDataRoot is null;
         var name = "af-cl-" + Guid.NewGuid().ToString("N")[..12];
         Endpoint = OperatingSystem.IsWindows() ? name : Path.Combine("/tmp", name, "node.sock");
         Environment[NodeLocations.ConfigDirectoryVariable] = ConfigDirectory;
@@ -202,12 +204,20 @@ internal sealed class TestNode : IAsyncDisposable
 
     public string SupervisorLog => Path.Combine(DataRoot, "logs", "supervisor", "supervisor.log");
 
-    public static TestNode Create(string? parent = null)
+    /// <summary>
+    /// Creates a temporary fixture. An optional existing data root is provisioned and retained by the caller.
+    /// </summary>
+    public static TestNode Create(string? parent = null, string? provisionedDataRoot = null)
     {
+        if (provisionedDataRoot is not null && (!Path.IsPathFullyQualified(provisionedDataRoot) || !Directory.Exists(provisionedDataRoot)))
+        {
+            throw new ArgumentException("The provisioned data root must be an existing absolute directory.", nameof(provisionedDataRoot));
+        }
+
         var root = parent is null
             ? Directory.CreateTempSubdirectory("arcforges-closed-loop-").FullName
             : Directory.CreateDirectory(Path.Combine(parent, "arcforges-closed-loop-" + Guid.NewGuid().ToString("N")[..12])).FullName;
-        var node = new TestNode(root);
+        var node = new TestNode(root, provisionedDataRoot);
         Directory.CreateDirectory(node.ConfigDirectory);
         File.WriteAllText(Path.Combine(node.ConfigDirectory, "node.json"), "{ \"dataRoot\": " + JsonSerializer.Serialize(node.DataRoot) + " }");
         return node;
@@ -752,8 +762,13 @@ internal sealed class TestNode : IAsyncDisposable
                 child.Dispose();
             }
 
-            leftovers.AddRange(DeleteDataKeys());
+            if (_ownsDataRoot)
+            {
+                leftovers.AddRange(DeleteDataKeys());
+            }
+
             SqliteConnection.ClearAllPools();
+            // Root is the separate, randomly created fixture directory, never a caller-provisioned data root.
             Directory.Delete(Root, recursive: true);
             if (!OperatingSystem.IsWindows() && Directory.Exists(Path.GetDirectoryName(Endpoint)))
             {

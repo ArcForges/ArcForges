@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
 using ArcForges.Client;
 using Microsoft.Win32.SafeHandles;
 
@@ -78,6 +79,15 @@ public sealed partial class SingleInstance : IDisposable
             File.SetUnixFileMode(handle, UnixFileMode.UserRead | UnixFileMode.UserWrite);
         }
 
+        return AcquireFileLock(handle, path);
+    }
+
+    [SupportedOSPlatform("linux")]
+    internal static SingleInstance? TryAcquire(LinuxSandboxDeletionAuthority authority) =>
+        AcquireFileLock(authority.OpenInstanceLock(), NodeLocations.NodeLockFile(authority.DataRoot));
+
+    private static SingleInstance? AcquireFileLock(SafeFileHandle handle, string path)
+    {
         if (Flock((int)handle.DangerousGetHandle(), LockExclusive | LockNonBlocking) != 0)
         {
             var error = Marshal.GetLastPInvokeError();
