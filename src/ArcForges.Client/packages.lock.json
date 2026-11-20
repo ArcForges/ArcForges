@@ -10,9 +10,9 @@
       },
       "ArcForges.Contracts.Foundation": {
         "type": "Direct",
-        "requested": "[1.0.0-ci.481.1, )",
-        "resolved": "1.0.0-ci.481.1",
-        "contentHash": "zlCOSkAQ9zI1BlIVhOxcbkm1QPRQ2RK5xhvtEmZwUSMORkvOUDZZwRkKNK7X6gd7NPI804rRuzuP9RGHRqJQIQ==",
+        "requested": "[1.0.0-ci.486.1, )",
+        "resolved": "1.0.0-ci.486.1",
+        "contentHash": "wENqAu2EtZfQn9noM353Almep9+AIe9M7wIrpoC6l97qnkuiAEBcurmcSaVBder797NNnVJxeDQ+MTZyyrwQig==",
         "dependencies": {
           "Google.Protobuf": "3.36.2"
         }
