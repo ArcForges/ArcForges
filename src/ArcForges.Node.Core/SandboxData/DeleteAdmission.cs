@@ -106,7 +106,14 @@ internal sealed partial class SandboxManager
             && journal.QuarantineIdentity is null && failure.Reason is "native_2" or "native_3" or "deletion_quarantine_location_occupied")
         {
             // A prior attempt may have moved the exact root before the quarantine identity was committed.
-            _ = _roots.ObserveQuarantinedDeletion(row.SandboxId, journal.RootIdentity, journal.DeletionId);
+            try
+            {
+                _ = _roots.ObserveQuarantinedDeletion(row.SandboxId, journal.RootIdentity, journal.DeletionId);
+            }
+            catch (WorkspacePathException missing) when (IsMissingDeletionSource(missing))
+            {
+                throw new SandboxPrivateRootException(missing.Reason, inner: missing);
+            }
         }
     }
 }

@@ -11,12 +11,13 @@ internal sealed partial class SandboxManager
 {
     internal SandboxServiceDeleteResponse Delete(SandboxServiceDeleteRequest request, CancellationToken cancellationToken)
     {
+        SandboxServiceDeleteResponse response;
         lock (OwnershipGate)
         {
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                return DeleteLocked(request, cancellationToken);
+                response = DeleteLocked(request, cancellationToken);
             }
             catch (SandboxPrivateRootException failure)
             {
@@ -31,6 +32,13 @@ internal sealed partial class SandboxManager
                 return DeleteError(request.Meta, StorageFailure(request.Meta));
             }
         }
+
+        if (response.Value?.Operation?.State == OperationState.Accepted)
+        {
+            HoldRunFault("hold-delete-before-accepted-reply");
+        }
+
+        return response;
     }
 
     private SandboxServiceDeleteResponse DeleteLocked(SandboxServiceDeleteRequest request, CancellationToken cancellationToken)

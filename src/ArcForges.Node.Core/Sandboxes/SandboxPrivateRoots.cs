@@ -29,7 +29,12 @@ internal sealed class SandboxPrivateRootLease(WorkspacePath dataRoot, WorkspaceP
 
     internal WorkspacePath OwnedAnchor => dataRoot;
 
-    internal void ReleaseOwnedRoot() => root.Dispose();
+    internal void ReleaseOwnedRoot()
+    {
+        root.Dispose();
+        // Release the original child lookup while retaining the verified parent for the native mutation.
+        parent.EndRemovalTraversal();
+    }
 
     internal WorkspacePath OpenTransferStaging() => SandboxPrivateRoots.OpenTransferStaging(dataRoot);
 

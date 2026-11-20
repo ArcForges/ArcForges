@@ -7,12 +7,14 @@ using ArcForges.Node.Core.Execution;
 using ArcForges.Node.Core.Platform;
 using ArcForges.Node.Core.Sandboxes;
 using ArcForges.Node.Store;
+using Grpc.Core;
 
 namespace ArcForges.ClosedLoop.Tests;
 
 public sealed partial class MxcRunServiceTests
 {
     private const string DeleteAfterLock = "hold-delete-after-lock";
+    private const string DeleteBeforeAcceptedReply = "hold-delete-before-accepted-reply";
     private const string DeleteAfterQuarantine = "hold-delete-after-quarantine";
     private const string DeleteDuringRemoval = "hold-delete-during-removal";
     private const string DeleteBeforeRemovalProof = "hold-delete-before-removal-proof";
@@ -273,7 +275,9 @@ public sealed partial class MxcRunServiceTests
     {
         await using var fixture = TestNode.Create();
         PrepareInstalledCliFixture(fixture);
-        fixture.Environment[ExecutionFaults.Variable] = checkpoint + "=60";
+        bool cancelOriginalCall = checkpoint == DeleteAfterLock;
+        fixture.Environment[ExecutionFaults.Variable] = checkpoint + "=60" +
+            (cancelOriginalCall ? "," + DeleteBeforeAcceptedReply + "=60" : string.Empty);
         var interrupted = await fixture.StartNodeAsync();
         Process? restarted = null;
         Id? cleanupEpoch = null;
@@ -315,16 +319,34 @@ public sealed partial class MxcRunServiceTests
                     PlanId = preview.PlanId,
                 };
                 RequireUnacceptedDelete(ReadInstalledDeletion(fixture, sandbox.SandboxId, original.OwnerEpoch, original.Meta.CommandId));
-                var accepted = await sandboxes.DeleteAsync(original, deadline: Deadline, cancellationToken: token);
-                var operation = Value(accepted.Value, accepted.Error).Operation;
+                using var originalWait = CancellationTokenSource.CreateLinkedTokenSource(token);
+                using var pendingCall = sandboxes.DeleteAsync(original, deadline: DateTime.UtcNow.AddSeconds(55),
+                    cancellationToken: originalWait.Token);
+                Operation operation;
+                if (cancelOriginalCall)
+                {
+                    await WaitDispatchCheckpointAsync(fixture, DeleteBeforeAcceptedReply);
+                    Assert.False(pendingCall.ResponseAsync.IsCompleted);
+                    operation = await OperationAsync(node, original.OwnerEpoch, original.Meta.CommandId);
+                }
+                else
+                {
+                    var accepted = await pendingCall.ResponseAsync;
+                    operation = Value(accepted.Value, accepted.Error).Operation;
+                }
+
                 Assert.Equal(original.Meta.CommandId, operation.CommandId);
                 Assert.Equal(OperationState.Accepted, operation.State);
                 Assert.Equal(EffectCertainty.Unknown, operation.Effect);
                 await WaitDispatchCheckpointAsync(fixture, checkpoint);
                 observed = ReadInstalledDeletion(fixture, sandbox.SandboxId, original.OwnerEpoch, original.Meta.CommandId);
                 RequireDeleteCheckpointJournal(checkpoint, sandbox, original, observed);
-                if (checkpoint == DeleteAfterLock)
+                if (cancelOriginalCall)
                 {
+                    Assert.False(pendingCall.ResponseAsync.IsCompleted);
+                    await originalWait.CancelAsync();
+                    var cancelled = await Assert.ThrowsAsync<RpcException>(() => pendingCall.ResponseAsync.WaitAsync(NativeBound, token));
+                    Assert.Equal(StatusCode.Cancelled, cancelled.StatusCode);
                     var runs = new RunService.RunServiceClient(channel.CallInvoker);
                     var start = BuildStart(sandbox, original.OwnerEpoch,
                         [Path.Combine(Environment.SystemDirectory, "cmd.exe"), "/d", "/c", "exit 0"]);
@@ -333,7 +355,7 @@ public sealed partial class MxcRunServiceTests
                     Assert.Null(fenced.Value);
                     RequireDataRefusal(fenced.Error, ErrorCategory.State, "busy");
                     Assert.Equal("sandbox_not_ready", fenced.Error?.Details?.State?.Reason);
-                    await RequireDeleteReceiptWaitCancellationAsync(node, original, token);
+                    Assert.Equal(operation, await OperationAsync(node, original.OwnerEpoch, original.Meta.CommandId));
                     Assert.Equal(observed, ReadInstalledDeletion(fixture, sandbox.SandboxId, original.OwnerEpoch, original.Meta.CommandId));
                 }
 
@@ -345,6 +367,14 @@ public sealed partial class MxcRunServiceTests
             RequireInterruptedDeleteTree(checkpoint, sandbox.DataLocation, quarantine, originalRoot, initialEntries);
             Assert.Equal(sentinel, await File.ReadAllBytesAsync(siblingFile, token));
             fixture.Environment.Remove(ExecutionFaults.Variable);
+            string? alternateSentinel = null;
+            if (checkpoint == DeleteAfterQuarantine)
+            {
+                alternateSentinel = await VerifyMismatchedInstalledQuarantineAsync(fixture, sandbox, original, quarantine,
+                    originalRoot, sentinel, token);
+                RequireInterruptedDeleteTree(checkpoint, sandbox.DataLocation, quarantine, originalRoot, initialEntries);
+            }
+
             restarted = await fixture.StartNodeAsync();
             interrupted.Dispose();
             await using var recovered = OpenChannel(fixture);
@@ -425,52 +455,84 @@ public sealed partial class MxcRunServiceTests
             RequireInstalledDeleteNameAbsent(sandbox.DataLocation);
             RequireInstalledDeleteNameAbsent(quarantine);
             Assert.Equal(sentinel, await File.ReadAllBytesAsync(siblingFile, token));
+            if (alternateSentinel is not null) Assert.Equal(sentinel, await File.ReadAllBytesAsync(alternateSentinel, token));
             await RequireDeleteSandboxReadyAsync(recoveredSandboxes, sibling, token);
         }
         finally
         {
-            if (restarted is null) ReleaseInstalledDeleteCheckpoint(fixture, interrupted, checkpoint);
+            if (restarted is null)
+            {
+                ReleaseInstalledDeleteCheckpoint(fixture, interrupted, checkpoint);
+                if (cancelOriginalCall) ReleaseInstalledDeleteCheckpoint(fixture, interrupted, DeleteBeforeAcceptedReply);
+            }
+
             await CleanInstalledCliFixtureAsync(fixture, restarted ?? interrupted, cleanupEpoch, heldRun: null);
         }
     }
 
-    private static async Task RequireDeleteReceiptWaitCancellationAsync(NodeService.NodeServiceClient node,
-        SandboxServiceDeleteRequest accepted, CancellationToken token)
+    private static async Task<string> VerifyMismatchedInstalledQuarantineAsync(TestNode fixture, Sandbox sandbox,
+        SandboxServiceDeleteRequest original, string quarantine, WorkspaceObjectIdentity originalRoot, byte[] sentinel,
+        CancellationToken token)
     {
-        using var waiter = CancellationTokenSource.CreateLinkedTokenSource(token);
-        var sawAccepted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var waiting = ObserveUntilTerminalAsync();
+        var parent = Path.GetDirectoryName(quarantine)!;
+        var retainedOriginal = Path.Combine(parent, "fixture-original-" + Guid.NewGuid().ToString("N"));
+        var retainedAlternate = Path.Combine(parent, "fixture-alternate-" + Guid.NewGuid().ToString("N"));
+        const string sentinelName = "alternate-sentinel.bin";
+        var sentinelPath = Path.Combine(quarantine, sentinelName);
+        RequireInstalledDeleteNameAbsent(retainedOriginal);
+        RequireInstalledDeleteNameAbsent(retainedAlternate);
+        Directory.Move(quarantine, retainedOriginal);
+        Process? probe = null;
+        bool startedProbe = false;
         try
         {
-            await sawAccepted.Task.WaitAsync(NativeBound, token);
-            Assert.False(waiting.IsCompleted);
-            await waiter.CancelAsync();
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiting);
+            using (var root = WorkspacePath.OpenRoot(parent))
+            using (var alternate = root.CreateSandboxDirectory(Path.GetFileName(quarantine)))
+            {
+                Assert.False(originalRoot.SameObject(alternate.RootIdentity));
+            }
+
+            await File.WriteAllBytesAsync(sentinelPath, sentinel, token);
+            startedProbe = true;
+            probe = await fixture.StartNodeAsync();
+            await using var connection = OpenChannel(fixture);
+            var node = new NodeService.NodeServiceClient(connection.CallInvoker);
+            var sandboxes = new SandboxService.SandboxServiceClient(connection.CallInvoker);
+            var current = await InspectInstalledCliSandboxAsync(sandboxes, sandbox.SandboxId, token);
+            Assert.Equal(SandboxState.RecoveryRequired, current.State);
+            var before = ReadInstalledDeletion(fixture, sandbox.SandboxId, original.OwnerEpoch, original.Meta.CommandId);
+            Assert.Equal("UNKNOWN", before.ReceiptState);
+            var successor = new SandboxServiceDeleteRequest
+            {
+                Meta = Mutation(current.Revision),
+                OwnerEpoch = original.OwnerEpoch,
+                SandboxId = sandbox.SandboxId,
+                ResumeCommandId = original.Meta.CommandId,
+            };
+            var refused = await sandboxes.DeleteAsync(successor, deadline: Deadline, cancellationToken: token);
+            Assert.Null(refused.Value);
+            RequireDataRefusal(refused.Error, ErrorCategory.Conflict, "identity_changed");
+            Assert.Equal("deletion_quarantine_identity_changed", refused.Error?.Details?.State?.Reason);
+            await RequireMissingDeleteReceiptAsync(node, original.OwnerEpoch, successor.Meta.CommandId, token);
+            Assert.Equal(before, ReadInstalledDeletion(fixture, sandbox.SandboxId, original.OwnerEpoch, original.Meta.CommandId));
+            Assert.Equal(sentinel, await File.ReadAllBytesAsync(sentinelPath, token));
         }
         finally
         {
-            await waiter.CancelAsync();
-        }
-
-        async Task ObserveUntilTerminalAsync()
-        {
-            while (!waiter.IsCancellationRequested)
+            if (probe is not null)
             {
-                var response = await node.GetOperationAsync(new NodeServiceGetOperationRequest
-                {
-                    Meta = Query(),
-                    OwnerEpoch = accepted.OwnerEpoch,
-                    CommandId = accepted.Meta.CommandId,
-                }, deadline: Deadline, cancellationToken: waiter.Token);
-                var operation = Value(response.Value, response.Error).Operation;
-                if (operation.State != OperationState.Accepted) return;
-                Assert.Equal(EffectCertainty.Unknown, operation.Effect);
-                sawAccepted.TrySetResult();
-                await Task.Delay(TimeSpan.FromSeconds(5), waiter.Token);
+                using (probe) await StopInstalledCliNodeAsync(fixture, probe);
             }
 
-            waiter.Token.ThrowIfCancellationRequested();
+            // If startup threw before returning its process, the outer fixture owns cleanup. Never move these paths under a live Node.
+            if (!startedProbe || probe is not null)
+            {
+                if (Directory.Exists(quarantine)) Directory.Move(quarantine, retainedAlternate);
+                Directory.Move(retainedOriginal, quarantine);
+            }
         }
+
+        return Path.Combine(retainedAlternate, sentinelName);
     }
 
     private static async Task RequireInvalidResumeAuthorityAsync(NodeService.NodeServiceClient node,
@@ -756,13 +818,19 @@ public sealed partial class MxcRunServiceTests
             Assert.Equal(epoch, observed.OwnerEpoch);
             Assert.Equal(sandbox, observed.AggregateId);
             if (observed.State == OperationState.Accepted) return false;
-            Assert.Equal(OperationState.Succeeded, observed.State);
+            var error = observed.Error;
+            Assert.True(observed.State == OperationState.Succeeded,
+                $"Delete reached {observed.State} with effect {observed.Effect}, error {error?.Category}/{SafeDeleteReason(error?.Code)} " +
+                $"and reason {SafeDeleteReason(error?.Details?.State?.Reason)}.");
             Assert.Equal(EffectCertainty.Happened, observed.Effect);
             completed = observed;
             return true;
         }, NativeBound, "the original installed Delete receipt completing");
         return Assert.IsType<Operation>(completed);
     }
+
+    private static string SafeDeleteReason(string? value) => value is { Length: > 0 and <= 128 }
+        && value.All(character => char.IsAsciiLetterOrDigit(character) || character is '_' or '-' or ':') ? value : "unavailable";
 
     private sealed record InstalledDeletionDisk(StoredSandbox Row, StoredSandboxDeletion? Pending, long JournalCount,
         string? ReceiptState, string? DeletionId, string? Phase, string? LatestSuccessor, string? QuarantineIdentity,
