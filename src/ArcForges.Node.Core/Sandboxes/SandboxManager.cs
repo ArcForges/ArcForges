@@ -527,7 +527,7 @@ internal sealed partial class SandboxManager : IDisposable
         }
     }
 
-    private DurableCommandStore Receipts
+    internal DurableCommandStore Receipts
     {
         get
         {
