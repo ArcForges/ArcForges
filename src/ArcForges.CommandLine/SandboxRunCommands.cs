@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.CommandLine;
 using System.CommandLine.Parsing;
+using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Sandbox.V2;
 using Grpc.Core;
@@ -18,6 +19,9 @@ internal static class SandboxRunCommands
         command.Subcommands.Add(List(factory));
         command.Subcommands.Add(Inspect(factory));
         command.Subcommands.Add(Stop(factory));
+        command.Subcommands.Add(TerminalCommands.Attach(factory));
+        command.Subcommands.Add(TerminalCommands.Detach(factory));
+        command.Subcommands.Add(TerminalCommands.Logs(factory));
         return command;
     }
 
@@ -33,28 +37,38 @@ internal static class SandboxRunCommands
         terminal.AcceptOnlyFromAmong("auto", "on", "off");
         var directory = new Option<string?>("--cwd") { Description = "Working directory in the Sandbox" };
         var expected = new Option<long?>("--expected-revision") { Description = "Expected Sandbox configuration revision" };
+        var detach = new Option<bool>("--detach") { Description = "Return the receipt and leave the Run under Node management" };
+        var noEscape = TerminalCommands.NoDetachEscape();
         var mutation = new V2MutationOptions();
-        var command = new Command("start", "Start explicit argv in a Sandbox and return the receipt")
+        var command = new Command("start", "Start explicit argv in a Sandbox and attach or return the receipt")
         {
-            sandbox, program, terminal, directory, expected,
+            sandbox, program, terminal, directory, expected, detach, noEscape,
         };
         mutation.AddTo(command);
         V2Cli.Set(command, factory, async (cli, result, cancellationToken) =>
         {
+            using var signals = new TerminalSignals(cancellationToken);
+            cancellationToken = signals.Token;
             string[] argv = ReadArgv(result, program);
             var sandboxId = V2Cli.ReadId(result.GetValue(sandbox), "Sandbox ID");
             bool replay = mutation.IsReplay(result);
             var revision = ReadRevision(result.GetValue(expected), replay);
             string mode = result.GetValue(terminal) ?? "auto";
+            bool detached = cli.Output.Json || result.GetValue(detach);
             if (replay && mode == "auto")
             {
                 throw new UsageException("An exact Start replay requires the original --terminal on or off mode.");
             }
 
+            if (!detached && mode == "on" && !TerminalAttachment.HasCallerTerminal)
+            {
+                return V2Cli.Fail(cli, TerminalAttachment.CallerTerminalRequired());
+            }
+
             await using var session = await V2CliSession.OpenAsync(cli, cancellationToken).ConfigureAwait(false);
             using var connection = session.PinConnection();
             var deadline = cli.Deadline(UnaryDeadline);
-            bool autoTerminal = mode == "auto" && !Console.IsInputRedirected && !Console.IsOutputRedirected;
+            bool autoTerminal = mode == "auto" && TerminalAttachment.HasCallerTerminal;
             Sandbox? current = revision is null || autoTerminal
                 ? await SandboxCommands.InspectAsync(session, sandboxId, deadline, cancellationToken).ConfigureAwait(false)
                 : null;
@@ -87,7 +101,15 @@ internal static class SandboxRunCommands
                 return V2Cli.Fail(cli, V2Cli.UnknownEffect("start_acceptance_unconfirmed", identity.Meta.CorrelationId), identity);
             }
 
-            return V2Cli.Print(cli, value, identity);
+            if (detached)
+            {
+                return V2Cli.Print(cli, value, identity);
+            }
+
+            cli.Output.Error.WriteLine($"accepted run {IdText.Format(run.RunId)} command {IdText.Format(identity.CommandId)} " +
+                $"owner epoch {IdText.Format(identity.OwnerEpoch)} expected revision {identity.Meta.ExpectedRev.Value} terminal {identity.TerminalOption}");
+            return await TerminalAttachment.AttachAsync(cli, session, run, readOnly: false, takeover: false, !result.GetValue(noEscape),
+                offset: 0, cancellationToken).ConfigureAwait(false);
         });
         return command;
     }
