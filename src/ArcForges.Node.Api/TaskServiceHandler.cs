@@ -709,7 +709,15 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
 
         var (response, retained) = _api.ReadRetained(request, request.Meta, caller, "RetryTask", TaskServiceRetryTaskResponse.Parser,
             Failed, NodeErrors.LegacyTaskOutcomeUnknown());
-        if (retained && (!NodeShapes.IsValid(response) || (response.Error is null && !ValidTaskReceipt(response.Value?.Receipt, request.Meta.CommandId))))
+        var checkedResponse = response;
+        if (retained && response is { Error: { CorrelationId: null }, Meta.CorrelationId: not null })
+        {
+            // The legacy writer kept correlation in ResponseMeta for some durable errors. Validate a copy and replay the original reply.
+            checkedResponse = response.Clone();
+            checkedResponse.Error.CorrelationId = checkedResponse.Meta.CorrelationId;
+        }
+
+        if (retained && (!NodeShapes.IsValid(checkedResponse) || (response.Error is null && !ValidTaskReceipt(response.Value?.Receipt, request.Meta.CommandId))))
         {
             return (Failed(NodeErrors.LegacyTaskOutcomeUnknown()), false);
         }
