@@ -83,6 +83,7 @@ public sealed class AdoptionTests
             reopened.Terminate();
             LinuxHarness.WaitFor(() =>
             {
+                Ct.ThrowIfCancellationRequested();
                 try
                 {
                     return reopened.Processes().Count == 0;
