@@ -51,7 +51,7 @@ public sealed class LinuxPlatformOptions
 /// <c>MemoryMax</c>, <c>MemorySwapMax</c>, <c>TasksMax</c>) set through the user manager; a transient slice when no unit file
 /// defines it. Startup verifies enforcement with a probe unit whose cgroup files must carry its limits.</item>
 /// <item>Each attempt is the transient service <c>arcforges-a-&lt;attempt&gt;.service</c> (see <see cref="LinuxAttemptHandle"/>).</item>
-/// <item>Attempt launch requires a systemd user manager. A controller missing from the manager's delegation makes that resource observe only.</item>
+/// <item>Reopening a recorded unit requires a systemd user manager. A controller missing from its delegation makes that resource observe only.</item>
 /// </list>
 /// </summary>
 [SupportedOSPlatform("linux")]
@@ -580,42 +580,6 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
     /// <inheritdoc />
     public bool Listens(int port, IReadOnlyCollection<int> processIds) => ListeningSockets.Listens(port, processIds);
 
-    /// <summary>Starts a new legacy attempt for the Linux platform fixtures.</summary>
-    public IAttemptHandle Launch(AttemptLaunch launch)
-    {
-        ArgumentNullException.ThrowIfNull(launch);
-        if (_manager is null)
-        {
-            throw new InvalidOperationException("Cannot start a legacy Linux attempt: " + (_managerReason ?? "no systemd user manager is connected."));
-        }
-
-        var files = launch.Files;
-        Directory.CreateDirectory(files.Directory);
-        Directory.CreateDirectory(files.TempDirectory);
-        if (launch.Command.ScriptFile is { } scriptFile)
-        {
-            File.WriteAllText(scriptFile, launch.Command.ScriptContent ?? string.Empty, new UTF8Encoding(false));
-        }
-
-        HelperFiles.WriteAtomically(files.StepsPath, new StepsFile
-        {
-            AttemptId = files.AttemptName,
-            LaunchSteps = [.. launch.LaunchSteps],
-            EndSteps = [.. launch.EndSteps],
-            LeftoverGraceMs = launch.LeftoverGraceMs,
-            EnvironmentNames = [.. launch.Environment.Select(entry => entry[..Math.Max(0, entry.IndexOf('=', StringComparison.Ordinal))]).Distinct(StringComparer.Ordinal)],
-        }.ToJson());
-
-        try
-        {
-            return LinuxAttemptHandle.Start(this, launch);
-        }
-        catch (Exception exception) when (exception is DBusExceptionBase or TimeoutException)
-        {
-            throw new IOException("The systemd user manager did not start the attempt unit: " + OneLine(exception.Message), exception);
-        }
-    }
-
     /// <inheritdoc />
     public IAttemptHandle? Reopen(string nodeName, AttemptFiles files, RootProcess? root, bool stopping = false)
     {
@@ -715,148 +679,11 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
         }
     }
 
-    /// <summary>The unit properties of an attempt (AD-0005 Linux section 2; 03 section 5.2; 04 section 3).</summary>
-    internal List<UnitProperty> AttemptProperties(AttemptLaunch launch, string[] managerEnvironment, SafeHandle stdin, SafeHandle stdout, SafeHandle stderr)
-    {
-        var files = launch.Files;
-        var limits = launch.Limits;
-        var resolved = launch.Environment.Select(entry => entry[..Math.Max(0, entry.IndexOf('=', StringComparison.Ordinal))]).ToHashSet(StringComparer.Ordinal);
-        var nofileHard = Libc.GetRLimit(Libc.RlimitNofile, out var nofile) == 0 ? nofile.Maximum : 524_288UL;
-        var nofileSoft = Math.Min(DefaultNoFileSoft, nofileHard);
-        List<string> start =
-        [
-            _helper, "node", "exec-launch", "--attempt", files.AttemptName, "--dir", files.Directory, "--cwd", launch.WorkingDirectory,
-            "--program", launch.Command.Application, "--nofile", nofileSoft.ToString(CultureInfo.InvariantCulture),
-        ];
-        foreach (var name in ExecLaunchRole.ManagerAddedVariables.Where(name => !resolved.Contains(name)))
-        {
-            start.Add("--unset");
-            start.Add(name);
-        }
-
-        var helperDiagnosticsOff = HelperRuntime is not null && !resolved.Contains(DiagnosticsVariable);
-        if (HelperRuntime is not null && !resolved.Contains("DOTNET_ROOT"))
-        {
-            // A framework-dependent helper (the JIT build next to the tests) gets DOTNET_ROOT for itself only.
-            start.Add("--unset");
-            start.Add("DOTNET_ROOT");
-        }
-
-        if (helperDiagnosticsOff)
-        {
-            start.Add("--unset");
-            start.Add(DiagnosticsVariable);
-        }
-
-        start.Add("--");
-        start.AddRange(launch.Command.Argv);
-        var properties = new List<UnitProperty>
-        {
-            new("Description", "ArcForges attempt " + files.AttemptName),
-            new("Slice", Slice),
-            new("Type", "exec"),
-            new("ExecStartEx", (IReadOnlyList<ExecCommand>)[HelperCommand(start, false, helperDiagnosticsOff)]),
-            new("ExecStopEx", (IReadOnlyList<ExecCommand>)[HelperCommand([_helper, "node", "exec-stop", "--attempt", files.AttemptName, "--dir", files.Directory], true,
-                helperDiagnosticsOff)]),
-            new("ExecStopPostEx", (IReadOnlyList<ExecCommand>)[HelperCommand([_helper, "node", "exit-record", "--attempt", files.AttemptName, "--dir", files.Directory], false,
-                helperDiagnosticsOff)]),
-            // Every exit status and signal is a success of the unit, so ExecStop (the end steps) runs after any exit; the attempt's result
-            // is taken from $EXIT_CODE and $EXIT_STATUS by exit-record (04 section 3).
-            new("SuccessExitStatus", new ExitStatusSet([.. Enumerable.Range(1, 255)],
-                [.. Enumerable.Range(1, 31), .. Enumerable.Range(Libc.SigRtMin, Libc.SigRtMax - Libc.SigRtMin + 1)])),
-            new("WorkingDirectory", "-" + launch.WorkingDirectory),
-            new("Environment", (string[])[.. UnitEnvironment(launch.Environment), .. _options.ExtraUnitEnvironment]),
-            new("UnsetEnvironment", managerEnvironment.Select(entry => entry[..Math.Max(0, entry.IndexOf('=', StringComparison.Ordinal))])
-                .Where(name => name.Length > 0 && !resolved.Contains(name)).Distinct(StringComparer.Ordinal).ToArray()),
-            new("StandardInputFileDescriptor", stdin),
-            new("StandardOutputFileDescriptor", stdout),
-            new("StandardErrorFileDescriptor", stderr),
-            new("LimitNOFILE", nofileHard),
-            new("LimitNOFILESoft", nofileSoft),
-            new("KillMode", "control-group"),
-            new("TimeoutStopUSec", (ulong)(new StepsFile().EndStepBudgetMs + launch.LeftoverGraceMs + StopRecordMarginMs) * 1000),
-            // Failed units stay loaded (an OOM kill while ExecStopPost runs ends exit-record too), so the node records them from the unit.
-            new("CollectMode", "inactive"),
-            new("IgnoreSIGPIPE", false),
-            new("CPUAccounting", true),
-            new("MemoryAccounting", true),
-            new("TasksAccounting", true),
-        };
-        if (_hardening is { } hardening)
-        {
-            // AD-0007 section 8: only after the probe read it back as applied; each unit is read back again after its start.
-            properties.AddRange(hardening);
-        }
-
-        foreach (var (resource, name) in (ReadOnlySpan<(int, string)>)[(Libc.RlimitCore, "LimitCORE"), (Libc.RlimitStack, "LimitSTACK")])
-        {
-            if (Libc.GetRLimit(resource, out var limit) == 0)
-            {
-                properties.Add(new(name, limit.Maximum));
-                properties.Add(new(name + "Soft", limit.Current));
-            }
-        }
-
-        if (_controllers.Contains("cpu"))
-        {
-            properties.Add(new("CPUWeight", (ulong)CpuWeight(limits.CpuWeight)));
-            if (limits.CpuRateCap is { } cap)
-            {
-                properties.Add(new("CPUQuotaPerSecUSec", (ulong)cap * (ulong)Capacity.LogicalProcessors * 100UL));
-            }
-        }
-
-        if (_controllers.Contains("memory"))
-        {
-            if (limits.MemoryHighBytes > 0)
-            {
-                properties.Add(new("MemoryHigh", (ulong)limits.MemoryHighBytes));
-            }
-
-            if (limits.MemoryMaxBytes > 0)
-            {
-                properties.Add(new("MemoryMax", (ulong)limits.MemoryMaxBytes));
-            }
-
-            if (limits.SwapMaxBytes is { } swap)
-            {
-                properties.Add(new("MemorySwapMax", (ulong)swap));
-            }
-
-            // stop, never kill (AD-0005 Linux section 2, L-27): kill sets memory.oom.group, and a group kill also signals the user
-            // manager's posix_spawn child while it still shares the manager's address space, which kills the user manager.
-            properties.Add(new("OOMPolicy", "stop"));
-        }
-
-        if (_controllers.Contains("pids"))
-        {
-            properties.Add(new("TasksMax", (ulong)(limits.ActiveProcessLimit ?? limits.TasksMax)));
-        }
-
-        if (launch.KillWithNode && _nodeUnit is { } nodeUnit)
-        {
-            // kill_with_node: bound to the node's own unit, so it stops with the node (13 section 3.4).
-            properties.Add(new("BindsTo", new[] { nodeUnit }));
-            properties.Add(new("After", new[] { nodeUnit }));
-        }
-
-        return properties;
-    }
-
     /// <summary>
     /// The .NET location a framework-dependent helper needs (the JIT build of the tests: an <c>arcforges.dll</c> beside it), or null for
     /// the Native AOT executable, which needs nothing.
     /// </summary>
     internal string? HelperRuntime => File.Exists(Path.ChangeExtension(_helper, ".dll")) ? Environment.GetEnvironmentVariable("DOTNET_ROOT") : null;
-
-    /// <summary>
-    /// A helper command line; a framework-dependent helper is started through <c>env DOTNET_ROOT=...</c>, and without the runtime's
-    /// diagnostic endpoints (<c>DOTNET_EnableDiagnostics=0</c>, unless the attempt sets it), so a helper that becomes the command
-    /// (<c>execve</c>) or is killed leaves no IPC socket behind in the temporary directory.
-    /// </summary>
-    private ExecCommand HelperCommand(List<string> argv, bool ignoreFailure, bool diagnosticsOff) => HelperRuntime is { } runtime && File.Exists("/usr/bin/env")
-        ? new ExecCommand("/usr/bin/env", ["env", "DOTNET_ROOT=" + runtime, .. diagnosticsOff ? (string[])[DiagnosticsVariable + "=0"] : [], .. argv], ignoreFailure)
-        : new ExecCommand(_helper, argv, ignoreFailure);
 
     /// <summary>
     /// The unit's <c>Environment=</c>: systemd accepts only names of letters, digits and underscores (not starting with a digit) and

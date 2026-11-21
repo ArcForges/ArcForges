@@ -2,7 +2,6 @@
 using System.ComponentModel;
 using System.Globalization;
 using System.Runtime.Versioning;
-using Microsoft.Win32.SafeHandles;
 using Tmds.DBus.Protocol;
 
 namespace ArcForges.Node.Platform.Linux;
@@ -29,10 +28,8 @@ public sealed record LimitStop(bool Frozen, int Killed, DateTimeOffset? FrozenAt
 /// <summary>
 /// One attempt's transient unit <c>arcforges-a-&lt;attempt&gt;.service</c> (AD-0005 Linux section 2; 04 sections 3, 6 and 9):
 /// <list type="bullet">
-/// <item>Started with <c>StartTransientUnit</c> in the slice, stdio passed as file descriptors (<c>Standard*FileDescriptor</c>), the exact
-/// environment (<c>Environment</c> plus <c>UnsetEnvironment</c> for every manager variable outside it), rlimits, the limits of 03 section
-/// 5.2, <c>ExecStart</c> through <c>exec-launch</c>, <c>ExecStop=-</c> through <c>exec-stop</c> and <c>ExecStopPost</c> through
-/// <c>exit-record</c>. The node waits for the start job's <c>JobRemoved</c> (result <c>done</c>) before it records the root process.</item>
+/// <item>Recovery opens an existing unit in the slice. Its configured <c>exec-stop</c> and <c>exit-record</c> callbacks still finish the
+/// attempt. For a queued start being stopped, the node waits for the start job's <c>JobRemoved</c> before recording the root process.</item>
 /// <item>Cancellation: <c>KillUnit("all", stop_signal)</c>, then the forced phase. The forced phase and limit stops freeze the unit
 /// (<c>FreezeUnit</c>), kill every process of its cgroup (the main process last), and thaw the cgroup directly: the user manager spawns
 /// <c>ExecStop</c> into the unit's cgroup once the main process is gone, and a spawn into a frozen cgroup blocks it until the cgroup is
@@ -123,64 +120,6 @@ public sealed class LinuxAttemptHandle : IAttemptHandle
 
     /// <inheritdoc />
     public bool MemoryLimitHit => CgroupDirectory is { } directory && ProcFs.KeyValues(Path.Combine(directory, "memory.events")).GetValueOrDefault("oom_kill") > 0;
-
-    /// <summary>Starts the unit of <paramref name="launch"/>.</summary>
-    internal static LinuxAttemptHandle Start(LinuxExecutionPlatform platform, AttemptLaunch launch)
-    {
-        var files = launch.Files;
-        var manager = platform.Manager;
-        SafeFileHandle? stdout = null, stderr = null, stdin = null;
-        Stream? writer = null;
-        try
-        {
-            stdout = Libc.Open(launch.DiscardOutput ? "/dev/null" : files.StdoutPath, write: true);
-            stderr = Libc.Open(launch.DiscardOutput ? "/dev/null" : files.StderrPath, write: true);
-            switch (launch.Stdin)
-            {
-                case StdinKind.File:
-                    stdin = Libc.Open(launch.StdinPath ?? throw new ArgumentException("A stdin file is required.", nameof(launch)), write: false);
-                    break;
-                case StdinKind.Stream:
-                    var (read, write) = Libc.Pipe();
-                    stdin = new SafeFileHandle(read, ownsHandle: true);
-                    writer = new FileStream(new SafeFileHandle(write, ownsHandle: true), FileAccess.Write, 1, isAsync: false);
-                    break;
-                default:
-                    stdin = Libc.Open("/dev/null", write: false);
-                    break;
-            }
-
-            var handle = new LinuxAttemptHandle(platform, files, writer);
-            var properties = platform.AttemptProperties(launch, manager.ManagerEnvironment(), stdin, stdout, stderr);
-            handle._watch = manager.WatchUnit(SystemdManager.UnitPath(handle.Unit), handle.OnUnitChanged);
-            string job;
-            try
-            {
-                job = manager.StartTransientUnit(handle.Unit, properties);
-            }
-            catch
-            {
-                handle._watch.Dispose();
-                throw;
-            }
-
-            _ = Task.Run(() => handle.AwaitStart(job, TimeSpan.FromSeconds(90), recordUnstarted: true));
-            writer = null;
-            return handle;
-        }
-        catch (DBusErrorReplyException exception)
-        {
-            throw new IOException($"The user manager refused the attempt unit: {exception.ErrorName}: {LinuxExecutionPlatform.OneLine(exception.Message)}", exception);
-        }
-        finally
-        {
-            // The user manager holds its own copies of the descriptors now.
-            stdout?.Dispose();
-            stderr?.Dispose();
-            stdin?.Dispose();
-            writer?.Dispose();
-        }
-    }
 
     /// <summary>Re-opens a recovered attempt's unit by name, or null when it is gone (<see cref="IExecutionPlatform.Reopen"/>).</summary>
     internal static LinuxAttemptHandle? Reopen(LinuxExecutionPlatform platform, AttemptFiles files, RootProcess? root, bool stopping)

@@ -747,8 +747,8 @@ public sealed class UnitPlatformTests
             SystemdRun("--user", "--no-block", "--unit=" + gate, "--slice=" + harness.Slice, "-p", "Type=oneshot", "-p", "Before=" + plainUnit,
                 "-p", "Before=" + stoppingUnit, "/bin/sh", "-c", $"while [ ! -e '{go}' ]; do sleep 0.05; done");
             WaitUntil(() => SystemdTestEnvironment.Property(gate, "ActiveState") == "activating", "the gate unit to start");
-            harness.Launch(["sleep", "60"], files: plainFiles);
-            harness.Launch(["sleep", "60"], files: stoppingFiles);
+            harness.Queue(["sleep", "60"], plainFiles);
+            harness.Queue(["sleep", "60"], stoppingFiles);
             foreach (var unit in new[] { plainUnit, stoppingUnit })
             {
                 WaitUntil(() => SystemdTestEnvironment.Systemctl("list-jobs", "--no-legend", unit).Output.Contains(unit, StringComparison.Ordinal),
@@ -921,10 +921,10 @@ public sealed class UnitPlatformTests
 
 /// <summary>Exercises the missing manager path without connecting to a manager or launching a workload.</summary>
 [SupportedOSPlatform("linux")]
-public sealed class LegacyLinuxLaunchRefusalTests
+public sealed class LegacyLinuxCustodyRefusalTests
 {
     [Fact]
-    public void APlatformWithoutAManagerRefusesBeforeCreatingAttemptFiles()
+    public void APlatformWithoutAManagerCannotConfirmCustodyOrCreateAttemptFiles()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         // The platform has no manager connection. This branch uses managed observation and no Linux system calls.
@@ -944,28 +944,7 @@ public sealed class LegacyLinuxLaunchRefusalTests
         try
         {
             var files = new AttemptFiles(root, "fixture");
-            var program = Path.Combine(root, "missing-fixture-program");
-            var launch = new AttemptLaunch
-            {
-                NodeName = "fixture-node",
-                Files = files,
-                Command = new PreparedCommand
-                {
-                    Application = program,
-                    CommandLine = string.Empty,
-                    Argv = [program],
-                    Program = program,
-                    ScriptFile = Path.Combine(files.TempDirectory, "fixture.sh"),
-                    ScriptContent = "exit 0",
-                },
-                Environment = [],
-                WorkingDirectory = root,
-                Limits = new ContainerLimits(),
-            };
-
-            var error = Assert.Throws<InvalidOperationException>(() => platform.Launch(launch));
-            Assert.Equal("Cannot start a legacy Linux attempt: no systemd user manager is connected.", error.Message);
-            var custody = Assert.Throws<LegacyCustodyUnavailableException>(() => platform.Reopen(launch.NodeName, files, null));
+            var custody = Assert.Throws<LegacyCustodyUnavailableException>(() => platform.Reopen("fixture-node", files, null, stopping: true));
             Assert.Contains("systemd user manager", custody.Message, StringComparison.Ordinal);
             Assert.Empty(Directory.EnumerateFileSystemEntries(root));
         }
