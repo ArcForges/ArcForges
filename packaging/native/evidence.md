@@ -13,7 +13,7 @@ The staged official MXC document remains byte-identical to its pinned SPDX relea
 
 ## Native performance capture
 
-Run this on the actual native release venue. Use the verified extraction of the exact archive and the independently published native Bench and TestLoad executables. On Windows, use a new extraction directly under the installing user's local temporary directory so the native trust checks can verify the installation path. The fixture launches a distinct offline Node under its own temporary data root and endpoint.
+Run this on the actual native release venue. Use the authenticated extraction of the exact signed archive and the independently published native Bench and TestLoad executables. Keep the installer's authentication receipt next to the performance report to retain the archive and signing identity. On Windows, use a new extraction directly under the installing user's local temporary directory so the native trust checks can verify the installation path. The fixture launches a distinct offline Node under its own temporary data root and endpoint.
 
 ```text
 python packaging/native/measure.py --install <verified-install> --bench <native-arcforges-bench> --testload <native-arcforges-testload> --output <new-report.json>
