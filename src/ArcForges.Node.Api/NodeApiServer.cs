@@ -102,7 +102,9 @@ public static class NodeApiServer
 
         if (!protectedStorage)
         {
-            RegisterLegacyEffects(builder, node, sessions, executors, streamBuffer);
+            var tasks = RegisterLegacyExecution(builder, node, sessions, executors, streamBuffer);
+            var files = RegisterFileCustodyAndApprovals(builder, node, sessions, executors);
+            (node.RoutedDispatcher as RoutedDispatcher)?.Bind(tasks, new WorkspaceServiceHandler(node), files);
         }
         if (!protectedStorage && centerControl is not null)
         {
@@ -172,28 +174,14 @@ public static class NodeApiServer
         return server;
     }
 
-    private static void RegisterLegacyEffects(LocalRpcServerBuilder builder, NodeRuntime node, ClientSessions sessions, ApprovalExecutors executors,
-        int streamBuffer)
+    private static TaskServiceHandler RegisterLegacyExecution(LocalRpcServerBuilder builder, NodeRuntime node,
+        ClientSessions sessions, ApprovalExecutors executors, int streamBuffer)
     {
-        var approvals = new ApprovalServiceHandler(node, sessions, executors);
         var tasks = new TaskServiceHandler(node, sessions, executors);
-        var files = new FileServiceHandler(node);
-        executors.RegisterReference("FileService.WriteFile", ArcForges.Node.Core.Security.PermissionMatrix.FileWrite, files.ExecuteApprovedReferenceAsync);
-        executors.RegisterReference("FileService.EditFile", ArcForges.Node.Core.Security.PermissionMatrix.FileWrite, files.ExecuteApprovedReferenceAsync);
-        executors.RegisterReference("FileService.ExecuteRemoval", ArcForges.Node.Core.Security.PermissionMatrix.FileRemove, files.ExecuteApprovedRemovalReferenceAsync);
-        (node.RoutedDispatcher as RoutedDispatcher)?.Bind(tasks, new WorkspaceServiceHandler(node), files);
         builder.AddService(tasks);
         builder.AddService(new ResourceServiceHandler(node, sessions, executors));
         builder.AddService(new QueueServiceHandler(node, sessions, executors));
         builder.AddService(new PolicyServiceHandler(node, sessions, executors));
-        builder.AddService(approvals);
-        builder.AddService(new LocalFileOperationHandler(node, sessions));
-        foreach (var method in (ReadOnlySpan<string>)["GetFileOperation", "AcknowledgeFileOperation"])
-        {
-            builder.RegisterMethod(Files, method, new LocalRpcCallProfile(TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(30)));
-        }
-
-        node.ResumeApprovals = approvals.ResumeAsync;
 
         // TaskService deadlines (tasks.proto): WaitTask holds up to wait_ms (55 s) + 5 s.
         foreach (var (method, seconds) in (ReadOnlySpan<(string, int)>)[("SubmitTask", 10), ("GetTask", 5), ("ListTasks", 5), ("WriteTaskInput", 5),
@@ -221,17 +209,39 @@ public static class NodeApiServer
             builder.RegisterMethod(Resources, method, new LocalRpcCallProfile(TimeSpan.FromSeconds(seconds), TimeSpan.FromSeconds(30)));
         }
 
+        builder.RegisterStream(Resources, "WatchResources", new LocalRpcStreamProfile
+        {
+            HeartbeatInterval = NodeEventServiceHandler.HeartbeatInterval,
+            MaxBufferedMessages = streamBuffer,
+        });
+
+        return tasks;
+    }
+
+    private static FileServiceHandler RegisterFileCustodyAndApprovals(LocalRpcServerBuilder builder, NodeRuntime node,
+        ClientSessions sessions, ApprovalExecutors executors)
+    {
+        var files = new FileServiceHandler(node);
+        executors.RegisterReference("FileService.WriteFile", ArcForges.Node.Core.Security.PermissionMatrix.FileWrite, files.ExecuteApprovedReferenceAsync);
+        executors.RegisterReference("FileService.EditFile", ArcForges.Node.Core.Security.PermissionMatrix.FileWrite, files.ExecuteApprovedReferenceAsync);
+        executors.RegisterReference("FileService.ExecuteRemoval", ArcForges.Node.Core.Security.PermissionMatrix.FileRemove, files.ExecuteApprovedRemovalReferenceAsync);
+        var approvals = new ApprovalServiceHandler(node, sessions, executors);
+        builder.AddService(approvals);
+        builder.AddService(new LocalFileOperationHandler(node, sessions));
+        foreach (var method in (ReadOnlySpan<string>)["GetFileOperation", "AcknowledgeFileOperation"])
+        {
+            builder.RegisterMethod(Files, method, new LocalRpcCallProfile(TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(30)));
+        }
+
+        node.ResumeApprovals = approvals.ResumeAsync;
+
         // ApprovalService deadlines (approvals.proto): list, get and withdraw 5 s; a decision 10 s (it runs the approved request).
         foreach (var (method, seconds) in (ReadOnlySpan<(string, int)>)[("ListApprovals", 5), ("GetApproval", 5), ("DecideApproval", 10), ("CancelApproval", 5)])
         {
             builder.RegisterMethod(Approvals, method, new LocalRpcCallProfile(TimeSpan.FromSeconds(seconds), TimeSpan.FromSeconds(30)));
         }
 
-        builder.RegisterStream(Resources, "WatchResources", new LocalRpcStreamProfile
-        {
-            HeartbeatInterval = NodeEventServiceHandler.HeartbeatInterval,
-            MaxBufferedMessages = streamBuffer,
-        });
+        return files;
     }
 
     private static void RegisterCloudServices(LocalRpcServerBuilder builder, NodeRuntime node, ClientSessions sessions,
