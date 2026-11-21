@@ -5,6 +5,9 @@ using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Contracts.Relay.V1;
 using ArcForges.Node.Core;
+using ArcForges.Node.Core.Files;
+using ArcForges.Node.Core.Platform;
+using ArcForges.Node.Store;
 using Google.Protobuf;
 using NodeFilePath = ArcForges.Contracts.Node.V1.FilePath;
 using NodeShapes = ArcForges.Contracts.Node.Shapes.ContractShapeValidation;
@@ -44,21 +47,7 @@ public sealed class RoutedDirectoryChannelTests
         var marker = Encoding.UTF8.GetBytes("😀SIGNED_DIRECTORY_PRIVATE_FILE_BODY_641e9");
         File.WriteAllBytes(Path.Combine(root, "a"), marker);
         File.WriteAllText(Path.Combine(root, "b"), "second");
-        var register = new WorkspaceServiceRegisterWorkspaceRequest { Meta = CloudNode.Command(), Path = root, Name = "signed-directory" };
-        var registeredCall = center.Channel.BuildCall(connection, new FakeCallSpec
-        {
-            Method = RoutedMethod.RegisterNodeWorkspace,
-            Payload = register.ToByteArray(),
-            Caller = caller,
-            CommandId = register.Meta.CommandId,
-            Lifetime = TimeSpan.FromSeconds(30),
-        }).Call;
-        await connection.SendCallAsync(registeredCall);
-        var registeredFrame = await connection.ResultOfAsync(registeredCall.CallId);
-        await Eventually.TrueAsync(() => connection.VerifiedResults.Any(x => x.Header.CallId.Equals(registeredCall.CallId)), "signed registration");
-        var registered = WorkspaceServiceRegisterWorkspaceResponse.Parser.ParseFrom(registeredFrame.Payload);
-        Assert.Null(registered.Error);
-        var workspace = registered.Value.Workspace.WorkspaceId;
+        var workspace = SeedRegisteredWorkspace(node.Runtime.Store, root, ct);
         var correlation = CommandIds.New();
         var request = new FileServiceListDirectoryRequest
         {
@@ -167,5 +156,30 @@ public sealed class RoutedDirectoryChannelTests
             stream.CopyTo(copy);
             Assert.Equal(-1, copy.ToArray().AsSpan().IndexOf(marker));
         }
+    }
+
+    private static Id SeedRegisteredWorkspace(NodeStore store, string root, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        using var opened = WorkspacePath.OpenRoot(root);
+        var native = RegisteredWorkspaces.RootIdentity.Encode(opened.RootIdentity);
+        var canonical = opened.RootPath;
+
+        // The signed read starts from a persisted legacy workspace and its real native directory identity.
+        return store.Write(transaction =>
+        {
+            var id = StoreIds.NewUuid7(transaction.Clock);
+            var now = transaction.NowMicroseconds;
+            transaction.Execute("""
+                INSERT INTO workspace (workspace_id, kind, state, name, root_path, created_at, last_used_at, rev)
+                VALUES ($id, 1, 2, 'signed-directory', $path, $now, $now, 0);
+                """, ("$id", id), ("$path", canonical), ("$now", now));
+            transaction.Execute("""
+                INSERT INTO workspace_root_identity (workspace_id, format_version, platform, native_identity, canonical_path, registered_at)
+                VALUES ($id, 1, $platform, $identity, $path, $now);
+                """, ("$id", id), ("$platform", native.Platform), ("$identity", native.Bytes), ("$path", canonical), ("$now", now));
+            cancellationToken.ThrowIfCancellationRequested();
+            return new Id { Value = ByteString.CopyFrom(id) };
+        }, CommitDurability.Full);
     }
 }
