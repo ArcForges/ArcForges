@@ -238,6 +238,39 @@ class InventoryTests(unittest.TestCase):
         self.assertIn("nonterminal_tasks", result["blockers"])
         self.assertFalse(result["destructive_contraction_allowed"])
 
+    def test_finished_legacy_attempts_requiring_reconciliation_are_reported(self):
+        for version in (15, 19):
+            with self.subTest(version=version):
+                database = self.root / f"terminal-{version}.db"
+                fixture(database, version=version)
+                task = b"t" * 16
+                with contextlib.closing(sqlite3.connect(database)) as connection:
+                    connection.execute("PRAGMA foreign_keys=ON")
+                    connection.execute("""INSERT INTO task(task_id,state,kind,title,command_summary,spec,spec_digest,
+                        owner,owner_origin,pool,priority,effective_priority,side_effect,side_effect_source,
+                        command_fingerprint,command_digest,created_at,rev)
+                        VALUES(?,7,1,'fixture','fixture',x'',zeroblob(32),x'00',1,'fixture',1,1,1,1,
+                        'fixture',zeroblob(32),1,0)""", (task,))
+                    # The first two attempts have known outcomes. Each later row is unresolved
+                    # for a different reason despite a FINISHED state and zero leftovers.
+                    outcomes = [(1, 2, 2), (9, 1, 2), (1, 3, 2), (1, None, 2),
+                                (8, 2, 2), (12, 2, 2), (1, 2, None)]
+                    connection.executemany("""INSERT INTO attempt(attempt_id,task_id,number,kind,state,executor_node_id,
+                        request_cpu_millicores,request_mem_expected_bytes,request_mem_ceiling_bytes,request_source,
+                        accounted_mem_bytes,created_at,termination_reason,effect,finished_at,detail,rev)
+                        VALUES(?,?,?,1,9,zeroblob(16),1,1,1,1,1,1,?,?,?,'private fixture detail',0)""",
+                        [(bytes([n]) * 16, task, n, *outcome) for n, outcome in enumerate(outcomes, 1)])
+                    connection.commit()
+                before = database.read_bytes()
+                result = preflight.inventory(database)
+                self.assertEqual(0, result["counts"]["live_attempt_records"])
+                self.assertEqual(5, result["counts"]["uncertain_finished_attempts"])
+                self.assertIn("uncertain_finished_attempts", result["blockers"])
+                self.assertIn("native_scope_and_exclusive_owner_proof_required", result["blockers"])
+                self.assertFalse(result["destructive_contraction_allowed"])
+                self.assertNotIn("private fixture detail", json.dumps(result))
+                self.assertEqual(before, database.read_bytes())
+
     def test_legacy_approval_stage_and_removal_custody_is_counted_without_changing_the_snapshot(self):
         for version, classification in [(15, "node15"), (19, "node_v2_expanded")]:
             with self.subTest(version=version):
