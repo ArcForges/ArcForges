@@ -136,6 +136,24 @@ public sealed class AdoptionLifecycleTests
         }, initiallyUnavailable: true, missingScopeIdentity: missingScopeIdentity);
     }
 
+    [Theory(Timeout = 60_000)]
+    [InlineData("")]
+    [InlineData("windows:unknown:100")]
+    public async Task UnknownOriginalBootCannotOpenOrControlASameNamedAdoption(string recordedBoot)
+    {
+        Ct.ThrowIfCancellationRequested();
+        await WithRecoveredAdoptionAsync(containerAvailable: true, async fixture =>
+        {
+            var before = await fixture.ReadAsync();
+            Assert.Equal((TaskState.Running, AttemptState.Running), (before.State, before.CurrentAttempt.State));
+            var cancel = await fixture.Tasks.CancelTask(Human,
+                new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = fixture.TaskId }, Ct);
+            Assert.Null(cancel.Error);
+            Assert.Equal(1, fixture.Platform.TerminateCalls);
+            Assert.Equal(TaskState.Cancelled, (await fixture.CompleteAsync()).State);
+        }, unauthenticatedBoot: recordedBoot);
+    }
+
     [Fact(Timeout = 60_000)]
     public async Task UnreadableAdoptionMembershipCanBeReadAgainBeforeRecordingAnEnd()
     {
@@ -186,7 +204,7 @@ public sealed class AdoptionLifecycleTests
     }
 
     private static async Task WithRecoveredAdoptionAsync(bool containerAvailable, Func<AdoptionFixture, Task> verify,
-        bool captureRoutedCancel = false, bool initiallyUnavailable = false, bool missingScopeIdentity = false)
+        bool captureRoutedCancel = false, bool initiallyUnavailable = false, bool missingScopeIdentity = false, string? unauthenticatedBoot = null)
     {
         await using var node = InProcessNode.Create();
         var root = new RootProcess(int.MaxValue, node.Clock.GetUtcNow());
@@ -234,16 +252,25 @@ public sealed class AdoptionLifecycleTests
         using var dispatcher = new RoutedDispatcher(runtime);
         dispatcher.Bind(tasks, new WorkspaceServiceHandler(runtime), new FileServiceHandler(runtime));
         await runtime.TransitionAsync(NodeLifecycleState.Recovering, "fixture").WaitAsync(Ct);
-        if (initiallyUnavailable)
+        if (initiallyUnavailable || unauthenticatedBoot is not null)
         {
-            var nativeError = new System.ComponentModel.Win32Exception(5);
+            var nativeError = initiallyUnavailable ? new System.ComponentModel.Win32Exception(5) : null;
             platform.ReopenError = nativeError;
             Task<int> SetRecordedScope(string? scope) => processor.ExecuteAsync(context =>
                 context.Transaction.Execute("UPDATE attempt SET container_name = $scope WHERE attempt_id = $id;",
                     ("$scope", scope), ("$id", attemptId.Value.ToByteArray())), CommitDurability.Full);
+            Task<int> SetRecordedBoot(string boot) => processor.ExecuteAsync(context =>
+                context.Transaction.Execute("UPDATE attempt SET boot_identity = $boot WHERE attempt_id = $id;",
+                    ("$boot", boot), ("$id", attemptId.Value.ToByteArray())), CommitDurability.Full);
             if (missingScopeIdentity)
             {
                 await SetRecordedScope(null).WaitAsync(Ct);
+            }
+
+            if (unauthenticatedBoot is not null)
+            {
+                await SetRecordedBoot(unauthenticatedBoot).WaitAsync(Ct);
+                Assert.Single(platform.OwnedProcesses());
             }
 
             ManagedTask? ReadTask() => store.Read(reader => TaskRecords.GetTask(reader, taskId.Value.Span, full: true));
@@ -261,6 +288,25 @@ public sealed class AdoptionLifecycleTests
             {
                 Assert.Equal(0, platform.ReopenCalls);
                 await SetRecordedScope(ContainerName).WaitAsync(Ct);
+            }
+
+            if (unauthenticatedBoot is not null)
+            {
+                Assert.Equal("The original adoption's boot could not be authenticated on this host.", error.Message);
+                Assert.Equal(0, platform.ReopenCalls);
+                var untracked = await processor.ExecuteAsync(context =>
+                    execution.Adoptions.Cancel(context, taskId.Value.Span, "unauthenticated adoption"), CommitDurability.Full).WaitAsync(Ct);
+                Assert.Null(untracked);
+                Assert.False(platform.MembershipReadFailed.IsCompleted);
+                Assert.False(platform.MembershipReadSucceeded.IsCompleted);
+                Assert.False(platform.Released.IsCompleted);
+                Assert.Equal(0, platform.TerminateCalls);
+                Assert.Single(platform.OwnedProcesses());
+                Assert.Equal(original, ReadTask());
+                Assert.Equal(unauthenticatedBoot, store.Read(reader => reader.Scalar(
+                    "SELECT boot_identity FROM attempt WHERE attempt_id = $id;", ("$id", attemptId.Value.ToByteArray())) as string));
+                Assert.Equal(recoverCursor, journal.LatestPosition);
+                await SetRecordedBoot(store.Metadata.BootIdentity).WaitAsync(Ct);
             }
 
             platform.ReopenError = null;
