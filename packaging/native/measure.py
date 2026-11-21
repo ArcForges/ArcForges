@@ -238,6 +238,7 @@ def capture(install, bench, testload, runs, seconds):
     scratch = Path(tempfile.mkdtemp(prefix="afv2-native-performance-", dir=scratch_parent)).resolve()
     env = {key: value for key, value in os.environ.items() if not key.upper().startswith("ARCFORGES_")}
     config, data = scratch / "config", scratch / "data"
+    ipc = None
     node = None
     cleaned = False
     try:
@@ -246,8 +247,18 @@ def capture(install, bench, testload, runs, seconds):
         data.mkdir(mode=0o700)
         protect_install_root(data)
         (config / "node.json").write_text(json.dumps({"dataRoot": str(data)}), encoding="utf-8")
-        env.update(ARCFORGES_CONFIG_DIR=str(config), ARCFORGES_ENDPOINT=(f"af-perf-{uuid.uuid4().hex}" if WIN
-                                                                    else str(scratch / "node.sock")))
+        if WIN:
+            endpoint = f"af-perf-{uuid.uuid4().hex}"
+        else:
+            # The Node's protected Unix socket directory must be outside the Sandbox's private root.
+            # Match the closed-loop fixture and leave the actual systemd user manager runtime in place.
+            ipc = Path(tempfile.mkdtemp(prefix="af-perf-ipc-", dir="/tmp")).resolve()
+            endpoint = str(ipc / "node.sock")
+            runtime = Path(env.get("XDG_RUNTIME_DIR") or f"/run/user/{os.geteuid()}").resolve(strict=True)
+            require(runtime.is_dir() and runtime != scratch and scratch not in runtime.parents and runtime not in scratch.parents,
+                    "The systemd user runtime directory overlaps the owned measurement root")
+            env["XDG_RUNTIME_DIR"] = str(runtime)
+        env.update(ARCFORGES_CONFIG_DIR=str(config), ARCFORGES_ENDPOINT=endpoint)
 
         def cli(*arguments, timeout=40):
             return checked([str(host), "--test-mode", "--json", *arguments], scratch, env, timeout)
@@ -295,6 +306,8 @@ def capture(install, bench, testload, runs, seconds):
     finally:
         if node is None or cleaned:
             shutil.rmtree(scratch)
+            if ipc is not None:
+                shutil.rmtree(ipc)
         else:
             # Keep evidence and files when cleanup cannot be proven. No effect is signaled to other installations.
             if node.poll() is None:
@@ -304,6 +317,8 @@ def capture(install, bench, testload, runs, seconds):
                 except (OSError, ValueError, subprocess.TimeoutExpired):
                     pass
             print(f"Preserved the isolated measurement fixture: {scratch}", file=sys.stderr)
+            if ipc is not None:
+                print(f"Preserved the isolated measurement socket directory: {ipc}", file=sys.stderr)
 
 
 def main():
