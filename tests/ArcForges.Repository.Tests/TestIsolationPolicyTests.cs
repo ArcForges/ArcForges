@@ -4,17 +4,11 @@ using System.Text.RegularExpressions;
 namespace ArcForges.Repository.Tests;
 
 /// <summary>
-/// Test nodes are isolated from the machine's other load by default (<c>MachineIsolation</c>; 16 section 4). A test that opts into the live
-/// machine (<c>LiveMachine</c> set to anything but false, <c>WithLiveMachine()</c>, the isolation variable removed or the in-process option
-/// cleared) sees every other test's load, so it must run alone: <c>isolation=exclusive</c> with <c>DisableParallelization = true</c>. The
-/// scripted-machine seam (<c>MachineScript</c>, <c>WrapSampler</c>) is for the resource tests of <c>ResourceServiceTests</c> only (AGENTS.md
-/// section 4).
+/// Tests of installed V2 host resources, admission and pressure see the machine's other load. They run alone with
+/// <c>isolation=exclusive</c> and <c>DisableParallelization = true</c> (16 section 4).
 /// </summary>
 public sealed partial class TestIsolationPolicyTests
 {
-    /// <summary>The fixture that defines the scripted-machine seam and the one test class that may use it.</summary>
-    private static readonly string[] ScriptedMachineFiles = ["tests/ArcForges.Node.Core.Tests/InProcessNode.cs", "tests/ArcForges.Node.Core.Tests/ResourceServiceTests.cs"];
-
     [Fact]
     public void EveryTestOnTheLiveMachineIsExclusive()
     {
@@ -49,26 +43,22 @@ public sealed partial class TestIsolationPolicyTests
             }
         }
 
-        // The rule is not vacuous: the tests of the measured budgets and of pressure use the live machine.
-        Assert.True(checkedTests.Count >= 10, $"Only {checkedTests.Count} live-machine tests were found.");
+        const string PackageTests = "tests/ArcForges.ClosedLoop.Tests/";
+        Assert.Contains(PackageTests + "ResourceMxcRunServiceTests.cs:InstalledResourcesObserveOwnedNativeScopesAndKeepHostUsageSeparate", checkedTests);
+        Assert.Contains(PackageTests + "PressureMxcRunServiceTests.cs:InstalledPressurePersistsBeforeStoppingOneEligibleRunAndLeavesItsPeersRunning", checkedTests);
+        Assert.Contains(PackageTests + "AdmissionMxcRunServiceTests.cs:InstalledParallelStartsReserveOneSlotAndNeverQueueTheRefusedRun", checkedTests);
+        Assert.Contains(PackageTests + "AdmissionMxcRunServiceTests.cs:InstalledWeightedSandboxesShareReducedNativeCpuHeadroomAndRecover", checkedTests);
     }
 
     [Fact]
-    public void OnlyTheResourceServiceTestsScriptTheMachine()
+    public void TheRetiredScriptedMachineSeamIsAbsent()
     {
-        var uses = new List<string>();
-        foreach (var file in RepositoryFiles.Projects("tests").SelectMany(Sources))
+        foreach (var file in RepositoryFiles.Projects("tests").SelectMany(Sources)
+            .Where(file => file != "tests/ArcForges.Repository.Tests/TestIsolationPolicyTests.cs"))
         {
             var text = File.ReadAllText(RepositoryFiles.PathOf(file));
-            if (ScriptedMachine().IsMatch(text))
-            {
-                Assert.True(ScriptedMachineFiles.Contains(file, StringComparer.Ordinal) || file.EndsWith("/TestIsolationPolicyTests.cs", StringComparison.Ordinal),
-                    $"{file} uses the scripted-machine seam (MachineScript, WrapSampler); only ResourceServiceTests may (AGENTS.md section 4).");
-                uses.Add(file);
-            }
+            Assert.False(ScriptedMachine().IsMatch(text), $"{file} references the retired scripted-machine seam.");
         }
-
-        Assert.Contains(ScriptedMachineFiles[1], uses);
     }
 
     /// <summary>The C# sources of a test project, relative to the repository root.</summary>
@@ -150,7 +140,7 @@ public sealed partial class TestIsolationPolicyTests
         return at < 0 ? member.Body : member.Body[(at + member.Name.Length)..];
     }
 
-    [GeneratedRegex(@"\bLiveMachine\s*=(?!=)(?!\s*false\b)|\.WithLiveMachine\(\)|MachineIsolation\.Variable\]\s*=\s*null|IsolatedFromMachineLoad\s*=\s*false",
+    [GeneratedRegex(@"\bReadFreshResourceHost\b|\bResourcePackage\.StartAsync\(|\bLiveMachine\s*=(?!=)(?!\s*false\b)|\.WithLiveMachine\(\)|MachineIsolation\.Variable\]\s*=\s*null|IsolatedFromMachineLoad\s*=\s*false",
         RegexOptions.None, matchTimeoutMilliseconds: 1000)]
     private static partial Regex LiveUse();
 
