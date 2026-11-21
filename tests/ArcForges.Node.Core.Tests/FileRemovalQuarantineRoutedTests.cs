@@ -6,6 +6,7 @@ using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Contracts.Relay.V1;
 using ArcForges.Node.Core.Files;
+using ArcForges.Node.Core.Platform;
 using ArcForges.Node.Core.Security;
 using ArcForges.Node.Store;
 using Google.Protobuf;
@@ -123,7 +124,7 @@ public sealed class FileRemovalQuarantineRoutedTests
 
 
     [Fact(Timeout = 120_000)]
-    public async Task AnInterruptedActualMoveStaysUnknownAcrossRestartAndOnlyExactLocalAcknowledgmentReleasesIt()
+    public async Task ARecoveredRemovalIntentHoldsUntilItsExactLocalAcknowledgment()
     {
         var token = TestContext.Current.CancellationToken;
         await using var node = await InProcessNode.Create().StartAsync();
@@ -131,38 +132,48 @@ public sealed class FileRemovalQuarantineRoutedTests
         var actor = calls.Relay(Origin.Script);
         var root = Directory.CreateDirectory(Path.Combine(node.Root, "unknown-quarantine-workspace")).FullName;
         var source = Path.Combine(root, "selected");
-        File.WriteAllText(source, "unknown actual moved bytes");
+        var custodyRoot = Directory.CreateDirectory(Path.Combine(node.Root, "retained-quarantine")).FullName;
+        var location = Path.Combine(custodyRoot, "selected");
+        File.WriteAllText(location, "retained quarantine fixture bytes");
         var workspace = new RegisteredWorkspaces(node.Runtime.Store).RegisterFromVerifiedHuman(root, cancellationToken: token);
-        var plan = await Plan(calls, actor, workspace.Id);
-        var request = Execute(plan);
-        var raw = request.ToByteArray();
-        var pending = await calls.CallAsync(actor, RoutedMethod.ExecuteNodeRemoval, raw, request.Meta.CommandId);
-        Assert.Equal("approval_required", pending.Answer!.Error!.Code);
-        // This injected exception is after the actual native move, before the SQLite outcome commit.
-        calls.Dispatcher.FileHandlerForTests!.AfterRemovalMoveForTests = () => throw new IOException("owned post-move fault");
-        await using (var human = await node.ChannelAsync(helloAsHuman: true))
+        WorkspaceRemovalSnapshot snapshot;
+        using (var workspaceRoot = WorkspacePath.OpenRoot(root))
+        using (var retainedRoot = WorkspacePath.OpenRoot(custodyRoot))
         {
-            var decided = await human.Approvals.DecideApprovalAsync(new ApprovalServiceDecideApprovalRequest
+            // The retained object is placed directly at the recorded destination. No removal is invoked.
+            snapshot = WorkspaceRemovalPlan.Capture(retainedRoot, "selected", token) with
             {
-                Meta = InProcessNode.Command(),
-                ApprovalId = pending.Answer!.Error!.Details.State.Resource.Id.Clone(),
-                Decision = ApprovalDecisionKind.Approve,
-            }, cancellationToken: token);
-            Assert.Null(decided.Error);
-            Assert.Equal(ApprovalState.Approved, decided.Value.Approval.State);
+                RootIdentity = RegisteredWorkspaces.RootIdentity.Encode(workspaceRoot.RootIdentity),
+            };
         }
+        var (request, raw, approvalId) = await SeedInterruptedRemoval(node, actor, workspace.Id, root, location, snapshot, token);
+        var id = request.Meta.CommandId.Value.ToByteArray();
+        var planId = request.PlanId.Value.ToByteArray();
         Assert.False(File.Exists(source));
-        var location = node.Runtime.Store.Read(reader => FileMutationJournal.RemovalRecoveryLocation(reader, request.Meta.CommandId.Value.Span));
-        Assert.NotNull(location);
-        Assert.Equal("unknown actual moved bytes", File.ReadAllText(location));
-        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM quarantine_entry;")));
+        Assert.Equal("retained quarantine fixture bytes", File.ReadAllText(location));
+        node.Runtime.Store.Read(reader =>
+        {
+            Assert.Equal(FileOperationState.Prepared, FileMutationJournal.GetForCaller(reader, id, actor)?.State);
+            Assert.Equal(3L, reader.Scalar("SELECT state FROM cleanup_plan WHERE plan_id = $id;", ("$id", planId)));
+            Assert.Equal(location, FileMutationJournal.RemovalRecoveryLocation(reader, id));
+            Assert.Equal(0L, reader.Scalar("SELECT count(*) FROM quarantine_entry;"));
+            return 0;
+        });
+        File.WriteAllText(source, "later object remains");
         Assert.Equal(0, await node.StopAsync());
         await node.StartAsync();
         calls = new RoutedCalls(node);
-        var replay = await Invoke(calls, actor, request);
+        var recoveredAnswer = (await calls.CallAsync(actor, RoutedMethod.ExecuteNodeRemoval, raw, request.Meta.CommandId)).Answer;
+        Assert.NotNull(recoveredAnswer);
+        Assert.Equal(RoutedOutcome.Executed, recoveredAnswer.Outcome);
+        var recoveredBytes = Assert.IsType<ByteString>(recoveredAnswer.Response);
+        Assert.Equal(recoveredBytes.ToByteArray(), node.Runtime.Store.Read(reader => reader.Scalar(
+            "SELECT outcome FROM command_dedup WHERE command_id = $id;", ("$id", id))) as byte[]);
+        var replay = FileServiceExecuteRemovalResponse.Parser.ParseFrom(recoveredBytes);
         Assert.Equal(EffectCertainty.Unknown, replay.Error.Effect);
         Assert.Equal(RetryMode.Never, replay.Error.Retry.Mode);
         Assert.Equal("file_outcome_unknown", replay.Error.Details.State.Reason);
+        Assert.Equal(request.Meta.CorrelationId, replay.Meta.CorrelationId);
         await using var local = await node.ChannelAsync(helloAsHuman: true);
         var get = new FileServiceGetFileOperationRequest
         {
@@ -191,12 +202,90 @@ public sealed class FileRemovalQuarantineRoutedTests
         Assert.False(accepted.Value.Operation.Held);
         Assert.Equal(FileOperationState.Unknown, accepted.Value.Operation.State);
         Assert.Equal(accepted.ToByteArray(), (await local.Files.AcknowledgeFileOperationAsync(ack, cancellationToken: token)).ToByteArray());
-        Assert.False(node.Runtime.Store.Read(reader => FileMutationJournal.HasWorkspaceHold(reader, workspace.Id)));
-        File.WriteAllText(source, "later object remains");
-        Assert.Equal(replay.ToByteArray(), (await Invoke(calls, actor, request)).ToByteArray());
+        node.Runtime.Store.Read(reader =>
+        {
+            Assert.False(FileMutationJournal.HasWorkspaceHold(reader, workspace.Id));
+            Assert.Equal(5L, reader.Scalar("SELECT state FROM cleanup_plan WHERE plan_id = $id;", ("$id", planId)));
+            Assert.Equal(0L, reader.Scalar("SELECT count(*) FROM quarantine_entry;"));
+            var approval = Approvals.Get(reader, approvalId);
+            Assert.Equal(ApprovalState.Approved, approval?.State);
+            Assert.Null(approval?.Outcome);
+            return 0;
+        });
+        var retried = (await calls.CallAsync(actor, RoutedMethod.ExecuteNodeRemoval, raw, request.Meta.CommandId)).Answer;
+        Assert.Equal(recoveredBytes, retried?.Response);
         Assert.Equal("later object remains", File.ReadAllText(source));
-        Assert.Equal("unknown actual moved bytes", File.ReadAllText(location));
+        Assert.Equal("retained quarantine fixture bytes", File.ReadAllText(location));
     }
+
+    private static Task<(FileServiceExecuteRemovalRequest Request, byte[] Raw, byte[] ApprovalId)> SeedInterruptedRemoval(
+        InProcessNode node, CenterCaller caller, byte[] workspace, string root, string destination, WorkspaceRemovalSnapshot snapshot,
+        CancellationToken token) => node.Runtime.Processor.ExecuteAsync(command =>
+        {
+            var transaction = command.Transaction;
+            void Reserve(RequestMeta meta, string method, byte[] digest)
+            {
+                var id = meta.CommandId.Value.ToByteArray();
+                Assert.Equal(DedupStatus.Execute, CommandDeduplication.Begin(transaction, id,
+                    "arcforges.node.v1.FileService/" + method, digest, Origin.Remote).Status);
+                transaction.Execute("INSERT INTO file_removal_command_owner (command_id, caller) VALUES ($id, $caller);",
+                    ("$id", id), ("$caller", caller.ToByteArray()));
+            }
+
+            var path = new FilePath { WorkspaceId = new Id { Value = ByteString.CopyFrom(workspace) }, Path = "selected" };
+            var planRequest = new FileServicePlanRemovalRequest { Meta = Tasks.Meta(), WorkspacePath = path };
+            var planDigest = SHA256.HashData(planRequest.ToByteArray());
+            var requester = new ActorRef { Origin = Origin.Remote, CenterCaller = caller, RemoteCommandId = planRequest.Meta.CommandId };
+            var plan = FileRemovalPlans.PrepareWorkspace(transaction, planRequest.Meta.CommandId.Value.Span, planDigest,
+                caller, requester, path, root, snapshot, transaction.NowMicroseconds, quarantineAvailable: true);
+            Reserve(planRequest.Meta, "PlanRemoval", planDigest);
+            FileRemovalPlans.RecordWorkspace(transaction, plan);
+            var planReceipt = new FileServicePlanRemovalResponse
+            {
+                Meta = new ResponseMeta { CorrelationId = planRequest.Meta.CorrelationId },
+                Value = new FileServicePlanRemovalValue { Plan = plan.Plan },
+            };
+            Assert.True(NodeShapes.IsValid(planReceipt));
+            CommandDeduplication.Complete(transaction, planRequest.Meta.CommandId.Value.Span, planReceipt.ToByteArray());
+
+            var request = Execute(plan.Plan);
+            request.DeleteWithoutQuarantine = false;
+            var id = request.Meta.CommandId.Value.ToByteArray();
+            var planId = request.PlanId.Value.ToByteArray();
+            var raw = request.ToByteArray();
+            var digest = SHA256.HashData(raw);
+            requester.RemoteCommandId = request.Meta.CommandId;
+            var (approval, created, error) = Approvals.Raise(command, new ApprovalCapture
+            {
+                Operation = "FileService.ExecuteRemoval",
+                MatrixOperation = PermissionMatrix.FileRemove,
+                Summary = "Quarantine the exact selected removal plan",
+                Risk = RiskClass.High,
+                Requester = requester,
+                CommandId = id,
+                Request = [2, .. id],
+                RequestDigest = digest,
+                TargetKind = "cleanup_plan",
+                TargetId = planId,
+                Details =
+                [
+                    new KeyValue { Name = "plan_id", Value = Convert.ToHexStringLower(request.PlanId.Value.Span) },
+                    new KeyValue { Name = "plan_digest", Value = Convert.ToHexStringLower(request.PlanDigest.Span) },
+                    new KeyValue { Name = "correlation_id", Value = Convert.ToHexStringLower(request.Meta.CorrelationId.Value.Span) },
+                    new KeyValue { Name = "delete_without_quarantine", Value = "false" },
+                ],
+            }, Approvals.DefaultTtl);
+            Assert.True(created);
+            Assert.Null(error);
+            Assert.NotNull(approval);
+            Assert.Equal(1, transaction.Execute("UPDATE cleanup_plan SET state = 2, approval_id = $approval, rev = rev + 1 WHERE plan_id = $plan AND state = 1;",
+                ("$approval", approval.Id), ("$plan", planId)));
+            Approvals.Decide(command, approval.Id, approve: true, new ActorRef { Origin = Origin.Human }, null);
+            Reserve(request.Meta, "ExecuteRemoval", digest);
+            FileMutationJournal.PrepareRemoval(transaction, id, request.Meta.CorrelationId.Value.ToByteArray(), digest, caller,
+                workspace, null, path.Path, snapshot.RootIdentity, snapshot.RootIdentity, Assert.Single(snapshot.Entries).NativeIdentity, planId, destination);
+            return (request, raw, approval.Id);
+        }, CommitDurability.Full).WaitAsync(token);
 
     [Theory(Timeout = 120_000)]
     [InlineData(false)]
