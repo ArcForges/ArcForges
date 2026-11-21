@@ -184,7 +184,10 @@ public sealed class CallerTests
                 Error = NodeErrors.NotFound("task", missing.Value.Span),
             };
             store.Write(transaction => RecordPrior(transaction, "RetryTask", retry.Meta, retry, oldRetry, origin), CommitDurability.Full);
-            Assert.Equal(oldRetry, await channel.Tasks.RetryTaskAsync(retry, cancellationToken: Ct));
+            var replay = retry.Clone();
+            replay.Meta.CorrelationId = CommandIds.New();
+            var replayedRetry = await channel.Tasks.RetryTaskAsync(replay, cancellationToken: Ct);
+            Assert.Equal(oldRetry.ToByteArray(), replayedRetry.ToByteArray());
             var freshRetry = retry.Clone();
             freshRetry.Meta = Tasks.Meta();
             var unknownRetry = await channel.Tasks.RetryTaskAsync(freshRetry, cancellationToken: Ct);
@@ -219,6 +222,20 @@ public sealed class CallerTests
                 && entry.TargetId is { } target && target.AsSpan().SequenceEqual(missing.Value.Span));
             Assert.Equal(new ActorRef { Origin = origin, ClientKind = kind }, audited.Actor);
         }
+
+        var inconsistent = new TaskServiceRetryTaskRequest { Meta = Tasks.Meta(), TaskId = CommandIds.New() };
+        var otherTask = new TaskServiceRetryTaskResponse
+        {
+            Meta = new ResponseMeta { CorrelationId = inconsistent.Meta.CorrelationId },
+            Error = NodeErrors.NotFound("task", CommandIds.New().Value.Span),
+        };
+        store.Write(transaction => RecordPrior(transaction, "RetryTask", inconsistent.Meta, inconsistent, otherTask, Origin.Human),
+            CommitDurability.Full);
+        var refusal = await human.Tasks.RetryTaskAsync(inconsistent, cancellationToken: Ct);
+        Assert.Equal(EffectCertainty.Unknown, refusal.Error.Effect);
+        Assert.Equal("legacy_task_outcome_unavailable", refusal.Error.Details.State.Reason);
+        Assert.Equal(otherTask.ToByteArray(), store.Read(reader => reader.Scalar(
+            "SELECT outcome FROM command_dedup WHERE command_id = $id;", ("$id", inconsistent.Meta.CommandId.Value.ToByteArray()))) as byte[]);
     }
 
     private static void RecordPrior(StoreTransaction transaction, string method, RequestMeta meta, IMessage request, IMessage response, Origin origin)

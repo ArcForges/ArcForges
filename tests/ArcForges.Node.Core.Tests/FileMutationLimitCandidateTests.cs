@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-using System.Security.Cryptography;
-using System.Text;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Node.Api;
-using ArcForges.Node.Core.Files;
+using ArcForges.Node.Core.Events;
 using ArcForges.Node.Core.Security;
+using ArcForges.Node.Store;
 using Google.Protobuf;
 using NodeFilePath = ArcForges.Contracts.Node.V1.FilePath;
 using NodeShapes = ArcForges.Contracts.Node.Shapes.ContractShapeValidation;
@@ -20,18 +19,29 @@ public sealed class FileMutationLimitCandidateTests
     public async Task DecodableOversizedMutationRequestsReturnTheirActualResourceLimitWithoutFileEffects()
     {
         var token = TestContext.Current.CancellationToken;
-        await using var node = await InProcessNode.Create().StartAsync();
-        var calls = new RoutedCalls(node);
-        var actor = calls.Relay(Origin.Human);
-        var root = Directory.CreateDirectory(Path.Combine(node.Root, "mutation-limits")).FullName;
-        var workspace = new RegisteredWorkspaces(node.Runtime.Store).RegisterFromVerifiedHuman(root, cancellationToken: token);
-        var target = Path.Combine(root, "target.txt");
-        var initial = Encoding.UTF8.GetBytes("request-limit-fixture-a93b");
-        File.WriteAllBytes(target, initial);
+        await using var fixture = InProcessNode.Create();
+        using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = fixture.DataRoot, BootIdentity = "mutation-limits-fixture" });
+        using var log = new NodeLog(Path.Combine(fixture.DataRoot, "logs", "node"), LogLevel.Info, fixture.Clock);
+        var journal = EventJournal.Open(store);
+        var hub = new StreamHub();
+        await using var processor = new CommandProcessor(store, journal, hub);
+        using var node = new NodeRuntime(store, journal, hub, processor, log,
+            new NodeSettingsManager(fixture.ConfigPath, fixture.DataRoot, log), fixture.DataRoot, "offline-fixture", fixture.Clock,
+            new RecoveryReport(false, false, null, store.Opening), new CapabilityReport());
+        using var handler = new FileServiceHandler(node);
+        var actor = new CenterCaller
+        {
+            Kind = CenterCallerKind.NodeRelay,
+            AccountId = RoutedCalls.Account.Clone(),
+            RelayingNodeId = new Id { Value = ByteString.CopyFrom(node.NodeId.Span) },
+            LocalOrigin = Origin.Human,
+            LocalSessionId = CommandIds.New(),
+        };
+        var workspace = CommandIds.New();
 
         NodeFilePath PathValue(string path) => new()
         {
-            WorkspaceId = new Id { Value = ByteString.CopyFrom(workspace.Id) },
+            WorkspaceId = workspace.Clone(),
             Path = path,
         };
         FileServiceWriteFileRequest Write(int count) => new()
@@ -58,17 +68,16 @@ public sealed class FileMutationLimitCandidateTests
                 FileServiceEditFileRequest edit => edit.Meta,
                 _ => throw new InvalidOperationException(),
             };
-            var now = node.Runtime.Clock.GetUtcNow();
-            var routed = new RoutedContext(calls.Link, node.Runtime.Lifecycle, now.AddSeconds(30), TimeSpan.FromSeconds(15),
-                node.Runtime.Clock, node.Runtime.Clock.GetTimestamp(), CommandIds.New(), fileWorkspace: true);
+            var now = node.Clock.GetUtcNow();
+            var routed = new RoutedContext(new RoutedCalls.TestLink(), node.Lifecycle, now.AddSeconds(30), TimeSpan.FromSeconds(15),
+                node.Clock, node.Clock.GetTimestamp(), CommandIds.New(), fileWorkspace: true);
             var caller = new Caller(Origin.Remote, ClientKind.Unspecified, null, centerCaller: actor.Clone())
             {
-                CellsOrigin = CenterRouting.CellsOrigin(actor, node.Runtime.NodeId.Span),
+                CellsOrigin = CenterRouting.CellsOrigin(actor, node.NodeId.Span),
                 RemoteCommandId = meta.CommandId.Clone(),
                 RawRequest = request.ToByteArray(),
                 Routed = routed,
             };
-            var handler = calls.Dispatcher.FileHandlerForTests!;
             return (request is FileServiceWriteFileRequest
                 ? await handler.WriteExistingCandidateAsync(caller, token)
                 : await handler.EditExistingCandidateAsync(caller, token))!;
@@ -122,11 +131,17 @@ public sealed class FileMutationLimitCandidateTests
         var atLimit = Write(196_608);
         Assert.True(NodeShapes.IsValid(atLimit));
         var boundedResponse = FileServiceWriteFileResponse.Parser.ParseFrom(await Invoke(atLimit));
-        Assert.NotEqual("too_large", boundedResponse.Error.Code); // Windows: hash conflict; Linux: guard refusal
-        Assert.Equal(EffectCertainty.DidNotHappen, boundedResponse.Error.Effect);
-        Assert.Equal(initial, File.ReadAllBytes(target));
-        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_operation_journal;")));
-        foreach (var database in new[] { node.Runtime.Store.DatabasePath, node.Runtime.Store.DatabasePath + "-wal" })
+        Assert.True(NodeShapes.IsValid(boundedResponse));
+        Assert.Equal(ErrorCategory.Execution, boundedResponse.Error.Category);
+        Assert.Equal("operation_failed", boundedResponse.Error.Code);
+        Assert.Equal("file_outcome_unknown", boundedResponse.Error.Details.State.Reason);
+        Assert.Equal(EffectCertainty.Unknown, boundedResponse.Error.Effect);
+        Assert.Equal(RetryMode.Never, boundedResponse.Error.Retry.Mode);
+        Assert.Equal(atLimit.Meta.CorrelationId, boundedResponse.Error.CorrelationId);
+        Assert.Equal(0L, store.Read(reader => reader.Scalar("SELECT count(*) FROM file_operation_journal;")));
+        Assert.Equal(0L, store.Read(reader => reader.Scalar("SELECT count(*) FROM file_private_stage_reservation;")));
+        Assert.Equal(0L, store.Read(reader => reader.Scalar("SELECT count(*) FROM command_dedup;")));
+        foreach (var database in new[] { store.DatabasePath, store.DatabasePath + "-wal" })
         {
             if (!File.Exists(database)) continue;
             using var file = new FileStream(database, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);

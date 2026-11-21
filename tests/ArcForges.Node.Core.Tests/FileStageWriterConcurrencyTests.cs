@@ -1,153 +1,119 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Security.Cryptography;
-using System.Text;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
-using ArcForges.Contracts.Relay.V1;
-using ArcForges.Node.CloudLink;
 using ArcForges.Node.Core.Files;
-using ArcForges.Node.Core.Platform;
 using ArcForges.Node.Store;
 using Google.Protobuf;
 using Microsoft.Data.Sqlite;
-using NodeFilePath = ArcForges.Contracts.Node.V1.FilePath;
 
 namespace ArcForges.Node.Core.Tests;
 
-/// <summary>Two real SQLite writer connections and native anonymous stages; routed caller is synthetic.</summary>
+/// <summary>Real independent SQLite writers with deterministic stage identity metadata.</summary>
 public sealed class FileStageWriterConcurrencyTests
 {
-    [Fact(Timeout = 120_000)]
-    public async Task OlderWriterCannotEnterBetweenAnonymousAllocationAndJournalCommit()
+    [Fact(Timeout = 30_000)]
+    public async Task OlderWriterCannotEnterBetweenStageReservationAndJournalCommit()
     {
         var ct = TestContext.Current.CancellationToken;
-        await using var node = await InProcessNode.Create().StartAsync();
-        var calls = new RoutedCalls(node);
-        var caller = calls.Relay(Origin.Human);
-        var path = Directory.CreateDirectory(Path.Combine(node.Root, "mixed-writers")).FullName;
-        var original = Encoding.UTF8.GetBytes("prior-transaction-bytes");
-        var intended = Encoding.UTF8.GetBytes("new-transaction-bytes");
-        File.WriteAllBytes(Path.Combine(path, "target"), original);
-        var workspace = new RegisteredWorkspaces(node.Runtime.Store).RegisterFromVerifiedHuman(path, cancellationToken: ct);
+        await using var fixture = InProcessNode.Create();
+        using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = fixture.DataRoot, BootIdentity = "legacy-stage-writer-fixture" });
+        var workspace = CommandIds.New();
+        store.Write(transaction => Assert.Equal(1, transaction.Execute("""
+            INSERT INTO workspace (workspace_id, kind, state, name, root_path, created_at, last_used_at, rev)
+            VALUES ($id, 1, 2, 'staged history', $root, $now, $now, 1);
+            """, ("$id", workspace.Value.ToByteArray()), ("$root", Path.Combine(fixture.Root, "workspace")),
+            ("$now", transaction.NowMicroseconds))), CommitDurability.Full);
+
+        var original = "prior-transaction-bytes"u8.ToArray();
+        var intended = "new-transaction-bytes"u8.ToArray();
         var request = new FileServiceWriteFileRequest
         {
-            Meta = new RequestMeta { CommandId = CommandIds.New(), CorrelationId = CommandIds.New() },
-            Path = new NodeFilePath { WorkspaceId = new Id { Value = ByteString.CopyFrom(workspace.Id) }, Path = "target" },
+            Meta = Tasks.Meta(),
+            Path = new FilePath { WorkspaceId = workspace, Path = "target" },
             ExpectedSha256 = ByteString.CopyFrom(SHA256.HashData(original)),
             Data = ByteString.CopyFrom(intended),
         };
-        var raw = request.ToByteArray();
         var id = request.Meta.CommandId.Value.ToByteArray();
-        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var attempting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var effectsMayProceed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var root = Identity(11);
+        var target = Identity(12);
+        var originalStage = Identity(13);
+        var intendedStage = Identity(14);
+        var intent = new FileJournalIntent(FileOperationKind.Write, id, request.Meta.CorrelationId.Value.ToByteArray(),
+            RoutedCalls.Session(), workspace.Value.ToByteArray(), request.Path.Path, root.Platform, root.Bytes, root.Bytes,
+            target.Bytes, original.Length, SHA256.HashData(original), originalStage.Bytes,
+            intended.Length, SHA256.HashData(intended), intendedStage.Bytes);
+        var budget = new FileStageBudget();
+        var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var release = new ManualResetEventSlim();
-        using var root = WorkspacePath.OpenRoot(path);
-        WorkspaceStagePair? held = null;
-        Task<FileJournalPreparation>? linux = null;
-        Task<(RoutedAnswer? Answer, long LogId)>? windows = null;
-        Task? oldWriter = null;
-        var handler = calls.Dispatcher.FileHandlerForTests!;
-        try
+        var write = Task.Run(() =>
         {
-            if (OperatingSystem.IsWindows())
+            FileStageBudget.Lease? stage = null;
+            try
             {
-                handler.AfterStageBeforeJournalForTests = () =>
+                return store.Write(transaction =>
                 {
-                    entered.TrySetResult();
-                    if (!release.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Owned stage coordination timed out.");
-                };
-                // Keep PREPARED and its real stage handles alive while the older writer gets its transaction.
-                handler.AfterPreparationForTests = () => effectsMayProceed.Task;
-                // This reaches the real routed WriteFile candidate and its own writer transaction on Windows.
-                windows = calls.CallAsync(caller, RoutedMethod.WriteNodeFile, raw, request.Meta.CommandId);
-            }
-            else
-            {
-                // Linux target effects are still disabled. Exercise the same actual writer/stage/journal primitives,
-                // without claiming a production target write or a §5 cleanup success.
-                linux = node.Runtime.Processor.ExecuteAsync(command =>
-                {
-                    held = WorkspaceStagePair.TryCreateForCommand(root, node.Runtime.FileStages, command.Transaction,
-                        id, original, intended, ct) ?? throw new InvalidOperationException("The native stage reservation failed.");
-                    var rootId = RegisteredWorkspaces.RootIdentity.Encode(root.RootIdentity);
-                    var target = RegisteredWorkspaces.RootIdentity.Encode(root.InspectEntry("target").Identity, directory: false);
-                    var intent = new FileJournalIntent(FileOperationKind.Write, id, request.Meta.CorrelationId.Value.ToByteArray(), caller,
-                        workspace.Id, "target", rootId.Platform, rootId.Bytes, rootId.Bytes, target.Bytes,
-                        original.Length, SHA256.HashData(original), held.Original!.Identity.Bytes,
-                        intended.Length, SHA256.HashData(intended), held.Intended.Identity.Bytes);
-                    entered.TrySetResult();
-                    if (!release.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Owned stage coordination timed out.");
-                    return FileMutationJournal.Prepare(command.Transaction, intent, raw);
+                    stage = Assert.IsType<FileStageBudget.Lease>(budget.TryReserveCommand(transaction, id, original.Length, intended.Length));
+                    stage.BindStages(originalStage, intendedStage);
+                    ready.SetResult();
+                    Assert.True(release.Wait(TimeSpan.FromSeconds(12), ct));
+                    var prepared = FileMutationJournal.Prepare(transaction, intent, request.ToByteArray());
+                    Assert.Equal((1, (long)(original.Length + intended.Length)), budget.CombinedUsage(transaction));
+                    return prepared;
                 }, CommitDurability.Full);
             }
-            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
-            oldWriter = Task.Run(() => OlderWriter(node.Runtime.Store.DatabasePath, workspace.Id,
-                original.Length + intended.Length, attempting), ct);
-            await attempting.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
-            Assert.NotSame(oldWriter, await Task.WhenAny(oldWriter, Task.Delay(200, ct)));
-            release.Set();
-            await oldWriter.WaitAsync(TimeSpan.FromSeconds(10), ct);
-            effectsMayProceed.TrySetResult();
-            if (windows is not null)
+            finally
             {
-                var result = await windows.WaitAsync(TimeSpan.FromSeconds(10), ct);
-                var response = FileServiceWriteFileResponse.Parser.ParseFrom(Assert.IsType<ByteString>(result.Answer?.Response));
-                Assert.Null(response.Error);
-                Assert.Equal(intended, File.ReadAllBytes(Path.Combine(path, "target")));
+                stage?.Dispose();
             }
-            else
-            {
-                Assert.Equal(FileJournalPreparation.Prepared, await linux!.WaitAsync(TimeSpan.FromSeconds(10), ct));
-                Assert.Equal(original, File.ReadAllBytes(Path.Combine(path, "target")));
-            }
+        }, ct);
+
+        try
+        {
+            await ready.Task.WaitAsync(TimeSpan.FromSeconds(8), ct);
+            Assert.Equal(0L, store.Read(reader => reader.Scalar("SELECT count(*) FROM file_operation_journal;")));
+            using var contender = OpenOlderConnection(store.DatabasePath, defaultTimeout: 1);
+            var busy = Assert.Throws<SqliteException>(() => contender.BeginTransaction(deferred: false));
+            Assert.Equal(5, busy.SqliteErrorCode); // SQLITE_BUSY from the independent writer.
         }
         finally
         {
             release.Set();
-            effectsMayProceed.TrySetResult();
-            handler.AfterStageBeforeJournalForTests = null;
-            handler.AfterPreparationForTests = null;
-            foreach (var pending in new Task?[] { oldWriter, linux, windows })
-            {
-                if (pending is null) continue;
-                await AwaitOwnedCleanupAsync(pending);
-            }
-            if (linux is { IsCompleted: false } && held is { } pendingStage)
-            {
-                held = null;
-                _ = DisposeAfterOwnedTaskAsync(linux, pendingStage);
-            }
-            held?.Dispose();
+            Assert.Equal(FileJournalPreparation.Prepared, await write);
         }
+
+        OlderWriter(store.DatabasePath, workspace.Value.ToByteArray(), original.Length + intended.Length);
+        Assert.Equal(64L, store.Read(reader => reader.Scalar("SELECT active_mutations FROM file_stage_capacity_totals;")));
+        Assert.Equal(64L, store.Read(reader => reader.Scalar("SELECT count(*) FROM command_dedup;")));
+        Assert.Equal(1L, store.Read(reader => reader.Scalar("""
+            SELECT count(*) FROM file_operation_journal WHERE command_id = $id AND phase = 1 AND held = 1;
+            """, ("$id", id))));
+        Assert.False(Directory.Exists(Path.Combine(fixture.Root, "workspace")));
     }
 
-    // Cleanup remains bounded even after the test token is canceled; never close a stage under a live owned callback.
-    private static async Task AwaitOwnedCleanupAsync(Task pending)
-    {
-        try { await pending.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false); }
-        catch (Exception exception) when (exception is not OutOfMemoryException) { }
-    }
+    private static RegisteredWorkspaces.RootIdentity Identity(byte number) =>
+        OperatingSystem.IsWindows() ? new(1, [1, number, .. new byte[31]]) : new(2, [1, number, .. new byte[51]]);
 
-    private static async Task DisposeAfterOwnedTaskAsync(Task pending, WorkspaceStagePair stage)
+    private static SqliteConnection OpenOlderConnection(string database, int defaultTimeout)
     {
-        try { await pending.ConfigureAwait(false); }
-        catch (Exception exception) when (exception is not OutOfMemoryException) { }
-        finally { stage.Dispose(); }
-    }
-
-    private static void OlderWriter(string database, byte[] workspace, int firstStageBytes, TaskCompletionSource attempting)
-    {
-        var settings = new SqliteConnectionStringBuilder { DataSource = database, Mode = SqliteOpenMode.ReadWrite, Pooling = false };
-        using var connection = new SqliteConnection(settings.ToString());
+        var settings = new SqliteConnectionStringBuilder
+        {
+            DataSource = database, Mode = SqliteOpenMode.ReadWrite, Pooling = false, DefaultTimeout = defaultTimeout,
+        };
+        var connection = new SqliteConnection(settings.ToString());
         connection.Open();
+        return connection;
+    }
+
+    private static void OlderWriter(string database, byte[] workspace, int firstStageBytes)
+    {
+        using var connection = OpenOlderConnection(database, defaultTimeout: 10);
         using (var pragma = connection.CreateCommand())
         {
-            pragma.CommandText = "PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 10000;";
+            pragma.CommandText = "PRAGMA foreign_keys = ON;";
             pragma.ExecuteNonQuery();
         }
-        attempting.TrySetResult();
         using var transaction = connection.BeginTransaction(deferred: false);
         for (var index = 0; index < 63; index++)
         {
@@ -164,6 +130,7 @@ public sealed class FileStageWriterConcurrencyTests
             Assert.Equal(64L, row.GetInt64(0));
             Assert.Equal((long)firstStageBytes, row.GetInt64(1));
         }
+
         Execute(connection, transaction, "SAVEPOINT overflow;");
         var overflow = CommandIds.New().Value.ToByteArray();
         InsertCommand(connection, transaction, overflow);

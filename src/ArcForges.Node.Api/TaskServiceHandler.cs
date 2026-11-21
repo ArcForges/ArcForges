@@ -715,6 +715,12 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
             // The legacy writer kept correlation in ResponseMeta for some durable errors. Validate a copy and replay the original reply.
             checkedResponse = response.Clone();
             checkedResponse.Error.CorrelationId = checkedResponse.Meta.CorrelationId;
+            if (response.Error.Equals(NodeErrors.NotFound("task", request.TaskId.Value.Span)))
+            {
+                // The original missing-task reply carried the exact target as its only state detail.
+                checkedResponse.Error.Details.State.State = "task";
+                checkedResponse.Error.Details.State.Reason = "not_found";
+            }
         }
 
         if (retained && (!NodeShapes.IsValid(checkedResponse) || (response.Error is null && !ValidTaskReceipt(response.Value?.Receipt, request.Meta.CommandId))))
