@@ -183,7 +183,7 @@ public static class TaskRecords
     }
 
     /// <summary>
-    /// Attempts the supervisor must recover: STARTING, RUNNING, PAUSING, PAUSED, STOPPING or FINALIZING. ADOPTED attempts have no holder or
+    /// Local attempts the supervisor must recover: STARTING, RUNNING, PAUSING, PAUSED, STOPPING or FINALIZING. ADOPTED attempts have no holder or
     /// exit record; <see cref="Adoptions"/> recovers them.
     /// </summary>
     public static List<AttemptRow> LiveAttempts(StoreReader reader)
@@ -191,7 +191,8 @@ public static class TaskRecords
         ArgumentNullException.ThrowIfNull(reader);
         using var command = reader.CreateCommand(
             "SELECT attempt_id, task_id, number, state, container_name, root_pid, root_start, boot_identity, stdout_offset, stderr_offset, index_offset, " +
-            "termination_reason, started_at, detail FROM attempt WHERE state BETWEEN 1 AND 8 AND kind <> 4 ORDER BY created_at;");
+            "termination_reason, started_at, detail FROM attempt WHERE state BETWEEN 1 AND 8 AND kind <> 4 " +
+            "AND executor_node_id = (SELECT node_id FROM store_meta WHERE singleton = 1) ORDER BY created_at;");
         using var rows = command.ExecuteReader();
         var result = new List<AttemptRow>();
         while (rows.Read())

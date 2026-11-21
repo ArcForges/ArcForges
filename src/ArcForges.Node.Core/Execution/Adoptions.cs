@@ -86,13 +86,17 @@ public sealed class Adoptions : IDisposable
         return TaskState.Running;
     }
 
-    /// <summary>Re-opens containers of live ADOPTED attempts or records authoritative absence. Unavailable custody leaves the attempt live.</summary>
+    /// <summary>Re-opens local live ADOPTED attempts or records authoritative absence. Unavailable custody leaves the attempt live.</summary>
     internal async Task RecoverAsync()
     {
         var live = _store.Read(reader =>
         {
             var rows = new List<(byte[] Attempt, byte[] Task, string? Container, int State, string? Boot)>();
-            using var command = reader.CreateCommand("SELECT attempt_id, task_id, container_name, state, boot_identity FROM attempt WHERE kind = 4 AND state BETWEEN 1 AND 8;");
+            using var command = reader.CreateCommand("""
+                SELECT attempt_id, task_id, container_name, state, boot_identity FROM attempt
+                WHERE kind = 4 AND state BETWEEN 1 AND 8
+                  AND executor_node_id = (SELECT node_id FROM store_meta WHERE singleton = 1);
+                """);
             using var result = command.ExecuteReader();
             while (result.Read())
             {

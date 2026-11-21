@@ -111,6 +111,38 @@ public sealed class LegacyCustodyAcknowledgementTests
         });
     }
 
+    [Theory(Timeout = 30_000)]
+    [InlineData(AttemptKind.Remote, WindowsCurrent)]
+    [InlineData(AttemptKind.Local, EarlierWindowsBoot)]
+    [InlineData(AttemptKind.Adopted, WindowsCurrent)]
+    [InlineData(AttemptKind.Adopted, EarlierWindowsBoot)]
+    public async Task RecoveryLeavesForeignLiveAttemptsUntouched(AttemptKind kind, string recordedBoot)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var node = InProcessNode.Create();
+        var (taskId, attemptId) = LegacyTaskHistoryFixture.Seed(node, AttemptState.Running);
+        using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = node.DataRoot, BootIdentity = WindowsCurrent, Clock = node.Clock });
+        store.Write(transaction => transaction.Execute("""
+            UPDATE attempt SET executor_node_id = $other, boot_identity = $boot, kind = $kind, container_name = $container
+            WHERE attempt_id = $id;
+            """, ("$other", CommandIds.New().Value.ToByteArray()), ("$boot", recordedBoot), ("$kind", (int)kind),
+            ("$container", IdText.Format(attemptId)), ("$id", attemptId.Value.ToByteArray())), CommitDurability.Full);
+        using var platform = new RecordingPlatform();
+        ManagedTask? ReadTask() => store.Read(reader => TaskRecords.GetTask(reader, taskId.Value.Span, full: true));
+        var original = ReadTask();
+        Assert.NotNull(original);
+        await WithSupervisorAsync(node, store, platform, async (execution, processor, heartbeat) =>
+        {
+            await execution.RecoverAsync(new RecoveryReport(true, true, null, store.Opening), processor, ct);
+            Assert.Equal(original, ReadTask());
+            Assert.Empty(platform.Queried);
+            Assert.Empty(platform.Acknowledged);
+            Assert.Empty(execution.RunningAttempts);
+            Assert.Empty(execution.Adoptions.Tracked);
+            Assert.True(heartbeat.RecoveryDone);
+        });
+    }
+
     private static async Task WithSupervisorAsync(InProcessNode node, NodeStore store, RecordingPlatform platform,
         Func<ExecutionSupervisor, CommandProcessor, NodeHeartbeatWriter, Task> verify)
     {
@@ -165,6 +197,12 @@ public sealed class LegacyCustodyAcknowledgementTests
         {
             Queried.Add(files.AttemptName);
             return confirmedMissing ? null : throw new LegacyCustodyUnavailableException("The precise fixture scope cannot be queried.");
+        }
+
+        public IAdoptedContainer? ReopenAdopted(string containerName)
+        {
+            Queried.Add(containerName);
+            return confirmedMissing ? null : throw new LegacyCustodyUnavailableException("The precise fixture adoption scope cannot be queried.");
         }
 
         public bool AcknowledgeRecorded(string nodeName, string attemptName)
