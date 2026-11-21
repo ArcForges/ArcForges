@@ -17,7 +17,7 @@ public sealed class BackupSecretRetentionTests
     {
         using var root = new TemporaryDataRoot();
         var clock = new ManualClock();
-        using var store = root.Open(clock);
+        using var store = root.Open(clock, StoreMigrations.Expanded);
         var backend = new IsolatedSecretStore();
         using var keys = new NodeDataKeyRing(store, backend.Selection);
         try
@@ -30,7 +30,7 @@ public sealed class BackupSecretRetentionTests
 
             AssertBackup(backup, backend, taskId, ciphertext);
             Assert.Equal(UnsealStatus.Available, new TaskSecrets(store, keys).Unseal(taskId).Status);
-            Assert.Equal(StoreMigrations.SupportedSchemaVersion, store.Metadata.SchemaVersion);
+            Assert.Equal(StoreMigrations.ExpandedSchemaVersion, store.Metadata.SchemaVersion);
             Assert.Null(store.Opening.MigratedFrom);
             Assert.Single(StoreBackups.List(root.Path));
             Assert.Empty(Directory.EnumerateFiles(StoreBackups.Directory(root.Path), "*.partial*"));
@@ -50,7 +50,7 @@ public sealed class BackupSecretRetentionTests
     {
         using var root = new TemporaryDataRoot();
         var clock = new ManualClock();
-        using var store = root.Open(clock);
+        using var store = root.Open(clock, StoreMigrations.Expanded);
         var backend = new IsolatedSecretStore();
         using var keys = new NodeDataKeyRing(store, backend.Selection);
         try
@@ -65,10 +65,10 @@ public sealed class BackupSecretRetentionTests
 
             var unrelated = Path.Combine(StoreBackups.Directory(root.Path), "unrelated.db");
             File.WriteAllText(unrelated, "synthetic unrelated file");
-            using (var reopened = root.Open(clock))
+            using (var reopened = root.Open(clock, StoreMigrations.Expanded))
             {
                 Assert.Null(reopened.Opening.MigratedFrom);
-                Assert.Equal(StoreMigrations.SupportedSchemaVersion, reopened.Metadata.SchemaVersion);
+                Assert.Equal(StoreMigrations.ExpandedSchemaVersion, reopened.Metadata.SchemaVersion);
                 Assert.Equal(UnsealStatus.Available, new TaskSecrets(reopened, keys).Unseal(taskId).Status);
             }
 
@@ -105,7 +105,7 @@ public sealed class BackupSecretRetentionTests
     {
         using var root = new TemporaryDataRoot();
         var clock = new ManualClock();
-        using var store = root.Open(clock);
+        using var store = root.Open(clock, StoreMigrations.Expanded);
         var backend = new IsolatedSecretStore();
         using var keys = new NodeDataKeyRing(store, backend.Selection);
         string? corrupt = null;
@@ -117,12 +117,12 @@ public sealed class BackupSecretRetentionTests
             File.WriteAllText(corrupt, "synthetic corrupt backup");
             var error = Assert.Throws<StoreBackupException>(() =>
             {
-                using var opened = root.Open(clock);
+                using var opened = root.Open(clock, StoreMigrations.Expanded);
             });
             Assert.Contains("backup", error.Message, StringComparison.OrdinalIgnoreCase);
             Assert.Equal(UnsealStatus.Available, new TaskSecrets(store, keys).Unseal(taskId).Status);
             Assert.Equal("synthetic corrupt backup", File.ReadAllText(corrupt));
-            Assert.Equal(StoreMigrations.SupportedSchemaVersion, store.Metadata.SchemaVersion);
+            Assert.Equal(StoreMigrations.ExpandedSchemaVersion, store.Metadata.SchemaVersion);
         }
         finally
         {
@@ -177,7 +177,7 @@ public sealed class BackupSecretRetentionTests
         using var restoredRoot = new TemporaryDataRoot();
         StorePaths.CreatePrivateDirectory(Path.GetDirectoryName(restoredRoot.Database)!);
         File.Copy(backup, restoredRoot.Database);
-        using var restored = restoredRoot.Open(new ManualClock());
+        using var restored = restoredRoot.Open(new ManualClock(), StoreMigrations.Expanded);
         using var restoredKeys = new NodeDataKeyRing(restored, backend.Selection);
         var unsealed = new TaskSecrets(restored, restoredKeys).Unseal(taskId);
         Assert.Equal(UnsealStatus.Unavailable, unsealed.Status);
@@ -189,7 +189,8 @@ public sealed class BackupSecretRetentionTests
         using (var connection = StoreCreationTests.Open(backup))
         {
             Assert.Equal(["ok"], StoreCreationTests.Query(connection, "PRAGMA integrity_check;"));
-            Assert.Equal([StoreMigrations.SupportedSchemaVersion.ToString(System.Globalization.CultureInfo.InvariantCulture)], StoreCreationTests.Query(connection, "SELECT schema_version FROM store_meta;"));
+            Assert.Equal([StoreMigrations.ExpandedSchemaVersion.ToString(System.Globalization.CultureInfo.InvariantCulture)],
+                StoreCreationTests.Query(connection, "SELECT schema_version FROM store_meta;"));
             Assert.Equal(["42"], StoreCreationTests.Query(connection, "SELECT value_json FROM node_setting WHERE name = 'backup-kept';"));
             Assert.Equal([TaskSecrets.PurgedKeyId], StoreCreationTests.Query(connection, "SELECT key_id FROM task_secret;"));
             Assert.Equal(["00"], StoreCreationTests.Query(connection, "SELECT hex(ciphertext) FROM task_secret;"));

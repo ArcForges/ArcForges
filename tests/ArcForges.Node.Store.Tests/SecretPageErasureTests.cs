@@ -17,7 +17,7 @@ public sealed class SecretPageErasureTests
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         using var root = new TemporaryDataRoot();
         var clock = new ManualClock();
-        using var store = root.Open(clock);
+        using var store = root.Open(clock, StoreMigrations.Expanded);
         var backend = new IsolatedSecretStore();
         using var keys = new NodeDataKeyRing(store, backend.Selection);
         try
@@ -62,7 +62,7 @@ public sealed class SecretPageErasureTests
             Assert.Equal(0, secrets.PurgeDue());
             Assert.False(ContainsCiphertext(root.Database, ciphertext));
             Assert.Equal("ok", store.Read(reader => reader.Scalar("PRAGMA integrity_check;")));
-            Assert.Equal(StoreMigrations.SupportedSchemaVersion, store.Metadata.SchemaVersion);
+            Assert.Equal(StoreMigrations.ExpandedSchemaVersion, store.Metadata.SchemaVersion);
             if (valueLength > 4096)
             {
                 Assert.True(store.Read(reader => (long)reader.Scalar("PRAGMA freelist_count;")!) > 0);
