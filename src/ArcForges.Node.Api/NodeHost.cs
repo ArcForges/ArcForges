@@ -376,8 +376,13 @@ public static class NodeHost
 
         // 02 section 2 step 6: the platform layer creates or re-opens the root container and verifies enforcement with a probe.
         var platform = protectedStorage ? null : StartPlatform(options, store, log);
-        CapabilityReport ReadLegacyCapabilities() => platform is null
-            ? NodeCapabilities.Evaluate(clock) : NodeCapabilities.FromPlatform(platform, clock);
+        CapabilityReport ReadLegacyCapabilities()
+        {
+            var report = platform is null ? NodeCapabilities.Evaluate(clock) : NodeCapabilities.FromPlatform(platform, clock);
+            report.Adopt = AdoptSupport.Unsupported;
+            report.AdoptReason = "New legacy process adoption has been retired. Cleanup of recorded adoptions requires confirmed custody.";
+            return report;
+        }
         var capabilities = ReadLegacyCapabilities();
         if (OperatingSystem.IsLinux())
         {
@@ -527,7 +532,17 @@ public static class NodeHost
                 new LogField("generation", journal.Generation));
             if (execution is not null)
             {
-                await RecoverLegacyAsync(options, node, execution, recovery).ConfigureAwait(false);
+                try
+                {
+                    await RecoverLegacyAsync(options, node, execution, recovery).ConfigureAwait(false);
+                }
+                catch (LegacyCustodyUnavailableException exception)
+                {
+                    log.Error("node.legacy_custody.unavailable", exception);
+                    await options.Error.WriteLineAsync("arcforges: legacy process custody could not be confirmed. Retry when the original platform scope is available."
+                        .AsMemory(), cancellationToken).ConfigureAwait(false);
+                    return NodeExitCodes.Failure;
+                }
             }
 
             if (node.Sandboxes is { } recoveredSandboxes)

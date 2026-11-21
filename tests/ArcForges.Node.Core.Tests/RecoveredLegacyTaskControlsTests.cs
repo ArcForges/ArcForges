@@ -53,6 +53,43 @@ public sealed class RecoveredLegacyTaskControlsTests
     }
 
     [Fact(Timeout = 30_000)]
+    public async Task UnavailableAttemptCustodyKeepsTheAttemptForExactReopen()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await WithRecoveredTaskAsync(AttemptState.Running, null, async fixture =>
+        {
+            var recovered = await fixture.ReadAsync();
+            Assert.Equal(TaskState.Running, recovered.State);
+            Assert.Equal(fixture.TaskId, recovered.TaskId);
+            Assert.Same(fixture.Platform, fixture.Execution.Running(IdText.Format(fixture.AttemptId))?.Handle);
+            Assert.Empty(fixture.Platform.Calls);
+        }, initiallyUnavailable: true);
+    }
+
+    [Fact(Timeout = 30_000)]
+    public async Task SameAttemptDurableExitCanSettleWhenNativeCustodyCannotBeQueried()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await WithRecoveredTaskAsync(AttemptState.Running, null, async fixture =>
+        {
+            Assert.Null(fixture.Execution.Running(IdText.Format(fixture.AttemptId))?.Handle);
+            fixture.Execution.Start();
+            var waited = await fixture.Tasks.WaitTask(Human, new TaskServiceWaitTaskRequest
+            {
+                TaskId = fixture.TaskId, Target = WaitTarget.Terminal, WaitMs = 10_000,
+            }, Ct);
+            Assert.Null(waited.Error);
+            Assert.True(waited.Value.Reached);
+            var settled = await fixture.ReadAsync();
+            Assert.Equal(TaskState.Failed, settled.State);
+            Assert.Equal(AttemptState.Finished, settled.CurrentAttempt.State);
+            Assert.Equal(9, settled.CurrentAttempt.Result.ExitCode);
+            Assert.Equal(EffectCertainty.Happened, settled.CurrentAttempt.Result.Effect);
+            Assert.Empty(fixture.Platform.Calls);
+        }, initiallyUnavailable: true, useRetainedExit: true);
+    }
+
+    [Fact(Timeout = 30_000)]
     public async Task ExplicitPauseAndResumePersistStateAndControlTheReopenedHandle()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
@@ -126,7 +163,8 @@ public sealed class RecoveredLegacyTaskControlsTests
         await fixture.DrainAsync();
     }
 
-    private static async Task WithRecoveredTaskAsync(AttemptState phase, string? reason, Func<RecoveredControlFixture, Task> verify)
+    private static async Task WithRecoveredTaskAsync(AttemptState phase, string? reason, Func<RecoveredControlFixture, Task> verify,
+        bool initiallyUnavailable = false, bool useRetainedExit = false)
     {
         await using var node = InProcessNode.Create();
         var clock = new ControlledClock();
@@ -161,9 +199,41 @@ public sealed class RecoveredLegacyTaskControlsTests
             new NodeSettingsManager(node.ConfigPath, node.DataRoot, log), node.DataRoot, "offline-fixture", clock,
             recovery, new CapabilityReport()) { Execution = execution };
         await runtime.TransitionAsync(NodeLifecycleState.Recovering, "fixture").WaitAsync(Ct);
+        if (initiallyUnavailable)
+        {
+            var nativeError = new LegacyCustodyUnavailableException("The user manager is unavailable.");
+            platform.ReopenError = nativeError;
+            // Even a valid record for a different attempt cannot replace this attempt's native ownership proof.
+            var unrelatedExit = new ExitRecord { AttemptId = IdText.Format(taskId), RecordedAt = clock.GetUtcNow().ToString("O", System.Globalization.CultureInfo.InvariantCulture) };
+            HelperFiles.WriteAtomically(files.ExitPath, unrelatedExit.ToJson());
+            ManagedTask? ReadTask() => store.Read(reader => TaskRecords.GetTask(reader, taskId.Value.Span, full: true));
+            var original = ReadTask();
+            Assert.NotNull(original);
+            var recoverCursor = journal.LatestPosition;
+            var error = await Assert.ThrowsAsync<LegacyCustodyUnavailableException>(() => execution.RecoverAsync(recovery, processor, Ct));
+            Assert.Same(nativeError, error.InnerException);
+            Assert.Equal(original, ReadTask());
+            Assert.Equal(recoverCursor, journal.LatestPosition);
+            Assert.False(heartbeat.RecoveryDone);
+            Assert.Empty(execution.RunningAttempts);
+            Assert.Empty(platform.Calls);
+            if (useRetainedExit)
+            {
+                unrelatedExit.AttemptId = files.AttemptName;
+                unrelatedExit.ExitStatus = 9;
+                unrelatedExit.ServiceResult = "exit-code";
+                HelperFiles.WriteAtomically(files.ExitPath, unrelatedExit.ToJson());
+            }
+            else
+            {
+                File.Delete(files.ExitPath);
+                platform.ReopenError = null;
+            }
+        }
+
         await execution.RecoverAsync(recovery, processor, Ct);
         await runtime.TransitionAsync(NodeLifecycleState.Ready, "fixture").WaitAsync(Ct);
-        Assert.Equal(1, platform.ReopenCalls);
+        Assert.Equal(initiallyUnavailable ? 2 : 1, platform.ReopenCalls);
 
         var handler = new TaskServiceHandler(runtime, new ClientSessions());
         await verify(new RecoveredControlFixture(store, processor, execution, handler, taskId, attemptId, platform, clock));
@@ -206,6 +276,7 @@ public sealed class RecoveredLegacyTaskControlsTests
         private bool _frozen = frozen;
         public List<(string Operation, long Value)> Calls { get; } = [];
         public int ReopenCalls { get; private set; }
+        public Exception? ReopenError { get; set; }
         public string Name => "reopened-fixture";
         public MachineCapacity Capacity => new(4, 1L << 30);
         public string ContainerName => "retained-fixture";
@@ -224,6 +295,11 @@ public sealed class RecoveredLegacyTaskControlsTests
             Assert.Equal(root, persistedRoot);
             Assert.False(stopping);
             ReopenCalls++;
+            if (ReopenError is { } error)
+            {
+                throw error;
+            }
+
             return this;
         }
 

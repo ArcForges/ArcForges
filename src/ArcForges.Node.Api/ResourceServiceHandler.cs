@@ -270,7 +270,18 @@ public sealed class ResourceServiceHandler : ResourceService.ResourceServiceBase
             ?? (request.HasReason && request.Reason.Length > 500 ? NodeErrors.InvalidArgument("reason: <= 500 chars") : null)
             ?? (request.FindingId is { } finding && finding.Value.Length is not (0 or 16) ? NodeErrors.InvalidArgument("finding_id: a 16-byte ID") : null)
             ?? (platform is null ? NodeErrors.EnforcementUnavailable("no execution platform could be started on this node (see the node log)") : null);
-        var target = refused is null ? Classify(pid, start) : null;
+        ProcessTarget? target = null;
+        if (refused is null)
+        {
+            try
+            {
+                target = Classify(pid, start);
+            }
+            catch (LegacyCustodyUnavailableException)
+            {
+                refused = NodeErrors.EnforcementUnavailable("the recorded adoption scope's membership could not be confirmed");
+            }
+        }
         if (refused is null && target is null)
         {
             // resources.proto: never unrelated processes.

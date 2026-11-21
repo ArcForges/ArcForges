@@ -48,6 +48,9 @@ public sealed class RunningAttempt : IDisposable
     /// <summary>The container handle, once launched or re-opened.</summary>
     public IAttemptHandle? Handle { get; internal set; }
 
+    // Used only when recovery has an exact durable exit record and no native scope handle.
+    internal ExitRecord? RecoveredExit { get; init; }
+
     /// <summary>Pulsed when output was indexed or the attempt changed.</summary>
     public AsyncPulse Changed { get; } = new();
 

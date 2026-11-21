@@ -357,6 +357,19 @@ public interface IAttemptHandle : IDisposable
 /// <param name="PhysicalMemoryBytes">Physical memory.</param>
 public sealed record MachineCapacity(int LogicalProcessors, long PhysicalMemoryBytes);
 
+/// <summary>The original legacy process scope could not be observed reliably.</summary>
+public sealed class LegacyCustodyUnavailableException : IOException
+{
+    /// <summary>Creates a custody failure.</summary>
+    public LegacyCustodyUnavailableException() : base("Legacy process custody could not be confirmed.") { }
+
+    /// <summary>Creates a custody failure with the platform reason.</summary>
+    public LegacyCustodyUnavailableException(string message) : base(message) { }
+
+    /// <summary>Creates a custody failure with the underlying observation error.</summary>
+    public LegacyCustodyUnavailableException(string message, Exception innerException) : base(message, innerException) { }
+}
+
 /// <summary>
 /// The legacy root container and the controls needed to recover existing attempt containers and holders by name.
 /// </summary>
@@ -383,6 +396,7 @@ public interface IExecutionPlatform : IDisposable
     /// <see cref="IAttemptHandle.Started"/> completes when it continues. Otherwise the start completes at once with <paramref name="root"/>, and
     /// a forced phase that stops the attempt later still sees such a launch go on (<see cref="IAttemptHandle.WatchLaunch"/>).
     /// </summary>
+    /// <exception cref="LegacyCustodyUnavailableException">The original container's existence could not be determined.</exception>
     IAttemptHandle? Reopen(string nodeName, AttemptFiles files, RootProcess? root, bool stopping = false);
 
     /// <summary>
@@ -397,7 +411,8 @@ public interface IExecutionPlatform : IDisposable
     /// </summary>
     bool Listens(int port, IReadOnlyCollection<int> processIds) => false;
     /// <summary>Re-opens a recorded adoption container by name after a node restart, or returns <see langword="null"/> when it is gone.</summary>
-    IAdoptedContainer? ReopenAdopted(string containerName) => null;
+    /// <exception cref="LegacyCustodyUnavailableException">The original container's existence could not be determined.</exception>
+    IAdoptedContainer? ReopenAdopted(string containerName) => throw new LegacyCustodyUnavailableException();
 
     /// <summary>
     /// Terminates the process identified by <paramref name="pid"/> and its start time when it still is that process and runs as the node's

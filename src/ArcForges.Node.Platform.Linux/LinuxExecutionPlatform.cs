@@ -740,18 +740,24 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
         ArgumentException.ThrowIfNullOrWhiteSpace(containerName);
         if (_manager is null)
         {
-            return null;
+            throw new LegacyCustodyUnavailableException(_managerReason ?? "No systemd user manager is connected.");
         }
 
         try
         {
-            return Manager.ScopeControlGroup(containerName) is { Length: > 0 } controlGroup
+            var controlGroup = Manager.ScopeControlGroup(containerName);
+            if (controlGroup is null)
+            {
+                return null;
+            }
+
+            return controlGroup.Length > 0
                 ? new LinuxAdoptedScope(this, containerName, ProcFs.CgroupDirectory(controlGroup))
-                : null;
+                : throw new LegacyCustodyUnavailableException("The recorded scope has no reported cgroup.");
         }
         catch (Exception exception) when (exception is DBusExceptionBase or TimeoutException or InvalidOperationException)
         {
-            return null;
+            throw new LegacyCustodyUnavailableException("The systemd user manager did not resolve the recorded scope.", exception);
         }
     }
 
@@ -855,7 +861,7 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
         ArgumentNullException.ThrowIfNull(files);
         if (_manager is null)
         {
-            return null;
+            throw new LegacyCustodyUnavailableException(_managerReason ?? "No systemd user manager is connected.");
         }
 
         try
@@ -864,7 +870,7 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
         }
         catch (Exception exception) when (exception is DBusExceptionBase or TimeoutException)
         {
-            throw new IOException("The systemd user manager did not answer for the attempt unit: " + OneLine(exception.Message), exception);
+            throw new LegacyCustodyUnavailableException("The systemd user manager did not resolve the attempt unit.", exception);
         }
     }
 

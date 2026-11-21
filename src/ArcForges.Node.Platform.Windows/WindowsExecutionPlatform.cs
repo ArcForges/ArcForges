@@ -265,7 +265,9 @@ public sealed class WindowsExecutionPlatform : IExecutionPlatform
     public IAdoptedContainer? ReopenAdopted(string containerName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(containerName);
-        return JobObject.Open(containerName) is { } job ? new WindowsAdoptedJob(job) : null;
+        return JobObject.Open(containerName) is { } job
+            ? new WindowsAdoptedJob(job)
+            : throw new LegacyCustodyUnavailableException("The recorded adoption job was not found in this Windows session.");
     }
 
     /// <inheritdoc />
@@ -484,7 +486,8 @@ public sealed class WindowsExecutionPlatform : IExecutionPlatform
         var job = JobObject.Open(JobName(nodeName, files.AttemptName));
         if (job is null)
         {
-            return null;
+            // Legacy attempts did not record their Windows session. A Local job can exist in another session.
+            throw new LegacyCustodyUnavailableException("The recorded attempt job was not found in this Windows session.");
         }
 
         var key = (nuint)Interlocked.Increment(ref _nextKey);

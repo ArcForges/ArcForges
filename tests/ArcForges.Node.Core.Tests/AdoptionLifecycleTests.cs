@@ -118,6 +118,47 @@ public sealed class AdoptionLifecycleTests
     }
 
     [Fact(Timeout = 60_000)]
+    public async Task UnavailableAdoptionCustodyLeavesTheOriginalAttemptForLaterCancellation()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await WithRecoveredAdoptionAsync(containerAvailable: true, async fixture =>
+        {
+            var before = await fixture.ReadAsync();
+            Assert.Equal(TaskState.Running, before.State);
+            Assert.Equal(fixture.TaskId, before.TaskId);
+            var cancel = await fixture.Tasks.CancelTask(Human,
+                new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = fixture.TaskId }, Ct);
+            Assert.Null(cancel.Error);
+            Assert.Equal(1, fixture.Platform.TerminateCalls);
+            Assert.Equal(TaskState.Cancelled, (await fixture.CompleteAsync()).State);
+        }, initiallyUnavailable: true);
+    }
+
+    [Fact(Timeout = 60_000)]
+    public async Task UnreadableAdoptionMembershipCanBeReadAgainBeforeRecordingAnEnd()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await WithRecoveredAdoptionAsync(containerAvailable: true, async fixture =>
+        {
+            var before = await fixture.ReadAsync();
+            fixture.Platform.SetMembershipUnavailable(true);
+            fixture.Execution.Adoptions.Wake();
+            await fixture.Platform.MembershipReadFailed.WaitAsync(TimeSpan.FromSeconds(5), Ct);
+            fixture.Platform.SetMembershipUnavailable(false);
+            fixture.Execution.Adoptions.Start();
+            await fixture.Platform.MembershipReadSucceeded.WaitAsync(TimeSpan.FromSeconds(5), Ct);
+            Assert.Equal(before, await fixture.ReadAsync());
+            Assert.Single(fixture.Execution.Adoptions.Tracked);
+            Assert.False(fixture.Platform.Released.IsCompleted);
+            Assert.Equal(0, fixture.Platform.TerminateCalls);
+
+            var ended = await fixture.CompleteAsync();
+            Assert.Equal(TaskState.Lost, ended.State);
+            AssertAdoptedResult(ended, TerminationReason.Lost, EffectCertainty.Unknown);
+        });
+    }
+
+    [Fact(Timeout = 60_000)]
     public async Task CancellingAnAdoptionJournalsStoppingBeforeItsFinalResult()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
@@ -142,7 +183,8 @@ public sealed class AdoptionLifecycleTests
         });
     }
 
-    private static async Task WithRecoveredAdoptionAsync(bool containerAvailable, Func<AdoptionFixture, Task> verify, bool captureRoutedCancel = false)
+    private static async Task WithRecoveredAdoptionAsync(bool containerAvailable, Func<AdoptionFixture, Task> verify,
+        bool captureRoutedCancel = false, bool initiallyUnavailable = false)
     {
         await using var node = InProcessNode.Create();
         var root = new RootProcess(int.MaxValue, node.Clock.GetUtcNow());
@@ -191,9 +233,27 @@ public sealed class AdoptionLifecycleTests
         using var dispatcher = new RoutedDispatcher(runtime);
         dispatcher.Bind(tasks, new WorkspaceServiceHandler(runtime), new FileServiceHandler(runtime));
         await runtime.TransitionAsync(NodeLifecycleState.Recovering, "fixture").WaitAsync(Ct);
+        if (initiallyUnavailable)
+        {
+            var nativeError = new System.ComponentModel.Win32Exception(5);
+            platform.ReopenError = nativeError;
+            ManagedTask? ReadTask() => store.Read(reader => TaskRecords.GetTask(reader, taskId.Value.Span, full: true));
+            var original = ReadTask();
+            Assert.NotNull(original);
+            var recoverCursor = journal.LatestPosition;
+            var error = await Assert.ThrowsAsync<LegacyCustodyUnavailableException>(() => execution.RecoverAsync(recovery, processor, Ct));
+            Assert.Same(nativeError, error.InnerException);
+            Assert.Equal(original, ReadTask());
+            Assert.Equal(recoverCursor, journal.LatestPosition);
+            Assert.False(heartbeat.RecoveryDone);
+            Assert.Empty(execution.Adoptions.Tracked);
+            Assert.Equal(0, platform.TerminateCalls);
+            platform.ReopenError = null;
+        }
+
         await execution.RecoverAsync(recovery, processor, Ct).WaitAsync(Ct);
         await runtime.TransitionAsync(NodeLifecycleState.Ready, "fixture").WaitAsync(Ct);
-        Assert.Equal(1, platform.ReopenCalls);
+        Assert.Equal(initiallyUnavailable ? 2 : 1, platform.ReopenCalls);
         Assert.Equal(containerAvailable ? 1 : 0, execution.Adoptions.Tracked.Count);
         await verify(new AdoptionFixture(store, runtime, execution, tasks, approvals, dispatcher, taskId, platform, cursor, priorApproval));
     }
@@ -296,23 +356,35 @@ public sealed class AdoptionLifecycleTests
     private sealed class RecoveredPlatform(RootProcess root, bool canReopen) : IExecutionPlatform, IResourceSampler
     {
         private int _present = canReopen ? 1 : 0;
+        private int _membershipUnavailable;
         private readonly TaskCompletionSource _released = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _membershipReadFailed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _membershipReadSucceeded = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public string Name => "retained-adoption-fixture";
         public MachineCapacity Capacity => new(4, 1L << 30);
         public RootProcess Root => root;
         public Task Released => _released.Task;
+        public Task MembershipReadFailed => _membershipReadFailed.Task;
+        public Task MembershipReadSucceeded => _membershipReadSucceeded.Task;
         public int ReopenCalls { get; private set; }
         public int TerminateCalls { get; private set; }
+        public Exception? ReopenError { get; set; }
 
         public IAdoptedContainer? ReopenAdopted(string containerName)
         {
             Assert.Equal(ContainerName, containerName);
             ReopenCalls++;
+            if (ReopenError is { } error)
+            {
+                throw error;
+            }
+
             return canReopen ? new RecoveredContainer(this) : null;
         }
 
         public IReadOnlyList<int> OwnedProcesses() => Volatile.Read(ref _present) == 1 ? [root.Pid] : [];
+        public void SetMembershipUnavailable(bool unavailable) => Volatile.Write(ref _membershipUnavailable, unavailable ? 1 : 0);
         public IReadOnlyList<ProcessSample> Processes() => Volatile.Read(ref _present) == 1 ? [new(root.Pid, 0, root.StartTime, "retained-adopted-image")] : [];
         public MachineSample Machine() => throw new NotSupportedException();
         public void End() => Volatile.Write(ref _present, 0);
@@ -327,7 +399,17 @@ public sealed class AdoptionLifecycleTests
         private sealed class RecoveredContainer(RecoveredPlatform owner) : IAdoptedContainer
         {
             string IAdoptedContainer.ContainerName => AdoptionLifecycleTests.ContainerName;
-            public IReadOnlyList<int> Processes() => owner.OwnedProcesses();
+            public IReadOnlyList<int> Processes()
+            {
+                if (Volatile.Read(ref owner._membershipUnavailable) == 1)
+                {
+                    owner._membershipReadFailed.TrySetResult();
+                    throw new LegacyCustodyUnavailableException("The adopted scope's membership is unavailable.");
+                }
+
+                owner._membershipReadSucceeded.TrySetResult();
+                return owner.OwnedProcesses();
+            }
             public void Terminate() => owner.TerminateCalls++;
             public void Dispose() => owner._released.TrySetResult();
         }

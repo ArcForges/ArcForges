@@ -380,6 +380,25 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
     {
         ArgumentNullException.ThrowIfNull(report);
         var live = _store.Read(TaskRecords.LiveAttempts);
+        try
+        {
+            await RecoverAttemptsAsync(report, live, cancellationToken).ConfigureAwait(false);
+            await Adoptions.RecoverAsync(report.BootChanged).ConfigureAwait(false);
+        }
+        catch (LegacyCustodyUnavailableException)
+        {
+            // A failed recovery is not an intentional Node stop. Release any handles already reopened without signalling their processes.
+            ReleaseAttemptHandles();
+            Adoptions.Dispose();
+            throw;
+        }
+
+        AcknowledgeRecordedAttempts(live);
+        Heartbeat.RecoveryDone = true;
+    }
+
+    private async Task RecoverAttemptsAsync(RecoveryReport report, List<AttemptRow> live, CancellationToken cancellationToken)
+    {
         var gapStart = _store.Read(reader => reader.Scalar("SELECT max(at) FROM event_journal WHERE generation < (SELECT journal_generation FROM store_meta);") as long?);
         foreach (var row in live)
         {
@@ -400,24 +419,40 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             // later watches such a launch, TerminateEachLaunchProcess).
             var stopping = row.State is AttemptState.Stopping or AttemptState.Finalizing;
             IAttemptHandle? handle = null;
+            Exception? custodyError = null;
             try
             {
-                handle = Platform?.Reopen(NodeName, files, root, stopping);
+                if (OperatingSystem.IsLinux() && row.ContainerName?.StartsWith("pgid:", StringComparison.Ordinal) == true)
+                {
+                    throw new LegacyCustodyUnavailableException("The retired direct-process scope cannot be reopened through systemd.");
+                }
+
+                var platform = Platform ?? throw new LegacyCustodyUnavailableException("The legacy execution platform is unavailable.");
+                handle = platform.Reopen(NodeName, files, root, stopping);
             }
-            catch (Win32Exception exception)
+            catch (Exception exception) when (exception is Win32Exception or IOException or TimeoutException or InvalidOperationException or UnauthorizedAccessException)
             {
-                _log.Warning("execution.recover.reopen_failed", new LogField("attempt", name), new LogField("error", exception.NativeErrorCode));
-            }
-            catch (Exception exception) when (exception is IOException or TimeoutException or InvalidOperationException)
-            {
-                // Linux: the user manager did not answer; without a container the exit record (if any) still finalizes the attempt.
+                custodyError = exception;
                 _log.Warning("execution.recover.reopen_failed", new LogField("attempt", name), new LogField("errorType", exception.GetType().Name),
-                    new LogField("error", NodeLog.OneLine(exception.Message)));
+                    new LogField("error", exception is Win32Exception native ? native.NativeErrorCode : NodeLog.OneLine(exception.Message)));
+            }
+
+            var recoveredExit = handle is null ? ReadRecoveryExit(files) : null;
+            if (handle is null && recoveredExit is null)
+            {
+                if (custodyError is not null)
+                {
+                    throw new LegacyCustodyUnavailableException("Legacy attempt custody could not be confirmed.", custodyError);
+                }
+
+                await RecordLostAsync(row, "container_missing: the attempt's original container no longer exists and no valid exit record was found", "container_missing").ConfigureAwait(false);
+                continue;
             }
 
             var running = new RunningAttempt(row.AttemptId, row.TaskId, name, row.Number, files)
             {
                 Handle = handle,
+                RecoveredExit = recoveredExit,
                 NodeGap = true,
                 ApproximateNext = true,
                 RootRecorded = row.RootPid is not null,
@@ -469,13 +504,6 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
                 running.StartedTimestamp = _clock.GetTimestamp() - (long)(Math.Max(0, elapsed.TotalSeconds) * TimeProvider.System.TimestampFrequency);
             }
 
-            if (handle is null && !File.Exists(files.ExitPath))
-            {
-                running.Dispose();
-                await RecordLostAsync(row, "container_missing: the attempt's job no longer exists and no exit record was written", "container_missing").ConfigureAwait(false);
-                continue;
-            }
-
             if (stopping)
             {
                 // The node was stopping it: the stop continues (forced, since the graceful phase cannot be resumed). The node may have
@@ -506,11 +534,24 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             _log.Info("execution.recovered", new LogField("attempt", name), new LogField("container", handle?.ContainerName ?? "-"),
                 new LogField("exitRecorded", File.Exists(files.ExitPath)), new LogField("portReassociated", handle is not null));
         }
-
-        AcknowledgeRecordedAttempts(live);
-        await Adoptions.RecoverAsync(report.BootChanged).ConfigureAwait(false);
-        Heartbeat.RecoveryDone = true;
     }
+
+    private static ExitRecord? ReadRecoveryExit(AttemptFiles files) => HelperFiles.TryRead(files.ExitPath, json =>
+    {
+        using var document = JsonDocument.Parse(json);
+        var record = document.RootElement;
+        // Recovery without a handle needs an actual same-attempt receipt, not defaults from missing JSON fields.
+        return record.ValueKind == JsonValueKind.Object
+            && record.TryGetProperty("schema", out var schema) && schema.ValueKind == JsonValueKind.Number
+            && schema.TryGetInt32(out var version) && version == 1
+            && record.TryGetProperty("attempt_id", out var id) && id.ValueKind == JsonValueKind.String && id.ValueEquals(files.AttemptName)
+            && record.TryGetProperty("exit_code_kind", out var kind) && kind.ValueKind == JsonValueKind.String
+            && (kind.ValueEquals("exited") || kind.ValueEquals("killed") || kind.ValueEquals("dumped"))
+            && record.TryGetProperty("exit_status", out var status) && status.ValueKind == JsonValueKind.Number && status.TryGetInt32(out _)
+            && record.TryGetProperty("service_result", out var result) && result is { ValueKind: JsonValueKind.String } && !string.IsNullOrEmpty(result.GetString())
+            && record.TryGetProperty("recorded_at", out var at) && at.ValueKind == JsonValueKind.String && at.TryGetDateTimeOffset(out _)
+            ? ExitRecord.Parse(json) : null;
+    });
 
     /// <summary>
     /// The exit acknowledgement follows the record's commit, so a node that stopped between the two leaves a holder waiting on an
@@ -583,14 +624,19 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         var deadline = _clock.GetTimestamp();
         foreach (var attempt in _running.Values.Where(attempt => attempt.KillWithNode))
         {
-            while (!File.Exists(attempt.Files.ExitPath) && _clock.GetElapsedTime(deadline) < TimeSpan.FromSeconds(3))
+            while (attempt.RecoveredExit is null && !File.Exists(attempt.Files.ExitPath) && _clock.GetElapsedTime(deadline) < TimeSpan.FromSeconds(3))
             {
                 await Task.Delay(20).ConfigureAwait(false);
             }
 
-            await FinalizeAsync(attempt, incomplete: !File.Exists(attempt.Files.ExitPath)).ConfigureAwait(false);
+            await FinalizeAsync(attempt, incomplete: attempt.RecoveredExit is null && !File.Exists(attempt.Files.ExitPath)).ConfigureAwait(false);
         }
 
+        ReleaseAttemptHandles();
+    }
+
+    private void ReleaseAttemptHandles()
+    {
         foreach (var attempt in _running.Values)
         {
             // The holder keeps the jobs; the node only releases its handles.
@@ -1702,7 +1748,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
 
         // Linux observes its units here (a failed unit whose ExecStopPost systemd skipped is recorded from the unit's own properties).
         handle?.Refresh();
-        if (File.Exists(attempt.Files.ExitPath))
+        if (attempt.RecoveredExit is not null || File.Exists(attempt.Files.ExitPath))
         {
             BeginFinalize(attempt, incomplete: false);
             return;
@@ -2180,7 +2226,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
                 throw new NotSupportedException("test fault finalize-throw");
             }
 
-            var exit = ExitRecord.TryRead(attempt.Files.ExitPath);
+            var exit = attempt.RecoveredExit ?? ExitRecord.TryRead(attempt.Files.ExitPath);
             var launch = LaunchRecord.TryRead(attempt.Files.LaunchPath);
             var guard = GuardEvent.ReadAll(attempt.Files.GuardEventsPath);
             var handle = attempt.Handle;

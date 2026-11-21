@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Globalization;
 using System.Runtime.Versioning;
 using Tmds.DBus.Protocol;
 
@@ -16,7 +17,49 @@ internal sealed class LinuxAdoptedScope(LinuxExecutionPlatform platform, string 
     public string ContainerName => unit;
 
     /// <inheritdoc />
-    public IReadOnlyList<int> Processes() => Directory.Exists(directory) ? ProcFs.Procs(directory) : [];
+    public IReadOnlyList<int> Processes()
+    {
+        try
+        {
+            var members = new List<int>();
+            foreach (var line in File.ReadLines(Path.Combine(directory, "cgroup.procs")))
+            {
+                if (!int.TryParse(line, NumberStyles.None, CultureInfo.InvariantCulture, out var pid) || pid <= 0)
+                {
+                    throw new LegacyCustodyUnavailableException("The recorded scope reported invalid membership.");
+                }
+
+                members.Add(pid);
+            }
+
+            if (members.Count == 0 && !File.ReadLines(Path.Combine(directory, "cgroup.events")).Contains("populated 0", StringComparer.Ordinal))
+            {
+                throw new LegacyCustodyUnavailableException("The recorded scope's whole-tree membership is not confirmed empty.");
+            }
+
+            return members;
+        }
+        catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
+        {
+            try
+            {
+                if (platform.Manager.GetUnit(unit) is null)
+                {
+                    return [];
+                }
+            }
+            catch (Exception queryError) when (queryError is DBusExceptionBase or TimeoutException or IOException or InvalidOperationException)
+            {
+                throw new LegacyCustodyUnavailableException("The systemd user manager did not confirm the recorded scope's departure.", queryError);
+            }
+
+            throw new LegacyCustodyUnavailableException("The recorded scope is still loaded but its membership is unavailable.", exception);
+        }
+        catch (Exception exception) when (exception is IOException and not LegacyCustodyUnavailableException or UnauthorizedAccessException)
+        {
+            throw new LegacyCustodyUnavailableException("The recorded scope's membership could not be read.", exception);
+        }
+    }
 
     /// <inheritdoc />
     public void Terminate()

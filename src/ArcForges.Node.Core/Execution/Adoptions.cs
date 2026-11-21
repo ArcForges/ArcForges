@@ -86,7 +86,7 @@ public sealed class Adoptions : IDisposable
         return TaskState.Running;
     }
 
-    /// <summary>Re-opens the containers of the ADOPTED attempts the store records as live (node start), or records them LOST.</summary>
+    /// <summary>Re-opens containers of live ADOPTED attempts or records authoritative absence. Unavailable custody leaves the attempt live.</summary>
     internal async Task RecoverAsync(bool bootChanged)
     {
         var live = _store.Read(reader =>
@@ -111,13 +111,25 @@ public sealed class Adoptions : IDisposable
             {
                 why = "boot_changed: the machine restarted since the process was adopted";
             }
-            else if (row.Container is null || _execution.Platform?.ReopenAdopted(row.Container) is not { } reopened)
-            {
-                why = ContainerMissing + ": the adoption container " + (row.Container ?? "(none)") + " could not be re-opened after the node restarted";
-            }
             else
             {
-                container = reopened;
+                if (row.Container is { } containerName)
+                {
+                    try
+                    {
+                        var platform = _execution.Platform ?? throw new LegacyCustodyUnavailableException("The legacy execution platform is unavailable.");
+                        container = platform.ReopenAdopted(containerName);
+                    }
+                    catch (Exception exception) when (exception is Win32Exception or IOException or TimeoutException or InvalidOperationException or UnauthorizedAccessException)
+                    {
+                        _log.Warning("execution.adopted.reopen_failed", new LogField("attempt", name),
+                            new LogField("errorType", exception.GetType().Name),
+                            new LogField("error", exception is Win32Exception native ? native.NativeErrorCode : NodeLog.OneLine(exception.Message)));
+                        throw new LegacyCustodyUnavailableException("Legacy adoption custody could not be confirmed.", exception);
+                    }
+                }
+
+                why = ContainerMissing + ": the adoption container " + (row.Container ?? "(none)") + " no longer exists";
             }
 
             if (container is null)
@@ -151,6 +163,7 @@ public sealed class Adoptions : IDisposable
         }
 
         _tracked.Clear();
+        _cancelled.Clear();
     }
 
     private void Poll()
