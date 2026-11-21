@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using Microsoft.Win32.SafeHandles;
@@ -21,6 +22,155 @@ public sealed class SafeKernelHandle : SafeHandleZeroOrMinusOneIsInvalid
 
     /// <inheritdoc />
     protected override bool ReleaseHandle() => Native.CloseHandle(handle);
+}
+
+/// <summary>A launched Windows process and its owned handles.</summary>
+[SupportedOSPlatform("windows")]
+public sealed class LaunchedProcess : IDisposable
+{
+    internal LaunchedProcess(SafeKernelHandle process, SafeKernelHandle thread, int processId)
+    {
+        Process = process;
+        Thread = thread;
+        ProcessId = processId;
+    }
+
+    /// <summary>The process handle (full access).</summary>
+    public SafeKernelHandle Process { get; }
+
+    /// <summary>The primary thread handle (closed once resumed).</summary>
+    public SafeKernelHandle Thread { get; }
+
+    /// <summary>The process ID.</summary>
+    public int ProcessId { get; }
+
+    /// <summary>The creation time as a FILETIME.</summary>
+    public long CreationFileTime => ProcessInfo.CreationFileTime(Process);
+
+    /// <summary>Resumes a process created suspended.</summary>
+    public void Resume()
+    {
+        if (Native.ResumeThread(Thread.DangerousGetHandle()) == uint.MaxValue)
+        {
+            throw new Win32Exception(Native.LastError, "ResumeThread failed.");
+        }
+
+        Thread.Dispose();
+    }
+
+    /// <summary>Waits for the process to exit; false on timeout.</summary>
+    public bool WaitForExit(TimeSpan timeout) =>
+        Native.WaitForSingleObject(Process, timeout == Timeout.InfiniteTimeSpan ? Native.Infinite : (uint)Math.Clamp(timeout.TotalMilliseconds, 0, uint.MaxValue - 1))
+            == Native.WaitObject0;
+
+    /// <summary>The exit code (259 while running).</summary>
+    public uint ExitCode => Native.GetExitCodeProcess(Process, out var code) ? code : uint.MaxValue;
+
+    /// <summary>Terminates the process.</summary>
+    public void Kill(uint exitCode) => Native.TerminateProcess(Process, exitCode);
+
+    /// <summary>Closes the handles.</summary>
+    public void Dispose()
+    {
+        Thread.Dispose();
+        Process.Dispose();
+    }
+}
+
+/// <summary>Process identity helpers.</summary>
+[SupportedOSPlatform("windows")]
+public static unsafe class ProcessInfo
+{
+    /// <summary>A process's creation time as a FILETIME, or 0.</summary>
+    public static long CreationFileTime(SafeHandle process) => Native.GetProcessTimes(process, out var creation, out _, out _, out _) ? creation : 0;
+
+    /// <summary>A FILETIME as an instant.</summary>
+    public static DateTimeOffset FromFileTime(long fileTime) => DateTimeOffset.FromFileTime(fileTime).ToUniversalTime();
+
+    /// <summary>Opens a process for query and synchronize (and terminate when asked), or returns <see langword="null"/>.</summary>
+    public static SafeKernelHandle? Open(int processId, bool terminate = false)
+    {
+        var handle = Native.OpenProcess(Native.ProcessQueryLimitedInformation | Native.Synchronize | (terminate ? Native.ProcessTerminate : 0), inherit: false, processId);
+        if (handle.IsInvalid)
+        {
+            handle.Dispose();
+            return null;
+        }
+
+        return handle;
+    }
+
+    /// <summary>Opens a process only when it is still the one created at <paramref name="creationFileTime"/>.</summary>
+    public static SafeKernelHandle? OpenIdentified(int processId, long creationFileTime, bool terminate = false)
+    {
+        var handle = Open(processId, terminate);
+        if (handle is null)
+        {
+            return null;
+        }
+
+        // Stored start times keep microseconds; FILETIME counts 100 ns.
+        if (Math.Abs(CreationFileTime(handle) - creationFileTime) >= 10)
+        {
+            handle.Dispose();
+            return null;
+        }
+
+        return handle;
+    }
+
+    /// <summary>True when the process has not exited.</summary>
+    public static bool IsRunning(SafeHandle process) => Native.WaitForSingleObject(process, 0) == Native.WaitTimeout;
+
+    /// <summary>The image file name (no directory), or the process ID as text.</summary>
+    public static string ImageName(int processId)
+    {
+        using var handle = Open(processId);
+        return handle is null ? processId.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            : ImageName(handle) ?? processId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>The image file name (no directory) of an open process, or <see langword="null"/>.</summary>
+    public static string? ImageName(SafeHandle process)
+    {
+        var buffer = stackalloc char[1024];
+        var size = 1024;
+        return Native.QueryFullProcessImageName(process, 0, buffer, ref size) ? Path.GetFileName(new string(buffer, 0, size)) : null;
+    }
+
+    /// <summary>Every process with its parent ID and image (a Toolhelp snapshot).</summary>
+    public static List<(int Pid, int ParentPid, string Image)> Snapshot()
+    {
+        var result = new List<(int, int, string)>();
+        using var snapshot = Native.CreateToolhelp32Snapshot(Native.Th32csSnapProcess, 0);
+        if (snapshot.IsInvalid)
+        {
+            return result;
+        }
+
+        var entry = default(Native.ProcessEntry32);
+        entry.Size = sizeof(Native.ProcessEntry32);
+        if (!Native.Process32First(snapshot, &entry))
+        {
+            return result;
+        }
+
+        do
+        {
+            result.Add((entry.ProcessId, entry.ParentProcessId, new string(entry.ExeFile)));
+            entry.Size = sizeof(Native.ProcessEntry32);
+        }
+        while (Native.Process32Next(snapshot, &entry));
+        return result;
+    }
+
+    /// <summary>The machine's physical memory.</summary>
+    public static long PhysicalMemory()
+    {
+        var status = default(Native.MemoryStatusEx);
+        status.Length = sizeof(Native.MemoryStatusEx);
+        return Native.GlobalMemoryStatusEx(&status) ? (long)status.TotalPhys : GC.GetGCMemoryInfo().TotalAvailableMemoryBytes;
+    }
 }
 
 /// <summary>Win32 declarations of the Windows platform (source-generated P/Invoke).</summary>
@@ -371,6 +521,18 @@ internal static unsafe partial class Native
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool DuplicateHandle(nint sourceProcess, SafeHandle source, nint targetProcess, out nint target, uint access,
         [MarshalAs(UnmanagedType.Bool)] bool inherit, uint options);
+
+    /// <summary>Duplicates a handle as inheritable with the same access. The caller closes the duplicate.</summary>
+    internal static nint DuplicateInheritableHandle(SafeHandle handle)
+    {
+        ArgumentNullException.ThrowIfNull(handle);
+        if (!DuplicateHandle(GetCurrentProcess(), handle, GetCurrentProcess(), out var copy, 0, inherit: true, DuplicateSameAccess))
+        {
+            throw new Win32Exception(LastError, "DuplicateHandle failed.");
+        }
+
+        return copy;
+    }
 
     [LibraryImport("kernel32.dll", EntryPoint = "DuplicateHandle", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

@@ -2,8 +2,8 @@
 """Actual SQLite and native file-lock tests; all writes belong to temporary fixtures."""
 
 import contextlib
+import hashlib
 import importlib.util
-import io
 import json
 import os
 from pathlib import Path
@@ -12,20 +12,34 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 spec = importlib.util.spec_from_file_location("node_preflight", Path(__file__).with_name("preflight.py"))
 preflight = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(preflight)
 
 
-def fixture(path, journal=False):
+def record_expansion(connection, step, source, unresolved):
+    cohort = "private-fixture-cohort"
+    backup = "a" * 64 if source else "fresh:no-predecessor"
+    intent = f"AFV2-DATA-01|{source}|16|{step['sha256']}|{backup}|{unresolved}|{cohort}"
+    receipt = hashlib.sha256(intent.encode("utf-8")).hexdigest()
+    connection.execute("""INSERT INTO schema_version
+        SELECT 1,schema_version,min_reader_version,?,? FROM store_meta WHERE singleton=1""", (cohort, receipt))
+    connection.execute("""INSERT INTO migration_checkpoint
+        VALUES('AFV2-DATA-01/schema16',?,16,?,'EXPANDED_LEGACY_RECONCILIATION_PRESERVED',?,?,?,'2026-01-01T00:00:00Z')""",
+        (source, backup, cohort, unresolved, receipt))
+
+
+def fixture(path, journal=False, version=15, fresh=False):
     with contextlib.closing(sqlite3.connect(path)) as connection:
-        connection.create_function("arcforges_store_reader_version", 0, lambda: 20)
-        for step in preflight.migration_sources():
-            connection.executescript((preflight.SCHEMA / step["file"]).read_text(encoding="utf-8"))
+        connection.create_function("arcforges_store_reader_version", 0, lambda: version)
+        steps = preflight.migration_sources()[:version]
+        for step in steps:
+            connection.executescript(step["sql"])
             if journal and step["version"] == 7:
                 # A retained UNKNOWN metadata record from schema7, carried through the actual
-                # 8..15 migrations. This claims no native target validation or file effect.
+                # later migrations. This claims no native target validation or file effect.
                 connection.execute("INSERT INTO workspace(workspace_id,kind,state,name,root_path,created_at,last_used_at,rev) VALUES(?,1,1,'fixture','fixture',1,1,0)", (b"w" * 16,))
                 connection.execute("INSERT INTO command_dedup VALUES(?,'fixture',?,1,NULL,1,2)", (b"c" * 16, b"d" * 32))
                 connection.execute("""INSERT INTO file_operation_journal(command_id,kind,phase,request_sha256,caller,
@@ -34,7 +48,16 @@ def fixture(path, journal=False):
                     VALUES(?,3,3,?,?,?,?,'fixture',1,?,?,1,1,1,1,0)""",
                     (b"c" * 16, b"d" * 32, b"fixture", b"i" * 16, b"w" * 16, b"r" * 33, b"p" * 33))
                 connection.commit()
-        connection.execute("INSERT INTO store_meta VALUES(1,15,15,?,1,1,'fixture',1,1)", (b"n" * 16,))
+            elif not fresh and step["version"] == 15:
+                connection.execute("INSERT INTO store_meta VALUES(1,15,15,?,1,1,'fixture',1,1)", (b"n" * 16,))
+            elif not fresh and step["version"] > 15:
+                connection.execute("UPDATE store_meta SET schema_version=?,min_reader_version=?",
+                                   (step["version"], step["minReaderVersion"]))
+                if step["version"] == 16:
+                    record_expansion(connection, step, source=15, unresolved=int(journal))
+        if fresh:
+            connection.execute("INSERT INTO store_meta VALUES(1,?,?,?,1,1,'fixture',1,1)", (version, version, b"n" * 16))
+            record_expansion(connection, steps[15], source=0, unresolved=0)
         connection.commit()
 
 
@@ -59,6 +82,8 @@ class InventoryTests(unittest.TestCase):
         result = preflight.inventory(self.database)
         self.assertEqual("node15", result["database"]["classification"])
         self.assertTrue(result["database"]["schema_objects_match"])
+        self.assertEqual("not_available_in_node15", result["database"]["applied_migration_checksum_ledger"])
+        self.assertEqual(list(range(1, 16)), [step["version"] for step in result["source"]["migrations"]])
         self.assertTrue(all(value == 0 for value in result["counts"].values()))
         self.assertIn("installed_cohort_unknown", result["blockers"])
         self.assertEqual(before, {p.name: p.read_bytes() for p in self.root.iterdir()})
@@ -74,17 +99,105 @@ class InventoryTests(unittest.TestCase):
     def test_newer_store_is_not_opened_as_supported(self):
         fixture(self.database)
         with contextlib.closing(sqlite3.connect(self.database)) as connection:
-            connection.create_function("arcforges_store_reader_version", 0, lambda: 16)
-            connection.execute("UPDATE store_meta SET schema_version=16,min_reader_version=16")
+            connection.create_function("arcforges_store_reader_version", 0, lambda: 20)
+            connection.execute("UPDATE store_meta SET schema_version=20,min_reader_version=20")
             connection.commit()
         result = preflight.inventory(self.database)
         self.assertEqual("newer", result["database"]["classification"])
         self.assertEqual({}, result["counts"])
 
+    def test_expanded_prefixes_keep_legacy_reconciliation_and_leave_snapshot_unchanged(self):
+        for version in range(16, 20):
+            with self.subTest(version=version):
+                database = self.root / f"upgraded-{version}.db"
+                fixture(database, journal=True, version=version)
+                before = {p.name: p.read_bytes() for p in self.root.iterdir()}
+                result = preflight.inventory(database)
+                self.assertEqual("node_v2_expanded", result["database"]["classification"])
+                self.assertEqual(version, result["database"]["schema_version"])
+                self.assertEqual(min(version, 18), result["database"]["expansion_metadata_schema_version"])
+                self.assertEqual("step16_checkpoint_only", result["database"]["applied_migration_checksum_ledger"])
+                self.assertEqual(list(range(1, version + 1)), [step["version"] for step in result["source"]["migrations"]])
+                self.assertEqual(1, result["counts"]["unsettled_commands"])
+                self.assertEqual(1, result["counts"]["unsettled_file_journals"])
+                self.assertIn("native_scope_and_exclusive_owner_proof_required", result["blockers"])
+                self.assertFalse(result["destructive_contraction_allowed"])
+                self.assertNotIn("private-fixture-cohort", json.dumps(result))
+                self.assertEqual(before, {p.name: p.read_bytes() for p in self.root.iterdir()})
+
+    def test_fresh_schema19_store_has_current_expansion_metadata(self):
+        fixture(self.database, version=19, fresh=True)
+        result = preflight.inventory(self.database)
+        self.assertEqual("node_v2_expanded", result["database"]["classification"])
+        self.assertEqual(19, result["database"]["expansion_metadata_schema_version"])
+        self.assertTrue(result["database"]["expansion_checkpoint_matches"])
+        self.assertTrue(all(value == 0 for value in result["counts"].values()))
+
+    def test_post_read_snapshot_identity_failure_discards_inventory(self):
+        fixture(self.database, journal=True, version=18)
+        binary = self.root / "fixture-node"
+        binary.write_bytes(b"test-only binary bytes")
+        with self.database.open("rb") as stream:
+            before = preflight.stream_identity(stream)
+        changed = (*before[:-1], "0" * 64)
+        with mock.patch.object(preflight, "stream_identity", side_effect=[before, changed]) as identity:
+            result = preflight.inventory(self.database, binary)
+        self.assertEqual(2, identity.call_count)
+        self.assertEqual({"classification": "unknown", "schema_version": None, "min_reader_version": None},
+                         result["database"])
+        self.assertEqual({}, result["counts"])
+        self.assertEqual(["snapshot_changed_during_inspection"], result["blockers"])
+        self.assertFalse(result["destructive_contraction_allowed"])
+        self.assertEqual(list(range(1, 20)), [step["version"] for step in result["source"]["migrations"]])
+        self.assertEqual({"state": "bytes_observed_provenance_unproven", "binary_sha256": preflight.digest_file(binary)},
+                         result["installation"])
+
+    def test_expanded_metadata_cannot_describe_a_legacy_layout(self):
+        fixture(self.database)
+        with contextlib.closing(sqlite3.connect(self.database)) as connection:
+            connection.create_function("arcforges_store_reader_version", 0, lambda: 16)
+            connection.execute("UPDATE store_meta SET schema_version=16,min_reader_version=16")
+            connection.commit()
+        result = preflight.inventory(self.database)
+        self.assertEqual("unknown", result["database"]["classification"])
+        self.assertIn("schema_objects_differ_from_released_node_v2_prefix", result["blockers"])
+        self.assertEqual({}, result["counts"])
+
+    def test_inconsistent_or_missing_expansion_checkpoint_is_refused(self):
+        for name, statements in {
+            "missing": "DELETE FROM migration_checkpoint",
+            "mirror": "UPDATE schema_version SET version=17,min_reader=17",
+            "mutated": "UPDATE migration_checkpoint SET unresolved_count=13",
+        }.items():
+            with self.subTest(name=name):
+                database = self.root / f"{name}.db"
+                fixture(database, version=19)
+                with contextlib.closing(sqlite3.connect(database)) as connection:
+                    connection.executescript(statements)
+                result = preflight.inventory(database)
+                self.assertEqual("unknown", result["database"]["classification"])
+                self.assertIn("inconsistent_v2_expansion_checkpoint", result["blockers"])
+                self.assertEqual({}, result["counts"])
+
+    def test_queued_legacy_task_without_an_attempt_blocks_contraction(self):
+        fixture(self.database, version=19)
+        with contextlib.closing(sqlite3.connect(self.database)) as connection:
+            connection.executemany("""INSERT INTO task(task_id,state,kind,title,command_summary,spec,spec_digest,owner,
+                owner_origin,pool,priority,effective_priority,side_effect,side_effect_source,command_fingerprint,
+                command_digest,created_at,rev)
+                VALUES(?,?,1,'fixture','fixture',x'',zeroblob(32),x'00',1,'fixture',1,1,1,1,'fixture',zeroblob(32),1,0)""",
+                [(b"q" * 16, 2), (b"s" * 16, 7)])
+            connection.commit()
+        result = preflight.inventory(self.database)
+        self.assertEqual(1, result["counts"]["nonterminal_tasks"])
+        self.assertEqual(0, result["counts"]["live_attempt_records"])
+        self.assertIn("nonterminal_tasks", result["blockers"])
+        self.assertFalse(result["destructive_contraction_allowed"])
+
     def test_schema_drift_is_not_hidden_by_version15(self):
         fixture(self.database)
         with contextlib.closing(sqlite3.connect(self.database)) as connection:
-            connection.execute("CREATE TABLE unexpected(value TEXT)")
+            connection.execute("CREATE TABLE sqliteUnexpected(value TEXT)")
             connection.commit()
         result = preflight.inventory(self.database)
         self.assertEqual("unknown", result["database"]["classification"])
@@ -156,11 +269,7 @@ class InventoryTests(unittest.TestCase):
     def test_rename_replacement_does_not_redirect_the_protected_snapshot(self):
         fixture(self.database)
         replacement = self.root / "replacement.db"
-        fixture(replacement)
-        with contextlib.closing(sqlite3.connect(replacement)) as connection:
-            connection.create_function("arcforges_store_reader_version", 0, lambda: 16)
-            connection.execute("UPDATE store_meta SET schema_version=16,min_reader_version=16")
-            connection.commit()
+        fixture(replacement, version=16)
         with self.assertRaisesRegex(preflight.InspectionRefused, "snapshot_path_identity_changed"):
             with preflight.offline_database(self.database) as connection:
                 self.database.rename(self.root / "original.db")
