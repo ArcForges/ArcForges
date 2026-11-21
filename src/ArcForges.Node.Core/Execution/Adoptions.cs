@@ -107,29 +107,31 @@ public sealed class Adoptions : IDisposable
             var name = IdText.Format(row.Attempt);
             IAdoptedContainer? container = null;
             string? why = null;
-            if (bootChanged && !string.Equals(row.Boot, _store.Metadata.BootIdentity, StringComparison.Ordinal))
+            if (_execution.OriginalBootEnded(row.Boot, bootChanged))
             {
                 why = "boot_changed: the machine restarted since the process was adopted";
             }
             else
             {
-                if (row.Container is { } containerName)
+                if (string.IsNullOrWhiteSpace(row.Container))
                 {
-                    try
-                    {
-                        var platform = _execution.Platform ?? throw new LegacyCustodyUnavailableException("The legacy execution platform is unavailable.");
-                        container = platform.ReopenAdopted(containerName);
-                    }
-                    catch (Exception exception) when (exception is Win32Exception or IOException or TimeoutException or InvalidOperationException or UnauthorizedAccessException)
-                    {
-                        _log.Warning("execution.adopted.reopen_failed", new LogField("attempt", name),
-                            new LogField("errorType", exception.GetType().Name),
-                            new LogField("error", exception is Win32Exception native ? native.NativeErrorCode : NodeLog.OneLine(exception.Message)));
-                        throw new LegacyCustodyUnavailableException("Legacy adoption custody could not be confirmed.", exception);
-                    }
+                    throw new LegacyCustodyUnavailableException("The live adopted attempt has no recorded scope identity.");
                 }
 
-                why = ContainerMissing + ": the adoption container " + (row.Container ?? "(none)") + " no longer exists";
+                try
+                {
+                    var platform = _execution.Platform ?? throw new LegacyCustodyUnavailableException("The legacy execution platform is unavailable.");
+                    container = platform.ReopenAdopted(row.Container);
+                }
+                catch (Exception exception) when (exception is Win32Exception or IOException or TimeoutException or InvalidOperationException or UnauthorizedAccessException)
+                {
+                    _log.Warning("execution.adopted.reopen_failed", new LogField("attempt", name),
+                        new LogField("errorType", exception.GetType().Name),
+                        new LogField("error", exception is Win32Exception native ? native.NativeErrorCode : NodeLog.OneLine(exception.Message)));
+                    throw new LegacyCustodyUnavailableException("Legacy adoption custody could not be confirmed.", exception);
+                }
+
+                why = ContainerMissing + ": the adoption container " + row.Container + " no longer exists";
             }
 
             if (container is null)

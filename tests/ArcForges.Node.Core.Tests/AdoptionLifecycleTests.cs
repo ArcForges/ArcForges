@@ -117,8 +117,10 @@ public sealed class AdoptionLifecycleTests
         });
     }
 
-    [Fact(Timeout = 60_000)]
-    public async Task UnavailableAdoptionCustodyLeavesTheOriginalAttemptForLaterCancellation()
+    [Theory(Timeout = 60_000)]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UnavailableAdoptionCustodyLeavesTheOriginalAttemptForLaterCancellation(bool missingScopeIdentity)
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         await WithRecoveredAdoptionAsync(containerAvailable: true, async fixture =>
@@ -131,7 +133,7 @@ public sealed class AdoptionLifecycleTests
             Assert.Null(cancel.Error);
             Assert.Equal(1, fixture.Platform.TerminateCalls);
             Assert.Equal(TaskState.Cancelled, (await fixture.CompleteAsync()).State);
-        }, initiallyUnavailable: true);
+        }, initiallyUnavailable: true, missingScopeIdentity: missingScopeIdentity);
     }
 
     [Fact(Timeout = 60_000)]
@@ -184,7 +186,7 @@ public sealed class AdoptionLifecycleTests
     }
 
     private static async Task WithRecoveredAdoptionAsync(bool containerAvailable, Func<AdoptionFixture, Task> verify,
-        bool captureRoutedCancel = false, bool initiallyUnavailable = false)
+        bool captureRoutedCancel = false, bool initiallyUnavailable = false, bool missingScopeIdentity = false)
     {
         await using var node = InProcessNode.Create();
         var root = new RootProcess(int.MaxValue, node.Clock.GetUtcNow());
@@ -237,23 +239,37 @@ public sealed class AdoptionLifecycleTests
         {
             var nativeError = new System.ComponentModel.Win32Exception(5);
             platform.ReopenError = nativeError;
+            Task<int> SetRecordedScope(string? scope) => processor.ExecuteAsync(context =>
+                context.Transaction.Execute("UPDATE attempt SET container_name = $scope WHERE attempt_id = $id;",
+                    ("$scope", scope), ("$id", attemptId.Value.ToByteArray())), CommitDurability.Full);
+            if (missingScopeIdentity)
+            {
+                await SetRecordedScope(null).WaitAsync(Ct);
+            }
+
             ManagedTask? ReadTask() => store.Read(reader => TaskRecords.GetTask(reader, taskId.Value.Span, full: true));
             var original = ReadTask();
             Assert.NotNull(original);
             var recoverCursor = journal.LatestPosition;
             var error = await Assert.ThrowsAsync<LegacyCustodyUnavailableException>(() => execution.RecoverAsync(recovery, processor, Ct));
-            Assert.Same(nativeError, error.InnerException);
+            Assert.Same(missingScopeIdentity ? null : nativeError, error.InnerException);
             Assert.Equal(original, ReadTask());
             Assert.Equal(recoverCursor, journal.LatestPosition);
             Assert.False(heartbeat.RecoveryDone);
             Assert.Empty(execution.Adoptions.Tracked);
             Assert.Equal(0, platform.TerminateCalls);
+            if (missingScopeIdentity)
+            {
+                Assert.Equal(0, platform.ReopenCalls);
+                await SetRecordedScope(ContainerName).WaitAsync(Ct);
+            }
+
             platform.ReopenError = null;
         }
 
         await execution.RecoverAsync(recovery, processor, Ct).WaitAsync(Ct);
         await runtime.TransitionAsync(NodeLifecycleState.Ready, "fixture").WaitAsync(Ct);
-        Assert.Equal(initiallyUnavailable ? 2 : 1, platform.ReopenCalls);
+        Assert.Equal(initiallyUnavailable && !missingScopeIdentity ? 2 : 1, platform.ReopenCalls);
         Assert.Equal(containerAvailable ? 1 : 0, execution.Adoptions.Tracked.Count);
         await verify(new AdoptionFixture(store, runtime, execution, tasks, approvals, dispatcher, taskId, platform, cursor, priorApproval));
     }

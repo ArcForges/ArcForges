@@ -406,7 +406,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             var name = IdText.Format(row.AttemptId);
             var files = new AttemptFiles(_dataRoot, name);
             var task = _store.Read(reader => TaskRecords.GetRow(reader, row.TaskId));
-            if (report.BootChanged && !string.Equals(row.BootIdentity, _store.Metadata.BootIdentity, StringComparison.Ordinal))
+            if (OriginalBootEnded(row.BootIdentity, report.BootChanged))
             {
                 await RecordLostAsync(row, $"boot_changed: boot_id_old={row.BootIdentity}, boot_id_new={_store.Metadata.BootIdentity}", "boot_changed").ConfigureAwait(false);
                 continue;
@@ -553,10 +553,13 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             ? ExitRecord.Parse(json) : null;
     });
 
+    internal bool OriginalBootEnded(string? recordedBoot, bool previousStoreBootChanged) =>
+        (previousStoreBootChanged || !string.IsNullOrEmpty(recordedBoot))
+        && !string.Equals(recordedBoot, _store.Metadata.BootIdentity, StringComparison.Ordinal);
+
     /// <summary>
     /// The exit acknowledgement follows the record's commit, so a node that stopped between the two leaves a holder waiting on an
-    /// attempt the store already records as finished. Every attempt directory with a durable exit record that is not live is
-    /// acknowledged again (an ack event that no longer opens has no holder left).
+    /// attempt the store already records as finished. Retry only for a finished local attempt with its original same-boot exit record.
     /// </summary>
     private void AcknowledgeRecordedAttempts(List<AttemptRow> live)
     {
@@ -575,7 +578,20 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         foreach (var directory in Directory.EnumerateDirectories(logs))
         {
             var name = Path.GetFileName(directory);
-            if (liveNames.Contains(name) || !File.Exists(Path.Combine(directory, AttemptFiles.Exit)))
+            if (liveNames.Contains(name) || !IdText.TryParse(name, out var attemptId)
+                || !string.Equals(name, IdText.Format(attemptId), StringComparison.Ordinal)
+                || ReadRecoveryExit(new AttemptFiles(_dataRoot, name)) is null)
+            {
+                continue;
+            }
+
+            var finishedHere = _store.Read(reader => reader.Scalar("""
+                SELECT 1 FROM attempt
+                WHERE attempt_id = $attempt AND state = 9 AND kind <> 4
+                  AND executor_node_id = (SELECT node_id FROM store_meta WHERE singleton = 1)
+                  AND boot_identity = (SELECT boot_identity FROM store_meta WHERE singleton = 1);
+                """, ("$attempt", attemptId)) is not null);
+            if (!finishedHere)
             {
                 continue;
             }
