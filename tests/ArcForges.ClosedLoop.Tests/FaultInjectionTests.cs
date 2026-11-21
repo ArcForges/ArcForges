@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.IO.Pipes;
 using System.Runtime.Versioning;
 using System.Security.AccessControl;
 using System.Security.Cryptography;
 using System.Security.Principal;
 using ArcForges.Client;
 using ArcForges.Node.Store;
+using ArcForges.Node.Store.Migrations;
 
 namespace ArcForges.ClosedLoop.Tests;
 
@@ -114,6 +116,38 @@ public sealed class FaultInjectionTests
         Assert.Equal(original.GetProperty("nodeId").GetString(), restored.GetProperty("nodeId").GetString());
         Assert.Equal(retainedName, restored.GetProperty("name").GetString());
         Assert.Equal(0, (await node.CliAsync("node", "stop")).ExitCode);
+    }
+
+    [Fact(Timeout = 120_000)]
+    public async Task AHistoricalStoreIsRefusedBeforeTheNodeChangesItOrListens()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await using var fixture = TestNode.Create();
+        var migration = new MigrationPlan(StoreMigrations.Released.Steps.Take(15));
+        using (var historical = NodeStore.Open(new NodeStoreOptions { DataRoot = fixture.DataRoot, BootIdentity = "historical-fixture" }, migration))
+        {
+            Assert.Equal(15, historical.Metadata.SchemaVersion);
+        }
+
+        var store = Path.GetDirectoryName(StorePaths.Database(fixture.DataRoot))!;
+        var before = Digest(store);
+        using var process = fixture.Start(TestNode.Host, ["node", "run", NodeLocations.TestModeOption]);
+        var result = await TestNode.CompleteAsync(process, Bound);
+
+        Assert.NotEqual(0, result.ExitCode);
+        Assert.Contains("legacy_store_requires_offline_cutover", result.Error, StringComparison.Ordinal);
+        Assert.Equal(before, Digest(store));
+        Assert.Null(fixture.Descriptor());
+        Assert.Empty(TestNode.LogEvents(fixture.NodeLog, "node.ready"));
+        if (OperatingSystem.IsWindows())
+        {
+            using var pipe = new NamedPipeClientStream(".", fixture.Endpoint, PipeDirection.InOut, PipeOptions.Asynchronous);
+            await Assert.ThrowsAsync<TimeoutException>(() => pipe.ConnectAsync(100, Ct));
+        }
+        else
+        {
+            Assert.False(Path.Exists(fixture.Endpoint));
+        }
     }
 
     /// <summary>Killing the Windows auto-start supervisor leaves the same Node serving and stoppable.</summary>
