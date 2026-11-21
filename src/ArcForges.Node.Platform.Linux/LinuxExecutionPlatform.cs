@@ -36,12 +36,6 @@ public sealed class LinuxPlatformOptions
 
     /// <summary>The node's own files that attempt units must not reach (the store and the secret stores of the data root).</summary>
     public IReadOnlyList<string> ProtectedPaths { get; init; } = [];
-
-    /// <summary>
-    /// Tests only: entries added to every attempt unit's <c>Environment=</c> outside the resolved environment, standing in for a variable
-    /// the user manager passes to its services (the command must never see them).
-    /// </summary>
-    internal IReadOnlyList<string> ExtraUnitEnvironment { get; init; } = [];
 }
 
 /// <summary>
@@ -66,15 +60,6 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
     /// <summary>The prefix of attempt units.</summary>
     public const string UnitPrefix = "arcforges-a-";
 
-    /// <summary>The conventional soft open-file limit passed to attempts (the kernel default a login shell has).</summary>
-    public const ulong DefaultNoFileSoft = 1024;
-
-    /// <summary>
-    /// Added to <c>TimeoutStopSec</c> beyond the end-step budget and <c>leftover_grace</c>: the <c>exec-stop</c> role's own start and the
-    /// write of <c>stop.json</c>, so systemd never stops the role while it records the leftovers.
-    /// </summary>
-    public const int StopRecordMarginMs = 5_000;
-
     /// <summary>The prefix of adoption scopes (04 section 10).</summary>
     public const string AdoptionPrefix = "arcforges-x-";
 
@@ -83,9 +68,6 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
 
     /// <summary>How far two reads of a process's start time may differ (clock ticks of 10 ms).</summary>
     private static readonly TimeSpan IdentityTolerance = TimeSpan.FromMilliseconds(20);
-
-    /// <summary>The .NET runtime's switch for its diagnostic endpoints (framework-dependent helpers only).</summary>
-    internal const string DiagnosticsVariable = "DOTNET_EnableDiagnostics";
 
     private readonly LinuxPlatformOptions _options;
     private readonly Lock _gate = new();
@@ -677,76 +659,6 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
         {
             _manager?.Dispose();
         }
-    }
-
-    /// <summary>
-    /// The .NET location a framework-dependent helper needs (the JIT build of the tests: an <c>arcforges.dll</c> beside it), or null for
-    /// the Native AOT executable, which needs nothing.
-    /// </summary>
-    internal string? HelperRuntime => File.Exists(Path.ChangeExtension(_helper, ".dll")) ? Environment.GetEnvironmentVariable("DOTNET_ROOT") : null;
-
-    /// <summary>
-    /// The unit's <c>Environment=</c>: systemd accepts only names of letters, digits and underscores (not starting with a digit) and
-    /// values without other control characters than tab and newline, so any other entry (for example a bash function
-    /// <c>BASH_FUNC_x%%</c>, a name with a dash) travels in <see cref="ExecLaunchRole.CarrierVariable"/> (base64 of the NUL-separated
-    /// entries), which <c>exec-launch</c> unpacks into the command's environment and removes, so the command still gets exactly the
-    /// resolved environment. A caller's own variable of that name is carried the same way, and the carrier is always set (empty when
-    /// nothing is carried); <c>exec-launch</c> then keeps only the resolved names (<see cref="StepsFile.EnvironmentNames"/>).
-    /// </summary>
-    internal static string[] UnitEnvironment(IReadOnlyList<string> environment)
-    {
-        var accepted = new List<string>();
-        var carried = new List<string>();
-        foreach (var entry in environment)
-        {
-            (SystemdAccepts(entry) ? accepted : carried).Add(entry);
-        }
-
-        // Always set, empty when nothing is carried: a carrier variable of the user manager's own never reaches exec-launch.
-        accepted.Add(ExecLaunchRole.CarrierVariable + "="
-            + (carried.Count == 0 ? string.Empty : Convert.ToBase64String(Encoding.UTF8.GetBytes(string.Join('\0', carried)))));
-        return [.. accepted];
-    }
-
-    private static bool SystemdAccepts(string entry)
-    {
-        var equals = entry.IndexOf('=', StringComparison.Ordinal);
-        if (equals <= 0 || char.IsAsciiDigit(entry[0]))
-        {
-            return false;
-        }
-
-        // A caller's own variable with the carrier's name travels inside the carrier, like any entry systemd refuses.
-        if (entry.AsSpan(0, equals).SequenceEqual(ExecLaunchRole.CarrierVariable))
-        {
-            return false;
-        }
-
-        for (var index = 0; index < equals; index++)
-        {
-            if (!(char.IsAsciiLetterOrDigit(entry[index]) || entry[index] == '_'))
-            {
-                return false;
-            }
-        }
-
-        for (var index = equals + 1; index < entry.Length; index++)
-        {
-            var character = entry[index];
-            if (char.IsHighSurrogate(character) && index + 1 < entry.Length && char.IsLowSurrogate(entry[index + 1]))
-            {
-                index++;
-                continue;
-            }
-
-            // A lone surrogate is not valid UTF-8; other control characters than tab and newline are refused.
-            if (char.IsSurrogate(character) || (char.IsControl(character) && character is not ('\t' or '\n')))
-            {
-                return false;
-            }
-        }
-
-        return true;
     }
 
     /// <summary>The <c>CPUWeight</c> of a priority weight (03 section 5.2: 9, 7, 5, 3, 1 to 400, 200, 100, 50, 10).</summary>

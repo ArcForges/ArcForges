@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using System.Text;
 using ArcForges.Tests;
 
 namespace ArcForges.Node.Platform.Linux.Tests;
@@ -36,12 +37,25 @@ internal static class TestPrograms
 [SupportedOSPlatform("linux")]
 internal sealed class LinuxHarness : IDisposable
 {
+    /// <summary>The conventional soft open-file limit passed to attempts (the kernel default a login shell has).</summary>
+    private const ulong DefaultNoFileSoft = 1024;
+
+    /// <summary>
+    /// Added to <c>TimeoutStopSec</c> beyond the end-step budget and <c>leftover_grace</c>: the <c>exec-stop</c> role's own start and the
+    /// write of <c>stop.json</c>, so systemd never stops the role while it records the leftovers.
+    /// </summary>
+    private const int StopRecordMarginMs = 5_000;
+
+    /// <summary>The .NET runtime's switch for its diagnostic endpoints (framework-dependent helpers only).</summary>
+    private const string DiagnosticsVariable = "DOTNET_EnableDiagnostics";
+
     private readonly List<string> _attempts = [];
     private readonly List<string> _startGates = [];
     private readonly List<LinuxExecutionPlatform> _platforms = [];
     private readonly List<IAttemptHandle> _handles = [];
+    private readonly IReadOnlyList<string> _extraUnitEnvironment;
 
-    private LinuxHarness(string root, string slice, RootLimits limits, LinuxPlatformOptions? options)
+    private LinuxHarness(string root, string slice, RootLimits limits, LinuxPlatformOptions? options, IReadOnlyList<string> extraUnitEnvironment)
     {
         Root = root;
         DataRoot = Path.Combine(root, "data");
@@ -50,6 +64,7 @@ internal sealed class LinuxHarness : IDisposable
         Limits = limits;
         NodeName = "t" + Guid.NewGuid().ToString("N")[..20];
         Options = options ?? new LinuxPlatformOptions { Slice = slice };
+        _extraUnitEnvironment = extraUnitEnvironment;
         try
         {
             Platform = NewPlatform();
@@ -81,11 +96,12 @@ internal sealed class LinuxHarness : IDisposable
     public LinuxExecutionPlatform Platform { get; }
 
     /// <summary>Generous root limits (half the machine's CPU, 8 GiB, no swap) unless a test sets its own.</summary>
-    public static LinuxHarness Start(RootLimits? limits = null, Func<string, LinuxPlatformOptions>? options = null)
+    public static LinuxHarness Start(RootLimits? limits = null, Func<string, LinuxPlatformOptions>? options = null,
+        IReadOnlyList<string>? extraUnitEnvironment = null)
     {
         var slice = SystemdTestEnvironment.NewSlice();
         return new LinuxHarness(Directory.CreateTempSubdirectory("arcforges-linux-").FullName, slice,
-            limits ?? new RootLimits(5_000, 12L << 30, 8L << 30) { HardMemoryBytes = 8L << 30, SwapAllowanceBytes = 0 }, options?.Invoke(slice));
+            limits ?? new RootLimits(5_000, 12L << 30, 8L << 30) { HardMemoryBytes = 8L << 30, SwapAllowanceBytes = 0 }, options?.Invoke(slice), extraUnitEnvironment ?? []);
     }
 
     /// <summary>A second platform over the same slice and data root (a restarted node).</summary>
@@ -193,7 +209,7 @@ internal sealed class LinuxHarness : IDisposable
         var limits = launch.Limits;
         var resolved = launch.Environment.Select(entry => entry[..Math.Max(0, entry.IndexOf('=', StringComparison.Ordinal))]).ToHashSet(StringComparer.Ordinal);
         var nofileHard = Libc.GetRLimit(Libc.RlimitNofile, out var nofile) == 0 ? nofile.Maximum : 524_288UL;
-        var nofileSoft = Math.Min(LinuxExecutionPlatform.DefaultNoFileSoft, nofileHard);
+        var nofileSoft = Math.Min(DefaultNoFileSoft, nofileHard);
         List<string> start =
         [
             Platform.Helper, "node", "exec-launch", "--attempt", files.AttemptName, "--dir", files.Directory, "--cwd", launch.WorkingDirectory,
@@ -205,8 +221,8 @@ internal sealed class LinuxHarness : IDisposable
             start.Add(name);
         }
 
-        var helperDiagnosticsOff = Platform.HelperRuntime is not null && !resolved.Contains(LinuxExecutionPlatform.DiagnosticsVariable);
-        if (Platform.HelperRuntime is not null && !resolved.Contains("DOTNET_ROOT"))
+        var helperDiagnosticsOff = HelperRuntime is not null && !resolved.Contains(DiagnosticsVariable);
+        if (HelperRuntime is not null && !resolved.Contains("DOTNET_ROOT"))
         {
             // A framework-dependent helper (the JIT build next to the tests) gets DOTNET_ROOT for itself only.
             start.Add("--unset");
@@ -216,7 +232,7 @@ internal sealed class LinuxHarness : IDisposable
         if (helperDiagnosticsOff)
         {
             start.Add("--unset");
-            start.Add(LinuxExecutionPlatform.DiagnosticsVariable);
+            start.Add(DiagnosticsVariable);
         }
 
         start.Add("--");
@@ -236,7 +252,7 @@ internal sealed class LinuxHarness : IDisposable
             new("SuccessExitStatus", new ExitStatusSet([.. Enumerable.Range(1, 255)],
                 [.. Enumerable.Range(1, 31), .. Enumerable.Range(Libc.SigRtMin, Libc.SigRtMax - Libc.SigRtMin + 1)])),
             new("WorkingDirectory", "-" + launch.WorkingDirectory),
-            new("Environment", (string[])[.. LinuxExecutionPlatform.UnitEnvironment(launch.Environment), .. Options.ExtraUnitEnvironment]),
+            new("Environment", (string[])[.. UnitEnvironment(launch.Environment), .. _extraUnitEnvironment]),
             new("UnsetEnvironment", managerEnvironment.Select(entry => entry[..Math.Max(0, entry.IndexOf('=', StringComparison.Ordinal))])
                 .Where(name => name.Length > 0 && !resolved.Contains(name)).Distinct(StringComparer.Ordinal).ToArray()),
             new("StandardInputFileDescriptor", stdin),
@@ -245,7 +261,7 @@ internal sealed class LinuxHarness : IDisposable
             new("LimitNOFILE", nofileHard),
             new("LimitNOFILESoft", nofileSoft),
             new("KillMode", "control-group"),
-            new("TimeoutStopUSec", (ulong)(new StepsFile().EndStepBudgetMs + launch.LeftoverGraceMs + LinuxExecutionPlatform.StopRecordMarginMs) * 1000),
+            new("TimeoutStopUSec", (ulong)(new StepsFile().EndStepBudgetMs + launch.LeftoverGraceMs + StopRecordMarginMs) * 1000),
             // Failed units stay loaded (an OOM kill while ExecStopPost runs ends exit-record too), so the node records them from the unit.
             new("CollectMode", "inactive"),
             new("IgnoreSIGPIPE", false),
@@ -312,9 +328,79 @@ internal sealed class LinuxHarness : IDisposable
     /// diagnostic endpoints (<c>DOTNET_EnableDiagnostics=0</c>, unless the attempt sets it), so a helper that becomes the command
     /// (<c>execve</c>) or is killed leaves no IPC socket behind in the temporary directory.
     /// </summary>
-    private ExecCommand HelperCommand(List<string> argv, bool ignoreFailure, bool diagnosticsOff) => Platform.HelperRuntime is { } runtime && File.Exists("/usr/bin/env")
-        ? new ExecCommand("/usr/bin/env", ["env", "DOTNET_ROOT=" + runtime, .. diagnosticsOff ? (string[])[LinuxExecutionPlatform.DiagnosticsVariable + "=0"] : [], .. argv], ignoreFailure)
+    private ExecCommand HelperCommand(List<string> argv, bool ignoreFailure, bool diagnosticsOff) => HelperRuntime is { } runtime && File.Exists("/usr/bin/env")
+        ? new ExecCommand("/usr/bin/env", ["env", "DOTNET_ROOT=" + runtime, .. diagnosticsOff ? (string[])[DiagnosticsVariable + "=0"] : [], .. argv], ignoreFailure)
         : new ExecCommand(Platform.Helper, argv, ignoreFailure);
+
+    /// <summary>
+    /// The .NET location a framework-dependent helper needs (the JIT build of the tests: an <c>arcforges.dll</c> beside it), or null for
+    /// the Native AOT executable, which needs nothing.
+    /// </summary>
+    private string? HelperRuntime => File.Exists(Path.ChangeExtension(Platform.Helper, ".dll")) ? Environment.GetEnvironmentVariable("DOTNET_ROOT") : null;
+
+    /// <summary>
+    /// The unit's <c>Environment=</c>: systemd accepts only names of letters, digits and underscores (not starting with a digit) and
+    /// values without other control characters than tab and newline, so any other entry (for example a bash function
+    /// <c>BASH_FUNC_x%%</c>, a name with a dash) travels in <see cref="ExecLaunchRole.CarrierVariable"/> (base64 of the NUL-separated
+    /// entries), which <c>exec-launch</c> unpacks into the command's environment and removes, so the command still gets exactly the
+    /// resolved environment. A caller's own variable of that name is carried the same way, and the carrier is always set (empty when
+    /// nothing is carried); <c>exec-launch</c> then keeps only the resolved names (<see cref="StepsFile.EnvironmentNames"/>).
+    /// </summary>
+    internal static string[] UnitEnvironment(IReadOnlyList<string> environment)
+    {
+        var accepted = new List<string>();
+        var carried = new List<string>();
+        foreach (var entry in environment)
+        {
+            (SystemdAccepts(entry) ? accepted : carried).Add(entry);
+        }
+
+        // Always set, empty when nothing is carried: a carrier variable of the user manager's own never reaches exec-launch.
+        accepted.Add(ExecLaunchRole.CarrierVariable + "="
+            + (carried.Count == 0 ? string.Empty : Convert.ToBase64String(Encoding.UTF8.GetBytes(string.Join('\0', carried)))));
+        return [.. accepted];
+    }
+
+    private static bool SystemdAccepts(string entry)
+    {
+        var equals = entry.IndexOf('=', StringComparison.Ordinal);
+        if (equals <= 0 || char.IsAsciiDigit(entry[0]))
+        {
+            return false;
+        }
+
+        // A caller's own variable with the carrier's name travels inside the carrier, like any entry systemd refuses.
+        if (entry.AsSpan(0, equals).SequenceEqual(ExecLaunchRole.CarrierVariable))
+        {
+            return false;
+        }
+
+        for (var index = 0; index < equals; index++)
+        {
+            if (!(char.IsAsciiLetterOrDigit(entry[index]) || entry[index] == '_'))
+            {
+                return false;
+            }
+        }
+
+        for (var index = equals + 1; index < entry.Length; index++)
+        {
+            var character = entry[index];
+            if (char.IsHighSurrogate(character) && index + 1 < entry.Length && char.IsLowSurrogate(entry[index + 1]))
+            {
+                index++;
+                continue;
+            }
+
+            // A lone surrogate is not valid UTF-8; other control characters than tab and newline are refused.
+            if (char.IsSurrogate(character) || (char.IsControl(character) && character is not ('\t' or '\n')))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 
     /// <summary>The environment of the test process as <c>NAME=value</c> entries.</summary>
     public static List<string> DefaultEnvironment() =>

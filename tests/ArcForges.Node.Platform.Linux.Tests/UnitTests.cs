@@ -80,8 +80,8 @@ public sealed class UnitTests
     public void TheUnitEnvironmentAlwaysSetsTheCarrierAndCarriesACallersOwnCarrierVariable()
     {
         Assert.SkipUnless(OperatingSystem.IsLinux(), "The Linux platform.");
-        Assert.Equal(["A=1", ExecLaunchRole.CarrierVariable + "="], LinuxExecutionPlatform.UnitEnvironment(["A=1"]));
-        var unit = LinuxExecutionPlatform.UnitEnvironment(["A=1", ExecLaunchRole.CarrierVariable + "=caller's own"]);
+        Assert.Equal(["A=1", ExecLaunchRole.CarrierVariable + "="], LinuxHarness.UnitEnvironment(["A=1"]));
+        var unit = LinuxHarness.UnitEnvironment(["A=1", ExecLaunchRole.CarrierVariable + "=caller's own"]);
         Assert.Equal(2, unit.Length);
         Assert.Equal("A=1", unit[0]);
         var carried = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(unit[1][(ExecLaunchRole.CarrierVariable.Length + 1)..]));

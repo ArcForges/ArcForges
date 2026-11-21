@@ -134,11 +134,8 @@ public sealed class UnitPlatformTests
         // although UnsetEnvironment= listed the manager's environment): the unit itself carries variables outside the resolved
         // environment here, as a manager would pass them, and exec-launch keeps only the resolved names of steps.json.
         RequireUnits();
-        using var harness = LinuxHarness.Start(options: slice => new LinuxPlatformOptions
-        {
-            Slice = slice,
-            ExtraUnitEnvironment = ["ARCFORGES_TEST_MANAGER_EXTRA=leaked", "JAVA_HOME_8_X64=/usr/lib/jvm/x"],
-        });
+        using var harness = LinuxHarness.Start(options: slice => new LinuxPlatformOptions { Slice = slice },
+            extraUnitEnvironment: ["ARCFORGES_TEST_MANAGER_EXTRA=leaked", "JAVA_HOME_8_X64=/usr/lib/jvm/x"]);
         Assert.True(harness.Platform.UnitMode, harness.Platform.ManagerUnavailableReason);
         List<string> environment = ["A=1", "PATH=/usr/bin:/bin"];
         var endEnvironment = Path.Combine(harness.Root, "end-env.txt");

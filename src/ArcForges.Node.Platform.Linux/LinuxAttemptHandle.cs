@@ -161,7 +161,7 @@ public sealed class LinuxAttemptHandle : IAttemptHandle
             // The node stopped before the user manager started the unit of an attempt it was stopping (its start job still waits): the
             // command may still start, and Started completes once the job ends. No bound and no launch record: the unit can start at any
             // time, and the stop's verification and records apply once it did.
-            _ = Task.Run(() => handle.AwaitStart(job, Timeout.InfiniteTimeSpan, recordUnstarted: false));
+            _ = Task.Run(() => handle.AwaitStart(job));
         }
         else
         {
@@ -216,7 +216,7 @@ public sealed class LinuxAttemptHandle : IAttemptHandle
         // after the attempt was recorded or released terminates nothing (TerminateAgain's guards).
         _ = Task.Run(() =>
         {
-            AwaitStart(job, Timeout.InfiniteTimeSpan, recordUnstarted: false);
+            AwaitStart(job);
             if (Root is { } root)
             {
                 LaunchProcessEntered?.Invoke(root.Pid);
@@ -537,16 +537,13 @@ public sealed class LinuxAttemptHandle : IAttemptHandle
         return state.ExecMainStartUs > 0 ? new RootProcess(pid, DateTimeOffset.UnixEpoch.AddTicks((long)state.ExecMainStartUs * 10)) : null;
     }
 
-    /// <summary>
-    /// Waits (up to <paramref name="bound"/>) for the unit's start job and completes <see cref="Started"/>. With
-    /// <paramref name="recordUnstarted"/> a job that did not end <c>done</c> leaves a launch record (a launched attempt).
-    /// </summary>
-    private void AwaitStart(string job, TimeSpan bound, bool recordUnstarted)
+    /// <summary>Waits for the recorded unit's queued start and completes <see cref="Started"/>.</summary>
+    private void AwaitStart(string job)
     {
         RootProcess? root = null;
         try
         {
-            var result = _platform.Manager.WaitJob(job, bound);
+            var result = _platform.Manager.WaitJob(job, Timeout.InfiniteTimeSpan);
             if (result == "done" && _platform.Manager.State(Unit) is { } state)
             {
                 _lastState = state;
@@ -569,19 +566,8 @@ public sealed class LinuxAttemptHandle : IAttemptHandle
                     }
                 }
             }
-            else if (recordUnstarted && !File.Exists(Files.LaunchPath) && result != "done")
-            {
-                HelperFiles.WriteAtomically(Files.LaunchPath, new LaunchRecord
-                {
-                    AttemptId = Files.AttemptName,
-                    Step = "command",
-                    Error = $"the user manager did not start the attempt unit (job result {result ?? "timeout"})",
-                    RecordedAt = HelperFiles.Now(),
-                }.ToJson());
-            }
         }
-        catch (Exception exception) when (exception is DBusExceptionBase or TimeoutException or InvalidOperationException or IOException
-            || (!recordUnstarted && exception is AggregateException))
+        catch (Exception exception) when (exception is DBusExceptionBase or TimeoutException or InvalidOperationException or IOException or AggregateException)
         {
             // The unit's own record (exit.json, launch.json) still finalizes the attempt. An unbounded wait ends this way when the manager
             // connection closes (the node stops).
