@@ -1,669 +1,101 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
+using ArcForges.Node.Api;
+using ArcForges.Node.Core.Events;
+using ArcForges.Node.Core.Execution;
+using ArcForges.Node.Core.Platform;
 using ArcForges.Node.Platform;
 using ArcForges.Node.Platform.Windows;
+using ArcForges.Node.Store;
 using ArcForges.Tests;
 using Microsoft.Win32.SafeHandles;
 
 namespace ArcForges.Node.Core.Tests;
 
-/// <summary>
-/// Interrupted operations with real processes (16-testing-strategy section 1, fault injection: cancellation during launch). A cancel that
-/// arrives while an attempt's launch step runs (04 section 3: launch steps run in the attempt's job or unit before the command) cancels
-/// the task (SM-TASK RUNNING -> CANCELLED), stops the step, and the command never starts; the fixture fails the test on any leftover.
-/// The launch step is synthetic (fakes_allowed of the launch-step tasks: a provider returning fixed steps).
-/// </summary>
+/// <summary>Controls on retained legacy Tasks after fresh Task admission was removed.</summary>
 public sealed partial class LaunchFaultTests
 {
-    /// <summary>
-    /// When the command (<c>hold --ready-after-ms</c>) marks itself ready: the failure-path bound (<see cref="Tasks.Bound"/>), so a command that
-    /// marks itself ready ran on for the whole bound past its start. Nothing in a passing run waits for it.
-    /// </summary>
-    private const int ReadyAfterMs = 60_000;
+    // The fresh Task launch and late-start process races remain executable at Windows historical anchor
+    // eaaccb8380a2bd265aaad0a67d62c8fab2a8a29a using this project's LaunchFaultTests on the original test profile.
+    // The current V2 Run recovery cases are in RecoveryPreparedMxcRunServiceTests, RecoveryNativeDispatchMxcRunServiceTests
+    // and RecoveryMxcRunServiceTests. Retained platform re-open checks still have their own JobTests and UnitPlatformTests.
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    /// <summary>
-    /// The stop terminates the attempt at once, so a step shorter than any wait for the start (3 s) never finishes and lets the command
-    /// start after the cancel, and a long step (30 s) does not hold the cancel. The task ends CANCELLED well under the step's hold
-    /// (generous safety bound: the forced stop waits for nothing, so it holds in the parallel suites), no root was ever recorded (Windows:
-    /// the root is the command, started by the holder after the steps; on Linux the steps and the command share the unit's main process),
-    /// and the effect is HAPPENED (04 section 7: DID_NOT_HAPPEN only for SPAWN_FAILED and POLICY_DENIED).
-    /// </summary>
-    [Theory(Timeout = 180_000, DisableParallelization = true)]
-    [Trait("isolation", "exclusive")]
-    [InlineData(3_000)]
-    [InlineData(30_000)]
-    public async Task ACancelDuringTheLaunchStepsCancelsTheTaskAndTheCommandNeverRuns(int stepHoldMs)
+    [Fact(Timeout = 30_000)]
+    public async Task ConcurrentCancelsSettleAndReplayEveryRetainedQueuedTaskWithoutStartingAnAttempt()
     {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        if (!OperatingSystem.IsWindows())
+        var ct = TestContext.Current.CancellationToken;
+        await using var fixture = InProcessNode.Create();
+        using var store = NodeStore.Open(new NodeStoreOptions
         {
-            Assert.SkipWhen(ArcForges.Tests.SystemdTestEnvironment.SkipReason is not null, ArcForges.Tests.SystemdTestEnvironment.SkipReason ?? string.Empty);
+            DataRoot = fixture.DataRoot,
+            BootIdentity = BootIdentity.Read(),
+            Clock = fixture.Clock,
+        });
+        using var log = new NodeLog(Path.Combine(fixture.DataRoot, "logs", "node"), LogLevel.Info, fixture.Clock);
+        using var heartbeat = new NodeHeartbeatWriter(fixture.DataRoot, log, fixture.Clock);
+        using var keys = new NodeDataKeyRing(store, fixture.Secrets.Selection);
+        var journal = EventJournal.Open(store);
+        var hub = new StreamHub();
+        await using var processor = new CommandProcessor(store, journal, hub);
+        var recovery = new RecoveryReport(false, false, null, store.Opening);
+        await using var execution = new ExecutionSupervisor(new ExecutionOptions
+        {
+            Store = store,
+            Processor = processor,
+            Log = log,
+            Clock = fixture.Clock,
+            DataRoot = fixture.DataRoot,
+            Secrets = new TaskSecrets(store, keys),
+            Heartbeat = heartbeat,
+        });
+        using var runtime = new NodeRuntime(store, journal, hub, processor, log,
+            new NodeSettingsManager(fixture.ConfigPath, fixture.DataRoot, log), fixture.DataRoot, "offline-fixture", fixture.Clock,
+            recovery, new CapabilityReport())
+        {
+            Execution = execution,
+        };
+
+        const int count = 24;
+        var owner = new ActorRef { Origin = Origin.Human, ClientKind = ClientKind.Cli };
+        var taskIds = store.Write(transaction => Enumerable.Range(0, count)
+            .Select(_ => LegacyTaskHistoryFixture.SeedQueued(transaction, owner)).ToArray(), CommitDurability.Full);
+        await runtime.TransitionAsync(NodeLifecycleState.Recovering, "fixture").WaitAsync(ct);
+        await execution.RecoverAsync(recovery, processor, ct);
+        await runtime.TransitionAsync(NodeLifecycleState.Ready, "fixture").WaitAsync(ct);
+
+        var handler = new TaskServiceHandler(runtime, new ClientSessions());
+        var human = new Caller(Origin.Human, ClientKind.Cli, null);
+        var requests = taskIds.Select(id => new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = id, Reason = "migration" }).ToArray();
+        Assert.Equal((long)count, store.Read(reader => reader.Scalar("SELECT count(*) FROM task WHERE state=$state;",
+            ("$state", (int)TaskState.Queued))));
+        var original = await Task.WhenAll(requests.Select(request => handler.CancelTask(human, request, ct)));
+        var replay = await Task.WhenAll(requests.Select(request => handler.CancelTask(human, request, ct)));
+        for (var index = 0; index < requests.Length; index++)
+        {
+            Assert.Null(original[index].Error);
+            Assert.Equal(TaskState.Cancelled, original[index].Value.State);
+            Assert.Equal(requests[index].Meta.CommandId, original[index].Value.Receipt.CommandId);
+            Assert.Equal(EffectCertainty.Happened, original[index].Value.Receipt.Effect);
+            Assert.Null(replay[index].Error);
+            Assert.Equal(original[index].Value, replay[index].Value);
         }
 
-        string? launchMarker = null;
-        var steps = new Tasks.FixedSteps(_ => [Step("slow-launch", launchMarker!, stepHoldMs)], _ => []);
-        await using var node = await InProcessNode.Create(steps: steps).StartAsync();
-        launchMarker = Path.Combine(node.Root, "launch.txt");
-        await using var channel = await node.ChannelAsync();
-        var commandMarker = Path.Combine(node.Root, "command.txt");
-        var id = await Tasks.SubmitAsync(channel, OperatingSystem.IsWindows()
-            ? Tasks.Argv(node.Root, Tasks.TestLoad, "signal", "--hold-ms", "60000", "--marker", commandMarker)
-            : Tasks.Argv(node.Root, "/bin/sh", "-c", "echo ran > \"$1\"; exec sleep 60", "sh", commandMarker));
-
-        // The launch step is running: the attempt is being launched, its command has not started.
-        await Tasks.WaitForAsync(() => OperatingSystem.IsWindows()
-            ? Tasks.Marker(launchMarker).Any(line => line.Event == "ready")
-            : File.Exists(launchMarker), Tasks.Bound, "the launch step to run");
-        using var stepProcess = OperatingSystem.IsWindows() ? OpenWindowsStep(launchMarker) : null;
-        var cancelled = System.Diagnostics.Stopwatch.StartNew();
-        var cancel = await channel.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = id, Reason = "fault" }, cancellationToken: Ct);
-        Assert.Null(cancel.Error);
-
-        var task = await Tasks.WaitAsync(channel, id);
-        var toFinal = cancelled.Elapsed;
-        TestContext.Current.TestOutputHelper?.WriteLine($"{task.State} after {toFinal.TotalMilliseconds:F0} ms: {task.CurrentAttempt.Result}");
-        Assert.Equal(TaskState.Cancelled, task.State);
-        Assert.Equal(TerminationReason.Cancelled, task.CurrentAttempt.Result.TerminationReason);
-        Assert.Equal(EffectCertainty.Happened, task.CurrentAttempt.Result.Effect);
-        Assert.True(toFinal < TimeSpan.FromSeconds(5), $"The cancel took {toFinal} to end the task (step hold {stepHoldMs} ms).");
-        if (OperatingSystem.IsWindows())
-        {
-            var rootPid = node.Runtime.Store.Read(reader =>
-            {
-                using var command = reader.CreateCommand("SELECT root_pid FROM attempt WHERE task_id = $id;");
-                command.Parameters.AddWithValue("$id", id.Value.ToByteArray());
-                using var rows = command.ExecuteReader();
-                Assert.True(rows.Read());
-                return rows.IsDBNull(0) ? (long?)null : rows.GetInt64(0);
-            });
-            Assert.True(rootPid is null, $"The command started (root {rootPid}) although its task was cancelled during the launch.");
-        }
-
-        // Past the short step's hold, so a command started after the cancel would have written its marker (the long step was killed by
-        // the termination; the fixture fails the test on any leftover, so waiting out its hold proves nothing more).
-        await Task.Delay(TimeSpan.FromMilliseconds(Math.Max(0, Math.Min(stepHoldMs + 1_000, 5_000) - cancelled.Elapsed.TotalMilliseconds)), Ct);
-        Assert.False(File.Exists(commandMarker), "The command ran although its task was cancelled during the launch.");
-        if (OperatingSystem.IsWindows() && stepProcess is not null)
-        {
-            // MR-101 deliberately records a stopped task before its terminated step finishes running down. Await the exact process
-            // object before fixture cleanup: under real AOT load it still held the working directory beyond the fixture's retries.
-            // This is after the unchanged 5 s cancel assertion, and the fixture still fails on every leftover.
-            await WaitForWindowsRundownAsync(stepProcess);
-        }
-    }
-
-    [SupportedOSPlatform("windows")]
-    private static SafeKernelHandle OpenWindowsStep(string marker)
-    {
-        var pid = Tasks.Marker(marker).First(line => line.Event == "ready").Pid;
-        var identity = ArcForges.Tests.ProcessIdentity.Capture(pid);
-        Assert.True(identity is not null, $"The launch step {pid} ended before cancellation.");
-        var handle = ProcessInfo.OpenIdentified(pid, new DateTime(identity.Value.StartKey, DateTimeKind.Utc).ToFileTimeUtc());
-        Assert.NotNull(handle);
-        return handle;
+        Assert.Equal((long)count, store.Read(reader => reader.Scalar("SELECT count(*) FROM task WHERE state=$state;",
+            ("$state", (int)TaskState.Cancelled))));
+        Assert.Empty(execution.RunningAttempts);
+        Assert.Equal(0L, store.Read(reader => reader.Scalar("SELECT count(*) FROM attempt;")));
     }
 
     [SupportedOSPlatform("windows")]
     private static Task WaitForWindowsRundownAsync(SafeHandle process) =>
         Tasks.WaitForAsync(() => !ProcessInfo.IsRunning(process), Tasks.Bound, "the stopped launch step to finish running down before fixture cleanup");
-
-    /// <summary>
-    /// MR-101: the forced stop of an attempt in its launch steps does not wait for the stopped step to run down. The termination empties the
-    /// step's job at once (the job reports no process and the step its termination code), but the step's process handle is signaled only once
-    /// its own threads have run down, at the job's below-normal priority: under CPU load in the parallel suites that took seconds (up to 12 s),
-    /// and the holder, which waited for that handle, wrote the stop's records only then, so the cancel above exceeded its bound. Here the step's
-    /// run-down is held without load or timing: a debugger attached to the step holds its exit (<see cref="ExitHold"/>), so the step cannot run
-    /// down before the test releases it, after the task ended. The task ends CANCELLED within the same bound before the step ran down, the
-    /// termination did reach the step (its exit came once released), and the command never starts.
-    /// </summary>
-    [Fact(Timeout = 180_000)]
-    [Trait("env", "windows-real")]
-    [SupportedOSPlatform("windows")]
-    public async Task ACancelDuringALaunchStepDoesNotWaitForTheStoppedStepToRunDownOnWindows()
-    {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "A terminated Windows job's processes run down after it reports them gone; on Linux the steps and the command are the unit's main process.");
-        string? launchMarker = null;
-        var steps = new Tasks.FixedSteps(_ => [Step("slow-launch", launchMarker!, 60_000)], _ => []);
-        await using var node = await InProcessNode.Create(steps: steps).StartAsync();
-        launchMarker = Path.Combine(node.Root, "launch.txt");
-        await using var channel = await node.ChannelAsync();
-        var commandMarker = Path.Combine(node.Root, "command.txt");
-        var id = await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, Tasks.TestLoad, "signal", "--hold-ms", "60000", "--marker", commandMarker));
-
-        // The launch step runs; from now on it cannot run down until released (a failure-path bound of 30 s after its exit releases it, so an
-        // attempt that waits for the step's run-down ends only then).
-        await Tasks.WaitForAsync(() => Tasks.Marker(launchMarker).Any(line => line.Event == "ready"), Tasks.Bound, "the launch step to run");
-        using var hold = ExitHold.Attach(Tasks.Marker(launchMarker).First(line => line.Event == "ready").Pid, TimeSpan.FromSeconds(30));
-        var cancelled = Stopwatch.StartNew();
-        var cancel = await channel.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = id, Reason = "fault" }, cancellationToken: Ct);
-        Assert.Null(cancel.Error);
-
-        var task = await Tasks.WaitAsync(channel, id);
-        var toFinal = cancelled.Elapsed;
-        var ranDown = hold.RanDown;
-        var rundown = hold.WaitForRundownAsync();
-        Assert.False(rundown.IsCompleted, "The cleanup wait completed while the debugger still held the step's run-down.");
-        hold.Release();
-        TestContext.Current.TestOutputHelper?.WriteLine($"{task.State} after {toFinal.TotalMilliseconds:F0} ms, step ran down by then: {ranDown}: {task.CurrentAttempt.Result}");
-        AssertCancelled(task);
-        Assert.Equal("stopped during launch step slow-launch; the command did not start", task.CurrentAttempt.Result.Detail);
-        Assert.False(ranDown, $"The task ended only after the stopped step had run down ({toFinal}): the stop waited for the step's run-down.");
-        Assert.True(toFinal < TimeSpan.FromSeconds(5), $"The cancel took {toFinal} to end the task while the step's run-down was held.");
-
-        // The step's exit comes from its own last thread, which load may starve: it is awaited (bounded), not assumed to have come already.
-        Assert.True(await Task.WhenAny(hold.Exit, Task.Delay(Tasks.Bound, Ct)) == hold.Exit,
-            $"The termination never reached the launch step: its exit did not come within {Tasks.Bound.TotalSeconds:0} s.");
-        await rundown;
-        Assert.True(hold.RanDown, "The stopped step still holds its process resources before fixture cleanup.");
-        Assert.Null(RootPid(node, id));
-        Assert.False(File.Exists(commandMarker), "The command ran although its task was cancelled during the launch.");
-    }
-
-    /// <summary>
-    /// Cancels racing the admission and the launch (16 section 1: cancellation during launch): tasks cancelled as soon as they are
-    /// submitted, many at once, all end CANCELLED, whether the cancel found them queued, admitted but not yet supervised, being launched,
-    /// or started; none runs on to its own end (a lost cancel left a task RUNNING for its whole 120 s hold).
-    /// </summary>
-    [Fact(Timeout = 300_000)]
-    public async Task TasksCancelledAsSoonAsSubmittedAllEndCancelled()
-    {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        if (!OperatingSystem.IsWindows())
-        {
-            Assert.SkipWhen(ArcForges.Tests.SystemdTestEnvironment.SkipReason is not null, ArcForges.Tests.SystemdTestEnvironment.SkipReason ?? string.Empty);
-        }
-
-        await using var node = await InProcessNode.Create().StartAsync();
-        await using var channel = await node.ChannelAsync();
-        var tasks = await Task.WhenAll(Enumerable.Range(0, 24).Select(async index =>
-        {
-            var id = await Tasks.SubmitAsync(channel, OperatingSystem.IsWindows()
-                ? Tasks.Argv(node.Root, Tasks.TestLoad, "signal", "--hold-ms", "120000", "--marker", Path.Combine(node.Root, $"m{index}.txt"))
-                : Tasks.Argv(node.Root, "/bin/sleep", "120"));
-            Assert.Null((await channel.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = id, Reason = "fault" }, cancellationToken: Ct)).Error);
-            return await Tasks.WaitAsync(channel, id, bound: TimeSpan.FromSeconds(60));
-        }));
-
-        Assert.All(tasks, task => Assert.True(task.State == TaskState.Cancelled, $"{task.State}: {task.CurrentAttempt?.Result}"));
-    }
-
-    /// <summary>
-    /// MR-84: a cancel that finds the attempt still launching terminates its container at once, and terminates it again once the start
-    /// completes with a root, however the start interleaves with the termination. Here the start completes exactly between the termination
-    /// and the supervisor's look at the start (the seam <c>ForcedBeforeStart</c> holds the forced phase there until the start completed),
-    /// the interleaving in which the command ran on past the cancel and the attempt ended TERMINATION_INCOMPLETE (the task FAILED). The
-    /// command cannot enter its container before the termination, whatever the timing (<see cref="LaunchHold"/>). The task ends CANCELLED
-    /// and the command does not run on.
-    /// </summary>
-    [Fact(Timeout = 180_000)]
-    public async Task AStartCompletingBetweenTheForcedPhaseAndItsCheckIsTerminatedAgain()
-    {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        SkipWithoutPlatform();
-        var hold = new LaunchHold();
-        var seam = new StartSeam(hold);
-        var node = InProcessNode.Create(steps: hold.Steps);
-        node.ForcedBeforeStart = seam.Invoke;
-        await using var started = await node.StartAsync();
-        await using var held = hold.Attach(node);
-        await using var channel = await node.ChannelAsync();
-        var commandMarker = Path.Combine(node.Root, "command.txt");
-        var id = await Tasks.SubmitAsync(channel, Command(node.Root, commandMarker));
-
-        // The attempt is being launched, its command held back outside its container.
-        await hold.HeldAsync();
-        var cancel = await channel.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = id, Reason = "fault" }, cancellationToken: Ct);
-        Assert.Null(cancel.Error);
-
-        var task = await Tasks.WaitAsync(channel, id);
-        AssertCancelled(task);
-        seam.AssertStartedInBetween(task);
-        AssertNeverRanPastTheStop(commandMarker);
-    }
-
-    /// <summary>
-    /// MR-02: a node restart in the middle of the launch of an attempt that is STOPPING (cancelled while its command was held back, then
-    /// the node stopped). The restarted node continues the stop with the forced phase at once, and terminates the attempt again once the
-    /// launch it no longer controls starts the command: the hold is released exactly after that termination (the seam), so the restarted
-    /// node must see the start itself (Windows: a process entering the re-opened job, whose holder's reports went to the stopped node;
-    /// Linux: the unit's queued start job completing). The task ends CANCELLED, never TERMINATION_INCOMPLETE, and the command does not run
-    /// on.
-    /// </summary>
-    [Fact(Timeout = 240_000)]
-    public async Task ARestartInTheMiddleOfTheLaunchOfAStoppingAttemptCancelsItAndTheCommandNeverRuns()
-    {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        SkipWithoutPlatform();
-        var hold = new LaunchHold();
-        var node = InProcessNode.Create(steps: hold.Steps);
-        await using var started = await node.StartAsync();
-        await using var held = hold.Attach(node);
-        var commandMarker = Path.Combine(node.Root, "command.txt");
-        Id id;
-        await using (var channel = await node.ChannelAsync())
-        {
-            id = await Tasks.SubmitAsync(channel, Command(node.Root, commandMarker));
-            await hold.HeldAsync();
-            var cancel = await channel.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = id, Reason = "fault" }, cancellationToken: Ct);
-            Assert.Null(cancel.Error);
-
-            // STOPPING is recorded; the command is still held back, so the stop cannot end before the node stops.
-            Assert.Equal(AttemptState.Stopping, (await Tasks.GetAsync(channel, id)).CurrentAttempt.State);
-        }
-
-        await node.StopAsync();
-        var seam = new StartSeam(hold);
-        node.ForcedBeforeStart = seam.Invoke;
-        await node.StartAsync();
-        await using var after = await node.ChannelAsync();
-        var task = await Tasks.WaitAsync(after, id);
-        AssertCancelled(task);
-        Assert.True(task.CurrentAttempt.NodeGap, "The attempt was recovered after the restart.");
-        seam.AssertStartedInBetween(task);
-        AssertNeverRanPastTheStop(commandMarker);
-    }
-
-    /// <summary>
-    /// MR-89: a node restart in the middle of the launch of an attempt that is STARTING (its command held back, nothing cancelled yet), then a
-    /// cancel after the restart. The restarted node re-opened the attempt as one it was not stopping, so its start completed at once without a
-    /// root; the cancel's forced phase finds the container empty, and the launch the node no longer controls starts the command after it: the
-    /// hold is released once the cancel answered, and the cancel stops the attempt before it answers. The restarted node must see that late
-    /// start itself (Windows: a process entering the re-opened job; Linux: the unit's queued start job, read at the forced phase, completing)
-    /// and terminate it. The task ends CANCELLED, never TERMINATION_INCOMPLETE, the late start was reported, and the command does not run on.
-    /// </summary>
-    [Fact(Timeout = 240_000)]
-    public async Task ACancelAfterARestartInTheMiddleOfTheLaunchOfAStartingAttemptEndsTheCommandThatStartsLate()
-    {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        SkipWithoutPlatform();
-        var hold = new LaunchHold();
-        var node = InProcessNode.Create(steps: hold.Steps);
-        await using var started = await node.StartAsync();
-        await using var held = hold.Attach(node);
-        var commandMarker = Path.Combine(node.Root, "command.txt");
-        Id id;
-        string attempt;
-        await using (var channel = await node.ChannelAsync())
-        {
-            id = await Tasks.SubmitAsync(channel, Command(node.Root, commandMarker));
-            attempt = await hold.HeldAsync();
-
-            // Nothing cancelled it: the attempt is STARTING when the node stops, its command still held back.
-            Assert.Equal(AttemptState.Starting, (await Tasks.GetAsync(channel, id)).CurrentAttempt.State);
-        }
-
-        await node.StopAsync();
-        var pendingCalls = 0;
-        node.ForcedBeforeStart = _ => Interlocked.Increment(ref pendingCalls);
-        await node.StartAsync();
-        await using var after = await node.ChannelAsync();
-        Assert.Equal(AttemptState.Starting, (await Tasks.GetAsync(after, id)).CurrentAttempt.State);
-        var handle = node.Runtime.Execution?.Running(attempt)?.Handle;
-        Assert.True(handle is not null, "The restarted node did not re-open the attempt's container.");
-        var entered = new ConcurrentQueue<int>();
-        handle!.LaunchProcessEntered += entered.Enqueue;
-
-        var cancel = await after.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = id, Reason = "fault" }, cancellationToken: Ct);
-        Assert.Null(cancel.Error);
-
-        // The forced phase ran before the cancel answered: the command starts after it.
-        hold.Release();
-        var task = await Tasks.WaitAsync(after, id);
-        AssertCancelled(task);
-        Assert.True(task.CurrentAttempt.NodeGap, "The attempt was recovered after the restart.");
-        Assert.True(!entered.IsEmpty,
-            $"The restarted node did not see the command start after the forced phase ({LaunchEnded(handle)}; attempt result {task.CurrentAttempt?.Result}).");
-        Assert.Equal(0, Volatile.Read(ref pendingCalls));
-        AssertNeverRanPastTheStop(commandMarker);
-        if (!OperatingSystem.IsWindows())
-        {
-            // The late start's root (the unit's main process, which becomes the command) is recorded with the attempt. On Windows the first
-            // process that enters a re-opened job may be a launch step, so none is recorded there.
-            Assert.True(RootPid(node, id) is not null, "The late start's root was not recorded with the attempt.");
-        }
-    }
-
-    /// <summary>
-    /// Review round 1, finding 1: the start completes only after the verification window of the forced phase that found it pending. The hold
-    /// is released 6 s after that termination (a lower bound past the 5 s window, never a race with it), and the node sees the late start in
-    /// the container before it sees the start complete: the seam <c>StartObserved</c> holds the start's continuation until the task ended.
-    /// The verification terminates the late start (the termination owed to it) instead of recording TERMINATION_INCOMPLETE: the task ends
-    /// CANCELLED, the command does not run on, and the node logs the late start.
-    /// </summary>
-    [Fact(Timeout = 180_000)]
-    public async Task AStartCompletingAfterTheVerificationWindowIsTerminatedNotLeftOver()
-    {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        SkipWithoutPlatform();
-        var hold = new LaunchHold();
-        var ended = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var released = new TaskCompletionSource<TimeSpan>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var forcedCalls = 0;
-        var node = InProcessNode.Create(steps: hold.Steps);
-        node.ForcedBeforeStart = handle =>
-        {
-            if (Interlocked.Increment(ref forcedCalls) == 1)
-            {
-                var forced = Stopwatch.StartNew();
-                _ = Task.Run(async () =>
-                {
-                    await Task.Delay(ArcForges.Node.Core.Execution.ExecutionSupervisor.VerifyWindow + TimeSpan.FromSeconds(1));
-                    hold.Release();
-                    released.TrySetResult(forced.Elapsed);
-                });
-            }
-        };
-        node.StartObserved = (handle, terminated) =>
-        {
-            if (!terminated)
-            {
-                // The verification sees the late start first.
-                ended.Task.Wait(Tasks.Bound);
-            }
-        };
-        await using var started = await node.StartAsync();
-        await using var held = hold.Attach(node);
-        try
-        {
-            await using var channel = await node.ChannelAsync();
-            var commandMarker = Path.Combine(node.Root, "command.txt");
-            var id = await Tasks.SubmitAsync(channel, Command(node.Root, commandMarker));
-            await hold.HeldAsync();
-            var cancel = await channel.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = id, Reason = "fault" }, cancellationToken: Ct);
-            Assert.Null(cancel.Error);
-
-            var task = await Tasks.WaitAsync(channel, id);
-            ended.TrySetResult();
-            AssertCancelled(task);
-            Assert.Equal(1, Volatile.Read(ref forcedCalls));
-            var releasedAfter = await released.Task.WaitAsync(Tasks.Bound, Ct);
-            Assert.True(releasedAfter > ArcForges.Node.Core.Execution.ExecutionSupervisor.VerifyWindow,
-                $"The hold was released {releasedAfter.TotalMilliseconds:F0} ms after the forced phase, within its verification window.");
-            AssertNeverRanPastTheStop(commandMarker);
-            await Tasks.WaitForAsync(() => NodeLog(node).Contains("execution.stop.late_start", StringComparison.Ordinal), Tasks.Bound,
-                "the node to log the late start it terminated");
-        }
-        finally
-        {
-            ended.TrySetResult();
-        }
-    }
-
-    /// <summary>
-    /// Review round 1, finding 2 (Windows): a STOPPING attempt recovered in the middle of its launch, whose first late process (a launch step)
-    /// completes the start and ends before the termination that follows it; the holder then starts the command after that termination. The
-    /// re-opened job reports every process the launch starts, and each is terminated: the task ends CANCELLED and the command does not run on.
-    /// The order is fixed without timing: the holder is suspended while the first step ends, the attempt is cancelled and the node restarted;
-    /// the restarted node's forced phase resumes the holder, the start's continuation is held (the seam <c>StartObserved</c>) until the second
-    /// step ended with the holder suspended again, and the holder resumes only after that continuation's termination. The job holds no process
-    /// when the attempt is cancelled (<see cref="WaitForEmptyJobAsync"/>), so the holder can start the second step after the restarted node's
-    /// termination. The second step's own report (each process that enters is terminated) may end it before the seam suspends the holder;
-    /// the order under test still holds, and the seam tolerates a holder that ended meanwhile.
-    /// </summary>
-    [Fact(Timeout = 240_000)]
-    [Trait("env", "windows-real")]
-    [SupportedOSPlatform("windows")]
-    public async Task EveryProcessTheLaunchOfARecoveredStoppingAttemptStartsIsTerminatedOnWindows()
-    {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "A re-opened Windows job; on Linux the late start is the unit's queued start job.");
-        var attempt = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
-        InProcessNode? node = null;
-        string Dir(string name) => Path.Combine(node!.Root, name);
-        var steps = new Tasks.FixedSteps(files =>
-        {
-            attempt.TrySetResult(files.AttemptName);
-            return [WindowsHoldStep("first", Dir("step1.txt"), Dir("go1")), WindowsHoldStep("second", Dir("step2.txt"), Dir("go2"))];
-        }, _ => []);
-        node = InProcessNode.Create(steps: steps);
-        await using var started = await node.StartAsync();
-        var commandMarker = Dir("command.txt");
-        var gate = new Lock();
-        int? holder = null;
-        var suspended = false;
-        void Suspend()
-        {
-            lock (gate)
-            {
-                if (!suspended)
-                {
-                    Suspension.Suspend(holder!.Value);
-                    suspended = true;
-                }
-            }
-        }
-
-        void Resume()
-        {
-            lock (gate)
-            {
-                if (suspended)
-                {
-                    Suspension.Resume(holder!.Value);
-                    suspended = false;
-                }
-            }
-        }
-
-        try
-        {
-            Id id;
-            await using (var channel = await node.ChannelAsync())
-            {
-                id = await Tasks.SubmitAsync(channel, Command(node.Root, commandMarker));
-                var name = await attempt.Task.WaitAsync(Tasks.Bound, Ct);
-                await Tasks.WaitForAsync(() => Tasks.Marker(Dir("step1.txt")).Any(line => line.Event == "start"), Tasks.Bound, "the first launch step to run");
-                holder = ExecutionCleanup.Holders([name]).Single();
-                Suspend();
-                await File.WriteAllTextAsync(Dir("go1"), "go", Ct);
-                var first = Tasks.Processes(Dir("step1.txt")).Single();
-                await Tasks.WaitForAsync(() => !first.IsRunning(), Tasks.Bound, "the first launch step to end");
-                await WaitForEmptyJobAsync(node, name);
-                var cancel = await channel.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = id, Reason = "fault" }, cancellationToken: Ct);
-                Assert.Null(cancel.Error);
-                Assert.Equal(AttemptState.Stopping, (await Tasks.GetAsync(channel, id)).CurrentAttempt.State);
-            }
-
-            await node.StopAsync();
-            var forcedCalls = 0;
-            var observed = 0;
-            IAttemptHandle? forced = null;
-            node.ForcedBeforeStart = handle =>
-            {
-                if (Interlocked.Increment(ref forcedCalls) == 1)
-                {
-                    forced = handle;
-                    // The holder goes on: it starts the second launch step, whose entry completes the restarted node's start.
-                    Resume();
-                }
-            };
-            node.StartObserved = (handle, terminated) =>
-            {
-                try
-                {
-                    if (!terminated && Interlocked.Increment(ref observed) == 1)
-                    {
-                        // The second step ends with the holder suspended, before the continuation's termination, which then finds the job
-                        // empty.
-                        Suspend();
-                        File.WriteAllText(Dir("go2"), "go");
-                        var watch = Stopwatch.StartNew();
-                        while (handle.Accounting().ActiveProcesses > 0 && watch.Elapsed < Tasks.Bound)
-                        {
-                            Thread.Sleep(20);
-                        }
-                    }
-                    else if (terminated && Volatile.Read(ref observed) == 1)
-                    {
-                        // After that termination the holder goes on: it starts the command (or records the step it found terminated).
-                        Resume();
-                    }
-                }
-                catch (Exception exception) when (exception is Win32Exception or ObjectDisposedException)
-                {
-                    // The second step's own termination ended the launch first: the holder exited (or the handle was released) meanwhile.
-                }
-            };
-            await node.StartAsync();
-            await using var after = await node.ChannelAsync();
-            var task = await Tasks.WaitAsync(after, id);
-            AssertCancelled(task);
-            Assert.True(task.CurrentAttempt.NodeGap, "The attempt was recovered after the restart.");
-            Assert.Equal(1, Volatile.Read(ref forcedCalls));
-            Assert.True(Volatile.Read(ref observed) == 1,
-                $"The restarted node's start never completed with a root ({LaunchEnded(forced)}; attempt result {task.CurrentAttempt?.Result}).");
-            AssertNeverRanPastTheStop(commandMarker);
-        }
-        finally
-        {
-            if (holder is not null)
-            {
-                Resume();
-            }
-        }
-    }
-
-    /// <summary>
-    /// Review round 2, item A (Windows): a STOPPING attempt recovered in the middle of its launch whose start completed before the restarted
-    /// node's forced phase: a launch step entered the re-opened job (completing the start) and ended before that phase, so the phase finds the
-    /// start complete and the job empty, and owes nothing. The holder's next process (the command) enters after the termination; it is
-    /// reported and terminated all the same: the task ends CANCELLED and the command does not run on. The order is fixed without timing: the
-    /// holder is suspended while the first step ends, the attempt is cancelled and the node restarted; the restarted node's forced phase (the
-    /// seam <c>ForcedPhase</c>, before it reads the start) resumes the holder until the second step entered and completed the start, suspends
-    /// it again until that step ended and the job is empty, and resumes it only after the termination, so the command enters after it.
-    /// </summary>
-    [Fact(Timeout = 240_000)]
-    [Trait("env", "windows-real")]
-    [SupportedOSPlatform("windows")]
-    public async Task AProcessEnteringAfterTheRecoveredForcedPhaseIsTerminatedWhenTheStartCompletedBeforeItOnWindows()
-    {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(),
-            "A re-opened Windows job; on Linux the launch steps and the command run in the unit, which the forced phase ends.");
-        var attempt = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
-        InProcessNode? node = null;
-        string Dir(string name) => Path.Combine(node!.Root, name);
-        var steps = new Tasks.FixedSteps(files =>
-        {
-            attempt.TrySetResult(files.AttemptName);
-            return [WindowsHoldStep("first", Dir("step1.txt"), Dir("go1")), WindowsHoldStep("second", Dir("step2.txt"), Dir("go2"))];
-        }, _ => []);
-        node = InProcessNode.Create(steps: steps);
-        await using var started = await node.StartAsync();
-        var commandMarker = Dir("command.txt");
-        var gate = new Lock();
-        int? holder = null;
-        var suspended = false;
-        void Suspend()
-        {
-            lock (gate)
-            {
-                if (!suspended)
-                {
-                    Suspension.Suspend(holder!.Value);
-                    suspended = true;
-                }
-            }
-        }
-
-        void Resume()
-        {
-            lock (gate)
-            {
-                if (suspended)
-                {
-                    Suspension.Resume(holder!.Value);
-                    suspended = false;
-                }
-            }
-        }
-
-        try
-        {
-            Id id;
-            await using (var channel = await node.ChannelAsync())
-            {
-                id = await Tasks.SubmitAsync(channel, Command(node.Root, commandMarker));
-                var name = await attempt.Task.WaitAsync(Tasks.Bound, Ct);
-                await Tasks.WaitForAsync(() => Tasks.Marker(Dir("step1.txt")).Any(line => line.Event == "start"), Tasks.Bound, "the first launch step to run");
-                holder = ExecutionCleanup.Holders([name]).Single();
-                Suspend();
-                await File.WriteAllTextAsync(Dir("go1"), "go", Ct);
-                var first = Tasks.Processes(Dir("step1.txt")).Single();
-                await Tasks.WaitForAsync(() => !first.IsRunning(), Tasks.Bound, "the first launch step to end");
-                await WaitForEmptyJobAsync(node, name);
-                var cancel = await channel.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = id, Reason = "fault" }, cancellationToken: Ct);
-                Assert.Null(cancel.Error);
-                Assert.Equal(AttemptState.Stopping, (await Tasks.GetAsync(channel, id)).CurrentAttempt.State);
-            }
-
-            await node.StopAsync();
-            var phases = 0;
-            var pendingCalls = 0;
-            RootProcess? startedBefore = null;
-            var emptyBefore = false;
-            var secondRanBeforeSuspend = false;
-            node.ForcedBeforeStart = _ => Interlocked.Increment(ref pendingCalls);
-            node.ForcedPhase = (handle, terminated) =>
-            {
-                if (!terminated && Interlocked.Increment(ref phases) == 1)
-                {
-                    // Started is a job-entry notification: it can precede the holder's Resume of the created-suspended step.
-                    // Wait for the step itself to execute before suspending its holder; go2 still holds it before the command.
-                    Resume();
-                    startedBefore = handle.Started.Wait(Tasks.Bound) ? handle.Started.Result : null;
-                    var ready = Stopwatch.StartNew();
-                    while (!Tasks.Marker(Dir("step2.txt")).Any(line => line.Event == "start") && ready.Elapsed < Tasks.Bound)
-                    {
-                        Thread.Sleep(20);
-                    }
-
-                    secondRanBeforeSuspend = Tasks.Marker(Dir("step2.txt")).Any(line => line.Event == "start");
-                    Suspend();
-                    File.WriteAllText(Dir("go2"), "go");
-                    var watch = Stopwatch.StartNew();
-                    while (handle.Accounting().ActiveProcesses > 0 && watch.Elapsed < Tasks.Bound)
-                    {
-                        Thread.Sleep(20);
-                    }
-
-                    emptyBefore = handle.Accounting().ActiveProcesses == 0;
-                }
-                else if (terminated && Volatile.Read(ref phases) == 1)
-                {
-                    // After the termination the holder goes on: it starts the command, which enters the job after the forced phase.
-                    Resume();
-                }
-            };
-            await node.StartAsync();
-            await using var after = await node.ChannelAsync();
-            var task = await Tasks.WaitAsync(after, id);
-            AssertCancelled(task);
-            Assert.True(task.CurrentAttempt.NodeGap, "The attempt was recovered after the restart.");
-            Assert.Equal(1, Volatile.Read(ref phases));
-            Assert.True(startedBefore is not null, "The second launch step did not complete the restarted node's start before its forced phase.");
-            Assert.True(secondRanBeforeSuspend, "The holder was suspended before its second launch step executed.");
-            Assert.True(emptyBefore, "The second launch step had not ended when the forced phase terminated the job.");
-            Assert.Equal(0, Volatile.Read(ref pendingCalls));
-            AssertNeverRanPastTheStop(commandMarker);
-        }
-        finally
-        {
-            if (holder is not null)
-            {
-                Resume();
-            }
-        }
-    }
 
     private static void SkipWithoutPlatform()
     {
@@ -673,10 +105,6 @@ public sealed partial class LaunchFaultTests
         }
     }
 
-    /// <summary>The command: marks its start, marks itself ready after <see cref="ReadyAfterMs"/>, then holds.</summary>
-    private static TaskSpec Command(string directory, string marker) => Tasks.Argv(directory, Tasks.TestLoad, "hold", "--hold-ms", "60000",
-        "--ready-after-ms", ReadyAfterMs.ToString(System.Globalization.CultureInfo.InvariantCulture), "--marker", marker);
-
     /// <summary>CANCELLED with the cancel's reason; effect HAPPENED (04 section 7: DID_NOT_HAPPEN only for SPAWN_FAILED and POLICY_DENIED).</summary>
     private static void AssertCancelled(ManagedTask task)
     {
@@ -684,21 +112,6 @@ public sealed partial class LaunchFaultTests
         var result = Assert.IsType<Attempt>(task.CurrentAttempt).Result;
         Assert.Equal(TerminationReason.Cancelled, result.TerminationReason);
         Assert.Equal(EffectCertainty.Happened, result.Effect);
-    }
-
-    /// <summary>
-    /// The command never ran on past the stop: every process it started is gone once its task ended (so it marks nothing later), and none
-    /// marked itself ready (<see cref="ReadyAfterMs"/>, the failure-path bound). There is no success-path time bound: the task ending CANCELLED,
-    /// not TERMINATION_INCOMPLETE, is what shows that the stop ended the command within its verification window.
-    /// </summary>
-    private static void AssertNeverRanPastTheStop(string marker)
-    {
-        foreach (var process in Tasks.Processes(marker))
-        {
-            Assert.False(process.IsRunning(), $"The command {process} still runs after its task ended.");
-        }
-
-        Assert.DoesNotContain(Tasks.Marker(marker), line => line.Event == "ready");
     }
 
     /// <summary>A Windows launch step that marks its start and holds until <paramref name="untilFile"/> exists, then exits 0.</summary>
@@ -727,19 +140,6 @@ public sealed partial class LaunchFaultTests
         }
     }
 
-    /// <summary>What ended a launch without a command (diagnostics of a failure; never throws).</summary>
-    private static string LaunchEnded(IAttemptHandle? handle)
-    {
-        try
-        {
-            return $"launch record: {handle?.TryReadLaunchFailure()?.ToJson() ?? "none"}; exit record: {handle?.TryReadExit()?.ToJson() ?? "none"}";
-        }
-        catch (Exception exception) when (exception is IOException or ObjectDisposedException or UnauthorizedAccessException)
-        {
-            return "records unreadable: " + exception.Message;
-        }
-    }
-
     /// <summary>The recorded root process ID of the task's attempt, or null.</summary>
     private static long? RootPid(InProcessNode node, Id id) => node.Runtime.Store.Read(reader =>
     {
@@ -764,45 +164,6 @@ public sealed partial class LaunchFaultTests
     }
 
     /// <summary>
-    /// The forced-phase seam: on its first call it releases the hold and waits (bounded) until the start completed, all inside the forced
-    /// phase, between the termination and the supervisor's look at the start.
-    /// </summary>
-    private sealed class StartSeam(LaunchHold hold)
-    {
-        private int _calls;
-        private bool _pendingAtCall;
-        private RootProcess? _started;
-        private string? _launchEnded;
-
-        public void Invoke(IAttemptHandle handle)
-        {
-            if (Interlocked.Increment(ref _calls) != 1)
-            {
-                return;
-            }
-
-            _pendingAtCall = !handle.Started.IsCompleted;
-            hold.Release();
-            _started = handle.Started.Wait(Tasks.Bound) ? handle.Started.Result : null;
-            if (_started is null)
-            {
-                // What ended the launch without a command, for the failure message.
-                _launchEnded = $"launch record: {handle.TryReadLaunchFailure()?.ToJson() ?? "none"}; exit record: {handle.TryReadExit()?.ToJson() ?? "none"}; "
-                    + hold.Describe();
-            }
-        }
-
-        /// <summary>The forced phase ran once while the start was pending, and the start completed with a root while it was held.</summary>
-        public void AssertStartedInBetween(ManagedTask task)
-        {
-            Assert.Equal(1, Volatile.Read(ref _calls));
-            Assert.True(_pendingAtCall, "The start had completed before the forced phase's termination.");
-            Assert.True(_started is not null,
-                $"The start did not complete with a root while the forced phase was held ({_launchEnded}; attempt result {task.CurrentAttempt?.Result}).");
-        }
-    }
-
-    /// <summary>
     /// Holds an attempt's command back from its container until the test releases it, from outside the container (the forced phase cannot
     /// end the hold) and without waiting on any timing:
     /// <list type="bullet">
@@ -817,7 +178,6 @@ public sealed partial class LaunchFaultTests
         private readonly TaskCompletionSource<string> _attempt = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private InProcessNode? _node;
         private int? _holder;
-        private int? _stepExitCode;
         private int _released;
         private string? _gate;
 
@@ -848,12 +208,9 @@ public sealed partial class LaunchFaultTests
                 _holder = ExecutionCleanup.Holders([attempt]).Single();
                 Suspension.Suspend(_holder.Value);
 
-                // A handle on the step before it is released, so its exit code can be read afterwards (diagnostics; never fails the test).
-                using var stepHandle = ProcessInfo.Open(Tasks.Marker(StepMarker).First(line => line.Event == "start").Pid);
                 await File.WriteAllTextAsync(StepGo, "go", Ct);
                 var step = Tasks.Processes(StepMarker).Single();
                 await Tasks.WaitForAsync(() => !step.IsRunning(), Tasks.Bound, "the launch step to end");
-                _stepExitCode = stepHandle is not null && Native.GetExitCodeProcess(stepHandle, out var code) ? unchecked((int)code) : null;
 
                 // The job must hold nothing when the stop terminates it (the case under test).
                 await WaitForEmptyJobAsync(_node!, attempt);
@@ -869,10 +226,6 @@ public sealed partial class LaunchFaultTests
 
             return attempt;
         }
-
-        /// <summary>What the hold saw (diagnostics of a failure).</summary>
-        public string Describe() =>
-            "launch step exit code " + (_stepExitCode is { } code ? code.ToString(System.Globalization.CultureInfo.InvariantCulture) : "unknown");
 
         /// <summary>Lets the command start (once).</summary>
         public void Release()

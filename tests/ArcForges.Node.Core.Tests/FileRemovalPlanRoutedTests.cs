@@ -7,541 +7,380 @@ using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Contracts.Relay.V1;
 using ArcForges.Node.Api;
-using ArcForges.Node.Core.Files;
-using ArcForges.Node.Core.Platform;
+using ArcForges.Node.CloudLink;
+using ArcForges.Node.Core;
 using ArcForges.Node.Core.Security;
 using ArcForges.Node.Store;
 using Google.Protobuf;
-using Microsoft.Data.Sqlite;
-using NodeShapes = ArcForges.Contracts.Node.Shapes.ContractShapeValidation;
 
 namespace ArcForges.Node.Core.Tests;
 
-/// <summary>Real dispatcher, native workspace and SQLite; the test seam does not claim a signed channel or real Center.</summary>
+/// <summary>
+/// Exercises the real SQLite receipts and mock-routed replay. Native traversal, producer rollback, and commit-fault tests
+/// remain at eaaccb8380a2bd265aaad0a67d62c8fab2a8a29a.
+/// </summary>
 public sealed class FileRemovalPlanRoutedTests
 {
-    [Fact(Timeout = 120_000)]
-    public async Task RealPlanAndReceiptCommitTogetherReplayAndBindTheRelaySession()
+    private const string ServiceMethod = "arcforges.node.v1.FileService/PlanRemoval";
+    private const string AuditOperation = "cleanup.plan FileService.PlanRemoval";
+
+    [Fact(Timeout = 30_000)]
+    public async Task HistoricalPlanReplaysOriginalBytesAfterRestartAndBindsItsOriginalCaller()
     {
         var ct = TestContext.Current.CancellationToken;
         await using var node = await InProcessNode.Create().StartAsync();
         var calls = new RoutedCalls(node);
-        var manager = new RegisteredWorkspaces(node.Runtime.Store);
-        var root = Directory.CreateDirectory(Path.Combine(node.Root, "removal-plan-root")).FullName;
-        var tree = Directory.CreateDirectory(Path.Combine(root, "tree")).FullName;
-        const string body = "owned-fixture-plan-body-must-never-be-persisted-8196";
-        File.WriteAllText(Path.Combine(tree, "content.txt"), body);
-        var workspace = manager.RegisterFromVerifiedHuman(root, cancellationToken: ct);
-        var request = new FileServicePlanRemovalRequest
+        var agent = calls.Relay(Origin.Agent);
+        var account = RoutedCalls.Session();
+        var root = Path.Combine(node.Root, "unavailable-historical-workspace");
+        var request = Request(CommandIds.New());
+        var accountRequest = Request(request.WorkspacePath.WorkspaceId);
+        var now = node.Runtime.Clock.GetUtcNow();
+        var items = new[] { Item("tree", FileEntryKind.Directory, 0), Item("tree/file.txt", FileEntryKind.File, 37) };
+        var response = Plan(request, now, items);
+        var accountResponse = Plan(accountRequest, now, items);
+        var expected = WithUnknownField(response);
+        node.Runtime.Store.Write(transaction =>
         {
-            Meta = Tasks.Meta(),
-            WorkspacePath = new FilePath { WorkspaceId = new Id { Value = ByteString.CopyFrom(workspace.Id) }, Path = "tree" },
-        };
-        var caller = calls.Relay(Origin.Agent);
-        var bytes = request.ToByteArray();
-        var first = await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval, bytes, request.Meta.CommandId);
-        Assert.NotNull(first.Answer);
-        Assert.Equal(RoutedOutcome.Executed, first.Answer.Outcome);
-        var firstBytes = first.Answer.Response ?? throw new InvalidOperationException("The plan response is missing.");
-        var response = FileServicePlanRemovalResponse.Parser.ParseFrom(firstBytes);
-        Assert.Null(response.Error);
-        Assert.True(NodeShapes.IsValid(response));
-        var plan = response.Value.Plan;
-        Assert.Equal(request.WorkspacePath, plan.WorkspacePath);
-        Assert.Equal(2, plan.Items.Count);
-        Assert.Equal((ulong)Encoding.UTF8.GetByteCount(body), plan.TotalBytes);
-        Assert.True(plan.RequiresApproval);
-        Assert.True(plan.QuarantineAvailable);
-        Assert.NotEqual(RiskClass.Low, plan.Risk);
-        Assert.All(plan.Items, item => Assert.False(item.OwnerVerified));
-        Assert.Equal(body, File.ReadAllText(Path.Combine(tree, "content.txt")));
+            Seed(transaction, agent, request, response, root, expected);
+            Seed(transaction, account, accountRequest, accountResponse, root);
+            return 0;
+        }, CommitDurability.Full);
 
-        var commandId = request.Meta.CommandId.Value.ToByteArray();
-        var expectedSha = SHA256.HashData(bytes);
+        var replay = await RouteAsync(calls, agent, request, ct);
+        Assert.Equal(expected, replay.Response!.ToByteArray());
+        var parsed = Parse(replay);
+        Assert.Equal(request.Meta.CorrelationId, parsed.Meta.CorrelationId);
+        Assert.Equal(37UL, parsed.Value.Plan.TotalBytes);
+        Assert.Equal(request.WorkspacePath, parsed.Value.Plan.WorkspacePath);
+
+        var otherRelay = agent.Clone();
+        otherRelay.LocalSessionId = CommandIds.New();
+        Assert.Equal("command_id_reused", Parse(await RouteAsync(calls, otherRelay, request, ct)).Error.Code);
+        var wrongBytes = WithUnknownField(request);
+        Assert.Equal("command_id_reused", Parse(await RouteAsync(calls, agent, request, ct, wrongBytes)).Error.Code);
+        var differentCorrelation = request.Clone();
+        differentCorrelation.Meta.CorrelationId = CommandIds.New();
+        Assert.Equal("command_id_reused", Parse(await RouteAsync(calls, agent, differentCorrelation, ct)).Error.Code);
+        var otherAccountUser = RoutedCalls.Session();
+        otherAccountUser.UserId = CommandIds.New();
+        Assert.Equal(accountResponse.ToByteArray(), (await RouteAsync(calls, otherAccountUser, accountRequest, ct)).Response!.ToByteArray());
+
+        Assert.Equal(0, await node.StopAsync());
+        await node.StartAsync();
+        calls = new RoutedCalls(node);
+        Assert.Equal(expected, (await RouteAsync(calls, agent, request, ct)).Response!.ToByteArray());
+        Assert.Equal(accountResponse.ToByteArray(), (await RouteAsync(calls, otherAccountUser, accountRequest, ct)).Response!.ToByteArray());
+        Assert.False(Directory.Exists(root));
         node.Runtime.Store.Read(reader =>
         {
-            using var sql = reader.CreateCommand("""
-                SELECT p.request_sha256, p.workspace_id, p.workspace_path, p.caller, d.outcome,
-                       (SELECT count(*) FROM file_removal_plan_item i WHERE i.plan_id = p.plan_id)
-                FROM file_removal_plan p JOIN command_dedup d ON d.command_id = p.command_id WHERE p.command_id = $id;
-                """);
-            sql.Parameters.AddWithValue("$id", commandId);
-            using var row = sql.ExecuteReader();
-            Assert.True(row.Read());
-            Assert.Equal(expectedSha, (byte[])row.GetValue(0));
-            Assert.Equal(workspace.Id, (byte[])row.GetValue(1));
-            Assert.Equal("tree", row.GetString(2));
-            Assert.Equal(caller, CenterCaller.Parser.ParseFrom((byte[])row.GetValue(3)));
-            Assert.Equal(firstBytes.ToByteArray(), (byte[])row.GetValue(4));
-            Assert.Equal(2L, row.GetInt64(5));
-            Assert.False(row.Read());
+            Assert.Equal(2L, reader.Scalar("SELECT count(*) FROM command_dedup;"));
+            Assert.Equal(2L, reader.Scalar("SELECT count(*) FROM file_removal_plan;"));
+            Assert.Equal(4L, reader.Scalar("SELECT count(*) FROM file_removal_plan_item;"));
+            Assert.Equal(0L, reader.Scalar("SELECT count(*) FROM quarantine_entry;"));
+            Assert.Equal(SHA256.HashData(request.ToByteArray()), reader.Scalar(
+                "SELECT request_sha256 FROM file_removal_plan WHERE command_id = $id;", ("$id", request.Meta.CommandId.Value.ToByteArray())) as byte[]);
             return 0;
         });
-
-        var replay = await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval, bytes, request.Meta.CommandId);
-        Assert.Equal(firstBytes, replay.Answer!.Response);
-        var otherSession = caller.Clone();
-        otherSession.LocalSessionId = CommandIds.New();
-        var foreign = await calls.CallAsync(otherSession, RoutedMethod.PlanNodeRemoval, bytes, request.Meta.CommandId);
-        Assert.Equal("command_id_reused", FileServicePlanRemovalResponse.Parser.ParseFrom(foreign.Answer!.Response).Error.Code);
-        var changed = request.Clone();
-        changed.Meta.CorrelationId = CommandIds.New();
-        var mismatch = await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval, changed.ToByteArray(), request.Meta.CommandId);
-        Assert.Equal("command_id_reused", FileServicePlanRemovalResponse.Parser.ParseFrom(mismatch.Answer!.Response).Error.Code);
-        Assert.Equal(1L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_removal_plan;")));
-        Assert.Equal(body, File.ReadAllText(Path.Combine(tree, "content.txt")));
-
-        var accountRequest = request.Clone();
-        accountRequest.Meta = Tasks.Meta();
-        var account = RoutedCalls.Session();
-        var accountFirst = await calls.CallAsync(account, RoutedMethod.PlanNodeRemoval, accountRequest.ToByteArray(), accountRequest.Meta.CommandId);
-        Assert.NotNull(accountFirst.Answer?.Response);
-        var nextSession = RoutedCalls.Session();
-        nextSession.UserId = CommandIds.New();
-        var accountReplay = await calls.CallAsync(nextSession, RoutedMethod.PlanNodeRemoval, accountRequest.ToByteArray(), accountRequest.Meta.CommandId);
-        Assert.Equal(accountFirst.Answer!.Response, accountReplay.Answer!.Response);
-
-        Assert.Equal(0, await node.StopAsync());
-        await node.StartAsync();
-        calls = new RoutedCalls(node);
-        var afterRestart = await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval, bytes, request.Meta.CommandId);
-        Assert.Equal(firstBytes, afterRestart.Answer!.Response);
-        Assert.Equal(2L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_removal_plan;")));
-
-        foreach (var db in new[] { node.Runtime.Store.DatabasePath, node.Runtime.Store.DatabasePath + "-wal" })
-        {
-            if (!File.Exists(db)) continue;
-            using var stream = new FileStream(db, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-            using var data = new MemoryStream();
-            stream.CopyTo(data);
-            Assert.False(data.ToArray().AsSpan().IndexOf(Encoding.UTF8.GetBytes(body)) >= 0);
-        }
     }
 
-    [Fact(Timeout = 120_000)]
-    public async Task PlanningPermissionAndUnknownWorkspaceReturnActualAuditedRefusals()
+    [Fact(Timeout = 30_000)]
+    public async Task FreshPlanningStaysUnknownAndCurrentPolicyDenialIsAuditedWithoutAdmission()
     {
         var ct = TestContext.Current.CancellationToken;
         await using var node = await InProcessNode.Create().StartAsync();
         var calls = new RoutedCalls(node);
         var caller = calls.Relay(Origin.Agent);
-        var request = new FileServicePlanRemovalRequest
-        {
-            Meta = Tasks.Meta(),
-            WorkspacePath = new FilePath { WorkspaceId = CommandIds.New(), Path = "missing" },
-        };
-        var missing = await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval, request.ToByteArray(), request.Meta.CommandId);
-        Assert.Equal("not_found", FileServicePlanRemovalResponse.Parser.ParseFrom(missing.Answer!.Response).Error.Code);
-        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_removal_plan;")));
-        var unknownAttempt = new FileServicePlanRemovalRequest { Meta = Tasks.Meta(), AttemptId = CommandIds.New() };
-        var attempt = await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval, unknownAttempt.ToByteArray(), unknownAttempt.Meta.CommandId);
-        Assert.Equal("not_found", FileServicePlanRemovalResponse.Parser.ParseFrom(attempt.Answer!.Response).Error.Code);
+        var request = Request(CommandIds.New());
+        var unknown = Parse(await RouteAsync(calls, caller, request, ct));
+        Assert.True(RoutedFileResponseValidation.RemovalPlanOutcome(unknown, request));
+        Assert.Equal(("internal", EffectCertainty.Unknown, RetryMode.Never), (unknown.Error.Code, unknown.Error.Effect, unknown.Error.Retry.Mode));
 
-        string reason;
-        await using (var human = await node.ChannelAsync(helloAsHuman: true))
+        await using var human = await node.ChannelAsync(helloAsHuman: true);
+        Assert.Null((await Sched.ChangePolicyAsync(human, policy => policy.Permissions.Add(new PermissionOverride
         {
-            Assert.Null((await Sched.ChangePolicyAsync(human, policy => policy.Permissions.Add(new PermissionOverride
-            {
-                Operation = PermissionMatrix.CleanupPlan,
-                Origin = Origin.Agent,
-                Decision = PermissionDecision.Deny,
-            }))).Error);
-            request.Meta = Tasks.Meta();
-            var denied = await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval, request.ToByteArray(), request.Meta.CommandId);
-            Assert.Equal(RoutedOutcome.RefusedByPolicy, denied.Answer!.Outcome);
-            Assert.Equal("permission_denied", denied.Answer.Error!.Code);
-            reason = denied.Answer.Error.Details.State.Reason;
-            Assert.Null((await Sched.ChangePolicyAsync(human, policy => policy.Permissions.Clear())).Error);
-        }
-
-        Assert.Equal(0, await node.StopAsync());
-        await node.StartAsync();
-        calls = new RoutedCalls(node);
-        var replay = await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval, request.ToByteArray(), request.Meta.CommandId);
-        Assert.Equal(RoutedOutcome.RefusedByPolicy, replay.Answer!.Outcome);
-        Assert.Equal(reason, replay.Answer.Error!.Details.State.Reason);
-        Assert.Equal(reason, node.Runtime.Store.Read(reader => reader.Scalar(
-            "SELECT policy_reason FROM file_removal_command_owner WHERE command_id = $id;", ("$id", request.Meta.CommandId.Value.ToByteArray()))));
-        Assert.True((long)node.Runtime.Store.Read(reader => reader.Scalar(
-            "SELECT count(*) FROM file_workspace_audit f JOIN audit_log a ON a.seq = f.audit_seq WHERE a.operation LIKE '%PlanRemoval%';"))! >= 3);
-    }
-    [Fact(Timeout = 120_000)]
-    public async Task AnExceptionAfterActualPlanInsertsRollsBackPlanAndCommandReceipt()
-    {
-        var ct = TestContext.Current.CancellationToken;
-        await using var node = await InProcessNode.Create().StartAsync();
-        var calls = new RoutedCalls(node);
-        var root = Directory.CreateDirectory(Path.Combine(node.Root, "rollback-root")).FullName;
-        File.WriteAllText(Path.Combine(root, "kept"), "owned rollback marker");
-        var registered = new RegisteredWorkspaces(node.Runtime.Store).RegisterFromVerifiedHuman(root, cancellationToken: ct);
-        using var workspace = WorkspacePath.OpenRoot(root);
-        var snapshot = WorkspaceRemovalPlan.Capture(workspace, "kept", ct);
-        var id = Tasks.Meta().CommandId.Value.ToByteArray();
-        var raw = SHA256.HashData("exact test command"u8);
-        var caller = calls.Relay(Origin.Human);
-        var actor = new ActorRef { Origin = Origin.Remote, CenterCaller = caller.Clone() };
-        var target = new FilePath { WorkspaceId = new Id { Value = ByteString.CopyFrom(registered.Id) }, Path = "kept" };
-
-        Assert.Throws<InvalidOperationException>(() => node.Runtime.Store.Write<int>(transaction =>
+            Operation = PermissionMatrix.CleanupPlan,
+            Origin = Origin.Agent,
+            Decision = PermissionDecision.Deny,
+        }))).Error);
+        var denied = await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval, request.ToByteArray(), request.Meta.CommandId, cancellationToken: ct);
+        Assert.Equal(RoutedOutcome.RefusedByPolicy, denied.Answer!.Outcome);
+        Assert.Equal("permission_denied", denied.Answer.Error!.Code);
+        Assert.Equal(EffectCertainty.DidNotHappen, denied.Answer.Error.Effect);
+        node.Runtime.Store.Read(reader =>
         {
-            Assert.Equal(DedupStatus.Execute, CommandDeduplication.Begin(transaction, id,
-                "arcforges.node.v1.FileService/PlanRemoval", raw, Origin.Remote).Status);
-            var prepared = FileRemovalPlans.PrepareWorkspace(transaction, id, raw, caller, actor, target, root, snapshot, transaction.NowMicroseconds);
-            FileRemovalPlans.RecordWorkspace(transaction, prepared);
-            throw new InvalidOperationException("test-owned rollback");
-        }, CommitDurability.Full));
-        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_removal_plan;")));
-        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM cleanup_plan;")));
-        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar(
-            "SELECT count(*) FROM command_dedup WHERE command_id = $id;", ("$id", id))));
-        Assert.Equal("owned rollback marker", File.ReadAllText(Path.Combine(root, "kept")));
-    }
-
-    // isolation=exclusive: the real oversized tree must reach the transactional fault inside the unchanged file-operation budget.
-    [Fact(Timeout = 120_000, DisableParallelization = true)]
-    [Trait("isolation", "exclusive")]
-    public async Task OversizedRealTreePersistsAndReplaysRefusalWithoutAPlanEvenAfterUncertainCommit()
-    {
-        var ct = TestContext.Current.CancellationToken;
-        await using var node = await InProcessNode.Create().StartAsync();
-        var calls = new RoutedCalls(node);
-        var root = Directory.CreateDirectory(Path.Combine(node.Root, "large-response-root")).FullName;
-        var selected = Directory.CreateDirectory(Path.Combine(root, "tree")).FullName;
-        var deep = selected;
-        for (var depth = 0; depth < 5; depth++)
-            deep = Directory.CreateDirectory(Path.Combine(deep, new string((char)('a' + depth), 210))).FullName;
-        for (var index = 0; index < 980; index++)
-            File.WriteAllBytes(Path.Combine(deep, "f" + index.ToString("D4", System.Globalization.CultureInfo.InvariantCulture)), []);
-        const string privateBody = "plan-budget-fixture-content-never-persisted-3752";
-        File.WriteAllText(Path.Combine(deep, "f0000"), privateBody);
-        var registered = new RegisteredWorkspaces(node.Runtime.Store).RegisterFromVerifiedHuman(root, cancellationToken: ct);
-        using var workspace = WorkspacePath.OpenRoot(root);
-        var snapshot = WorkspaceRemovalPlan.Capture(workspace, "tree", ct);
-        Assert.Equal(986, snapshot.Entries.Count);
-        var caller = calls.Relay(Origin.Agent);
-        var request = new FileServicePlanRemovalRequest
-        {
-            Meta = Tasks.Meta(),
-            WorkspacePath = new FilePath { WorkspaceId = new Id { Value = ByteString.CopyFrom(registered.Id) }, Path = "tree" },
-        };
-        var raw = SHA256.HashData(request.ToByteArray());
-        var id = request.Meta.CommandId.Value.ToByteArray();
-        var actor = new ActorRef { Origin = Origin.Remote, CenterCaller = caller.Clone() };
-        var encodedSize = 0;
-        var shapeAccepted = false;
-        var planShapeAccepted = false;
-        var invalidItemCount = 0;
-        var firstInvalidPathBytes = 0;
-        Assert.Throws<InvalidOperationException>(() => node.Runtime.Store.Write<int>(transaction =>
-        {
-            Assert.Equal(DedupStatus.Execute, CommandDeduplication.Begin(transaction, id,
-                "arcforges.node.v1.FileService/PlanRemoval", raw, Origin.Remote).Status);
-            var prepared = FileRemovalPlans.PrepareWorkspace(transaction, id, raw, caller, actor, request.WorkspacePath, root,
-                snapshot, transaction.NowMicroseconds);
-            FileRemovalPlans.RecordWorkspace(transaction, prepared);
-            var plan = prepared.Plan;
-            var response = new FileServicePlanRemovalResponse
-            {
-                Meta = new ResponseMeta { CorrelationId = request.Meta.CorrelationId.Clone() },
-                Value = new FileServicePlanRemovalValue { Plan = plan },
-            };
-            encodedSize = response.CalculateSize();
-            shapeAccepted = NodeShapes.IsValid(response);
-            planShapeAccepted = NodeShapes.IsValid(plan);
-            foreach (var item in plan.Items)
-            {
-                if (NodeShapes.IsValid(item)) continue;
-                invalidItemCount++;
-                if (firstInvalidPathBytes == 0) firstInvalidPathBytes = Encoding.UTF8.GetByteCount(item.Path);
-            }
-            throw new InvalidOperationException("test-owned size measurement rollback");
-        }, CommitDurability.Full));
-        // The actual 450.1 response validator enforces the encoded-size ceiling even though the plan and all items fit.
-        Assert.True(planShapeAccepted);
-        Assert.Equal(0, invalidItemCount);
-        Assert.Equal(0, firstInvalidPathBytes);
-        Assert.True(encodedSize > 1_040_384, $"Actual encoded response was {encodedSize} bytes.");
-        Assert.False(shapeAccepted);
-        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_removal_plan;")));
-        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar(
-            "SELECT count(*) FROM command_dedup WHERE command_id = $id;", ("$id", id))));
-
-        var requestBytes = request.ToByteArray();
-        var handler = calls.Dispatcher.FileHandlerForTests!;
-        handler.AfterRemovalSizeRefusalForTests = transaction =>
-        {
-            Assert.Equal(CommitDurability.Full, transaction.Durability);
-            Assert.Equal(2L, transaction.Scalar("PRAGMA synchronous;"));
-            throw new InvalidOperationException("test-owned pre-commit fault");
-        };
-        await Assert.ThrowsAsync<InvalidOperationException>(() => calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval,
-            requestBytes, request.Meta.CommandId));
-        handler.AfterRemovalSizeRefusalForTests = null;
-        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_removal_plan;")));
-        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM cleanup_plan;")));
-        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar(
-            "SELECT count(*) FROM command_dedup WHERE command_id = $id;", ("$id", id))));
-        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar(
-            "SELECT count(*) FROM audit_log WHERE operation = 'cleanup.plan FileService.PlanRemoval';")));
-
-        // The real SQLite FULL commit succeeds; an injected failure at its return makes its caller's outcome uncertain.
-        var observedFullBeforeCommit = false;
-        handler.AfterRemovalSizeRefusalForTests = transaction =>
-        {
-            Assert.Equal(CommitDurability.Full, transaction.Durability);
-            Assert.Equal(2L, transaction.Scalar("PRAGMA synchronous;"));
-            observedFullBeforeCommit = true;
-        };
-        handler.AfterRemovalSizeCommitForTests = () => throw new SqliteException("test-owned commit return fault", 10);
-        var uncertain = await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval, requestBytes, request.Meta.CommandId);
-        handler.AfterRemovalSizeRefusalForTests = null;
-        handler.AfterRemovalSizeCommitForTests = null;
-        Assert.True(observedFullBeforeCommit);
-        var unknown = FileServicePlanRemovalResponse.Parser.ParseFrom(uncertain.Answer!.Response);
-        Assert.True(NodeShapes.IsValid(unknown));
-        Assert.Equal("internal", unknown.Error.Code);
-        Assert.Equal(ErrorCategory.Internal, unknown.Error.Category);
-        Assert.Equal(EffectCertainty.Unknown, unknown.Error.Effect);
-        Assert.Equal(RetryMode.Never, unknown.Error.Retry.Mode);
-        Assert.Null(unknown.Value);
-        var receipt = node.Runtime.Store.Read(reader =>
-        {
-            using var sql = reader.CreateCommand("""
-                SELECT d.payload_digest, d.outcome, o.caller FROM command_dedup d
-                JOIN file_removal_command_owner o ON o.command_id = d.command_id WHERE d.command_id = $id;
-                """);
-            sql.Parameters.AddWithValue("$id", id);
-            using var row = sql.ExecuteReader();
-            Assert.True(row.Read());
-            Assert.Equal(SHA256.HashData(requestBytes), (byte[])row.GetValue(0));
-            Assert.Equal(caller, CenterCaller.Parser.ParseFrom((byte[])row.GetValue(2)));
-            return (byte[])row.GetValue(1);
+            Assert.Equal(1L, reader.Scalar("""
+                SELECT count(*) FROM file_workspace_audit f JOIN audit_log a ON a.seq = f.audit_seq
+                WHERE a.remote_command_id = $id AND f.workspace_id = $workspace AND a.decision = $deny;
+                """, ("$id", request.Meta.CommandId.Value.ToByteArray()), ("$workspace", request.WorkspacePath.WorkspaceId.Value.ToByteArray()),
+                ("$deny", (int)PermissionDecision.Deny)));
+            Assert.Equal(0L, reader.Scalar("SELECT count(*) FROM command_dedup WHERE command_id = $id;",
+                ("$id", request.Meta.CommandId.Value.ToByteArray())));
+            Assert.Equal(0L, reader.Scalar("SELECT count(*) FROM cleanup_plan;"));
+            return 0;
         });
-        var committed = FileServicePlanRemovalResponse.Parser.ParseFrom(receipt);
-        Assert.True(NodeShapes.IsValid(committed));
-        Assert.Equal(ErrorCategory.Resource, committed.Error.Category);
-        Assert.Equal("too_large", committed.Error.Code);
-        Assert.Equal(EffectCertainty.DidNotHappen, committed.Error.Effect);
-        Assert.Equal(RetryMode.Never, committed.Error.Retry.Mode);
-        Assert.Equal("removal_plan_response_bytes", committed.Error.Details.Limit.LimitName);
-        Assert.Equal("1040384", committed.Error.Details.Limit.Maximum.Value);
-        Assert.Null(committed.Value);
-        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_removal_plan;")));
-        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM cleanup_plan;")));
-        Assert.Equal(1L, node.Runtime.Store.Read(reader => reader.Scalar(
-            "SELECT count(*) FROM audit_log WHERE operation = 'cleanup.plan FileService.PlanRemoval' AND outcome_summary = 'refused: too_large';")));
-
-        // A second account session of the same account may replay the first account session's exact refusal.
-        var account = RoutedCalls.Session();
-        var accountRequest = request.Clone();
-        accountRequest.Meta = Tasks.Meta();
-        var accountBytes = accountRequest.ToByteArray();
-        var accountFirst = await calls.CallAsync(account, RoutedMethod.PlanNodeRemoval, accountBytes, accountRequest.Meta.CommandId);
-        var accountResult = FileServicePlanRemovalResponse.Parser.ParseFrom(accountFirst.Answer!.Response);
-        Assert.Equal("removal_plan_response_bytes", accountResult.Error.Details.Limit.LimitName);
-        var anotherAccountSession = RoutedCalls.Session();
-        Assert.NotEqual(account.SessionId, anotherAccountSession.SessionId);
-        var accountReplay = await calls.CallAsync(anotherAccountSession, RoutedMethod.PlanNodeRemoval, accountBytes, accountRequest.Meta.CommandId);
-        Assert.Equal(accountFirst.Answer.Response, accountReplay.Answer!.Response);
-
-        await using (var human = await node.ChannelAsync(helloAsHuman: true))
-        {
-            Assert.Null((await Sched.ChangePolicyAsync(human, policy => policy.Permissions.Add(new PermissionOverride
-            {
-                Operation = PermissionMatrix.CleanupPlan,
-                Origin = Origin.Agent,
-                Decision = PermissionDecision.Deny,
-            }))).Error);
-        }
-        // Re-enumerating now would hit the different 1000-descendant bound, so the original result proves receipt replay.
-        for (var index = 980; index < 996; index++)
-            File.WriteAllBytes(Path.Combine(deep, "f" + index.ToString("D4", System.Globalization.CultureInfo.InvariantCulture)), []);
-        var replay = await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval, requestBytes, request.Meta.CommandId);
-        Assert.Equal(receipt, replay.Answer!.Response!.ToByteArray());
-        var foreign = caller.Clone();
-        foreign.LocalSessionId = CommandIds.New();
-        var denied = await calls.CallAsync(foreign, RoutedMethod.PlanNodeRemoval, requestBytes, request.Meta.CommandId);
-        Assert.Equal("command_id_reused", FileServicePlanRemovalResponse.Parser.ParseFrom(denied.Answer!.Response).Error.Code);
-        var differentRawBytes = requestBytes.Concat(new byte[] { 0x98, 0x06, 0x01 }).ToArray();
-        var mismatch = await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval, differentRawBytes, request.Meta.CommandId);
-        Assert.Equal("command_id_reused", FileServicePlanRemovalResponse.Parser.ParseFrom(mismatch.Answer!.Response).Error.Code);
-        Assert.Equal(0, await node.StopAsync());
-        await node.StartAsync();
-        calls = new RoutedCalls(node);
-        var restarted = await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval, requestBytes, request.Meta.CommandId);
-        Assert.Equal(receipt, restarted.Answer!.Response!.ToByteArray());
-        var restartedAccount = await calls.CallAsync(anotherAccountSession, RoutedMethod.PlanNodeRemoval, accountBytes, accountRequest.Meta.CommandId);
-        Assert.Equal(accountFirst.Answer.Response, restartedAccount.Answer!.Response);
-        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_removal_plan;")));
-        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM cleanup_plan;")));
-        Assert.Equal(privateBody, File.ReadAllText(Path.Combine(deep, "f0000")));
-        foreach (var db in new[] { node.Runtime.Store.DatabasePath, node.Runtime.Store.DatabasePath + "-wal" })
-        {
-            if (!File.Exists(db)) continue;
-            using var stream = new FileStream(db, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-            using var data = new MemoryStream();
-            stream.CopyTo(data);
-            Assert.True(data.ToArray().AsSpan().IndexOf(Encoding.UTF8.GetBytes(privateBody)) < 0);
-        }
     }
 
-    [Fact(Timeout = 120_000)]
-    public async Task DispatcherFailureAfterPlanInsertsRollsBackBeforeTheSameCommandIsRetried()
+    [Fact(Timeout = 30_000)]
+    public async Task RetainedPolicyRefusalPreservesItsRecordedReasonEvenWhenCurrentPolicyAllows()
     {
         var ct = TestContext.Current.CancellationToken;
         await using var node = await InProcessNode.Create().StartAsync();
         var calls = new RoutedCalls(node);
-        var root = Directory.CreateDirectory(Path.Combine(node.Root, "injected-rollback-root")).FullName;
-        File.WriteAllText(Path.Combine(root, "target"), "unchanged");
-        var registered = new RegisteredWorkspaces(node.Runtime.Store).RegisterFromVerifiedHuman(root, cancellationToken: ct);
         var caller = calls.Relay(Origin.Agent);
-        var request = new FileServicePlanRemovalRequest
-        {
-            Meta = Tasks.Meta(),
-            WorkspacePath = new FilePath { WorkspaceId = new Id { Value = ByteString.CopyFrom(registered.Id) }, Path = "target" },
-        };
-        var handler = calls.Dispatcher.FileHandlerForTests!;
-        handler.AfterRemovalPlanInsertForTests = () => throw new ArgumentException("test-owned post-insert failure");
-        await Assert.ThrowsAsync<ArgumentException>(() => calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval,
-            request.ToByteArray(), request.Meta.CommandId));
-        handler.AfterRemovalPlanInsertForTests = null;
-        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_removal_plan;")));
+        var request = Request(CommandIds.New());
+        var error = NodeErrors.PermissionDenied(PermissionMatrix.CleanupPlan);
+        RoutedFileErrors.Complete(error, request.Meta, request.Meta.CorrelationId, node.Runtime.Clock);
+        var historical = Refusal(request, error);
+        node.Runtime.Store.Write(transaction => Seed(transaction, caller, request, historical, policyReason: "denied"), CommitDurability.Full);
+
+        var replay = await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval, request.ToByteArray(), request.Meta.CommandId, cancellationToken: ct);
+        Assert.Equal(RoutedOutcome.RefusedByPolicy, replay.Answer!.Outcome);
+        Assert.Equal("denied", replay.Answer.Error!.Details.State.Reason);
+        Assert.Equal(request.Meta.CorrelationId, replay.Answer.Error.CorrelationId);
+        var fresh = Request(request.WorkspacePath.WorkspaceId);
+        Assert.Equal(EffectCertainty.Unknown, Parse(await RouteAsync(calls, caller, fresh, ct)).Error.Effect);
+        Assert.Equal(historical.ToByteArray(), node.Runtime.Store.Read(reader => reader.Scalar(
+            "SELECT outcome FROM command_dedup WHERE command_id = $id;", ("$id", request.Meta.CommandId.Value.ToByteArray()))) as byte[]);
         Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM cleanup_plan;")));
-        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar(
-            "SELECT count(*) FROM command_dedup WHERE command_id=$id;", ("$id", request.Meta.CommandId.Value.ToByteArray()))));
-        Assert.Equal("unchanged", File.ReadAllText(Path.Combine(root, "target")));
-
-        handler.AfterRemovalPlanInsertForTests = () => throw new EncoderFallbackException("test-owned post-insert UTF8 failure");
-        await Assert.ThrowsAsync<EncoderFallbackException>(() => calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval,
-            request.ToByteArray(), request.Meta.CommandId));
-        handler.AfterRemovalPlanInsertForTests = null;
-        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_removal_plan;")));
-        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar(
-            "SELECT count(*) FROM command_dedup WHERE command_id=$id;", ("$id", request.Meta.CommandId.Value.ToByteArray()))));
-
-        handler.AfterRemovalPlanInsertForTests = () => calls.Link.Reset(usableFor: 0);
-        var dropped = await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval, request.ToByteArray(), request.Meta.CommandId);
-        handler.AfterRemovalPlanInsertForTests = null;
-        calls.Link.Reset();
-        Assert.Null(dropped.Answer);
-        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_removal_plan;")));
-        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar(
-            "SELECT count(*) FROM command_dedup WHERE command_id=$id;", ("$id", request.Meta.CommandId.Value.ToByteArray()))));
-
-        var retry = await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval, request.ToByteArray(), request.Meta.CommandId);
-        var response = FileServicePlanRemovalResponse.Parser.ParseFrom(retry.Answer!.Response);
-        Assert.Null(response.Error);
-        Assert.Equal(1L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_removal_plan;")));
     }
 
-    [Fact(Timeout = 120_000)]
-    public async Task AThousandRealDescendantsFitAndTheCompletePlanSurvivesThePublishedConsumer()
+    [Theory(Timeout = 30_000)]
+    [InlineData("removal_descendants", "1000")]
+    [InlineData("removal_total_bytes", "67108864")]
+    [InlineData("removal_plan_response_bytes", "1040384")]
+    public async Task RetainedLimitsReplayExactlyEvenAfterCurrentPolicyChanges(string limitName, string maximum)
     {
         var ct = TestContext.Current.CancellationToken;
         await using var node = await InProcessNode.Create().StartAsync();
         var calls = new RoutedCalls(node);
-        var root = Directory.CreateDirectory(Path.Combine(node.Root, "bounded-routed-root")).FullName;
-        var tree = Directory.CreateDirectory(Path.Combine(root, "tree")).FullName;
-        for (var index = 0; index < 1000; index++)
-            File.WriteAllBytes(Path.Combine(tree, index.ToString("D4", System.Globalization.CultureInfo.InvariantCulture)), []);
-        var registered = new RegisteredWorkspaces(node.Runtime.Store).RegisterFromVerifiedHuman(root, cancellationToken: ct);
-        var request = new FileServicePlanRemovalRequest
+        var caller = calls.Relay(Origin.Agent);
+        var request = Request(CommandIds.New());
+        var historical = Refusal(request, Limit(request, limitName, maximum));
+        node.Runtime.Store.Write(transaction => Seed(transaction, caller, request, historical), CommitDurability.Full);
+
+        await using var human = await node.ChannelAsync(helloAsHuman: true);
+        Assert.Null((await Sched.ChangePolicyAsync(human, policy => policy.Permissions.Add(new PermissionOverride
         {
-            Meta = Tasks.Meta(),
-            WorkspacePath = new FilePath { WorkspaceId = new Id { Value = ByteString.CopyFrom(registered.Id) }, Path = "tree" },
-        };
-        var answer = await calls.CallAsync(calls.Relay(Origin.Agent), RoutedMethod.PlanNodeRemoval,
-            request.ToByteArray(), request.Meta.CommandId);
-        var response = FileServicePlanRemovalResponse.Parser.ParseFrom(answer.Answer!.Response);
-        Assert.Null(response.Error);
-        Assert.True(NodeShapes.IsValid(response));
-        Assert.Equal(1001, response.Value.Plan.Items.Count);
-        Assert.True(response.CalculateSize() <= 1_040_384);
+            Operation = PermissionMatrix.CleanupPlan,
+            Origin = Origin.Agent,
+            Decision = PermissionDecision.Deny,
+        }))).Error);
+
+        var answer = await RouteAsync(calls, caller, request, ct);
+        Assert.Equal(historical.ToByteArray(), answer.Response!.ToByteArray());
+        var refusal = Parse(answer);
+        Assert.Null(refusal.Value);
+        Assert.Equal((limitName, maximum), (refusal.Error.Details.Limit.LimitName, refusal.Error.Details.Limit.Maximum.Value));
+        Assert.Equal(EffectCertainty.DidNotHappen, refusal.Error.Effect);
+        Assert.True(RoutedFileResponseValidation.RemovalPlanOutcome(refusal, request));
+        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM cleanup_plan;")));
+    }
+
+    [Fact(Timeout = 30_000)]
+    public async Task OversizedRequestPathIsRefusedWithoutAStoredPlan()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var node = await InProcessNode.Create().StartAsync();
+        var calls = new RoutedCalls(node);
+        var request = Request(CommandIds.New());
+        request.WorkspacePath.Path = new string('x', 4097);
+
+        var refusal = Parse(await RouteAsync(calls, calls.Relay(Origin.Agent), request, ct));
+        Assert.Equal("too_large", refusal.Error.Code);
+        Assert.Equal(("path_bytes", "4096"), (refusal.Error.Details.Limit.LimitName, refusal.Error.Details.Limit.Maximum.Value));
+        Assert.Equal(EffectCertainty.DidNotHappen, refusal.Error.Effect);
+        Assert.True(RoutedFileResponseValidation.RemovalPlanOutcome(refusal, request));
+        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM command_dedup;")));
+        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM cleanup_plan;")));
+    }
+
+    [Fact(Timeout = 30_000)]
+    public async Task HistoricalPathEnforcementRefusalSurvivesWithoutOpeningTheWorkspace()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var node = await InProcessNode.Create().StartAsync();
+        var calls = new RoutedCalls(node);
+        var caller = calls.Relay(Origin.Agent);
+        var request = Request(CommandIds.New());
+        var historical = Refusal(request, new ArcError
+        {
+            Category = ErrorCategory.State,
+            Code = "file_access_denied",
+            MessageKey = "error.state.file_access_denied",
+            CorrelationId = request.Meta.CorrelationId.Clone(),
+            Effect = EffectCertainty.DidNotHappen,
+            Retry = new RetryAdvice { Mode = RetryMode.Never },
+            Details = new ErrorDetails { State = new StateFailure { State = "file", Reason = "path_enforcement_unavailable" } },
+        });
+        node.Runtime.Store.Write(transaction => Seed(transaction, caller, request, historical), CommitDurability.Full);
+
+        var replay = await RouteAsync(calls, caller, request, ct);
+        Assert.Equal(historical.ToByteString(), replay.Response);
+        Assert.True(RoutedFileResponseValidation.RemovalPlanOutcome(Parse(replay), request));
+        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM cleanup_plan;")));
+    }
+
+    [Fact(Timeout = 30_000)]
+    public async Task ThousandRetainedDescendantsFitThePublishedConsumerWithoutWorkspaceAccess()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var node = await InProcessNode.Create().StartAsync();
+        var calls = new RoutedCalls(node);
+        var caller = calls.Relay(Origin.Agent);
+        var root = Path.Combine(node.Root, "unavailable-large-workspace");
+        var request = Request(CommandIds.New());
+        var items = new List<FileRemovalItem> { Item("tree", FileEntryKind.Directory, 0) };
+        for (var index = 0; index < 1000; index++)
+            items.Add(Item(FormattableString.Invariant($"tree/{index:D4}"), FileEntryKind.File, 0));
+        var historical = Plan(request, node.Runtime.Clock.GetUtcNow(), items);
+        node.Runtime.Store.Write(transaction => Seed(transaction, caller, request, historical, root), CommitDurability.Full);
+
+        var answer = await RouteAsync(calls, caller, request, ct);
+        Assert.Equal(historical.ToByteString(), answer.Response);
+        Assert.Equal(1001, Parse(answer).Value.Plan.Items.Count);
         var target = CommandIds.New();
-        var fleetResponse = new FleetServicePlanNodeRemovalResponse
+        Assert.True(RoutedFileResponseValidation.PlanRemoval(new FleetServicePlanNodeRemovalResponse
+        {
+            Meta = historical.Meta.Clone(),
+            Value = new FleetServicePlanNodeRemovalValue { NodeId = target, Response = answer.Response },
+        }, target, request));
+        Assert.Equal(1001L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_removal_plan_item;")));
+        Assert.False(Directory.Exists(root));
+    }
+
+    internal static FileServicePlanRemovalRequest Request(Id workspace) => new()
+    {
+        Meta = Tasks.Meta(),
+        WorkspacePath = new FilePath { WorkspaceId = workspace.Clone(), Path = "tree" },
+    };
+
+    internal static FileRemovalItem Item(string path, FileEntryKind kind, ulong size) => new()
+    {
+        Path = path,
+        Kind = kind,
+        SizeBytes = size,
+        IdentitySha256 = ByteString.CopyFrom(SHA256.HashData(Encoding.UTF8.GetBytes(path))),
+        OwnerVerified = false,
+    };
+
+    internal static FileServicePlanRemovalResponse Plan(FileServicePlanRemovalRequest request, DateTimeOffset now,
+        IReadOnlyList<FileRemovalItem> items, FileAuditMetadata? audit = null) => new()
         {
             Meta = new ResponseMeta { CorrelationId = request.Meta.CorrelationId.Clone() },
-            Value = new FleetServicePlanNodeRemovalValue { NodeId = target.Clone(), Response = response.ToByteString() },
+            Value = new()
+            {
+                Plan = new()
+                {
+                    PlanId = CommandIds.New(),
+                    Digest = ByteString.CopyFrom(SHA256.HashData(request.ToByteArray())),
+                    ExpiresAt = ProtoTime.ToInstant(now.AddMinutes(5)),
+                    WorkspacePath = request.WorkspacePath.Clone(),
+                    TotalBytes = checked((ulong)items.Sum(item => (long)item.SizeBytes)),
+                    RequiresApproval = true,
+                    QuarantineAvailable = true,
+                    Risk = RiskClass.High,
+                    Items = { items },
+                },
+            },
+            Audit = audit,
         };
-        Assert.True(RoutedFileResponseValidation.PlanRemoval(fleetResponse, target, request));
-        Assert.Equal(1001L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_removal_plan_item;")));
-        Assert.True(File.Exists(Path.Combine(tree, "0000")));
 
-        File.WriteAllBytes(Path.Combine(tree, "extra"), []);
-        request.Meta = Tasks.Meta();
-        var tooMany = await calls.CallAsync(calls.Relay(Origin.Agent), RoutedMethod.PlanNodeRemoval,
-            request.ToByteArray(), request.Meta.CommandId);
-        var refused = FileServicePlanRemovalResponse.Parser.ParseFrom(tooMany.Answer!.Response);
-        Assert.True(NodeShapes.IsValid(refused));
-        Assert.Equal("too_large", refused.Error.Code);
-        Assert.Equal("removal_descendants", refused.Error.Details.Limit.LimitName);
-        Assert.Equal("1000", refused.Error.Details.Limit.Maximum.Value);
-        Assert.Equal(1L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_removal_plan;")));
-        Assert.True(File.Exists(Path.Combine(tree, "extra")));
-    }
-
-    [Fact(Timeout = 120_000)]
-    public async Task RealSizeAndInputPathBoundsReturnCanonicalRefusalsWithoutChangingTheFile()
-    {
-        var ct = TestContext.Current.CancellationToken;
-        await using var node = await InProcessNode.Create().StartAsync();
-        var calls = new RoutedCalls(node);
-        var root = Directory.CreateDirectory(Path.Combine(node.Root, "plan-bound-root")).FullName;
-        var file = Path.Combine(root, "large");
-        using (var stream = File.Create(file)) stream.SetLength(67_108_865);
-        var registered = new RegisteredWorkspaces(node.Runtime.Store).RegisterFromVerifiedHuman(root, cancellationToken: ct);
-        var request = new FileServicePlanRemovalRequest
+    internal static FileServicePlanRemovalResponse Refusal(FileServicePlanRemovalRequest request, ArcError error,
+        FileAuditMetadata? audit = null) => new()
         {
-            Meta = Tasks.Meta(),
-            WorkspacePath = new FilePath { WorkspaceId = new Id { Value = ByteString.CopyFrom(registered.Id) }, Path = "large" },
+            Meta = new ResponseMeta { CorrelationId = request.Meta.CorrelationId.Clone() },
+            Error = error,
+            Audit = audit,
         };
-        var caller = calls.Relay(Origin.Agent);
-        var tooLarge = await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval, request.ToByteArray(), request.Meta.CommandId);
-        var refused = FileServicePlanRemovalResponse.Parser.ParseFrom(tooLarge.Answer!.Response);
-        Assert.True(NodeShapes.IsValid(refused));
-        Assert.Equal("too_large", refused.Error.Code);
-        Assert.Equal("removal_total_bytes", refused.Error.Details.Limit.LimitName);
-        Assert.Equal("67108864", refused.Error.Details.Limit.Maximum.Value);
-        Assert.Equal(67_108_865, new FileInfo(file).Length);
 
-        request.Meta = Tasks.Meta();
-        request.WorkspacePath.Path = new string('x', 4097);
-        var pathTooLarge = await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval, request.ToByteArray(), request.Meta.CommandId);
-        var pathRefused = FileServicePlanRemovalResponse.Parser.ParseFrom(pathTooLarge.Answer!.Response);
-        Assert.True(NodeShapes.IsValid(pathRefused));
-        Assert.Equal("too_large", pathRefused.Error.Code);
-        Assert.Equal("path_bytes", pathRefused.Error.Details.Limit.LimitName);
-        Assert.Equal("4096", pathRefused.Error.Details.Limit.Maximum.Value);
-        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_removal_plan;")));
-    }
-
-    [Fact(Timeout = 120_000)]
-    [Trait("env", "linux-real")]
-    public async Task NonportableChildIsAFileAccessRefusalForAValidSelectedPath()
+    internal static ArcError Limit(FileServicePlanRemovalRequest request, string name, string maximum) => new()
     {
-        Assert.SkipUnless(OperatingSystem.IsLinux(), "This fixture uses a Linux filename containing a backslash.");
-        var ct = TestContext.Current.CancellationToken;
-        await using var node = await InProcessNode.Create().StartAsync();
-        var calls = new RoutedCalls(node);
-        var root = Directory.CreateDirectory(Path.Combine(node.Root, "nonportable-plan-root")).FullName;
-        var tree = Directory.CreateDirectory(Path.Combine(root, "tree")).FullName;
-        var child = Path.Combine(tree, "nonportable\\name");
-        File.WriteAllText(child, "unchanged");
-        var registered = new RegisteredWorkspaces(node.Runtime.Store).RegisterFromVerifiedHuman(root, cancellationToken: ct);
-        var request = new FileServicePlanRemovalRequest
+        Category = ErrorCategory.Resource,
+        Code = "too_large",
+        MessageKey = "error.resource.too_large",
+        CorrelationId = request.Meta.CorrelationId.Clone(),
+        Effect = EffectCertainty.DidNotHappen,
+        Retry = new RetryAdvice { Mode = RetryMode.Never },
+        Details = new ErrorDetails
         {
-            Meta = Tasks.Meta(),
-            WorkspacePath = new FilePath { WorkspaceId = new Id { Value = ByteString.CopyFrom(registered.Id) }, Path = "tree" },
-        };
-        var call = await calls.CallAsync(calls.Relay(Origin.Agent), RoutedMethod.PlanNodeRemoval,
-            request.ToByteArray(), request.Meta.CommandId);
-        var refusal = FileServicePlanRemovalResponse.Parser.ParseFrom(call.Answer!.Response);
-        Assert.True(NodeShapes.IsValid(refusal));
-        Assert.Equal("file_access_denied", refusal.Error.Code);
-        Assert.Equal("path_enforcement_unavailable", refusal.Error.Details.State.Reason);
-        Assert.Equal(EffectCertainty.DidNotHappen, refusal.Error.Effect);
-        Assert.Equal("unchanged", File.ReadAllText(child));
-        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_removal_plan;")));
+            Limit = new LimitFailure { LimitName = name, Maximum = new ArcForges.Contracts.Foundation.V1.Decimal { Value = maximum } },
+        },
+    };
+
+    internal static async Task<RoutedAnswer> RouteAsync(RoutedCalls calls, CenterCaller caller, FileServicePlanRemovalRequest request,
+        CancellationToken cancellationToken, byte[]? raw = null)
+    {
+        var result = await calls.CallAsync(caller, RoutedMethod.PlanNodeRemoval, raw ?? request.ToByteArray(), request.Meta.CommandId,
+            cancellationToken: cancellationToken);
+        Assert.NotNull(result.Answer);
+        Assert.Equal(RoutedOutcome.Executed, result.Answer.Outcome);
+        Assert.NotNull(result.Answer.Response);
+        return result.Answer;
     }
 
+    internal static FileServicePlanRemovalResponse Parse(RoutedAnswer answer) => FileServicePlanRemovalResponse.Parser.ParseFrom(answer.Response);
+
+    internal static byte[] WithUnknownField(IMessage message) => [0x98, 0x06, 0x01, .. message.ToByteArray()];
+
+    internal static int Seed(StoreTransaction transaction, CenterCaller caller, FileServicePlanRemovalRequest request,
+        FileServicePlanRemovalResponse response, string? workspaceRoot = null, byte[]? retained = null, string? policyReason = null)
+    {
+        var id = request.Meta.CommandId.Value.ToByteArray();
+        var digest = SHA256.HashData(request.ToByteArray());
+        var actor = new ActorRef { Origin = Origin.Remote, CenterCaller = caller, RemoteCommandId = request.Meta.CommandId.Clone() };
+        Assert.Equal(DedupStatus.Execute, CommandDeduplication.Begin(transaction, id, ServiceMethod, digest, Origin.Remote).Status);
+        transaction.Execute("INSERT INTO file_removal_command_owner (command_id, caller, policy_reason) VALUES ($id, $caller, $reason);",
+            ("$id", id), ("$caller", caller.ToByteArray()), ("$reason", policyReason));
+        if (response.Value?.Plan is { } plan)
+            SeedPlan(transaction, actor, id, digest, plan, workspaceRoot ?? throw new InvalidOperationException("A plan fixture needs its recorded root."));
+        AuditLog.AppendFileWorkspace(transaction, actor, AuditOperation, request.WorkspacePath.WorkspaceId.Value.ToByteArray(), null,
+            request.WorkspacePath.Path, response.Error is null ? PermissionDecision.Allow : PermissionDecision.Deny,
+            response.Error is { } error ? "refused: " + error.Code : "planned", response.Audit);
+        CommandDeduplication.Complete(transaction, id, retained ?? response.ToByteArray());
+        return 0;
+    }
+
+    private static void SeedPlan(StoreTransaction transaction, ActorRef actor, byte[] command, byte[] requestDigest,
+        FileRemovalPlan plan, string workspaceRoot)
+    {
+        var planId = plan.PlanId.Value.ToByteArray();
+        var digest = plan.Digest.ToByteArray();
+        var workspace = plan.WorkspacePath.WorkspaceId.Value.ToByteArray();
+        const int platform = 1;
+        byte[] rootIdentity = [1, .. new byte[32]];
+        transaction.Execute("""
+            INSERT OR IGNORE INTO workspace (workspace_id, kind, state, name, root_path, created_at, last_used_at, rev)
+            VALUES ($workspace, 1, 1, 'historical removal fixture', $root, $now, $now, 0);
+            """, ("$workspace", workspace), ("$root", workspaceRoot), ("$now", transaction.NowMicroseconds));
+        transaction.Execute("""
+            INSERT INTO cleanup_plan (plan_id, state, digest, planned_by, total_bytes, item_count, created_at, expires_at, rev)
+            VALUES ($plan, 1, $digest, $actor, $total, $count, $now, $expires, 0);
+            """, ("$plan", planId), ("$digest", digest), ("$actor", actor.ToByteArray()), ("$total", (long)plan.TotalBytes),
+            ("$count", plan.Items.Count), ("$now", transaction.NowMicroseconds),
+            ("$expires", StoreTime.ToMicroseconds(ProtoTime.ToDateTimeOffset(plan.ExpiresAt)!.Value)));
+        transaction.Execute("""
+            INSERT INTO file_removal_plan (plan_id, command_id, request_sha256, caller, target_kind, workspace_id, workspace_path,
+                root_platform, root_identity, requires_approval, quarantine_available)
+            VALUES ($plan, $command, $request, $caller, 1, $workspace, $path, $platform, $identity, 1, 1);
+            """, ("$plan", planId), ("$command", command), ("$request", requestDigest), ("$caller", actor.CenterCaller.ToByteArray()),
+            ("$workspace", workspace), ("$path", plan.WorkspacePath.Path), ("$platform", platform), ("$identity", rootIdentity));
+        for (var index = 0; index < plan.Items.Count; index++)
+        {
+            var item = plan.Items[index];
+            var itemId = StoreIds.NewUuid7(transaction.Clock);
+            transaction.Execute("""
+                INSERT INTO cleanup_item (plan_id, item_id, path, size_bytes, item_class, reason, risk, action,
+                    fp_mtime, fp_size, fp_owner_state, external)
+                VALUES ($plan, $item, $path, $size, 10, 'ownership_unverified', 3, 1, 0, $size, 'unverified', 1);
+                """, ("$plan", planId), ("$item", itemId), ("$path", Path.Combine(workspaceRoot, item.Path)), ("$size", (long)item.SizeBytes));
+            transaction.Execute("""
+                INSERT INTO file_removal_plan_item (plan_id, item_id, ordinal, relative_path, entry_kind, native_platform, native_identity,
+                    identity_sha256, fingerprint_sha256, stamp_size, stamp_mtime, stamp_mtime_nsec, stamp_change, stamp_change_nsec,
+                    mode, link_count, owner_verified)
+                VALUES ($plan, $item, $index, $path, $kind, $platform, $identity, $digest, $digest, $size, 0, 0, 0, 0, 0, 1, 0);
+                """, ("$plan", planId), ("$item", itemId), ("$index", index), ("$path", item.Path), ("$kind", (int)item.Kind),
+                ("$platform", platform), ("$identity", rootIdentity), ("$digest", item.IdentitySha256.ToByteArray()), ("$size", (long)item.SizeBytes));
+        }
+    }
 }

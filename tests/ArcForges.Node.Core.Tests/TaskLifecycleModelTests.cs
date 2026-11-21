@@ -1,22 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Globalization;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
+using ArcForges.Node.Core.Events;
+using ArcForges.Node.Platform;
 using ArcForges.Tests;
 using CsCheck;
-using Grpc.Core;
 
 namespace ArcForges.Node.Core.Tests;
 
 /// <summary>
-/// The task and attempt lifecycles, model-based against a real node in the test process with real attempts (Windows jobs and holders, or
-/// Linux units): generated sequences of submissions (exiting 0, exiting non-zero, or running until cancelled), cancels (also at once,
-/// while the attempt is still being created) and manual retries. After each operation the node agrees with a small model (state and
-/// attempt count; a refused retry changes nothing, a cancel of a finished task changes nothing), and the TASKS event stream obeys the
-/// state machines of ArcForges-Design <c>state-machines/machines.json</c>: every reported change is a transition SM-TASK or SM-ATTEMPT
-/// allows (or no state change), its previous state is the state the stream reported last, the first state of a task or attempt is an
-/// initial one, and per task and attempt the revision never goes back in sequence order (an event may repeat a revision: a task view
-/// also changes with its attempt).
+/// The SM-TASK and SM-ATTEMPT transitions of retained legacy records, tested through the real Node and event journal.
 /// </summary>
 public sealed class TaskLifecycleModelTests
 {
@@ -65,61 +60,58 @@ public sealed class TaskLifecycleModelTests
     /// <summary>One operation of a sequence; indexes pick an existing task modulo the number of tasks.</summary>
     private abstract record Operation;
 
-    private sealed record SubmitExiting(int Code) : Operation;
-
-    private sealed record SubmitRunning : Operation;
-
-    private sealed record SubmitAndCancelAtOnce : Operation;
-
+    private sealed record Submit : Operation;
     private sealed record Cancel(int Index) : Operation;
-
     private sealed record Retry(int Index) : Operation;
 
     private static readonly Gen<Operation> AnyOperation = Gen.Frequency(
-        (3, Gen.Int[0, 3].Select(code => (Operation)new SubmitExiting(code == 3 ? 0 : code))),
-        (2, Gen.Const((Operation)new SubmitRunning())),
-        (1, Gen.Const((Operation)new SubmitAndCancelAtOnce())),
-        (3, Gen.Int[0, 7].Select(index => (Operation)new Cancel(index))),
-        (3, Gen.Int[0, 7].Select(index => (Operation)new Retry(index))));
+        (2, Gen.Const((Operation)new Submit())),
+        (4, Gen.Int[0, 7].Select(index => (Operation)new Cancel(index))),
+        (4, Gen.Int[0, 7].Select(index => (Operation)new Retry(index))));
 
     [Fact(Timeout = 600_000)]
-    public async Task TaskAndAttemptStatesFollowTheStateMachinesAndTheModel()
+    public async Task RetainedTaskStatesFollowTheStateMachineAndTheModel()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        if (!OperatingSystem.IsWindows())
-        {
-            Assert.SkipWhen(ArcForges.Tests.SystemdTestEnvironment.SkipReason is not null, ArcForges.Tests.SystemdTestEnvironment.SkipReason ?? string.Empty);
-        }
-
-        await AnyOperation.Array[3, 9].SampleAsync(RunAsync, iter: PropertyRuns.Iter(4), threads: 1,
+        await AnyOperation.Array[3, 9].SampleAsync(operations => RunAsync([new Cancel(0), .. operations]), iter: PropertyRuns.Iter(4), threads: 1,
             print: operations => string.Join(", ", operations.Select(operation => operation.ToString())));
     }
 
     [Fact(Timeout = 120_000)]
-    public async Task ALocalExitCommitsItsRealInitialStateAndFinalizingBeforeTheResult()
+    public async Task ARecoveredStartingAttemptEmitsItsOriginalStateAndFinalizingBeforeTheResult()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        if (!OperatingSystem.IsWindows())
+        await using var node = InProcessNode.Create();
+        var (taskId, attemptId) = LegacyTaskHistoryFixture.Seed(node, AttemptState.Starting);
+        var files = Tasks.Files(node, attemptId);
+        Directory.CreateDirectory(files.Directory);
+        HelperFiles.WriteAtomically(files.ExitPath, new ExitRecord
         {
-            Assert.SkipWhen(SystemdTestEnvironment.SkipReason is not null, SystemdTestEnvironment.SkipReason ?? string.Empty);
-        }
+            AttemptId = IdText.Format(attemptId),
+            RecordedAt = node.Clock.GetUtcNow().ToString("O", CultureInfo.InvariantCulture),
+        }.ToJson());
 
-        await using var node = await InProcessNode.Create().StartAsync();
-        await using var channel = await node.ChannelAsync();
-        var cursor = await StartCursorAsync(channel);
-        var id = await Tasks.SubmitAsync(channel, Exiting(node, 0));
-        var task = await Tasks.WaitAsync(channel, id);
+        await node.StartAsync();
+        await using var channel = await node.ChannelAsync(helloAsHuman: true);
+        var task = await Tasks.WaitAsync(channel, taskId);
         Assert.Equal(TaskState.Succeeded, task.State);
-        var events = await EventsSinceAsync(channel, cursor);
+        Assert.Equal(attemptId, task.CurrentAttempt.AttemptId);
+        Assert.Equal(TerminationReason.Exited, task.CurrentAttempt.Result.TerminationReason);
+        Assert.Equal(EffectCertainty.Happened, task.CurrentAttempt.Result.Effect);
+        Assert.True(task.CurrentAttempt.Result.HasExitCode);
+        Assert.Equal(0, task.CurrentAttempt.Result.ExitCode);
+        var journal = node.Runtime.Journal;
+        var generationStart = new EventCursor(journal.Generation, journal.GenerationStart - 1).ToString();
+        var events = await EventsSinceAsync(channel, generationStart);
         var changes = events.Where(item => item.Attempt is not null).Select(item => item.Attempt).ToArray();
         Assert.NotEmpty(changes);
         Assert.Equal(AttemptState.Starting, changes[0].Attempt.State);
-        Assert.False(changes[0].HasPreviousState, "Local admission must not invent a prior CREATED row.");
+        Assert.False(changes[0].HasPreviousState, "Recovery must preserve the recorded STARTING phase.");
         var finalizing = Assert.Single(changes, change => change.Attempt.State == AttemptState.Finalizing);
         Assert.Null(finalizing.Attempt.Result);
         Assert.Equal(AttemptState.Finalizing, changes[^1].PreviousState);
         Assert.Equal(AttemptState.Finished, changes[^1].Attempt.State);
-        AssertStateMachines(events);
+        AssertStateMachines(events, [new ManagedTask { TaskId = taskId, State = TaskState.Running, Revision = new() }]);
     }
 
     [Theory]
@@ -159,91 +151,80 @@ public sealed class TaskLifecycleModelTests
 
     private static async Task RunAsync(Operation[] operations)
     {
-        await using var node = await InProcessNode.Create().StartAsync();
+        var model = new List<Modelled>();
+        await using var node = InProcessNode.Create(seed: transaction =>
+        {
+            var owner = new ActorRef { Origin = Origin.Human };
+            model.Add(new Modelled(LegacyTaskHistoryFixture.SeedQueued(transaction, owner), TaskState.Queued, 0));
+            model.Add(new Modelled(LegacyTaskHistoryFixture.SeedQueued(transaction, owner), TaskState.Queued, 0));
+        });
+        var (succeeded, _) = LegacyTaskHistoryFixture.Seed(node, AttemptState.Finished);
+        var (lost, _) = LegacyTaskHistoryFixture.Seed(node, AttemptState.Running);
+        model.Add(new Modelled(succeeded, TaskState.Succeeded, 1));
+        model.Add(new Modelled(lost, TaskState.Lost, 1));
+        await node.StartAsync();
         try
         {
-            await RunAsync(node, operations);
+            await RunAsync(node, operations, model);
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
         {
-            // What the node recorded about its attempts, for a failure that only load reproduces.
             throw new InvalidOperationException(exception.Message + Environment.NewLine + Diagnose(node), exception);
         }
     }
 
-    private static async Task RunAsync(InProcessNode node, Operation[] operations)
+    private static async Task RunAsync(InProcessNode node, Operation[] operations, List<Modelled> model)
     {
-        await using var channel = await node.ChannelAsync();
+        await using var channel = await node.ChannelAsync(helloAsHuman: true);
         var cursor = await StartCursorAsync(channel);
-        var model = new List<Modelled>();
+        await AssertModelAsync(channel, model);
+        var baseline = await Task.WhenAll(model.Select(task => Tasks.GetAsync(channel, task.Id)));
         foreach (var operation in operations)
         {
             switch (operation)
             {
-                case SubmitExiting submit:
-                    model.Add(await RunToEndAsync(channel, new Modelled(await Tasks.SubmitAsync(channel, Exiting(node, submit.Code)), submit.Code)));
+                case Submit:
+                    var submitted = await Tasks.SubmitRawAsync(channel, Tasks.Argv(node.Root, Path.Combine(node.Root, "fixture-never-starts")));
+                    Assert.Null(submitted.Value);
+                    AssertLegacyAdmissionRefused(submitted.Error);
                     break;
-                case SubmitRunning:
-                    var running = new Modelled(await Tasks.SubmitAsync(channel, Running(node, model.Count)), null);
-                    await Tasks.RunningAsync(channel, running.Id);
-                    model.Add(running with { State = TaskState.Running, Attempts = 1 });
+                case Cancel cancel:
+                    var index = cancel.Index % model.Count;
+                    var target = model[index];
+                    var expected = target.State == TaskState.Queued ? TaskState.Cancelled : target.State;
+                    var cancelled = await CancelAsync(channel, target.Id);
+                    Assert.Null(cancelled.Error);
+                    Assert.Equal(expected, cancelled.Value.State);
+                    model[index] = target with { State = expected };
                     break;
-                case SubmitAndCancelAtOnce:
-                    // Cancelled while queued or while its attempt is being created: no attempt, or one that never reaches the workload's end.
-                    var cancelled = new Modelled(await Tasks.SubmitAsync(channel, Running(node, model.Count)), null);
-                    Assert.Null((await CancelAsync(channel, cancelled.Id)).Error);
-                    var ended = await Tasks.WaitAsync(channel, cancelled.Id);
-                    Assert.True(ended.State == TaskState.Cancelled, $"Cancelled at once, the task ended {ended.State}: {ended.CurrentAttempt?.Result}");
-                    model.Add(cancelled with { State = TaskState.Cancelled, Attempts = (int)ended.AttemptCount });
-                    break;
-                case Cancel cancel when model.Count > 0:
-                    var target = model[cancel.Index % model.Count];
-                    Assert.Null((await CancelAsync(channel, target.Id)).Error);
-                    if (target.State == TaskState.Running)
+                case Retry retry:
+                    var response = await channel.Tasks.RetryTaskAsync(new TaskServiceRetryTaskRequest
                     {
-                        Assert.Equal(TaskState.Cancelled, (await Tasks.WaitAsync(channel, target.Id)).State);
-                        model[model.IndexOf(target)] = target with { State = TaskState.Cancelled };
-                    }
-
-                    break;
-                case Retry retry when model.Count > 0:
-                    var retried = model[retry.Index % model.Count];
-                    var response = await channel.Tasks.RetryTaskAsync(new TaskServiceRetryTaskRequest { Meta = Tasks.Meta(), TaskId = retried.Id }, cancellationToken: Ct);
-                    if (retried.State is TaskState.Failed or TaskState.Cancelled)
-                    {
-                        Assert.Null(response.Error);
-                        var again = retried with { State = TaskState.Queued, Attempts = retried.Attempts + 1 };
-                        if (retried.Code is null)
-                        {
-                            await Tasks.RunningAsync(channel, again.Id);
-                            again = again with { State = TaskState.Running };
-                        }
-                        else
-                        {
-                            again = await RunToEndAsync(channel, again);
-                        }
-
-                        model[model.IndexOf(retried)] = again;
-                    }
-                    else
-                    {
-                        // SUCCEEDED and RUNNING tasks cannot be retried (SM-TASK); the refusal changes nothing.
-                        Assert.Equal("invalid_state", response.Error?.Code);
-                    }
-
+                        Meta = Tasks.Meta(),
+                        TaskId = model[retry.Index % model.Count].Id,
+                    }, cancellationToken: Ct);
+                    Assert.Null(response.Value);
+                    AssertLegacyAdmissionRefused(response.Error);
                     break;
             }
 
             await AssertModelAsync(channel, model);
+            Assert.Equal((long)model.Count, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM task;")));
+            Assert.Equal((long)model.Sum(task => task.Attempts), node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM attempt;")));
         }
 
-        foreach (var task in model.Where(task => task.State == TaskState.Running))
-        {
-            await CancelAsync(channel, task.Id);
-            await Tasks.WaitAsync(channel, task.Id);
-        }
+        var events = await EventsSinceAsync(channel, cursor);
+        Assert.DoesNotContain(events, item => item.Attempt is not null);
+        AssertStateMachines(events, baseline);
+    }
 
-        AssertStateMachines(await EventsSinceAsync(channel, cursor));
+    private static void AssertLegacyAdmissionRefused(ArcError error)
+    {
+        Assert.Equal("operation_failed", error.Code);
+        Assert.Equal("LEGACY_DRAIN", error.Details.State.State);
+        Assert.Equal("legacy_task_outcome_unavailable", error.Details.State.Reason);
+        Assert.Equal(EffectCertainty.Unknown, error.Effect);
+        Assert.Equal(RetryMode.Never, error.Retry.Mode);
     }
 
     /// <summary>The node's execution log and each attempt's files (exit record, launch record), for a failure message.</summary>
@@ -269,17 +250,7 @@ public sealed class TaskLifecycleModelTests
         return text.ToString();
     }
 
-    /// <summary>What the model knows of a task: its workload (an exit code, or null for one that runs until cancelled), state and attempts.</summary>
-    private sealed record Modelled(Id Id, int? Code, TaskState State = TaskState.Queued, int Attempts = 0);
-
-    private static async Task<Modelled> RunToEndAsync(NodeChannel channel, Modelled task)
-    {
-        var ended = await Tasks.WaitAsync(channel, task.Id);
-        var expected = task.Code == 0 ? TaskState.Succeeded : TaskState.Failed;
-        Assert.Equal(expected, ended.State);
-        Assert.Equal(task.Code, ended.CurrentAttempt.Result.ExitCode);
-        return task with { State = expected, Attempts = task.Attempts == 0 ? 1 : task.Attempts };
-    }
+    private sealed record Modelled(Id Id, TaskState State, int Attempts);
 
     private static async Task AssertModelAsync(NodeChannel channel, List<Modelled> model)
     {
@@ -289,14 +260,6 @@ public sealed class TaskLifecycleModelTests
             Assert.Equal((task.State, (uint)task.Attempts), (actual.State, actual.AttemptCount));
         }
     }
-
-    private static TaskSpec Exiting(InProcessNode node, int code) => OperatingSystem.IsWindows()
-        ? Tasks.Argv(node.Root, Tasks.Cmd, "/d", "/c", "exit " + code.ToString(System.Globalization.CultureInfo.InvariantCulture))
-        : Tasks.Argv(node.Root, "/bin/sh", "-c", "exit " + code.ToString(System.Globalization.CultureInfo.InvariantCulture));
-
-    private static TaskSpec Running(InProcessNode node, int index) => OperatingSystem.IsWindows()
-        ? Tasks.Argv(node.Root, Tasks.TestLoad, "signal", "--hold-ms", "120000", "--marker", Path.Combine(node.Root, "running-" + index.ToString(System.Globalization.CultureInfo.InvariantCulture) + ".txt"))
-        : Tasks.Argv(node.Root, "/bin/sleep", "120");
 
     private static async Task<TaskServiceCancelTaskResponse> CancelAsync(NodeChannel channel, Id id) =>
         await channel.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = id, Reason = "model" }, cancellationToken: Ct);
@@ -334,12 +297,21 @@ public sealed class TaskLifecycleModelTests
         }
     }
 
-    internal static void AssertStateMachines(List<NodeEvent> events)
+    internal static void AssertStateMachines(List<NodeEvent> events, IReadOnlyList<ManagedTask>? baseline = null)
     {
         Assert.Equal(events.Select(item => item.Seq).Order(), events.Select(item => item.Seq));
         Assert.Equal(events.Count, events.Select(item => item.Seq).Distinct().Count());
         var tasks = new Dictionary<string, (TaskState State, long Revision)>(StringComparer.Ordinal);
         var attempts = new Dictionary<string, (AttemptState State, long Revision)>(StringComparer.Ordinal);
+        foreach (var task in baseline ?? [])
+        {
+            tasks.Add(IdText.Format(task.TaskId), (task.State, task.Revision.Value));
+            if (task.CurrentAttempt is { } attempt)
+            {
+                attempts.Add(IdText.Format(attempt.AttemptId), (attempt.State, attempt.Revision.Value));
+            }
+        }
+
         foreach (var item in events)
         {
             if (item.Task is { } changed)

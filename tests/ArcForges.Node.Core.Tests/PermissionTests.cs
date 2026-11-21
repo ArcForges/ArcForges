@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Security.Cryptography;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Node.Api;
 using ArcForges.Node.Core.Security;
+using ArcForges.Node.Store;
 using Google.Protobuf;
 
 namespace ArcForges.Node.Core.Tests;
@@ -380,44 +382,89 @@ public sealed class PermissionTests
 
         Assert.Empty((await human.Approvals.ListApprovalsAsync(new ApprovalServiceListApprovalsRequest { Meta = Tasks.Meta() }, cancellationToken: Ct)).Value.Approvals);
 
-        // Tasks wait in paused pools; nothing runs.
-        Assert.Null((await human.Queue.PausePoolAsync(new QueueServicePausePoolRequest { Meta = Tasks.Meta(), All = true }, cancellationToken: Ct)).Error);
-        TaskSpec Pure()
-        {
-            var spec = Tasks.Argv(node.Root, Tasks.TestLoad, "hold", "--hold-ms", "100");
-            spec.SideEffect = SideEffectClass.Pure;
-            return spec;
-        }
-
-        // A local AGENT submits nothing (AD-0021 section 5); its assertions are those of an AGENT relayed through the center from this node
-        // (decisions B-4): never accepted for a routed AGENT, regardless of the local policy setting.
+        // The original fresh Task assertion classification is preserved at eaaccb8380a2bd265aaad0a67d62c8fab2a8a29a.
+        var store = node.Runtime.Store;
         var routed = new RoutedCalls(node);
         var relayedAgent = routed.Relay(Origin.Agent);
-        async Task<TaskServiceSubmitTaskResponse> AgentSubmitAsync(TaskSpec spec) =>
-            (await routed.SubmitAsync(relayedAgent, new TaskServiceSubmitTaskRequest { Meta = Tasks.Meta(), Spec = spec })).Response!;
-        Assert.Equal("local_submission_human_only", (await Tasks.SubmitRawAsync(agent, Pure())).Error?.Details.State.Reason);
-        var refused = await AgentSubmitAsync(Pure());
-        Assert.Contains(refused.Value.Warnings, warning => warning.Contains("accept_agent_assertions", StringComparison.Ordinal));
-        var unknown = await Tasks.GetAsync(human, refused.Value.TaskId);
-        Assert.Equal((SideEffectClass.Unknown, SideEffectSource.Default), (unknown.SideEffect, unknown.SideEffectSource));
-        var fromScript = await Tasks.GetAsync(human, (await Tasks.SubmitRawAsync(script, Pure())).Value.TaskId);
-        Assert.Equal((SideEffectClass.Pure, SideEffectSource.Caller), (fromScript.SideEffect, fromScript.SideEffectSource));
-
-        Assert.Null((await Sched.ChangePolicyAsync(human, policy => policy.RetrySafety.AcceptAgentAssertions = true)).Error);
-        await Tasks.WaitForAsync(() => node.Runtime.Execution!.Settings.AcceptAgentAssertions, TimeSpan.FromSeconds(30), "the policy to take effect");
-        foreach (var claim in (SideEffectClass[])[SideEffectClass.Pure, SideEffectClass.Idempotent])
+        TaskServiceSubmitTaskRequest Submit(SideEffectClass claim)
         {
-            var spec = Pure();
+            var spec = Tasks.Argv(node.Root, "fixture-never-starts");
             spec.SideEffect = claim;
-            var outcome = await AgentSubmitAsync(spec);
-            Assert.Contains(outcome.Value.Warnings, warning => warning.Contains("accept_agent_assertions", StringComparison.Ordinal));
-            var stillUnknown = await Tasks.GetAsync(human, outcome.Value.TaskId);
-            Assert.Equal((SideEffectClass.Unknown, SideEffectSource.Default), (stillUnknown.SideEffect, stillUnknown.SideEffectSource));
+            return new TaskServiceSubmitTaskRequest { Meta = Tasks.Meta(), Spec = spec };
         }
 
-        Assert.Equal("local_submission_human_only", (await Tasks.SubmitRawAsync(agent, Pure())).Error?.Details.State.Reason);
-        var stillScript = await Tasks.GetAsync(human, (await Tasks.SubmitRawAsync(script, Pure())).Value.TaskId);
-        Assert.Equal((SideEffectClass.Pure, SideEffectSource.Caller), (stillScript.SideEffect, stillScript.SideEffectSource));
+        TaskServiceSubmitTaskResponse Seed(TaskServiceSubmitTaskRequest request, ActorRef owner, SideEffectClass effect, SideEffectSource source) =>
+            store.Write(transaction =>
+            {
+                var task = LegacyTaskHistoryFixture.SeedQueued(transaction, owner);
+                var spec = request.Spec.ToByteArray();
+                transaction.Execute("UPDATE task SET spec = $spec, spec_digest = $digest, side_effect = $effect, side_effect_source = $source WHERE task_id = $id;",
+                    ("$spec", spec), ("$digest", SHA256.HashData(spec)), ("$effect", (int)effect), ("$source", (int)source), ("$id", task.Value.ToByteArray()));
+                var response = new TaskServiceSubmitTaskResponse
+                {
+                    Meta = new ResponseMeta { CorrelationId = request.Meta.CorrelationId },
+                    Value = new TaskServiceSubmitTaskValue
+                    {
+                        TaskId = task, State = TaskState.Queued,
+                        Receipt = new Receipt { CommandId = request.Meta.CommandId, Effect = EffectCertainty.Happened },
+                    },
+                };
+                if (owner.CenterCaller is not null)
+                {
+                    response.Value.Warnings.Add($"The agent's side-effect class {request.Spec.SideEffect.ToString().ToUpperInvariant()} is not accepted " +
+                        "(retry_safety.accept_agent_assertions is treated as false for a center-routed AGENT); the task is UNKNOWN.");
+                }
+
+                var id = request.Meta.CommandId.Value.Span;
+                Assert.Equal(DedupStatus.Execute, CommandDeduplication.Begin(transaction, id,
+                    "arcforges.node.v1.TaskService/SubmitTask", PayloadDigest.Compute(request), owner.Origin).Status);
+                CommandDeduplication.Complete(transaction, id, response.ToByteArray());
+                RoutedCommandOwnership.Record(transaction, id, owner);
+                return response;
+            }, CommitDurability.Full);
+
+        var historicalAgent = (SideEffectClass[])[SideEffectClass.Pure, SideEffectClass.Idempotent];
+        var relayedHistory = historicalAgent.Select(claim =>
+        {
+            var request = Submit(claim);
+            var actor = new ActorRef { Origin = Origin.Remote, CenterCaller = relayedAgent, RemoteCommandId = request.Meta.CommandId };
+            return (Request: request, Response: Seed(request, actor, SideEffectClass.Unknown, SideEffectSource.Default));
+        }).ToArray();
+        var scriptRequest = Submit(SideEffectClass.Pure);
+        var scriptResponse = Seed(scriptRequest, new ActorRef { Origin = Origin.Script, ClientKind = ClientKind.Cli },
+            SideEffectClass.Pure, SideEffectSource.Caller);
+
+        async Task AssertRetainedPolicyAsync()
+        {
+            var priorReceipts = store.Read(reader => reader.Scalar("SELECT count(*) FROM command_dedup;"));
+            Assert.Equal("local_submission_human_only", (await agent.Tasks.SubmitTaskAsync(Submit(SideEffectClass.Pure), cancellationToken: Ct))
+                .Error?.Details.State.Reason);
+            foreach (var (request, response) in relayedHistory)
+            {
+                var replay = (await routed.SubmitAsync(relayedAgent, request)).Response;
+                Assert.Equal(response, replay);
+                var task = await Tasks.GetAsync(human, response.Value.TaskId);
+                Assert.Equal((SideEffectClass.Unknown, SideEffectSource.Default), (task.SideEffect, task.SideEffectSource));
+                var fresh = (await routed.SubmitAsync(relayedAgent, Submit(request.Spec.SideEffect))).Response;
+                Assert.Equal("legacy_task_outcome_unavailable", fresh?.Error?.Details.State.Reason);
+                Assert.Equal((EffectCertainty.Unknown, RetryMode.Never), (fresh!.Error.Effect, fresh.Error.Retry.Mode));
+            }
+
+            Assert.Equal(scriptResponse, await script.Tasks.SubmitTaskAsync(scriptRequest, cancellationToken: Ct));
+            var local = await Tasks.GetAsync(human, scriptResponse.Value.TaskId);
+            Assert.Equal((SideEffectClass.Pure, SideEffectSource.Caller), (local.SideEffect, local.SideEffectSource));
+            var freshLocal = await script.Tasks.SubmitTaskAsync(Submit(SideEffectClass.Pure), cancellationToken: Ct);
+            Assert.Equal("legacy_task_outcome_unavailable", freshLocal.Error?.Details.State.Reason);
+            Assert.Equal((EffectCertainty.Unknown, RetryMode.Never), (freshLocal.Error!.Effect, freshLocal.Error.Retry.Mode));
+            Assert.Equal(priorReceipts, store.Read(reader => reader.Scalar("SELECT count(*) FROM command_dedup;")));
+            Assert.Equal(3L, store.Read(reader => reader.Scalar("SELECT count(*) FROM task;")));
+            Assert.Equal(0L, store.Read(reader => reader.Scalar("SELECT count(*) FROM attempt;")));
+        }
+
+        await AssertRetainedPolicyAsync();
+        Assert.Null((await Sched.ChangePolicyAsync(human, policy => policy.RetrySafety.AcceptAgentAssertions = true)).Error);
+        await Tasks.WaitForAsync(() => node.Runtime.Execution!.Settings.AcceptAgentAssertions, TimeSpan.FromSeconds(30), "the policy to take effect");
+        await AssertRetainedPolicyAsync();
 
         // The refusals of the HUMAN-only sections are audited.
         var audit = node.Runtime.Store.Read(reader => AuditLog.Recent(reader));
@@ -446,11 +493,26 @@ public sealed class PermissionTests
         var purge = new TaskServicePurgeTaskRecordRequest { Meta = Tasks.Meta(), TaskId = new Id { Value = ByteString.CopyFrom(new byte[16]) } };
         Assert.Equal("permission_denied", (await script.Tasks.PurgeTaskRecordAsync(purge, cancellationToken: Ct)).Error?.Code);
         Assert.Equal("not_found", (await human.Tasks.PurgeTaskRecordAsync(purge, cancellationToken: Ct)).Error?.Code);
-        Assert.Equal("permission_denied", (await script.Resources.AdoptProcessAsync(new ResourceServiceAdoptProcessRequest
+        // The old Script adoption gate wrote a refusal audit entry before any dedup row or native effect (eaaccb8380a2bd265aaad0a67d62c8fab2a8a29a).
+        var adoptionOperation = PermissionMatrix.ProcessAdopt + " ResourceService.AdoptProcess";
+        var adoption = new ResourceServiceAdoptProcessRequest
         {
             Meta = Tasks.Meta(),
-            Process = ClientProcess.Current(),
-        }, cancellationToken: Ct)).Error?.Code);
+            Process = new() { Pid = int.MaxValue, StartTime = ProtoTime.ToInstant(DateTimeOffset.UnixEpoch) },
+        };
+        node.Runtime.Store.Write(transaction => AuditLog.Append(transaction, new ActorRef { Origin = Origin.Script, ClientKind = ClientKind.Cli },
+            adoptionOperation, "process", [], D, [], "denied: adopt process 2147483647"), CommitDurability.Full);
+        var explained = await script.Policy.ExplainPermissionAsync(new PolicyServiceExplainPermissionRequest
+        {
+            Meta = Tasks.Meta(), Operation = PermissionMatrix.ProcessAdopt, Origin = Origin.Script,
+        }, cancellationToken: Ct);
+        Assert.Null(explained.Error);
+        Assert.Equal((D, PermissionMatrix.DefaultSource), (explained.Value.Decision, explained.Value.Source));
+        var adoptionResult = await script.Resources.AdoptProcessAsync(adoption, cancellationToken: Ct);
+        Assert.Equal("legacy_adoption_outcome_unavailable", adoptionResult.Error?.Details.State.Reason);
+        Assert.Equal(EffectCertainty.Unknown, adoptionResult.Error!.Effect);
+        Assert.Null(node.Runtime.Store.Read(reader => reader.Scalar("SELECT 1 FROM command_dedup WHERE command_id = $id;",
+            ("$id", adoption.Meta.CommandId.Value.ToByteArray()))));
 
         var audit = node.Runtime.Store.Read(reader => AuditLog.Recent(reader));
         Assert.Contains(audit, entry => entry.Operation == PermissionMatrix.NodeStop + " NodeService.StopNode" && entry.Decision == D && entry.Actor.Origin == Origin.Agent);
@@ -459,7 +521,8 @@ public sealed class PermissionTests
         Assert.Contains(audit, entry => entry.Operation == PermissionMatrix.TaskPurge + " TaskService.PurgeTaskRecord" && entry.Decision == D);
         Assert.Contains(audit, entry => entry.Operation == PermissionMatrix.TaskPurge + " TaskService.PurgeTaskRecord" && entry.Decision == A
             && entry.Outcome.StartsWith("failed (State/not_found)", StringComparison.Ordinal));
-        Assert.Contains(audit, entry => entry.Operation == PermissionMatrix.ProcessAdopt + " ResourceService.AdoptProcess" && entry.Decision == D);
+        var historicalAdoption = Assert.Single(audit, entry => entry.Operation == adoptionOperation);
+        Assert.Equal((D, Origin.Script, ClientKind.Cli), (historicalAdoption.Decision, historicalAdoption.Actor.Origin, historicalAdoption.Actor.ClientKind));
 
         // Review round 1: the allowed executions of privileged actions are audited too (RenameNode by SCRIPT, MarkNotificationsRead by HUMAN).
         Assert.Contains(audit, entry => entry.Operation == PermissionMatrix.NodeRename + " NodeService.RenameNode" && entry.Decision == A
