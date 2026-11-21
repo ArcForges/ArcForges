@@ -5,7 +5,14 @@ param(
   [ValidateSet('win-x64', 'win-arm64', 'linux-x64', 'linux-arm64')]
   [string] $RuntimeIdentifier,
   [string] $MxcReleaseZip,
-  [string] $MxcInstallRoot
+  [string] $MxcInstallRoot,
+  [string] $SigningKey,
+  [string] $TrustedKey,
+  [ValidateSet('candidate', 'main')]
+  [string] $Qualification,
+  [string] $ContractsRepo,
+  [string] $DesktopPlatformRepo,
+  [string] $OpenSsl
 )
 
 $ErrorActionPreference = 'Stop'
@@ -14,6 +21,16 @@ $repository = Split-Path $PSScriptRoot -Parent
 $qualifiedMxcRid = $RuntimeIdentifier -in @('win-x64', 'linux-x64')
 if ($MxcInstallRoot -and -not $qualifiedMxcRid) {
   throw "An MXC install requires a qualified x64 RID, not $RuntimeIdentifier."
+}
+$signed = [bool] $SigningKey
+if ($signed -and (-not $qualifiedMxcRid -or -not $TrustedKey -or -not $Qualification)) {
+  throw 'Signed packaging requires a native x64 distribution, trusted key and explicit qualification.'
+}
+if ((-not $signed) -and ($TrustedKey -or $Qualification -or $ContractsRepo -or $DesktopPlatformRepo -or $OpenSsl)) {
+  throw 'Signing options require a signing key.'
+}
+if ($signed -and $Qualification -eq 'main' -and (-not $ContractsRepo -or -not $DesktopPlatformRepo)) {
+  throw 'Main qualification requires local Contracts and DesktopPlatform producer histories.'
 }
 # Packages Node/CLI and the supervisors belonging to this RID.
 $publish = Join-Path $repository "artifacts/publish/$RuntimeIdentifier/host"
@@ -29,6 +46,7 @@ if ($RuntimeIdentifier.StartsWith('win-') -and -not (Test-Path -LiteralPath $sup
 # A fresh staging directory keeps repeated local packaging free of stale files.
 $stage = Join-Path $repository "artifacts/staging/$RuntimeIdentifier-$([guid]::NewGuid().ToString('N'))"
 $packages = Join-Path $repository 'artifacts/packages'
+if ($signed) { $packages = Join-Path $packages "signed-$([guid]::NewGuid().ToString('N'))" }
 $null = New-Item -ItemType Directory -Path $stage, $packages -Force
 Get-ChildItem -LiteralPath $publish -Exclude '*.pdb', '*.dbg', '*.dSYM' | Copy-Item -Destination $stage -Recurse
 if (Test-Path -LiteralPath (Join-Path $stage 'mxc')) {
@@ -47,6 +65,7 @@ if ($RuntimeIdentifier.StartsWith('win-')) {
 }
 
 $projects = @('src/ArcForges.Host')
+if ($signed -and $RuntimeIdentifier -eq 'win-x64') { $projects += 'src/ArcForges.Supervisor' }
 if ($qualifiedMxcRid) {
   $runSupervisorProject = 'src/ArcForges.RunSupervisor'
   $runPublish = Join-Path $repository "artifacts/publish/$RuntimeIdentifier/run-supervisor"
@@ -99,6 +118,17 @@ if ($LASTEXITCODE -ne 0) { throw 'Could not identify local changes.' }
   distribution = 'unsigned-development-preview'
 } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $stage 'build-info.json') -Encoding utf8
 
+if ($signed) {
+  & python (Join-Path $repository 'packaging/native/sbom.py') --stage $stage --rid $RuntimeIdentifier | Out-Host
+  if ($LASTEXITCODE -ne 0) { throw 'Could not build the native distribution SBOM.' }
+  $admission = Join-Path $repository 'packaging/native/node_admission.py'
+  $prepare = @('prepare-stage', '--rid', $RuntimeIdentifier, '--stage', $stage, '--qualification', $Qualification)
+  if ($ContractsRepo) { $prepare += @('--contracts-repo', $ContractsRepo) }
+  if ($DesktopPlatformRepo) { $prepare += @('--desktop-platform-repo', $DesktopPlatformRepo) }
+  & python $admission @prepare | Out-Host
+  if ($LASTEXITCODE -ne 0) { throw 'Could not prepare the signed distribution.' }
+}
+
 # AD-0007 section 8: digests.json lists the SHA-256 of every file of the version directory except itself (relative paths with
 # / separators); a node running from the version directory makes its files read-only and verifies them after startup.
 $version = (Select-Xml -LiteralPath (Join-Path $repository 'Directory.Build.props') -XPath '//Version' | Select-Object -First 1).Node.InnerText
@@ -120,10 +150,24 @@ if ($RuntimeIdentifier.StartsWith('win-')) {
   tar -czf $archive -C $stage .
   if ($LASTEXITCODE -ne 0) { throw 'Archive creation failed.' }
 }
-$hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
-"$hash  $([IO.Path]::GetFileName($archive))" | Set-Content -LiteralPath "$archive.sha256" -Encoding ascii
+if (-not $signed) {
+  $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+  "$hash  $([IO.Path]::GetFileName($archive))" | Set-Content -LiteralPath "$archive.sha256" -Encoding ascii
+}
 if ($qualifiedMxcRid) {
   $verifyArguments = @('--rid', $RuntimeIdentifier, '--archive', $archive, '--commit', $commit)
+  if ($signed) {
+    $sign = @('sign-archive') + $prepare[1..($prepare.Count - 1)] +
+      @('--archive', $archive, '--signing-key', $SigningKey, '--trusted-key', $TrustedKey)
+    $verifyArguments += @('--trusted-key', $TrustedKey)
+    if ($Qualification -eq 'candidate') { $verifyArguments += '--allow-candidate' }
+    if ($OpenSsl) {
+      $sign += @('--openssl', $OpenSsl)
+      $verifyArguments += @('--openssl', $OpenSsl)
+    }
+    & python $admission @sign | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw 'Could not sign the native archive.' }
+  }
   if ($MxcInstallRoot) { $verifyArguments += @('--output', $MxcInstallRoot) }
   & python (Join-Path $repository 'packaging/mxc/verify_install.py') @verifyArguments | Out-Host
   if ($LASTEXITCODE -ne 0) { throw 'Verification of the packaged MXC installation failed.' }

@@ -58,7 +58,7 @@ def run(argv: list[str]) -> None:
         raise Failure(f"{Path(argv[0]).name} {argv[1] if len(argv) > 1 else ''} failed with exit code {code}.")
 
 
-def publish_group(components: list[str], out: list[str]) -> str:
+def publish_group(components: list[str], out: list[str], record_distribution: bool) -> str:
     """eng/publish.ps1 for the components of one group, in order: Native AOT publish per component; any build, trim or
     AOT warning fails it. Output goes to `out`; returns the failure, or an empty string."""
     for name in components:
@@ -67,6 +67,8 @@ def publish_group(components: list[str], out: list[str]) -> str:
         argv = ["dotnet", "publish", str(REPOSITORY / PROJECTS[name]), "-c", "Release", "-r", RID, "-o", str(output),
                 "-warnaserror", "-tl:off", "-clp:Summary;ForceNoAlign", "-p:TrimmerSingleWarn=false", "--no-restore",
                 *native_toolchain.aot_arguments()]
+        if record_distribution:
+            argv.append("-p:RestoreLockedMode=true")
         out.append(f"==> publish {name} ({RID})")
         result = subprocess.run(argv, cwd=REPOSITORY, env=native_toolchain.aot_environment(), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                                 encoding="utf-8", errors="replace")
@@ -83,7 +85,7 @@ def publish_group(components: list[str], out: list[str]) -> str:
     return ""
 
 
-def publish(groups: list[str]) -> None:
+def publish(groups: list[str], record_distribution: bool = False) -> None:
     """Each argument is a comma-separated group of components. Groups are published concurrently (they must not share a
     project: host and bench both build ArcForges.Node.Store), the components of a group one after another; each group's
     output is printed when it ends."""
@@ -91,11 +93,20 @@ def publish(groups: list[str]) -> None:
     unknown = sorted(set(components) - set(PROJECTS))
     if unknown or len(components) != len(set(components)):
         raise Failure(f"unknown or repeated components: {', '.join(unknown) or ', '.join(components)}")
+    if record_distribution:
+        if not {"host", "run-supervisor"} <= set(components):
+            raise Failure("A distribution receipt requires a complete Release native x64 publish.")
+        result = subprocess.run([sys.executable, "packaging/native/node_admission.py", "source"],
+                                cwd=REPOSITORY, stdout=subprocess.PIPE, text=True)
+        if result.returncode != 0:
+            raise Failure("Could not identify the clean distribution source.")
+        source_commit = result.stdout.strip()
+        (PUBLISH / "distribution-build.json").unlink(missing_ok=True)
     outputs: list[list[str]] = [[] for _ in groups]
     failures: list[str] = ["" for _ in groups]
 
     def work(index: int) -> None:
-        failures[index] = publish_group(groups[index].split(","), outputs[index])
+        failures[index] = publish_group(groups[index].split(","), outputs[index], record_distribution)
 
     threads = [threading.Thread(target=work, args=(index,)) for index in range(len(groups))]
     for thread in threads:
@@ -106,6 +117,8 @@ def publish(groups: list[str]) -> None:
         print("\n".join(output), flush=True)
     if any(failures):
         raise Failure(" ".join(failure for failure in failures if failure))
+    if record_distribution:
+        run([sys.executable, "packaging/native/node_admission.py", "record-publish", "--rid", RID, "--commit", source_commit])
 
 
 def bench() -> None:
@@ -137,8 +150,15 @@ def compare_startup(baseline: str, source: str | None) -> None:
          "--max-regression-percent", "25", "--noise-floor-ms", "5", "--output", str(output)])
 
 
-def package(mxc_release_zip: Path | None = None, mxc_install_root: Path | None = None) -> None:
+def package(args: argparse.Namespace) -> None:
     """eng/package.ps1: Node/CLI, protected MXC cohort, systemd units, notices, locks and build-info/digests."""
+    signed = args.signing_key is not None
+    if signed and (args.trusted_key is None or args.qualification is None):
+        raise Failure("Signed packaging requires a trusted key and explicit qualification.")
+    if not signed and any((args.trusted_key, args.qualification, args.contracts_repo, args.desktop_platform_repo, args.openssl)):
+        raise Failure("Signing options require a signing key.")
+    if signed and args.qualification == "main" and not (args.contracts_repo and args.desktop_platform_repo):
+        raise Failure("Main qualification requires local Contracts and DesktopPlatform producer histories.")
     publish_dir = PUBLISH / "host"
     if not (publish_dir / "arcforges").exists():
         raise Failure(f"Publish the {RID} host before packaging.")
@@ -147,6 +167,8 @@ def package(mxc_release_zip: Path | None = None, mxc_install_root: Path | None =
         raise Failure(f"Publish the {RID} run-supervisor before packaging.")
     stage = REPOSITORY / "artifacts" / "staging" / f"{RID}-{uuid.uuid4().hex}"
     packages = REPOSITORY / "artifacts" / "packages"
+    if signed:
+        packages /= f"signed-{uuid.uuid4().hex}"
     stage.mkdir(parents=True)
     packages.mkdir(parents=True, exist_ok=True)
     for item in publish_dir.iterdir():
@@ -168,8 +190,8 @@ def package(mxc_release_zip: Path | None = None, mxc_install_root: Path | None =
 
     stager = [sys.executable, "eng/mxc/stage.py", "--component", "run-supervisor", "--rid", RID,
               "--publish", str(run_publish), "--output", str(stage / "mxc")]
-    if mxc_release_zip is not None:
-        stager.extend(("--release", str(mxc_release_zip.resolve())))
+    if args.mxc_release_zip is not None:
+        stager.extend(("--release", str(args.mxc_release_zip.resolve())))
     run(stager)
     shutil.copy2(REPOSITORY / PROJECTS["run-supervisor"] / "packages.lock.json", stage / "run-supervisor.packages.lock.json")
 
@@ -207,6 +229,15 @@ def package(mxc_release_zip: Path | None = None, mxc_install_root: Path | None =
     }
     (stage / "build-info.json").write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
 
+    if signed:
+        run([sys.executable, "packaging/native/sbom.py", "--stage", str(stage), "--rid", RID])
+        admission = [sys.executable, "packaging/native/node_admission.py"]
+        build_arguments = ["--rid", RID, "--stage", str(stage), "--qualification", args.qualification]
+        for flag, value in (("--contracts-repo", args.contracts_repo), ("--desktop-platform-repo", args.desktop_platform_repo)):
+            if value is not None:
+                build_arguments.extend((flag, str(value)))
+        run([*admission, "prepare-stage", *build_arguments])
+
     # AD-0007 section 8: digests.json lists the SHA-256 of every file of the version directory except itself (relative paths
     # with / separators); a node running from the version directory makes its files read-only and verifies them after startup.
     version = re.search(r"<Version>([^<]+)</Version>", (REPOSITORY / "Directory.Build.props").read_text(encoding="utf-8")).group(1)
@@ -216,11 +247,23 @@ def package(mxc_release_zip: Path | None = None, mxc_install_root: Path | None =
 
     archive = packages / f"arcforges-{RID}.tar.gz"
     run(["tar", "-czf", str(archive), "-C", str(stage), "."])
-    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-    Path(f"{archive}.sha256").write_text(f"{digest}  {archive.name}\n", encoding="ascii")
+    if not signed:
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        Path(f"{archive}.sha256").write_text(f"{digest}  {archive.name}\n", encoding="ascii")
     verifier = [sys.executable, "packaging/mxc/verify_install.py", "--rid", RID, "--archive", str(archive), "--commit", info["commit"]]
-    if mxc_install_root is not None:
-        verifier.extend(("--output", str(mxc_install_root.absolute())))
+    if signed:
+        signer = [*admission, "sign-archive", *build_arguments, "--archive", str(archive),
+                  "--signing-key", str(args.signing_key), "--trusted-key", str(args.trusted_key)]
+        verifier.extend(("--trusted-key", str(args.trusted_key)))
+        if args.qualification == "candidate":
+            verifier.append("--allow-candidate")
+        if args.openssl is not None:
+            signer.extend(("--openssl", str(args.openssl)))
+            verifier.extend(("--openssl", str(args.openssl)))
+        if subprocess.run(signer, cwd=REPOSITORY).returncode != 0:
+            raise Failure("Could not sign the native archive.")
+    if args.mxc_install_root is not None:
+        verifier.extend(("--output", str(args.mxc_install_root.absolute())))
     run(verifier)
     print(archive, flush=True)
 
@@ -229,7 +272,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(prog="eng/verify_linux.py", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("publish").add_argument("groups", nargs="+", metavar="component[,component...]")
+    publishing = commands.add_parser("publish")
+    publishing.add_argument("groups", nargs="+", metavar="component[,component...]")
+    publishing.add_argument("--record-distribution", action="store_true")
     commands.add_parser("bench")
     compare = commands.add_parser("compare-startup")
     compare.add_argument("baseline")
@@ -237,6 +282,12 @@ def main() -> int:
     packaging = commands.add_parser("package")
     packaging.add_argument("--mxc-release-zip", type=Path)
     packaging.add_argument("--mxc-install-root", type=Path)
+    packaging.add_argument("--signing-key", type=Path)
+    packaging.add_argument("--trusted-key", type=Path)
+    packaging.add_argument("--qualification", choices=("candidate", "main"))
+    packaging.add_argument("--contracts-repo", type=Path)
+    packaging.add_argument("--desktop-platform-repo", type=Path)
+    packaging.add_argument("--openssl", type=Path)
     args = parser.parse_args()
     if not sys.platform.startswith("linux"):
         print("verify_linux.py runs on Linux; on Windows use the eng/*.ps1 scripts.", file=sys.stderr)
@@ -244,13 +295,13 @@ def main() -> int:
     os.environ["AVALONIA_TELEMETRY_OPTOUT"] = "1"
     try:
         if args.command == "publish":
-            publish(args.groups)
+            publish(args.groups, args.record_distribution)
         elif args.command == "bench":
             bench()
         elif args.command == "compare-startup":
             compare_startup(args.baseline, args.baseline_source)
         else:
-            package(args.mxc_release_zip, args.mxc_install_root)
+            package(args)
     except Failure as error:
         print(f"verify_linux {args.command}: {error}", file=sys.stderr, flush=True)
         return 1

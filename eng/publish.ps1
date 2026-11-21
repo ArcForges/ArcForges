@@ -21,7 +21,8 @@ param(
   [ValidateSet('host', 'supervisor', 'run-supervisor', 'testload', 'bench')]
   [string[]] $Component = @('host', 'supervisor', 'testload', 'bench'),
   [string] $Configuration = 'Release',
-  [switch] $NoRestore
+  [switch] $NoRestore,
+  [switch] $RecordDistribution
 )
 
 $ErrorActionPreference = 'Stop'
@@ -42,6 +43,20 @@ if ($Component -contains 'run-supervisor' -and -not $qualifiedMxcRid) {
   throw "The official Run supervisor is qualified only for win-x64 and linux-x64, not $RuntimeIdentifier."
 }
 
+if ($RecordDistribution) {
+  $requiredComponents = @('host', 'run-supervisor')
+  if ($RuntimeIdentifier -eq 'win-x64') { $requiredComponents += 'supervisor' }
+  if (-not $qualifiedMxcRid -or $Configuration -cne 'Release' -or
+    @($requiredComponents | Where-Object { $_ -notin $Component }).Count -ne 0) {
+    throw 'A distribution receipt requires a complete Release native x64 publish.'
+  }
+  $admission = Join-Path $repository 'packaging/native/node_admission.py'
+  $sourceCommit = & python $admission source
+  if ($LASTEXITCODE -ne 0) { throw 'Could not identify the clean distribution source.' }
+  $receipt = Join-Path $repository "artifacts/publish/$RuntimeIdentifier/distribution-build.json"
+  if (Test-Path -LiteralPath $receipt) { Remove-Item -LiteralPath $receipt }
+}
+
 foreach ($name in $Component) {
   if ($name -eq 'supervisor' -and -not $RuntimeIdentifier.StartsWith('win-')) {
     Write-Host "==> supervisor: Windows only (systemd fills the role on Linux); skipped for $RuntimeIdentifier"
@@ -55,6 +70,7 @@ foreach ($name in $Component) {
     '-warnaserror', '-tl:off', '-clp:Summary;ForceNoAlign', '-p:TrimmerSingleWarn=false'
   )
   if ($NoRestore) { $arguments += '--no-restore' }
+  if ($RecordDistribution) { $arguments += '-p:RestoreLockedMode=true' }
   if ($IsLinux) {
     # eng/native_toolchain.py run selects and verifies this private toolchain in
     # the child environment; these explicit SDK properties retain BFD/objcopy.
@@ -86,4 +102,9 @@ if (($Component -contains 'host' -or $Component -contains 'supervisor') -and
   (Test-Path -LiteralPath $hostDirectory) -and (Test-Path -LiteralPath $supervisorBinary)) {
   Copy-Item -LiteralPath $supervisorBinary -Destination $hostDirectory -Force
   Write-Host "==> copied arcforges-supervisor.exe beside arcforges.exe in $hostDirectory"
+}
+
+if ($RecordDistribution) {
+  & python $admission record-publish --rid $RuntimeIdentifier --commit $sourceCommit
+  if ($LASTEXITCODE -ne 0) { throw 'Could not record the signed distribution native publish.' }
 }
