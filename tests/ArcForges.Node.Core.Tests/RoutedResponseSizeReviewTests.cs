@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
@@ -78,19 +79,26 @@ public sealed class RoutedResponseSizeReviewTests
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         await using var node = InProcessNode.Create();
-        var longArgument = "--" + new string('x', (1024 * 1024) - System.Text.Encoding.UTF8.GetByteCount(HistoricalProgram) - 2);
+        // The archived v1 submission validator at eaaccb8380a2bd265aaad0a67d62c8fab2a8a29a allowed 1 MiB of argv.
+        const int historicalArgvLimit = 1024 * 1024;
+        var longArgument = "--" + new string('x', historicalArgvLimit - Encoding.UTF8.GetByteCount(HistoricalProgram) - 2);
         var spec = Tasks.Argv(node.Root, HistoricalProgram, longArgument);
+        Assert.Equal(historicalArgvLimit, spec.Command.Argv.Argv.Sum(argument => Encoding.UTF8.GetByteCount(argument)));
+        Assert.True(Path.IsPathFullyQualified(spec.WorkingDirectory) && Directory.Exists(spec.WorkingDirectory));
         var taskId = Assert.Single(SeedQueuedTasks(node, spec, count: 1));
         await node.StartAsync();
         await using var human = await node.ChannelAsync(helloAsHuman: true);
-        var execution = Assert.IsType<ExecutionSupervisor>(node.Runtime.Execution);
-        var valid = TaskValidation.Submit(new TaskServiceSubmitTaskRequest { Meta = Tasks.Meta(), Spec = spec }, Origin.Human,
-            execution.Settings, node.Runtime.NodeId.Span, node.Runtime.Capabilities);
-        Assert.Null(valid);
         Assert.Null((await Sched.ChangePolicyAsync(human, policy => (policy.Privacy ??= new PrivacyPolicy()).RemoteCommandLines = true)).Error);
         var request = new TaskServiceGetTaskRequest { Meta = ReadMeta(), TaskId = taskId, Detail = TaskDetail.Full };
+        var center = RoutedCalls.Session();
+        var receiver = new TaskServiceHandler(node.Runtime, new ClientSessions());
+        var projected = await receiver.GetTask(new Caller(Origin.Remote, ClientKind.Unspecified, null, centerCaller: center), request, Ct);
+        Assert.Null(projected.Error);
+        Assert.Equal(spec.Command, projected.Value.Task.Spec.Command);
+        Assert.True(projected.CalculateSize() > ResultSigner.MaxPayloadBytes, "the routed Task view crosses the wire limit before dispatch bounds it");
+
         var routed = new RoutedCalls(node);
-        var (answer, response) = await routed.ReadAsync(RoutedCalls.Session(), RoutedMethod.GetNodeTask, request, TaskServiceGetTaskResponse.Parser);
+        var (answer, response) = await routed.ReadAsync(center, RoutedMethod.GetNodeTask, request, TaskServiceGetTaskResponse.Parser);
         Assert.Equal(RoutedOutcome.Executed, answer!.Outcome);
         Assert.True(response!.CalculateSize() <= ResultSigner.MaxPayloadBytes);
         Assert.Equal(response.CalculateSize(), answer.Response!.Length);
