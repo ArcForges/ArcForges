@@ -49,9 +49,6 @@ public sealed class ExecutionOptions
     /// <summary>Completes once the node data key is loaded (or failed to load).</summary>
     public Task KeysReady { get; init; } = Task.CompletedTask;
 
-    /// <summary>Launch and end steps (toolchain adapters).</summary>
-    public ILaunchStepProvider? Steps { get; init; }
-
     /// <summary>Controlled faults (test mode).</summary>
     public ExecutionFaults Faults { get; init; } = ExecutionFaults.None;
 

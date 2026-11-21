@@ -6,7 +6,6 @@ using ArcForges.Contracts.Node.V1;
 using ArcForges.LocalRpc;
 using ArcForges.Node.Api;
 using ArcForges.Node.Core;
-using ArcForges.Node.Core.Execution;
 using ArcForges.Node.Platform;
 using ArcForges.Node.Store;
 using Google.Protobuf;
@@ -28,9 +27,8 @@ internal sealed class InProcessNode : IAsyncDisposable
     private TaskCompletionSource<NodeRuntime> _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Task<int>? _run;
 
-    private InProcessNode(string root, int streamBuffer, ILaunchStepProvider? steps, ArcForges.Node.Core.Scheduling.IToolConcurrency? tools = null)
+    private InProcessNode(string root, int streamBuffer, ArcForges.Node.Core.Scheduling.IToolConcurrency? tools = null)
     {
-        Steps = steps;
         Tools = tools;
         Root = root;
         DataRoot = Path.Combine(root, "data");
@@ -52,9 +50,6 @@ internal sealed class InProcessNode : IAsyncDisposable
 
     /// <summary>Test-only clock for coordinated expiry observations; default is the real system clock.</summary>
     public TimeProvider Clock { get; set; } = TimeProvider.System;
-
-    /// <summary>Launch and end steps the node's attempts get (synthetic steps in tests).</summary>
-    public ILaunchStepProvider? Steps { get; }
 
     /// <summary>The tool-level concurrency hook (a synthetic adapter in tests).</summary>
     public ArcForges.Node.Core.Scheduling.IToolConcurrency? Tools { get; }
@@ -153,13 +148,13 @@ internal sealed class InProcessNode : IAsyncDisposable
     public Task<int> Exit => _run ?? Task.FromResult(-1);
 
     /// <summary>Creates the node's files; <paramref name="seed"/> may write store rows before the node opens the store.</summary>
-    public static InProcessNode Create(int streamBuffer = 2048, Action<StoreTransaction>? seed = null, ILaunchStepProvider? steps = null, string? parent = null,
+    public static InProcessNode Create(int streamBuffer = 2048, Action<StoreTransaction>? seed = null, string? parent = null,
         ArcForges.Node.Core.Scheduling.IToolConcurrency? tools = null)
     {
         var root = parent is null
             ? Directory.CreateTempSubdirectory("arcforges-node-tests-").FullName
             : Directory.CreateDirectory(Path.Combine(parent, "arcforges-node-tests-" + Guid.NewGuid().ToString("N")[..12])).FullName;
-        var node = new InProcessNode(root, streamBuffer, steps, tools);
+        var node = new InProcessNode(root, streamBuffer, tools);
         Directory.CreateDirectory(Path.GetDirectoryName(node.ConfigPath)!);
         File.WriteAllText(node.ConfigPath, "{ \"dataRoot\": " + JsonSerializer.Serialize(node.DataRoot) + " }");
         if (seed is not null)
@@ -204,7 +199,6 @@ internal sealed class InProcessNode : IAsyncDisposable
             Output = TextWriter.Null,
             Error = TextWriter.Null,
             HelperExecutable = HelperExecutable,
-            LaunchSteps = Steps,
             ToolConcurrency = Tools,
             LinuxSlice = Slice,
             SystemdAddress = SystemdAddress,
