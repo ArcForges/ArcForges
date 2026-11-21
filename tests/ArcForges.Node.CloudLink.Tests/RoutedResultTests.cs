@@ -148,7 +148,8 @@ public sealed class RoutedResultTests
         try
         {
             var clock = new ManualClock();
-            using (var store = NodeStore.Open(new NodeStoreOptions { DataRoot = root, BootIdentity = "boot-1", Clock = clock }))
+            using (var store = NodeStore.Open(new NodeStoreOptions { DataRoot = root, BootIdentity = "boot-1", Clock = clock },
+                StoreMigrations.Expanded))
             {
                 var log = new RoutedCallLog(new DirectRoutedCallStore(store), clock);
                 var read = await log.RecordVerifiedAsync(Row(2));
@@ -229,7 +230,8 @@ public sealed class RoutedResultTests
         try
         {
             var clock = new OffsetSystemClock();
-            using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = root, BootIdentity = "boot-1", Clock = clock });
+            using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = root, BootIdentity = "boot-1", Clock = clock },
+                StoreMigrations.Expanded);
             var log = new RoutedCallLog(new DirectRoutedCallStore(store), clock);
             var row = Row(19);
             var id = await log.RecordVerifiedAsync(row);

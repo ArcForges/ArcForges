@@ -157,6 +157,14 @@
       "sha256": "54367cc308f91cbc2f43eed78829c470f9af2c9de0487c814045d5e94b456e81",
       "source": "AFV2-CENTER-04 committed metadata-only Sandbox and Run events, with scoped retention cursors.",
       "addedBy": "AFV2-CENTER-04"
+    },
+    {
+      "version": 20,
+      "minReaderVersion": 20,
+      "file": "0020-v2-contract.sql",
+      "sha256": "58fd86eb6a31fc6e9dc6027ab3d4d2bd28323e16ac9b18bb11076f060aee7dd6",
+      "source": "AFV2-MIG-02 guarded retirement of obsolete Node live tables, retaining shared original command IDs.",
+      "addedBy": "AFV2-MIG-02"
     }
   ]
 }

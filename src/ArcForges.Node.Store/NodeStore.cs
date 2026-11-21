@@ -111,7 +111,7 @@ public sealed class StoreOpening
 /// (the command processor) and short-lived read-only reader connections. Opening creates schema version 1 with the default
 /// policy (revision 1), or checks <c>min_reader_version</c>, backs up and migrates forward an existing store.
 /// </summary>
-public sealed class NodeStore : IDisposable
+public sealed partial class NodeStore : IDisposable
 {
     private const int BusyTimeoutMilliseconds = 5000;
     private const int LastDeliveredPreCtr06SchemaVersion = 2;
@@ -132,7 +132,9 @@ public sealed class NodeStore : IDisposable
             "arcforges_file_hold_witness", _fileTargetWitnesses.Matches);
         _clock = clock;
         Metadata = metadata;
-        _fileRetention = metadata.SchemaVersion >= 6 ? new RoutedFileRetentionProcess(_clock) : null;
+        _fileRetention = metadata.SchemaVersion >= 6
+            ? new RoutedFileRetentionProcess(_clock, metadata.SchemaVersion >= StoreMigrations.ContractedSchemaVersion)
+            : null;
         Opening = opening;
         Commands = new CommandDeduplication(this);
         Environments = new EnvSnapshots(this);
@@ -171,7 +173,8 @@ public sealed class NodeStore : IDisposable
     internal static NodeStore Open(NodeStoreOptions options, MigrationPlan plan) => Open(options, plan, requireV2Runtime: false);
 
     /// <summary>Opens a fresh store or an existing store without retired execution or file custody.</summary>
-    internal static NodeStore OpenForV2Runtime(NodeStoreOptions options) => Open(options, StoreMigrations.Released, requireV2Runtime: true);
+    internal static NodeStore OpenForV2Runtime(NodeStoreOptions options, MigrationPlan? runtimePlan = null) =>
+        Open(options, runtimePlan ?? StoreMigrations.Released, requireV2Runtime: true);
 
     private static NodeStore Open(NodeStoreOptions options, MigrationPlan plan, bool requireV2Runtime)
     {
@@ -451,6 +454,7 @@ public sealed class NodeStore : IDisposable
     private static (ExistingStore? Existing, SqliteConnection Writer, int Retries, int? LastCode) OpenWriter(
         string path, MigrationPlan plan, bool requireV2Runtime)
     {
+        var protectedInspection = requireV2Runtime || StoreMigrations.IncludesContraction(plan);
         var started = TimeProvider.System.GetTimestamp();
         int? lastCode = null;
         for (var retries = 0; ; retries++)
@@ -459,13 +463,13 @@ public sealed class NodeStore : IDisposable
             try
             {
                 ExistingStore? existing = null;
-                if (requireV2Runtime ? HasFileEntry(path) : File.Exists(path))
+                if (protectedInspection ? HasFileEntry(path) : File.Exists(path))
                 {
-                    existing = requireV2Runtime
-                        ? InspectRuntimeStore(path, plan)
+                    existing = protectedInspection
+                        ? InspectRuntimeStore(path, plan, allowWindowsSharing: !requireV2Runtime)
                         : Inspect(path, path, plan, requireV2Runtime: false);
                 }
-                if (existing is null && requireV2Runtime &&
+                if (existing is null && protectedInspection &&
                     (HasOwnerFence(path) || HasFileEntry(path + "-wal") || HasFileEntry(path + "-journal")))
                 {
                     throw new StoreIncompatibleException("A V2 data root with existing owner or journal state requires its original database.");
@@ -528,28 +532,38 @@ public sealed class NodeStore : IDisposable
         }
     }
 
-    private static ExistingStore? InspectRuntimeStore(string path, MigrationPlan plan)
+    private static ExistingStore? InspectRuntimeStore(string path, MigrationPlan plan, bool allowWindowsSharing)
     {
-        if (HasFileEntry(path + "-journal"))
+        string journal = path + "-journal";
+        if (HasFileEntry(journal))
             throw new StoreIncompatibleException("The node store has a rollback journal and requires offline recovery; it was not changed.");
 
         // The host holds the node-instance guard. An immutable connection leaves a checkpointed store alone.
         // It would skip pending WAL frames, so inspect those on a private copy with the normal SQLite reader.
-        using var original = File.OpenRead(path);
+        using var original = OpenInspectionInput(path, allowWindowsSharing, out bool sharedDatabase);
         string wal = path + "-wal";
         bool hasWal = HasFileEntry(wal);
-        if (!hasWal && ImmutableStoreUri(path) is { } uri)
+        if (!sharedDatabase && !hasWal && ImmutableStoreUri(path) is { } uri)
             return Inspect(path, uri, plan, requireV2Runtime: true);
 
-        using var originalWal = hasWal ? File.OpenRead(wal) : null;
+        bool sharedWal = false;
+        using var originalWal = hasWal ? OpenInspectionInput(wal, allowWindowsSharing, out sharedWal) : null;
         string work = Path.Combine(Path.GetDirectoryName(path)!, $".inspect-{Guid.NewGuid():N}");
         StorePaths.CreatePrivateDirectory(work);
         try
         {
             string copy = Path.Combine(work, Path.GetFileName(path));
-            CopyInspectionFile(original, copy);
-            if (originalWal is not null)
-                CopyInspectionFile(originalWal, copy + "-wal");
+            if (sharedDatabase || sharedWal)
+            {
+                CopySharedInspectionPair(path, original, originalWal, copy);
+            }
+            else
+            {
+                CopyInspectionFile(original, copy);
+                if (originalWal is not null)
+                    CopyInspectionFile(originalWal, copy + "-wal");
+            }
+
             return Inspect(path, copy, plan, requireV2Runtime: true);
         }
         finally
@@ -558,7 +572,82 @@ public sealed class NodeStore : IDisposable
         }
     }
 
-    private static string? ImmutableStoreUri(string path)
+    private static FileStream OpenInspectionInput(string path, bool allowWindowsSharing, out bool shared)
+    {
+        shared = false;
+        try
+        {
+            return File.OpenRead(path);
+        }
+        catch (IOException failure) when (allowWindowsSharing && OperatingSystem.IsWindows() &&
+            failure.HResult == unchecked((int)0x80070020)) // ERROR_SHARING_VIOLATION
+        {
+            shared = true;
+            // Hold the name against replacement and reread the OS bytes on each verification pass.
+            return new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, bufferSize: 1);
+        }
+    }
+
+    private static void CopySharedInspectionPair(string path, FileStream original, FileStream? wal, string copy)
+    {
+        long databaseLength = original.Length;
+        long walLength = wal?.Length ?? 0;
+        byte[] temporary = new byte[64 * 1024];
+        byte[] databaseBefore = ReadInspectionBytes(original, databaseLength, temporary);
+        byte[]? walBefore = wal is null ? null : ReadInspectionBytes(wal, walLength, temporary);
+        byte[] databaseCopied;
+        using (var destination = DurableEpochFence.OpenPrivate(copy, FileMode.CreateNew))
+            databaseCopied = ReadInspectionBytes(original, databaseLength, temporary, destination);
+
+        byte[]? walCopied = null;
+        if (wal is not null)
+        {
+            using var destination = DurableEpochFence.OpenPrivate(copy + "-wal", FileMode.CreateNew);
+            walCopied = ReadInspectionBytes(wal, walLength, temporary, destination);
+        }
+
+        if (!databaseBefore.AsSpan().SequenceEqual(databaseCopied) ||
+            (wal is not null && !walBefore.AsSpan().SequenceEqual(walCopied)) ||
+            !databaseBefore.AsSpan().SequenceEqual(ReadInspectionBytes(original, databaseLength, temporary)) ||
+            (wal is not null && !walBefore.AsSpan().SequenceEqual(ReadInspectionBytes(wal, walLength, temporary))) ||
+            HasFileEntry(path + "-wal") != (wal is not null) || HasFileEntry(path + "-journal"))
+            throw UnstableInspection();
+    }
+
+    private static byte[] ReadInspectionBytes(FileStream input, long length, byte[] buffer, FileStream? copy = null)
+    {
+        input.Position = 0;
+        if (input.Length != length)
+            throw UnstableInspection();
+
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        for (long remaining = length; remaining != 0;)
+        {
+            var block = buffer.AsSpan(0, (int)Math.Min(remaining, buffer.Length));
+            try
+            {
+                input.ReadExactly(block);
+            }
+            catch (EndOfStreamException)
+            {
+                throw UnstableInspection();
+            }
+
+            hash.AppendData(block);
+            copy?.Write(block);
+            remaining -= block.Length;
+        }
+
+        if (input.Length != length)
+            throw UnstableInspection();
+
+        return hash.GetHashAndReset();
+    }
+
+    private static StoreIncompatibleException UnstableInspection() =>
+        new("The node store or its journals changed during inspection; the original was not changed. Retry after its writer has stopped.");
+
+    internal static string? ImmutableStoreUri(string path)
     {
         string prefix = "file://";
         if (OperatingSystem.IsWindows())
@@ -626,15 +715,28 @@ public sealed class NodeStore : IDisposable
             minimum = checked((int)reader.GetInt64(1));
         }
 
-        if (requireV2Runtime && minimum <= plan.LatestVersion)
+        if (minimum <= plan.LatestVersion)
         {
-            VerifyV2RuntimeLayout(connection, version);
+            if (StoreMigrations.IncludesContraction(plan) && version < StoreMigrations.ContractedSchemaVersion)
+            {
+                throw new StoreIncompatibleException(
+                    "legacy_store_requires_offline_cutover: This data root needs verified offline schema contraction before it can serve.");
+            }
+
+            if (version >= StoreMigrations.ContractedSchemaVersion)
+            {
+                VerifyContractedLayout(connection, version, minimum);
+            }
+            else if (requireV2Runtime)
+            {
+                VerifyV2RuntimeLayout(connection, version);
+            }
         }
 
         // Step 8 has never been released. A previous local author draft used the same version with different
         // private-stage capacity semantics. Refuse that draft while the database is still open read-only; neither
         // migrate it by pretending its version matches nor adopt or delete its potentially retained stages.
-        if (version >= 8 && plan.LatestVersion >= 8 && minimum <= plan.LatestVersion &&
+        if (version is >= 8 and <= StoreMigrations.ExpandedSchemaVersion && plan.LatestVersion >= 8 && minimum <= plan.LatestVersion &&
             plan.Steps[7].Sql.Contains("ctr06-stage-combined-v3", StringComparison.Ordinal))
         {
             var hasLayout = Convert.ToInt64(Scalar(connection, """
@@ -659,7 +761,7 @@ public sealed class NodeStore : IDisposable
         // Step 12 is still an unmerged AF-CTR-06 candidate. A separate protected draft used the same version
         // for a different layout. Check this candidate's required removal-plan objects while still read-only;
         // never advance an unknown step-12 database by assigning it this candidate's meaning.
-        if (version >= 12 && plan.LatestVersion >= 12 && minimum <= plan.LatestVersion &&
+        if (version is >= 12 and <= StoreMigrations.ExpandedSchemaVersion && plan.LatestVersion >= 12 && minimum <= plan.LatestVersion &&
             plan.Steps[11].Sql.Contains("CREATE TABLE file_removal_plan (", StringComparison.Ordinal))
         {
             var tables = Convert.ToInt64(Scalar(connection, """
@@ -724,7 +826,9 @@ public sealed class NodeStore : IDisposable
     {
         InTransaction(writer, CommitDurability.Full, transaction =>
         {
-            foreach (var step in plan.Steps)
+            var contracted = StoreMigrations.IncludesContraction(plan);
+            var expansion = contracted ? StoreMigrations.ExpandedSchemaVersion : plan.LatestVersion;
+            foreach (var step in plan.Steps.Take(expansion))
             {
                 using var command = writer.CreateCommand();
                 command.Transaction = transaction;
@@ -741,8 +845,8 @@ public sealed class NodeStore : IDisposable
                                             clean_shutdown_at, journal_generation)
                     VALUES (1, $schema, $minReader, $nodeId, $role, $now, $boot, $now, 1);
                     """;
-                meta.Parameters.AddWithValue("$schema", plan.LatestVersion);
-                meta.Parameters.AddWithValue("$minReader", plan.Steps[^1].MinReaderVersion);
+                meta.Parameters.AddWithValue("$schema", expansion);
+                meta.Parameters.AddWithValue("$minReader", plan.Steps[expansion - 1].MinReaderVersion);
                 meta.Parameters.AddWithValue("$nodeId", StoreIds.NewUuid7(options.Clock));
                 meta.Parameters.AddWithValue("$role", (int)options.Role);
                 meta.Parameters.AddWithValue("$now", now);
@@ -750,9 +854,19 @@ public sealed class NodeStore : IDisposable
                 meta.ExecuteNonQuery();
             }
 
-            PolicyDocuments.InsertDefault(new StoreTransaction(writer, transaction, options.Clock, CommitDurability.Full));
+            var current = new StoreTransaction(writer, transaction, options.Clock, CommitDurability.Full);
+            PolicyDocuments.InsertDefault(current);
             var v2 = plan.Steps.SingleOrDefault(step => step.Name == "0016-v2-expand.sql");
             if (v2 is not null) RecordV2Migration(writer, transaction, 0, "fresh:no-predecessor", options, v2);
+
+            if (contracted)
+            {
+                ApplyFreshContraction(current);
+                foreach (var step in plan.Steps.Skip(StoreMigrations.ContractedSchemaVersion))
+                {
+                    ApplyMigration(writer, transaction, step, 0, "fresh:no-predecessor", options);
+                }
+            }
         });
     }
 

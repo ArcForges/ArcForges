@@ -33,7 +33,7 @@ internal sealed partial class DurableCommandStore
 
     // A complete snapshot is a DB, every referenced epoch key, and an authenticated manifest.
     // A legacy pre-migration DB-only backup is intentionally not a ready V2 restore package.
-    internal void CreateBackup(string backupRoot, NodeSecretStore backupSecrets)
+    internal void CreateBackup(string backupRoot, NodeSecretStore backupSecrets, NodeContractionScope? preparationScope = null)
     {
         lock (_gate)
         {
@@ -58,7 +58,15 @@ internal sealed partial class DurableCommandStore
                     var authority = DurableEpochFence.Read(DurableEpochFence.PathFor(_store.DataRoot, entry.Owner), key);
                     if (!Matches(entry, authority)) throw new DurableStoreMaintenanceException();
                 }
-                StorePaths.CreatePrivateDirectory(backupRoot);
+                if (preparationScope is not null)
+                {
+                    preparationScope.ValidatePreparationRoot(backupRoot);
+                    NodeContractionScope.CreateNewPreparationRoot(backupRoot);
+                }
+                else
+                {
+                    StorePaths.CreatePrivateDirectory(backupRoot);
+                }
                 string database = StorePaths.Database(backupRoot);
                 StorePaths.CreatePrivateDirectory(Path.GetDirectoryName(database)!);
                 _store.CopyOwnerSnapshot(database); // Reuses the V1 secret-retention sanitization, not V1 identity expiry.
@@ -73,6 +81,7 @@ internal sealed partial class DurableCommandStore
                 var manifest = new DurableBackupManifest(_store.Metadata.SchemaVersion, Convert.ToHexStringLower(SHA256.HashData(stream)),
                     _fence.KeyReference, entries);
                 byte[] body = JsonSerializer.SerializeToUtf8Bytes(manifest, DurableBackupJsonContext.Default.DurableBackupManifest);
+                preparationScope?.VerifyHeld();
                 DurableEpochFence.WritePrivate(Path.Combine(backupRoot, "v2-backup.manifest"),
                     [.. body, .. HMACSHA256.HashData(_key, body)]);
             }
@@ -91,7 +100,8 @@ internal sealed partial class DurableCommandStore
     // The latest authority is retained independently of the backup being restored. Without
     // that outside evidence (or after any missing admission/effect observation), remain offline.
     internal static void RestoreBackup(string backupRoot, NodeSecretStore backupSecrets, string latestAuthorityRoot,
-        NodeSecretStore latestAuthoritySecrets, string destinationRoot, NodeSecretStore destinationSecrets)
+        NodeSecretStore latestAuthoritySecrets, string destinationRoot, NodeSecretStore destinationSecrets,
+        NodeContractionScope? offlineScope = null)
     {
         if (!Path.IsPathFullyQualified(backupRoot) || !Path.IsPathFullyQualified(latestAuthorityRoot)
             || !Path.IsPathFullyQualified(destinationRoot) || Directory.Exists(destinationRoot))
@@ -103,15 +113,19 @@ internal sealed partial class DurableCommandStore
         if (latestAuthorityRoot.Equals(backupRoot, comparison)
             || latestAuthorityRoot.StartsWith(backupRoot + Path.DirectorySeparatorChar, comparison))
             throw new DurableStoreMaintenanceException();
+        if (offlineScope is not null && !latestAuthorityRoot.Equals(offlineScope.DataRoot, comparison))
+            throw new DurableStoreMaintenanceException();
+        offlineScope?.VerifyHeld();
         var locks = new List<FileStream>();
         var keys = new Dictionary<string, byte[]>(StringComparer.Ordinal);
         try
         {
             RequireUnaliasedAuthorityRoot(Path.GetDirectoryName(StorePaths.Database(backupRoot))!);
             RequireUnaliasedAuthorityRoot(Path.GetDirectoryName(StorePaths.Database(latestAuthorityRoot))!);
-            using var catalogue = DurableEpochFence.OpenCatalogueLock(latestAuthorityRoot);
+            using var catalogue = DurableEpochFence.OpenCatalogueLock(latestAuthorityRoot, existingOnly: offlineScope is not null);
             byte[] signed;
-            using (var manifestFile = File.OpenRead(Path.Combine(backupRoot, "v2-backup.manifest")))
+            string manifestPath = Path.Combine(backupRoot, "v2-backup.manifest");
+            using (var manifestFile = offlineScope is null ? File.OpenRead(manifestPath) : ContractionPaths.OpenRegularRead(manifestPath))
             {
                 if (manifestFile.Length is < 33 or > 1048576) throw new DurableStoreMaintenanceException();
                 signed = new byte[checked((int)manifestFile.Length)];
@@ -130,8 +144,11 @@ internal sealed partial class DurableCommandStore
                 throw new DurableStoreMaintenanceException();
             foreach (string owner in manifest.Epochs.Select(entry => entry.Owner).Distinct(StringComparer.Ordinal))
                 locks.Add(DurableEpochFence.OpenPrivate(DurableEpochFence.PathFor(latestAuthorityRoot, owner) + ".lock", FileMode.Open));
+            string authorityDatabase = StorePaths.Database(latestAuthorityRoot);
+            string authoritySource = offlineScope is null ? authorityDatabase
+                : NodeStore.ImmutableStoreUri(authorityDatabase) ?? throw new DurableStoreMaintenanceException();
             using (var latest = new Microsoft.Data.Sqlite.SqliteConnection(StorePaths.ConnectionString(
-                StorePaths.Database(latestAuthorityRoot), Microsoft.Data.Sqlite.SqliteOpenMode.ReadOnly)))
+                authoritySource, Microsoft.Data.Sqlite.SqliteOpenMode.ReadOnly)))
             {
                 latest.Open();
                 // The independent latest catalogue must be complete/readable. Never substitute
@@ -159,11 +176,11 @@ internal sealed partial class DurableCommandStore
                 finally { CryptographicOperations.ZeroMemory(currentKey); }
             }
             string database = StorePaths.Database(backupRoot);
-            using var source = File.OpenRead(database);
+            using var source = offlineScope is null ? File.OpenRead(database) : ContractionPaths.OpenRegularRead(database);
             if (Convert.ToHexStringLower(SHA256.HashData(source)) != manifest.DatabaseSha256)
                 throw new DurableStoreMaintenanceException();
             source.Position = 0;
-            PublishRestore(destinationRoot, destinationSecrets, manifest, keys, source);
+            PublishRestore(destinationRoot, destinationSecrets, manifest, keys, source, offlineScope);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or ArgumentException or Microsoft.Data.Sqlite.SqliteException)
         {
@@ -177,7 +194,7 @@ internal sealed partial class DurableCommandStore
     }
 
     private static void PublishRestore(string destinationRoot, NodeSecretStore destinationSecrets,
-        DurableBackupManifest manifest, Dictionary<string, byte[]> keys, FileStream source)
+        DurableBackupManifest manifest, Dictionary<string, byte[]> keys, FileStream source, NodeContractionScope? offlineScope)
     {
         string parent = Path.GetDirectoryName(destinationRoot) ?? throw new DurableStoreMaintenanceException();
         StorePaths.CreatePrivateDirectory(parent);
@@ -195,6 +212,9 @@ internal sealed partial class DurableCommandStore
 
             guard.Write("restore pending\n"u8);
             guard.Flush(flushToDisk: true);
+            if (offlineScope is not null)
+                NodeContractionScope.CreateNewPreparationRoot(destinationRoot);
+
             string database = StorePaths.Database(destinationRoot);
             StorePaths.CreatePrivateDirectory(Path.GetDirectoryName(database)!);
             string staged = database + ".restore.partial";

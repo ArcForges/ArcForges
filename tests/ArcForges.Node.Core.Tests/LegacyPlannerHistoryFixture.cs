@@ -4,6 +4,7 @@ using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Node.Store;
+using ArcForges.Node.Store.Migrations;
 using Google.Protobuf;
 
 namespace ArcForges.Node.Core.Tests;
@@ -16,7 +17,8 @@ internal static class LegacyPlannerHistoryFixture
     internal static async Task WithStoreAsync(Func<NodeStore, Task> exercise)
     {
         await using var fixture = InProcessNode.Create();
-        using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = fixture.DataRoot, BootIdentity = "legacy-planner-fixture" });
+        using var store = NodeStore.Open(
+            new NodeStoreOptions { DataRoot = fixture.DataRoot, BootIdentity = "legacy-planner-fixture" }, StoreMigrations.Expanded);
         await exercise(store);
     }
 

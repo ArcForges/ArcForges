@@ -17,7 +17,7 @@ public sealed class SupportedStoreUpgradeTests
     {
         using var root = new TemporaryDataRoot();
         var clock = new ManualClock();
-        var prior = new MigrationPlan(StoreMigrations.Released.Steps.Take(oldVersion));
+        var prior = new MigrationPlan(StoreMigrations.Expanded.Steps.Take(oldVersion));
         var commandId = StoreIds.NewUuid7(clock);
         var digest = SHA256.HashData("legacy fixture request"u8);
         var outcome = Encoding.UTF8.GetBytes("legacy fixture receipt");
@@ -33,11 +33,11 @@ public sealed class SupportedStoreUpgradeTests
                 CommandDeduplication.Complete(tx, commandId, outcome);
             }, CommitDurability.Full);
         }
-        using (var current = root.Open(clock))
+        using (var current = root.Open(clock, StoreMigrations.Expanded))
         {
             Assert.Equal(oldVersion, current.Opening.MigratedFrom);
-            Assert.Equal(StoreMigrations.SupportedSchemaVersion, current.Metadata.SchemaVersion);
-            Assert.Equal(StoreMigrations.SupportedSchemaVersion, current.Metadata.MinReaderVersion);
+            Assert.Equal(StoreMigrations.ExpandedSchemaVersion, current.Metadata.SchemaVersion);
+            Assert.Equal(StoreMigrations.ExpandedSchemaVersion, current.Metadata.MinReaderVersion);
             Assert.Equal(nodeId, current.Metadata.NodeId.ToArray());
             Assert.Equal("42", current.Read(r => r.Scalar("SELECT value_json FROM node_setting WHERE name = 'upgrade-kept';")));
             Assert.Equal(outcome, current.Read(r => (byte[])r.Scalar("SELECT outcome FROM command_dedup WHERE command_id = $id;", ("$id", commandId))!));
@@ -59,7 +59,7 @@ public sealed class SupportedStoreUpgradeTests
         var beforeRefusal = SHA256.HashData(File.ReadAllBytes(root.Database));
         Assert.Throws<StoreIncompatibleException>(() => root.Open(clock, prior));
         Assert.Equal(beforeRefusal, SHA256.HashData(File.ReadAllBytes(root.Database)));
-        using var reopened = root.Open(clock);
+        using var reopened = root.Open(clock, StoreMigrations.Expanded);
         Assert.Null(reopened.Opening.MigratedFrom);
         Assert.Single(StoreBackups.List(root.Path));
         Assert.Equal(nodeId, reopened.Metadata.NodeId.ToArray());
@@ -71,15 +71,15 @@ public sealed class SupportedStoreUpgradeTests
     {
         using var root = new TemporaryDataRoot();
         var clock = new ManualClock();
-        var prior = new MigrationPlan(StoreMigrations.Released.Steps.Take(2));
+        var prior = new MigrationPlan(StoreMigrations.Expanded.Steps.Take(2));
         byte[] nodeId;
         using (var old = root.Open(clock, prior))
         {
             nodeId = old.Metadata.NodeId.ToArray();
             old.Write(tx => tx.Execute("INSERT INTO node_setting (name, value_json, updated_at, rev) VALUES ('upgrade-kept', '43', 0, 0);"));
         }
-        var last = StoreMigrations.Released.Steps[^1];
-        var failing = new MigrationPlan([.. StoreMigrations.Released.Steps.SkipLast(1),
+        var last = StoreMigrations.Expanded.Steps[^1];
+        var failing = new MigrationPlan([.. StoreMigrations.Expanded.Steps.SkipLast(1),
             new StoreMigration(last.Version, last.MinReaderVersion, last.Name,
                 last.Sql + "\nINSERT INTO missing_upgrade_fixture_table VALUES (1);\n")]);
         var failure = Assert.Throws<SqliteException>(() => root.Open(clock, failing));
@@ -101,9 +101,9 @@ public sealed class SupportedStoreUpgradeTests
             Assert.Equal(["43"], StoreCreationTests.Query(copy, "SELECT value_json FROM node_setting WHERE name = 'upgrade-kept';"));
             Assert.Equal(["ok"], StoreCreationTests.Query(copy, "PRAGMA integrity_check;"));
         }
-        using var retried = root.Open(clock);
+        using var retried = root.Open(clock, StoreMigrations.Expanded);
         Assert.Equal(2, retried.Opening.MigratedFrom);
-        Assert.Equal(StoreMigrations.SupportedSchemaVersion, retried.Metadata.SchemaVersion);
+        Assert.Equal(StoreMigrations.ExpandedSchemaVersion, retried.Metadata.SchemaVersion);
         Assert.Equal(nodeId, retried.Metadata.NodeId.ToArray());
         Assert.Equal("43", retried.Read(r => r.Scalar("SELECT value_json FROM node_setting WHERE name = 'upgrade-kept';")));
     }

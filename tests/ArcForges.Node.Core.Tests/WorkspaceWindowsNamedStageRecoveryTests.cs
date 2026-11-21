@@ -10,6 +10,7 @@ using ArcForges.Contracts.Node.V1;
 using ArcForges.Node.Core.Files;
 using ArcForges.Node.Core.Platform;
 using ArcForges.Node.Store;
+using ArcForges.Node.Store.Migrations;
 using Google.Protobuf;
 using NodeFilePath = ArcForges.Contracts.Node.V1.FilePath;
 
@@ -71,7 +72,9 @@ public sealed class WorkspaceWindowsNamedStageRecoveryTests
             Assert.True(child.HasExited);
             TestContext.Current.TestOutputHelper?.WriteLine($"Owned producer PID {child.Id}, start {child.StartTime.ToUniversalTime():O}, exit {child.ExitCode}; retained stage identity SHA-256 {Convert.ToHexString(SHA256.HashData(identity.Bytes))}.");
 
-            using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = Path.Combine(fixture.Path, "data"), BootIdentity = "owned-parent" });
+            using var store = NodeStore.Open(
+                new NodeStoreOptions { DataRoot = Path.Combine(fixture.Path, "data"), BootIdentity = "owned-parent" },
+                StoreMigrations.Expanded);
             _ = store.Read(reader =>
             {
                 using var query = reader.CreateCommand("""
@@ -127,7 +130,9 @@ public sealed class WorkspaceWindowsNamedStageRecoveryTests
             !File.Exists(Path.Combine(fullRoot, "owned-parent.marker")))
             throw new InvalidOperationException("The owned fixture directory is unavailable.");
         var workspacePath = Directory.CreateDirectory(Path.Combine(fullRoot, "workspace")).FullName;
-        using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = Path.Combine(root, "data"), BootIdentity = "owned-child" });
+        using var store = NodeStore.Open(
+            new NodeStoreOptions { DataRoot = Path.Combine(root, "data"), BootIdentity = "owned-child" },
+            StoreMigrations.Expanded);
         var workspace = new RegisteredWorkspaces(store).RegisterFromVerifiedHuman(workspacePath);
         var caller = new CenterCaller
         {

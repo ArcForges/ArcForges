@@ -29,8 +29,9 @@ internal sealed class TemporaryDataRoot : IDisposable
 
     public string Database => StorePaths.Database(Path);
 
+    // Many fixtures seed original Task, Attempt and FILE rows. Runtime fixtures select Released explicitly.
     public NodeStore Open(TimeProvider clock, MigrationPlan? plan = null, string boot = "boot-1") =>
-        NodeStore.Open(new NodeStoreOptions { DataRoot = Path, BootIdentity = boot, Clock = clock }, plan ?? StoreMigrations.Released);
+        NodeStore.Open(new NodeStoreOptions { DataRoot = Path, BootIdentity = boot, Clock = clock }, plan ?? StoreMigrations.Expanded);
 
     public void Dispose()
     {

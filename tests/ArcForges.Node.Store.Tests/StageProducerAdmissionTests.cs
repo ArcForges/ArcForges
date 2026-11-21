@@ -16,9 +16,10 @@ public sealed class StageProducerAdmissionTests
         var directory = Directory.CreateTempSubdirectory("af-stage-admission-");
         try
         {
-            using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = directory.FullName, BootIdentity = "stage-test-boot" });
-            Assert.Equal(StoreMigrations.SupportedSchemaVersion, store.Metadata.SchemaVersion);
-            Assert.Equal(StoreMigrations.Released.Steps[^1].MinReaderVersion, store.Metadata.MinReaderVersion);
+            using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = directory.FullName, BootIdentity = "stage-test-boot" },
+                StoreMigrations.Expanded);
+            Assert.Equal(StoreMigrations.ExpandedSchemaVersion, store.Metadata.SchemaVersion);
+            Assert.Equal(StoreMigrations.ExpandedSchemaVersion, store.Metadata.MinReaderVersion);
             Assert.Equal(0L, store.Read(reader => reader.Scalar("SELECT count(*) FROM file_stage_production;")));
             using var missing = Raw(store.DatabasePath);
             using var command = missing.CreateCommand();
@@ -36,7 +37,8 @@ public sealed class StageProducerAdmissionTests
         var directory = Directory.CreateTempSubdirectory("af-stage-floor-");
         try
         {
-            using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = directory.FullName, BootIdentity = "stage-floor-boot" });
+            using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = directory.FullName, BootIdentity = "stage-floor-boot" },
+                StoreMigrations.Released);
             using var future = Raw(store.DatabasePath);
             // A hypothetical later reader is an explicit test input, not a claimed future binary or migration.
             int currentVersion = StoreMigrations.SupportedSchemaVersion;
@@ -68,10 +70,10 @@ public sealed class StageProducerAdmissionTests
         try
         {
             var options = new NodeStoreOptions { DataRoot = directory.FullName, BootIdentity = "legacy-stage-boot" };
-            using (var old = NodeStore.Open(options, new MigrationPlan(StoreMigrations.Released.Steps.Take(14))))
+            using (var old = NodeStore.Open(options, new MigrationPlan(StoreMigrations.Expanded.Steps.Take(14))))
                 Assert.Equal(14, old.Metadata.SchemaVersion);
             var bytes = File.ReadAllBytes(StorePaths.Database(directory.FullName));
-            var failure = Assert.Throws<StoreIncompatibleException>(() => NodeStore.Open(options));
+            var failure = Assert.Throws<StoreIncompatibleException>(() => NodeStore.Open(options, StoreMigrations.Expanded));
             Assert.Contains("schema 15", failure.Message, StringComparison.Ordinal);
             Assert.Equal(bytes, File.ReadAllBytes(StorePaths.Database(directory.FullName)));
         }

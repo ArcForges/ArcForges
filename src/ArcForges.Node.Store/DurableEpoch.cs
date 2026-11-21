@@ -23,8 +23,8 @@ internal sealed record DurableEpochFence(string Owner, byte[] Epoch, string KeyR
 
     // Serializes namespace creation with complete catalogue backup/restore inspection.
     // Per-owner locks continue to protect admission and effect observations.
-    internal static FileStream OpenCatalogueLock(string dataRoot) =>
-        OpenPrivate(Path.Combine(dataRoot, "store", "v2-owner-catalogue.lock"), FileMode.OpenOrCreate);
+    internal static FileStream OpenCatalogueLock(string dataRoot, bool existingOnly = false) =>
+        OpenPrivate(Path.Combine(dataRoot, "store", "v2-owner-catalogue.lock"), existingOnly ? FileMode.Open : FileMode.OpenOrCreate);
 
     internal byte[] Encode(ReadOnlySpan<byte> key)
     {

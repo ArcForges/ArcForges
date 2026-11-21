@@ -3,6 +3,7 @@ using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Node.Core.Files;
 using ArcForges.Node.Store;
+using ArcForges.Node.Store.Migrations;
 
 namespace ArcForges.Node.Core.Tests;
 
@@ -17,7 +18,8 @@ public sealed class WorkspaceSubmitRegistryTests
     {
         var ct = TestContext.Current.CancellationToken;
         await using var fixture = InProcessNode.Create();
-        using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = fixture.DataRoot, BootIdentity = "workspace-history-fixture" });
+        using var store = NodeStore.Open(
+            new NodeStoreOptions { DataRoot = fixture.DataRoot, BootIdentity = "workspace-history-fixture" }, StoreMigrations.Expanded);
         var manager = new RegisteredWorkspaces(store);
         var parent = Directory.CreateDirectory(Path.Combine(fixture.Root, "parent"));
         var child = parent.CreateSubdirectory("child");
@@ -50,7 +52,8 @@ public sealed class WorkspaceSubmitRegistryTests
     {
         var ct = TestContext.Current.CancellationToken;
         await using var fixture = InProcessNode.Create();
-        using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = fixture.DataRoot, BootIdentity = "workspace-history-fixture" });
+        using var store = NodeStore.Open(
+            new NodeStoreOptions { DataRoot = fixture.DataRoot, BootIdentity = "workspace-history-fixture" }, StoreMigrations.Expanded);
         var manager = new RegisteredWorkspaces(store);
         var parent = Directory.CreateDirectory(Path.Combine(fixture.Root, "parent"));
         var child = parent.CreateSubdirectory("child");

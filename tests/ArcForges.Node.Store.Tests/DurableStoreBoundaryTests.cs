@@ -13,7 +13,7 @@ public sealed partial class DurableCommandStoreTests
     {
         using var root = new TemporaryDataRoot();
         var clock = new ManualClock();
-        var fifteen = new MigrationPlan(StoreMigrations.Released.Steps.Take(15));
+        var fifteen = new MigrationPlan(StoreMigrations.Expanded.Steps.Take(15));
         byte[] command = RandomNumberGenerator.GetBytes(16), workspace = RandomNumberGenerator.GetBytes(16);
         // A supplied historical intent fixture, not evidence of a native file operation or process identity.
         byte[] historicalIdentity = [1, .. new byte[32]];
@@ -32,11 +32,11 @@ public sealed partial class DurableCommandStoreTests
                     """, ("$c", command), ("$w", workspace), ("$identity", historicalIdentity));
             }, CommitDurability.Full);
         }
-        using (var current = root.Open(clock))
+        using (var current = root.Open(clock, StoreMigrations.Expanded))
         {
             Assert.Equal(15, current.Opening.MigratedFrom);
-            Assert.Equal(StoreMigrations.SupportedSchemaVersion, current.Metadata.SchemaVersion);
-            Assert.Equal(StoreMigrations.SupportedSchemaVersion, current.Metadata.MinReaderVersion);
+            Assert.Equal(StoreMigrations.ExpandedSchemaVersion, current.Metadata.SchemaVersion);
+            Assert.Equal(StoreMigrations.ExpandedSchemaVersion, current.Metadata.MinReaderVersion);
             Assert.NotNull(current.Opening.BackupPath);
             Assert.True(File.Exists(current.Opening.BackupPath));
             Assert.Equal(1L, current.Read(r => r.Scalar("SELECT count(*) FROM file_operation_journal WHERE phase=3 AND held=1 AND command_id=$c;", ("$c", command))));
@@ -52,7 +52,7 @@ public sealed partial class DurableCommandStoreTests
     public async Task ConcurrentCompareExchangeAdmitsOnlyOneSandboxRevision()
     {
         using var root = new TemporaryDataRoot();
-        using var store = root.Open(new ManualClock());
+        using var store = root.Open(new ManualClock(), StoreMigrations.Released);
         using var commands = Commands(store, root.Path);
         store.Write(tx => tx.Execute("""
             INSERT INTO sandbox(sandbox_id,owner_id,display_name,normalized_name,revision,state,root_relative,root_identity,root_generation,created_utc,updated_utc)
@@ -76,7 +76,7 @@ public sealed partial class DurableCommandStoreTests
         var clock = new ManualClock();
         DurableIntent intent;
         int syntheticEffects = 0;
-        using (var store = root.Open(clock))
+        using (var store = root.Open(clock, StoreMigrations.Released))
         using (var commands = Commands(store, root.Path))
         {
             intent = Intent(commands);
@@ -91,7 +91,7 @@ public sealed partial class DurableCommandStoreTests
             });
             Assert.True(commands.MaintenanceRequired);
         }
-        using (var store = root.Open(clock))
+        using (var store = root.Open(clock, StoreMigrations.Released))
         using (var commands = Commands(store, root.Path))
         {
             Assert.Equal(afterCommit ? 1L : 0L, store.Read(r => r.Scalar("SELECT count(*) FROM command_receipt;")));
@@ -120,6 +120,8 @@ public sealed partial class DurableCommandStoreTests
             var childClock = new ManualClock();
             if (phase == "replay") childClock.Advance(TimeSpan.FromHours(25));
             using var childStore = NodeStore.Open(new NodeStoreOptions { DataRoot = suppliedRoot, BootIdentity = "data01-child", Clock = childClock });
+            Assert.Equal(20, childStore.Metadata.SchemaVersion);
+            Assert.Equal(20, childStore.Metadata.MinReaderVersion);
             using var commands = Commands(childStore, suppliedRoot);
             var original = Intent(commands, saved[..16]) with { OwnerEpoch = saved[16..] };
             if (phase == "replay") Assert.Equal(1, commands.CompactKnownResponses());
@@ -132,7 +134,7 @@ public sealed partial class DurableCommandStoreTests
             return;
         }
         using var root = new TemporaryDataRoot();
-        using (var store = root.Open(new ManualClock()))
+        using (var store = root.Open(new ManualClock(), StoreMigrations.Released))
         using (var commands = Commands(store, root.Path))
             File.WriteAllBytes(Path.Combine(root.Path, "data01-original-command.fixture"), [.. RandomNumberGenerator.GetBytes(16), .. commands.OwnerEpoch.Span]);
         foreach (string phase in new[] { "settle", "replay" })
@@ -165,7 +167,7 @@ public sealed partial class DurableCommandStoreTests
             TestContext.Current.TestOutputHelper?.WriteLine("Real SQLite child phase {0}: exit0; process exited={1}", phase, child.HasExited);
         }
         Assert.Single(File.ReadAllLines(Path.Combine(root.Path, "data01-synthetic-effect.fixture")));
-        using (var store = root.Open(new ManualClock()))
+        using (var store = root.Open(new ManualClock(), StoreMigrations.Released))
         using (var commands = Commands(store, root.Path))
         {
             byte[] original = File.ReadAllBytes(Path.Combine(root.Path, "data01-original-command.fixture"));
