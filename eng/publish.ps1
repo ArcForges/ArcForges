@@ -44,6 +44,9 @@ if ($Component -contains 'run-supervisor' -and -not $qualifiedMxcRid) {
 }
 
 if ($RecordDistribution) {
+  if (-not $NoRestore) {
+    throw 'Run dotnet restore ArcForges.slnx --locked-mode, then publish with -NoRestore -RecordDistribution.'
+  }
   $requiredComponents = @('host', 'run-supervisor')
   if ($RuntimeIdentifier -eq 'win-x64') { $requiredComponents += 'supervisor' }
   if (-not $qualifiedMxcRid -or $Configuration -cne 'Release' -or
@@ -54,6 +57,15 @@ if ($RecordDistribution) {
   $sourceCommit = & python $admission source
   if ($LASTEXITCODE -ne 0) { throw 'Could not identify the clean distribution source.' }
   $receipt = Join-Path $repository "artifacts/publish/$RuntimeIdentifier/distribution-build.json"
+  foreach ($relative in @('artifacts', 'artifacts/publish', "artifacts/publish/$RuntimeIdentifier") +
+    @($Component | ForEach-Object { "artifacts/publish/$RuntimeIdentifier/$_" }) +
+    @("artifacts/publish/$RuntimeIdentifier/distribution-build.json")) {
+    $candidatePath = Join-Path $repository $relative
+    $entry = Get-Item -LiteralPath $candidatePath -Force -ErrorAction SilentlyContinue
+    if ($entry -and ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+      throw 'A filesystem alias intersects the signed worktree publish output.'
+    }
+  }
   if (Test-Path -LiteralPath $receipt) { Remove-Item -LiteralPath $receipt }
 }
 
@@ -63,6 +75,16 @@ foreach ($name in $Component) {
     continue
   }
   $output = Join-Path $repository "artifacts/publish/$RuntimeIdentifier/$name"
+  if ($RecordDistribution) {
+    $expectedParent = [IO.Path]::GetFullPath((Join-Path $repository "artifacts/publish/$RuntimeIdentifier"))
+    $actualParent = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($output))
+    if ($expectedParent -cne $actualParent) { throw 'Unexpected signed component path.' }
+    if (Test-Path -LiteralPath $output) {
+      $alias = Get-ChildItem -LiteralPath $output -Recurse -Force |
+        Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint } | Select-Object -First 1
+      if ($alias) { throw 'A filesystem alias intersects the previous signed component output.' }
+    }
+  }
   if (Test-Path -LiteralPath $output) { Remove-Item -LiteralPath $output -Recurse -Force }
   $arguments = @(
     'publish', (Join-Path $repository $projects[$name]),

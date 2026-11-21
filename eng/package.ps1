@@ -32,6 +32,9 @@ if ((-not $signed) -and ($TrustedKey -or $Qualification -or $ContractsRepo -or $
 if ($signed -and $Qualification -eq 'main' -and (-not $ContractsRepo -or -not $DesktopPlatformRepo)) {
   throw 'Main qualification requires local Contracts and DesktopPlatform producer histories.'
 }
+if ($signed -and $Qualification -eq 'main' -and $MxcInstallRoot) {
+  throw 'Install a signed main distribution separately with the independently admitted archive digest.'
+}
 # Packages Node/CLI and the supervisors belonging to this RID.
 $publish = Join-Path $repository "artifacts/publish/$RuntimeIdentifier/host"
 $executable = if ($RuntimeIdentifier.StartsWith('win-')) { 'arcforges.exe' } else { 'arcforges' }
@@ -119,8 +122,6 @@ if ($LASTEXITCODE -ne 0) { throw 'Could not identify local changes.' }
 } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $stage 'build-info.json') -Encoding utf8
 
 if ($signed) {
-  & python (Join-Path $repository 'packaging/native/sbom.py') --stage $stage --rid $RuntimeIdentifier | Out-Host
-  if ($LASTEXITCODE -ne 0) { throw 'Could not build the native distribution SBOM.' }
   $admission = Join-Path $repository 'packaging/native/node_admission.py'
   $prepare = @('prepare-stage', '--rid', $RuntimeIdentifier, '--stage', $stage, '--qualification', $Qualification)
   if ($ContractsRepo) { $prepare += @('--contracts-repo', $ContractsRepo) }
@@ -167,9 +168,13 @@ if ($qualifiedMxcRid) {
     }
     & python $admission @sign | Out-Host
     if ($LASTEXITCODE -ne 0) { throw 'Could not sign the native archive.' }
+  } else {
+    $verifyArguments += '--allow-unsigned-preview'
   }
-  if ($MxcInstallRoot) { $verifyArguments += @('--output', $MxcInstallRoot) }
-  & python (Join-Path $repository 'packaging/mxc/verify_install.py') @verifyArguments | Out-Host
-  if ($LASTEXITCODE -ne 0) { throw 'Verification of the packaged MXC installation failed.' }
+  if (-not $signed -or $Qualification -eq 'candidate') {
+    if ($MxcInstallRoot) { $verifyArguments += @('--output', $MxcInstallRoot) }
+    & python (Join-Path $repository 'packaging/mxc/verify_install.py') @verifyArguments | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw 'Verification of the packaged MXC installation failed.' }
+  }
 }
 Write-Output $archive

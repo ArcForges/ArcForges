@@ -141,13 +141,19 @@ def envelope(archive, rid, raw, *, commit, tree, allow_candidate):
     return manifest
 
 
-def authenticate(archive, rid, key, executable, *, commit=None, tree=None, allow_candidate=False):
+def authenticate(archive, rid, key, executable, *, commit=None, tree=None, allow_candidate=False,
+                 admitted_archive_sha256=None):
     require(host_rid() == rid, "The signed distribution requires the matching native x64 host")
     raw = read_bounded(Path(f"{archive}.manifest.json"), MAX_MANIFEST)
     signature = read_bounded(Path(f"{archive}.manifest.sig"), SIGNATURE_SIZE)
     trust = public_key(executable, key)
     verify_signature(executable, trust, raw, signature)
-    return envelope(archive, rid, raw, commit=commit, tree=tree, allow_candidate=allow_candidate)
+    manifest = envelope(archive, rid, raw, commit=commit, tree=tree, allow_candidate=allow_candidate)
+    if manifest["qualification"] == "main" or admitted_archive_sha256 is not None:
+        require(admitted_archive_sha256 is not None and SHA256.fullmatch(admitted_archive_sha256)
+                and admitted_archive_sha256 == manifest["archive"]["sha256"],
+                "Signed package requires the independently admitted archive SHA-256")
+    return manifest
 
 
 def archive_digest(archive, *, copy=None, length=MAX_ARCHIVE):

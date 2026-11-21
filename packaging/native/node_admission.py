@@ -260,16 +260,20 @@ def prepared_evidence(args):
             commits = {row["commit"] for dependency in closure.values() for row in dependency if row["repo"] == producer}
             require(commits, "Missing expected first-party dependency lineage")
             mains[producer] = main_ancestry(repo, producer, commits)
-    require((args.stage / "sbom.spdx.json").is_file(), "The native SBOM must be staged before signing")
     return {
         "schema": 1, "source": record["source"], "sdk": record["sdk"], "rid": args.rid,
         "qualification": args.qualification, "mainRefs": mains, "closures": closure,
+        "sbom": {"sha256": digest(args.stage / "sbom.spdx.json"),
+                 "generatorSha256": digest(REPO / "packaging/native/sbom.py")},
         "lockfiles": {PROJECTS[role][1]: digest(args.stage / PROJECTS[role][1]) for role in roles(args.rid)},
         "nativeBuild": record,
     }
 
 
 def prepare_stage(args):
+    from sbom import generate
+
+    generate(args.stage, args.rid, repo=REPO)
     record = prepared_evidence(args)
     info = read_json(args.stage / "build-info.json")
     require(info["commit"] == record["source"]["commit"] and info["sdk"] == record["sdk"]
@@ -303,8 +307,8 @@ def sign_archive(args):
         with tempfile.TemporaryFile(dir=root) as snapshot:
             archive = archive_digest(args.archive, copy=snapshot)
             snapshot.seek(0)
-            extract(args.archive, args.rid, root, source=snapshot)
-        verify(root, args.rid, record["source"]["commit"])
+            extract(args.archive, args.rid, root, source=snapshot, bounded=True)
+        verify(root, args.rid, record["source"]["commit"], distribution="signed-mxc-cohort")
         verify_stage_publish(root, args.rid, record["nativeBuild"])
         require(all(digest(root / name) == digest(args.stage / name) for name in evidence_names.values()),
                 "The archived evidence differs from the verified staging")

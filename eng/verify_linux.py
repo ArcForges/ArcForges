@@ -58,12 +58,31 @@ def run(argv: list[str]) -> None:
         raise Failure(f"{Path(argv[0]).name} {argv[1] if len(argv) > 1 else ''} failed with exit code {code}.")
 
 
+def signed_publish_path(path: Path) -> None:
+    expected = REPOSITORY / "artifacts" / "publish" / RID
+    if PUBLISH != expected or not path.is_relative_to(expected) or path.resolve() != path:
+        raise Failure("Signed publish output must be inside the exact worktree publish directory.")
+    # A bind mount can point outside the worktree without changing resolve().
+    for entry in Path("/proc/self/mountinfo").read_text(encoding="utf-8", errors="surrogateescape").splitlines():
+        mount = Path(re.sub(r"\\([0-7]{3})", lambda match: chr(int(match[1], 8)), entry.split()[4]))
+        if mount.is_relative_to(path) or (mount != REPOSITORY and mount.is_relative_to(REPOSITORY)
+                                         and path.is_relative_to(mount)):
+            raise Failure("A mount aliases the signed worktree publish output.")
+
+
 def publish_group(components: list[str], out: list[str], record_distribution: bool) -> str:
     """eng/publish.ps1 for the components of one group, in order: Native AOT publish per component; any build, trim or
     AOT warning fails it. Output goes to `out`; returns the failure, or an empty string."""
     for name in components:
         output = PUBLISH / name
-        shutil.rmtree(output, ignore_errors=True)
+        if record_distribution:
+            signed_publish_path(output)
+            if output.exists():
+                shutil.rmtree(output)
+            if os.path.lexists(output):
+                raise Failure(f"Could not clear the previous {name} publish output.")
+        else:
+            shutil.rmtree(output, ignore_errors=True)
         argv = ["dotnet", "publish", str(REPOSITORY / PROJECTS[name]), "-c", "Release", "-r", RID, "-o", str(output),
                 "-warnaserror", "-tl:off", "-clp:Summary;ForceNoAlign", "-p:TrimmerSingleWarn=false", "--no-restore",
                 *native_toolchain.aot_arguments()]
@@ -96,17 +115,24 @@ def publish(groups: list[str], record_distribution: bool = False) -> None:
     if record_distribution:
         if not {"host", "run-supervisor"} <= set(components):
             raise Failure("A distribution receipt requires a complete Release native x64 publish.")
+        receipt = PUBLISH / "distribution-build.json"
+        signed_publish_path(receipt)
+        for name in components:
+            signed_publish_path(PUBLISH / name)
         result = subprocess.run([sys.executable, "packaging/native/node_admission.py", "source"],
                                 cwd=REPOSITORY, stdout=subprocess.PIPE, text=True)
         if result.returncode != 0:
             raise Failure("Could not identify the clean distribution source.")
         source_commit = result.stdout.strip()
-        (PUBLISH / "distribution-build.json").unlink(missing_ok=True)
+        receipt.unlink(missing_ok=True)
     outputs: list[list[str]] = [[] for _ in groups]
-    failures: list[str] = ["" for _ in groups]
+    failures: list[str | None] = [None for _ in groups]
 
     def work(index: int) -> None:
-        failures[index] = publish_group(groups[index].split(","), outputs[index], record_distribution)
+        try:
+            failures[index] = publish_group(groups[index].split(","), outputs[index], record_distribution)
+        except Exception as error:
+            failures[index] = f"Publishing {groups[index]} for {RID} failed: {error}"
 
     threads = [threading.Thread(target=work, args=(index,)) for index in range(len(groups))]
     for thread in threads:
@@ -115,6 +141,8 @@ def publish(groups: list[str], record_distribution: bool = False) -> None:
         thread.join()
     for output in outputs:
         print("\n".join(output), flush=True)
+    if any(failure is None for failure in failures):
+        raise Failure("A native publish worker did not report an outcome.")
     if any(failures):
         raise Failure(" ".join(failure for failure in failures if failure))
     if record_distribution:
@@ -159,6 +187,8 @@ def package(args: argparse.Namespace) -> None:
         raise Failure("Signing options require a signing key.")
     if signed and args.qualification == "main" and not (args.contracts_repo and args.desktop_platform_repo):
         raise Failure("Main qualification requires local Contracts and DesktopPlatform producer histories.")
+    if signed and args.qualification == "main" and args.mxc_install_root is not None:
+        raise Failure("Install a signed main distribution separately with the independently admitted archive digest.")
     publish_dir = PUBLISH / "host"
     if not (publish_dir / "arcforges").exists():
         raise Failure(f"Publish the {RID} host before packaging.")
@@ -230,7 +260,6 @@ def package(args: argparse.Namespace) -> None:
     (stage / "build-info.json").write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
 
     if signed:
-        run([sys.executable, "packaging/native/sbom.py", "--stage", str(stage), "--rid", RID])
         admission = [sys.executable, "packaging/native/node_admission.py"]
         build_arguments = ["--rid", RID, "--stage", str(stage), "--qualification", args.qualification]
         for flag, value in (("--contracts-repo", args.contracts_repo), ("--desktop-platform-repo", args.desktop_platform_repo)):
@@ -262,9 +291,12 @@ def package(args: argparse.Namespace) -> None:
             verifier.extend(("--openssl", str(args.openssl)))
         if subprocess.run(signer, cwd=REPOSITORY).returncode != 0:
             raise Failure("Could not sign the native archive.")
+    else:
+        verifier.append("--allow-unsigned-preview")
     if args.mxc_install_root is not None:
         verifier.extend(("--output", str(args.mxc_install_root.absolute())))
-    run(verifier)
+    if not signed or args.qualification == "candidate":
+        run(verifier)
     print(archive, flush=True)
 
 
@@ -302,7 +334,7 @@ def main() -> int:
             compare_startup(args.baseline, args.baseline_source)
         else:
             package(args)
-    except Failure as error:
+    except (Failure, OSError) as error:
         print(f"verify_linux {args.command}: {error}", file=sys.stderr, flush=True)
         return 1
     return 0

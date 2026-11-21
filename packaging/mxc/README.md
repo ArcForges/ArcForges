@@ -32,7 +32,7 @@ home directory on Linux. The extractor protects each new root before writing
 the package files. Omit `--output` for a temporary extraction.
 
 ```text
-python packaging/mxc/verify_install.py --rid <x64-rid> --archive <archive> --commit <commit> --output <fresh-install>
+python packaging/mxc/verify_install.py --allow-unsigned-preview --rid <x64-rid> --archive <archive> --commit <commit> --output <fresh-install>
 ```
 
 ## Build and verify a signed Node distribution
@@ -48,12 +48,13 @@ on Windows and `/usr/bin/openssl` on Linux. An operator can supply an explicit
 trusted executable with `-OpenSsl` or `--openssl`.
 
 ```powershell
-./eng/publish.ps1 -RuntimeIdentifier win-x64 -Component host,supervisor,run-supervisor -RecordDistribution
+dotnet restore ArcForges.slnx --locked-mode
+./eng/publish.ps1 -RuntimeIdentifier win-x64 -Component host,supervisor,run-supervisor -NoRestore -RecordDistribution
 ./eng/package.ps1 -RuntimeIdentifier win-x64 -SigningKey <private-pem> -TrustedKey <public-pem> -Qualification main -ContractsRepo <contracts-repo> -DesktopPlatformRepo <desktop-platform-repo>
 ```
 
 ```sh
-dotnet restore ArcForges.slnx --locked-mode -r linux-x64
+dotnet restore ArcForges.slnx --locked-mode
 python eng/verify_linux.py publish --record-distribution host,run-supervisor
 python eng/verify_linux.py package --signing-key <private-pem> --trusted-key <public-pem> --qualification main --contracts-repo <contracts-repo> --desktop-platform-repo <desktop-platform-repo>
 ```
@@ -73,13 +74,17 @@ are written together under a fresh signed package directory. The signature
 covers the exact UTF-8 manifest bytes, which bind the archive filename,
 length and SHA-256, Node source commit/tree, qualification, and evidence
 digests. Supply the trust key from the operator's trusted distribution
-configuration when downloading and installing the cohort.
+configuration when downloading and installing the cohort. For a signed
+`main` install, separately obtain its exact approved archive SHA-256 from
+the release's admission record. The packager seals the cohort for that
+review and the operator performs the installation separately.
 
 ```text
-python packaging/mxc/verify_install.py --rid <x64-rid> --archive <archive> --trusted-key <public-pem> --commit <commit> --tree <tree> --output <fresh-install>
+python packaging/mxc/verify_install.py --rid <x64-rid> --archive <archive> --trusted-key <public-pem> --admitted-archive-sha256 <approved-sha256> --commit <commit> --tree <tree> --output <fresh-install>
 ```
 
-Use `--allow-candidate` only for a signed test candidate. The verifier
+Use `--allow-candidate` for a signed test candidate when the release admission
+record does not apply. The verifier
 authenticates the envelope and checks the archive bytes before opening
 archive members, and it checks the binaries and pinned MXC components
 before making the new installation directory available. The parent directory

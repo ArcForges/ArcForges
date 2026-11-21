@@ -2,18 +2,25 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Scoped real Ed25519 and Git admission checks for the detached Node envelope."""
 
+from contextlib import redirect_stdout
 import io
 from pathlib import Path
 import subprocess
 import sys
+import tarfile
 import tempfile
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
+from zipfile import ZipFile
 
 sys.dont_write_bytecode = True
 from node_admission import NODE_REPO, main_ancestry
 from signed import ARCHIVE_NAMES, archive_digest, authenticate, host_rid, openssl, openssl_path, seal
 
 VERIFY = Path(__file__).resolve().parents[1] / "mxc" / "verify_install.py"
+sys.path.insert(0, str(VERIFY.parent))
+import verify_install
 
 
 class SignedDistributionTests(unittest.TestCase):
@@ -77,6 +84,15 @@ class SignedDistributionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "OpenSSL rejected"):
             self.authenticate(self.other, allow_candidate=True)
 
+    def test_main_signature_requires_a_separately_admitted_archive(self):
+        self.manifest["qualification"] = "main"
+        self.sign()
+        with self.assertRaisesRegex(ValueError, "independently admitted"):
+            self.authenticate()
+        with self.assertRaisesRegex(ValueError, "independently admitted"):
+            self.authenticate(admitted_archive_sha256="9" * 64, allow_candidate=True)
+        self.assertEqual(self.manifest, self.authenticate(admitted_archive_sha256=self.manifest["archive"]["sha256"]))
+
     def test_tampered_manifest_does_not_verify(self):
         self.sign()
         path = Path(f"{self.archive}.manifest.json")
@@ -98,6 +114,48 @@ class SignedDistributionTests(unittest.TestCase):
         self.assertNotEqual(0, result.returncode)
         self.assertIn("separately trusted public key", result.stderr)
         self.assertFalse(self.output.exists())
+
+    def test_explicit_unsigned_mode_still_refuses_a_stripped_signed_marker(self):
+        manifest = b'{"runtimeIdentifier":"win-x64","distribution":"signed-mxc-cohort"}'
+        archive = self.root / ARCHIVE_NAMES["win-x64"]
+        with ZipFile(archive, "w") as package:
+            package.writestr("build-info.json", manifest)
+        sha = archive_digest(archive)["sha256"]
+        Path(f"{archive}.sha256").write_text(f"{sha}  {archive.name}\n", encoding="ascii")
+        result = subprocess.run([sys.executable, str(VERIFY), "--rid", "win-x64", "--archive", str(archive),
+                                 "--allow-unsigned-preview", "--output", str(self.output)], capture_output=True,
+                                text=True, encoding="utf-8", timeout=30)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("selected authentication", result.stderr)
+        self.assertFalse(self.output.exists())
+
+    def test_archive_limits_include_directories_and_actual_member_declarations(self):
+        archive = self.root / "bounded.zip"
+        with ZipFile(archive, "w") as package:
+            package.writestr("first/", b"")
+            package.writestr("second/", b"")
+            package.writestr("ordinary", b"1234")
+        with patch.object(verify_install, "MAX_MEMBERS", 2):
+            with archive.open("rb") as source, self.assertRaisesRegex(ValueError, "ZIP directory exceeds"):
+                verify_install.extract(archive, "win-x64", self.output, source=source, bounded=True)
+        self.assertFalse(self.output.exists())
+        with patch.object(verify_install, "MAX_MEMBER_BYTES", 3):
+            with archive.open("rb") as source, self.assertRaisesRegex(ValueError, "member exceeds"):
+                verify_install.extract(archive, "win-x64", self.output, source=source, bounded=True)
+        self.assertFalse(self.output.exists())
+
+    def test_tar_declarations_are_bounded_before_reading_member_contents(self):
+        archive = self.root / "bounded.tar.gz"
+        with tarfile.open(archive, "w:gz", format=tarfile.GNU_FORMAT) as package:
+            for name in ("first", "second"):
+                member = tarfile.TarInfo(name)
+                member.size = 4
+                package.addfile(member, io.BytesIO(b"1234"))
+        with patch.object(verify_install, "MAX_EXPANDED_BYTES", 7):
+            with archive.open("rb") as source, self.assertRaisesRegex(ValueError, "expanded size limit"):
+                verify_install.extract(archive, "linux-x64", self.output, source=source, bounded=True)
+        self.assertEqual(b"1234", (self.output / "first").read_bytes())
+        self.assertFalse((self.output / "second").exists())
 
     def test_wrong_native_rid_and_foreign_producer_are_refused(self):
         self.manifest["producers"][0]["repo"] = "ArcForges/Contracts"
@@ -135,6 +193,24 @@ class SignedDistributionTests(unittest.TestCase):
         git("remote", "set-url", "origin", "https://github.com/ArcForges/Contracts.git")
         with self.assertRaisesRegex(ValueError, "origin"):
             main_ancestry(self.root, NODE_REPO, [main])
+
+    def test_failed_linux_publish_worker_cannot_record_old_outputs(self):
+        sys.path.insert(0, str(VERIFY.parents[2] / "eng"))
+        import verify_linux
+
+        output = self.root / "artifacts/publish/linux-x64"
+        output.mkdir(parents=True)
+        receipt = output / "distribution-build.json"
+        receipt.write_text("old receipt", encoding="utf-8")
+        with (patch.object(verify_linux, "PUBLISH", output),
+              patch.object(verify_linux, "signed_publish_path"),
+              patch.object(verify_linux.subprocess, "run", return_value=SimpleNamespace(returncode=0, stdout="1" * 40)),
+              patch.object(verify_linux, "publish_group", side_effect=PermissionError("old output cannot be cleared")),
+              patch.object(verify_linux, "run") as record, redirect_stdout(io.StringIO())):
+            with self.assertRaisesRegex(verify_linux.Failure, "old output cannot be cleared"):
+                verify_linux.publish(["host", "run-supervisor"], record_distribution=True)
+        record.assert_not_called()
+        self.assertFalse(receipt.exists())
 
 
 if __name__ == "__main__":
