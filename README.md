@@ -27,7 +27,7 @@ modules. Shared DesktopPlatform/Contracts and independent applications stay inta
 | `src/ArcForges.Node.Api` | The node's API on the LocalRpc service endpoint (NodeService, NodeEventService) and the node host (startup and shutdown) |
 | `src/ArcForges.Node.Platform` | The execution platform contract and the helper file formats (exit, launch, guard, heartbeat, output index) |
 | `src/ArcForges.Node.Platform.Windows` | Windows execution: job objects, command resolution and quoting, the `node exec-wrap` holder and disk guard, the `node signal` helper |
-| `src/ArcForges.Node.Platform.Linux` | Linux execution: transient user units through the user manager's D-Bus API, the slice's limits, freeze and kill, the `node exec-launch`, `node exec-stop`, `node exit-record` and `node guard` roles |
+| `src/ArcForges.Node.Platform.Linux` | Linux Sandbox Runs through the official MXC SDK, transient user units, cgroup v2 resource limits and observation |
 | `src/ArcForges.Client` | The client library of the CLI: endpoint resolution, auto-start, hello, NodeStreamCache, command IDs, connection state |
 | `src/ArcForges.CommandLine` | The CLI (System.CommandLine): global options, human and JSON output, exit codes |
 | `src/ArcForges.RunSupervisor` | Per-Run ownership, official MXC execution, terminal and output |
@@ -37,7 +37,7 @@ modules. Shared DesktopPlatform/Contracts and independent applications stay inta
 | `tools/ArcForges.Bench` | `arcforges-bench`: binary size, startup and node store growth benchmarks (JSON results) |
 | `tests/` | xUnit v3 test applications; suites selected by trait |
 | `eng/` | test, publish, benchmark and packaging scripts; dependency admissions; the development systemd user unit (`eng/systemd`) |
-| `packaging/linux` | The systemd user units the Linux installers ship (13 section 3.4): `arcforges-node.service`, `arcforges.slice`, `arcforges-guard.service` |
+| `packaging/linux` | The `arcforges-node.service` systemd user unit shipped by the Linux installers |
 
 ## Build and test
 

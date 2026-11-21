@@ -98,11 +98,11 @@ def verify(root, rid, commit):
 
     windows = rid == "win-x64"
     host = "arcforges.exe" if windows else "arcforges"
-    legacy = {"arcforges-supervisor.exe", "supervisor.packages.lock.json"} if windows else {
-        "packaging/linux/arcforges-node.service", "packaging/linux/arcforges-guard.service", "packaging/linux/arcforges.slice",
+    platform_files = {"arcforges-supervisor.exe", "supervisor.packages.lock.json"} if windows else {
+        "packaging/linux/arcforges-node.service",
     }
     require(({host, "packages.lock.json", "run-supervisor.packages.lock.json", "LICENSE", "THIRD_PARTY_NOTICES.md"}
-             | legacy) <= actual, "Required Node/CLI distribution files are missing")
+             | platform_files) <= actual, "Required Node/CLI distribution files are missing")
 
     mxc = root / "mxc"
     manifest = read_json(mxc / "mxc-manifest.json")
