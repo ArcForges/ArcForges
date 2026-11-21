@@ -1,366 +1,408 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
+using ArcForges.Node.Api;
+using ArcForges.Node.Core.Events;
+using ArcForges.Node.Core.Execution;
+using ArcForges.Node.Core.Platform;
+using ArcForges.Node.Platform;
+using ArcForges.Node.Store;
+using ArcForges.Node.Store.Proto;
 using Google.Protobuf;
+using OutputIndexRecord = ArcForges.Node.Platform.OutputIndexRecord;
 
 namespace ArcForges.Node.Core.Tests;
 
-/// <summary>
-/// TaskService against a real node in the test process with the real Windows execution platform (node-component layer; env=windows-real):
-/// submission persisted before the receipt, the exact argument vector, working directory and environment, captured streams byte-identical
-/// to a direct run, stdin modes, sealed secrets, the batch refusal through the API (T-03), validation, waits, attach, output reads, manual
-/// retry, pin and purge.
-/// </summary>
-[Trait("env", "windows-real")]
-[System.Runtime.Versioning.SupportedOSPlatform("windows")]
+/// <summary>Exercises retained V1 Task records through the real local RPC handlers and SQLite.</summary>
+/// <remarks>
+/// The Windows Task admission fixtures can be run from eaaccb8380a2bd265aaad0a67d62c8fab2a8a29a.
+/// The current installed Run exercises argv and working directory in
+/// CliMxcRunServiceTests.InstalledCliManagesOfflineSandboxRunAndResourcesWithExactArgumentsAndReceipts.
+/// TerminalCliMxcRunServiceTests.InstalledCliPreservesBinaryPipesEofAndApplicationExit exercises live binary pipes,
+/// EOF and process exit. SecurityMxcRunServiceTests.InstalledOfflineOwnerRunsExactInputsWithProtectedIpcAndRedactedAuthority
+/// covers V2 secret handling. Legacy CMD batch admission, fresh Task stdin modes and retry admission belong to the historical executor.
+/// </remarks>
 public sealed class TaskServiceTests
 {
+    private const string TaskService = "arcforges.node.v1.TaskService/";
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    [Fact(Timeout = 120_000)]
-    public async Task ACommandReceivesTheExactArgumentsLikeADirectRunAndItsExitCodeIsRecorded()
+    [Theory(Timeout = 60_000)]
+    [InlineData(0, false, false)]
+    [InlineData(7, false, false)]
+    [InlineData(unchecked((int)0xc0000005), true, false)]
+    [InlineData(1, false, true)]
+    public async Task RetainedTaskReturnsExactArgumentsDirectoryAndTerminalResult(int code, bool hasWindowsStatus, bool cancelled)
     {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows execution platform.");
-        await using var node = await InProcessNode.Create().StartAsync();
-        await using var channel = await node.ChannelAsync();
-        var work = Directory.CreateDirectory(Path.Combine(node.Root, "work dir ä")).FullName;
-        string[] argv = [Tasks.TestLoad, "args", "plain", "", "two words", "quote\"inside", "trailing\\", "back\\\\\"slash", "unicode äöü 中文 🚀", "%PATH%", "!x!", "a&b|c<d>e^"];
-
-        var taskId = await Tasks.SubmitAsync(channel, Tasks.Argv(work, argv));
-        var task = await Tasks.WaitAsync(channel, taskId);
-        Assert.Equal(TaskState.Succeeded, task.State);
-        Assert.Equal(TerminationReason.Exited, task.CurrentAttempt.Result.TerminationReason);
-        Assert.Equal(0, task.CurrentAttempt.Result.ExitCode);
-        var managed = await Tasks.ReadAllAsync(channel, task.CurrentAttempt.AttemptId, OutputStream.Stdout);
-        var direct = Tasks.Direct(work, argv);
-        Assert.Equal(Encoding.UTF8.GetString(direct.Stdout), Encoding.UTF8.GetString(managed));
-        using var document = JsonDocument.Parse(managed);
-        Assert.Equal(argv[2..], document.RootElement.GetProperty("argv").EnumerateArray().Select(item => item.GetString()));
-        Assert.Equal(work, document.RootElement.GetProperty("cwd").GetString());
-
-        var failing = await Tasks.WaitAsync(channel, await Tasks.SubmitAsync(channel, Tasks.Argv(work, Tasks.Cmd, "/d", "/c", "exit 7")));
-        Assert.Equal(TaskState.Failed, failing.State);
-        Assert.Equal(7, failing.CurrentAttempt.Result.ExitCode);
-        Assert.Equal(EffectCertainty.Happened, failing.CurrentAttempt.Result.Effect);
-        var exception = await Tasks.WaitAsync(channel, await Tasks.SubmitAsync(channel, Tasks.Argv(work, Tasks.Cmd, "/d", "/c", "exit -1073741819")));
-        Assert.Equal(0xC0000005u, exception.CurrentAttempt.Result.WindowsStatus);
-    }
-
-    [Fact(Timeout = 180_000)]
-    public async Task CapturedStreamsAreByteIdenticalToADirectRun()
-    {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows execution platform.");
-        await using var node = await InProcessNode.Create().StartAsync();
-        await using var channel = await node.ChannelAsync();
-        string[] argv = [Tasks.TestLoad, "output", "--bytes", "16777216", "--line-bytes", "137", "--stream", "both", "--seed", "7"];
-        var task = await Tasks.WaitAsync(channel, await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, argv)));
-        Assert.Equal(TaskState.Succeeded, task.State);
-        var attempt = task.CurrentAttempt.AttemptId;
-        var stdout = await Tasks.ReadAllAsync(channel, attempt, OutputStream.Stdout);
-        var stderr = await Tasks.ReadAllAsync(channel, attempt, OutputStream.Stderr);
-        var merged = await Tasks.ReadAllAsync(channel, attempt, OutputStream.Merged);
-        var direct = Tasks.Direct(node.Root, argv);
-        Assert.Equal(direct.ExitCode, task.CurrentAttempt.Result.ExitCode);
-        Assert.Equal(SHA256.HashData(direct.Stdout), SHA256.HashData(stdout));
-        Assert.Equal(SHA256.HashData(direct.Stderr), SHA256.HashData(stderr));
-        Assert.Equal(stdout.Length + stderr.Length, merged.Length);
-    }
-
-    [Fact(Timeout = 120_000)]
-    public async Task StdinIsNoneBytesAFileOrAStreamFromTheAttachedCaller()
-    {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows execution platform.");
-        await using var node = await InProcessNode.Create().StartAsync();
-        await using var channel = await node.ChannelAsync();
-        var payload = Encoding.UTF8.GetBytes("line one\r\nzwei ä\n\0binary\xff end");
-
-        var none = Tasks.Argv(node.Root, Tasks.TestLoad, "echo");
-        none.Stdin = new StdinSpec { Mode = StdinMode.None };
-        var noneTask = await Tasks.WaitAsync(channel, await Tasks.SubmitAsync(channel, none));
-        Assert.Empty(await Tasks.ReadAllAsync(channel, noneTask.CurrentAttempt.AttemptId, OutputStream.Stdout));
-
-        var bytes = Tasks.Argv(node.Root, Tasks.TestLoad, "echo");
-        bytes.Stdin = new StdinSpec { Mode = StdinMode.Bytes, Data = ByteString.CopyFrom(payload) };
-        var bytesTask = await Tasks.WaitAsync(channel, await Tasks.SubmitAsync(channel, bytes));
-        Assert.Equal(payload, await Tasks.ReadAllAsync(channel, bytesTask.CurrentAttempt.AttemptId, OutputStream.Stdout));
-
-        var input = Path.Combine(node.Root, "input.bin");
-        File.WriteAllBytes(input, payload);
-        var file = Tasks.Argv(node.Root, Tasks.TestLoad, "echo");
-        file.Stdin = new StdinSpec { Mode = StdinMode.File, FilePath = input };
-        var fileTask = await Tasks.WaitAsync(channel, await Tasks.SubmitAsync(channel, file));
-        Assert.Equal(payload, await Tasks.ReadAllAsync(channel, fileTask.CurrentAttempt.AttemptId, OutputStream.Stdout));
-
-        var stream = Tasks.Argv(node.Root, Tasks.TestLoad, "echo");
-        stream.Stdin = new StdinSpec { Mode = StdinMode.Stream };
-        var streamId = await Tasks.SubmitAsync(channel, stream);
-        using var call = channel.Tasks.AttachTask(new TaskServiceAttachTaskRequest { Meta = Tasks.Meta(), TaskId = streamId, WantStdin = true }, cancellationToken: Ct);
-        Id? attach = null;
-        var output = new MemoryStream();
-        AttemptResult? result = null;
-        while (await call.ResponseStream.MoveNext(Ct))
+        await using var files = InProcessNode.Create();
+        var (taskId, attemptId) = LegacyTaskHistoryFixture.Seed(files, AttemptState.Finished);
+        var directory = Path.Combine(files.Root, "retained work dir ä");
+        string[] arguments = ["historic.exe", "", "two words", "quote\"inside", "trailing\\", "unicode äöü 中文 🚀", "literal%name"];
+        var spec = Tasks.Argv(directory, arguments);
+        var state = cancelled ? TaskState.Cancelled : code == 0 ? TaskState.Succeeded : TaskState.Failed;
+        var reason = cancelled ? TerminationReason.Cancelled : TerminationReason.Exited;
+        await WithOfflineNodeAsync(files, async (store, channel) =>
         {
-            var frame = call.ResponseStream.Current;
-            if (frame.FrameCase == TaskServiceAttachTaskFrame.FrameOneofCase.Started && frame.Started.StdinGranted && attach is null)
+            store.Write(transaction =>
             {
-                attach = frame.Started.AttachId;
-                ulong offset = 0;
-                foreach (var chunk in payload.Chunk(7))
-                {
-                    var written = await channel.Tasks.WriteTaskInputAsync(new TaskServiceWriteTaskInputRequest
-                    {
-                        Meta = Tasks.Meta(),
-                        TaskId = streamId,
-                        AttachId = attach,
-                        Offset = offset,
-                        Data = ByteString.CopyFrom(chunk),
-                    }, cancellationToken: Ct);
-                    Assert.Null(written.Error);
-                    offset = written.Value.AcceptedThrough;
+                StoreSpec(transaction, taskId, spec);
+                transaction.Execute("UPDATE task SET state = $state WHERE task_id = $id;",
+                    ("$state", (int)state), ("$id", taskId.Value.ToByteArray()));
+                transaction.Execute("UPDATE attempt SET exit_code = $exit, windows_status = $status, termination_reason = $reason WHERE attempt_id = $id;",
+                    ("$exit", code), ("$status", hasWindowsStatus ? (long)unchecked((uint)code) : (long?)null),
+                    ("$reason", (int)reason), ("$id", attemptId.Value.ToByteArray()));
+            }, CommitDurability.Full);
 
-                    // A repeated write (a retry) is deduplicated by its offset.
-                    var again = await channel.Tasks.WriteTaskInputAsync(new TaskServiceWriteTaskInputRequest
-                    {
-                        Meta = Tasks.Meta(),
-                        TaskId = streamId,
-                        AttachId = attach,
-                        Offset = offset - (ulong)chunk.Length,
-                        Data = ByteString.CopyFrom(chunk),
-                    }, cancellationToken: Ct);
-                    Assert.Equal(offset, again.Value.AcceptedThrough);
-                }
-
-                var closed = await channel.Tasks.CloseTaskInputAsync(new TaskServiceCloseTaskInputRequest { Meta = Tasks.Meta(), TaskId = streamId, AttachId = attach }, cancellationToken: Ct);
-                Assert.Null(closed.Error);
-            }
-            else if (frame.FrameCase == TaskServiceAttachTaskFrame.FrameOneofCase.Output)
+            var full = await Tasks.GetAsync(channel, taskId, full: true);
+            Assert.Equal(directory, full.Spec.WorkingDirectory);
+            Assert.Equal(arguments, full.Spec.Command.Argv.Argv.ToArray());
+            var waited = await channel.Tasks.WaitTaskAsync(new TaskServiceWaitTaskRequest { Meta = Tasks.Meta(), TaskId = taskId }, cancellationToken: Ct);
+            Assert.Null(waited.Error);
+            Assert.True(waited.Value.Reached);
+            Assert.Equal(state, waited.Value.Task.State);
+            var attempt = waited.Value.Task.CurrentAttempt;
+            Assert.Equal(attemptId, attempt.AttemptId);
+            Assert.Equal(AttemptState.Finished, attempt.State);
+            Assert.Equal(reason, attempt.Result.TerminationReason);
+            Assert.True(attempt.Result.HasExitCode);
+            Assert.Equal(code, attempt.Result.ExitCode);
+            Assert.Equal(EffectCertainty.Happened, attempt.Result.Effect);
+            Assert.Equal(hasWindowsStatus, attempt.Result.HasWindowsStatus);
+            if (hasWindowsStatus)
             {
-                output.Write(frame.Output.Data.Span);
+                Assert.Equal(unchecked((uint)code), attempt.Result.WindowsStatus);
             }
-            else if (frame.FrameCase == TaskServiceAttachTaskFrame.FrameOneofCase.Result)
-            {
-                result = frame.Result;
-            }
-        }
-
-        Assert.NotNull(attach);
-        Assert.Equal(0, result!.ExitCode);
-        Assert.Equal(payload, output.ToArray());
-
-        // Writes without the current attach are refused.
-        var stale = await channel.Tasks.WriteTaskInputAsync(new TaskServiceWriteTaskInputRequest
-        {
-            Meta = Tasks.Meta(),
-            TaskId = streamId,
-            AttachId = CommandIds.New(),
-            Offset = 0,
-            Data = Tasks.Bytes("x"),
-        }, cancellationToken: Ct);
-        Assert.NotNull(stale.Error);
-    }
-
-    [Fact(Timeout = 120_000)]
-    public async Task SecretShapedValuesAreSealedAndOnlyThePresenceIsRecorded()
-    {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows execution platform.");
-        await using var node = await InProcessNode.Create().StartAsync();
-        await using var channel = await node.ChannelAsync();
-        var spec = Tasks.Argv(node.Root, Tasks.Cmd, "/d", "/c", "echo [%API_TOKEN%] [%PLAIN_VALUE%] [%ARCFORGES_TASK_ID%] [%TMP%]");
-        spec.Environment = new EnvironmentSpec { Inherit = EnvironmentInherit.Caller };
-        spec.Environment.CallerEnvironment["SystemRoot"] = Environment.GetEnvironmentVariable("SystemRoot")!;
-        spec.Environment.CallerEnvironment["GITHUB_TOKEN"] = "caller-secret-value";
-        spec.Environment.Set["API_TOKEN"] = "s3cret-value";
-        spec.Environment.Set["PLAIN_VALUE"] = "visible";
-        var taskId = await Tasks.SubmitAsync(channel, spec);
-        var task = await Tasks.WaitAsync(channel, taskId);
-        var output = Encoding.UTF8.GetString(await Tasks.ReadAllAsync(channel, task.CurrentAttempt.AttemptId, OutputStream.Stdout));
-        Assert.Contains("[s3cret-value] [visible]", output, StringComparison.Ordinal);
-        Assert.Contains($"[{IdText.Format(taskId)}]", output, StringComparison.Ordinal);
-        Assert.Contains(Path.Combine(node.DataRoot, "tmp", IdText.Format(task.CurrentAttempt.AttemptId)), output, StringComparison.OrdinalIgnoreCase);
-
-        // R-EXE-017: records show secret-shaped names as presence only; the values live sealed in task_secret.
-        var full = await Tasks.GetAsync(channel, taskId, full: true);
-        Assert.Equal("visible", full.Spec.Environment.Set["PLAIN_VALUE"]);
-        Assert.False(full.Spec.Environment.Set.ContainsKey("API_TOKEN"));
-        Assert.Empty(full.Spec.Environment.CallerEnvironment);
-        var stored = node.Runtime.Store.Read(reader => (reader.Scalar("SELECT names_json FROM task_secret WHERE task_id = $id;", ("$id", taskId.Value.ToByteArray())) as string,
-            reader.Scalar("SELECT count(*) FROM task WHERE instr(spec, $value) > 0;", ("$value", Encoding.UTF8.GetBytes("s3cret-value")))));
-        Assert.Equal("[\"API_TOKEN\",\"GITHUB_TOKEN\"]", stored.Item1);
-        Assert.Equal(0L, stored.Item2);
-    }
-
-    [Fact(Timeout = 120_000)]
-    public async Task UnsafeBatchArgumentsAreRefusedAndSafeOnesReachTheBatchFileUnchanged()
-    {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows batch files.");
-        await using var node = await InProcessNode.Create().StartAsync();
-        await using var channel = await node.ChannelAsync();
-        var script = Path.Combine(node.Root, "probe.cmd");
-        File.WriteAllText(script, $"@\"{Tasks.TestLoad}\" args %*\r\n");
-
-        foreach (var unsafeArgument in (string[])["\"&calc.exe", "x\" | whoami", "!PATH!", "line\nbreak", "\"%PATH%\"", "quote\"only", "\"", "\"two words\"", "a\\\"b"])
-        {
-            var refused = await Tasks.SubmitRawAsync(channel, Tasks.Argv(node.Root, script, "ok", unsafeArgument));
-            Assert.Equal(("unsafe_batch_argument", ErrorCategory.Validation), (refused.Error.Code, refused.Error.Category));
-            Assert.Equal("2", refused.Error.Details.State.Reason);
-            Assert.Equal(EffectCertainty.DidNotHappen, refused.Error.Effect);
-        }
-
-        string[] safe = ["two words", "a&b", "x|y", "<in>", "caret^", "50%", "%PATH%", "(paren)", "comma,semi;eq=", "C:\\dir with space\\", "next",
-            "trailing\\\\ two", "\\\\server\\share x\\", "a\\b c", "C:\\nospace\\"];
-        var task = await Tasks.WaitAsync(channel, await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, [script, .. safe])));
-        Assert.Equal(TaskState.Succeeded, task.State);
-        using var document = JsonDocument.Parse(await Tasks.ReadAllAsync(channel, task.CurrentAttempt.AttemptId, OutputStream.Stdout));
-        Assert.Equal(safe, document.RootElement.GetProperty("argv").EnumerateArray().Select(item => item.GetString()));
+        });
     }
 
     [Fact(Timeout = 60_000)]
-    public async Task InvalidSubmissionsAreRefusedBeforeAnythingIsStored()
+    public async Task RetainedOutputKeepsExactBytesOffsetsTerminalFramesAndTail()
     {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows execution platform.");
-        await using var node = await InProcessNode.Create().StartAsync();
-        await using var channel = await node.ChannelAsync();
-        var notFound = await Tasks.SubmitRawAsync(channel, Tasks.Argv(node.Root, "arcforges-no-such-program-xyz"));
-        Assert.Equal(("program_not_found", "arcforges-no-such-program-xyz"), (notFound.Error.Code, notFound.Error.Details.State.Reason));
-        var missingDirectory = await Tasks.SubmitRawAsync(channel, Tasks.Argv(Path.Combine(node.Root, "missing"), Tasks.Cmd));
-        Assert.Equal(("path_not_found", "working_directory"), (missingDirectory.Error.Code, missingDirectory.Error.Details.State.Reason));
-        var relative = await Tasks.SubmitRawAsync(channel, Tasks.Argv("relative", Tasks.Cmd));
-        Assert.Equal("invalid_argument", relative.Error.Code);
-        var shell = Tasks.Argv(node.Root);
-        shell.Command = new CommandSpec { Shell = new ShellCommand { Kind = ShellKind.Bash, Script = "echo", ShellPath = Path.Combine(node.Root, "no-bash.exe") } };
-        Assert.Equal("unsupported_shell", (await Tasks.SubmitRawAsync(channel, shell)).Error.Code);
-        var dependency = Tasks.Argv(node.Root, Tasks.Cmd);
-        dependency.DependsOn.Add(new Dependency { TaskId = CommandIds.New() });
-        Assert.Equal("invalid_dependency", (await Tasks.SubmitRawAsync(channel, dependency)).Error.Code);
-        var tooLong = Tasks.Argv(node.Root, Tasks.Cmd, "/c", new string('x', 40_000));
-        Assert.Equal("invalid_argument", (await Tasks.SubmitRawAsync(channel, tooLong)).Error.Code);
-        var interactive = Tasks.Argv(node.Root, Tasks.Cmd);
-        interactive.Priority = Priority.Interactive;
-        Assert.Equal("permission_denied", (await Tasks.SubmitRawAsync(channel, interactive)).Error.Code);
+        await using var files = InProcessNode.Create();
+        var (taskId, attemptId) = LegacyTaskHistoryFixture.Seed(files, AttemptState.Finished);
+        var stdout = Enumerable.Range(0, 150_000).Select(index => (byte)(index % 251)).ToArray();
+        var stderr = Enumerable.Range(0, 150_000).Select(index => (byte)(255 - index % 251)).ToArray();
+        var merged = SeedOutput(files, attemptId, stdout, stderr);
 
-        var list = await channel.Tasks.ListTasksAsync(new TaskServiceListTasksRequest { Meta = Tasks.Meta() }, cancellationToken: Ct);
-        Assert.Empty(list.Value.Tasks);
+        await WithOfflineNodeAsync(files, async (_, channel) =>
+        {
+            Assert.Equal(stdout, await Tasks.ReadAllAsync(channel, attemptId, OutputStream.Stdout));
+            Assert.Equal(stderr, await Tasks.ReadAllAsync(channel, attemptId, OutputStream.Stderr));
+            Assert.Equal(merged, await Tasks.ReadAllAsync(channel, attemptId, OutputStream.Merged));
+
+            using var attach = channel.Tasks.AttachTask(new TaskServiceAttachTaskRequest { Meta = Tasks.Meta(), TaskId = taskId },
+                cancellationToken: Ct);
+            var frames = new List<TaskServiceAttachTaskFrame>();
+            while (await attach.ResponseStream.MoveNext(Ct))
+            {
+                frames.Add(attach.ResponseStream.Current);
+            }
+
+            Assert.Equal(TaskServiceAttachTaskFrame.FrameOneofCase.Started, frames[0].FrameCase);
+            Assert.False(frames[0].Started.StdinGranted);
+            Assert.Equal(TaskServiceAttachTaskFrame.FrameOneofCase.Result, frames[^1].FrameCase);
+            Assert.Equal((TerminationReason.Exited, 0, EffectCertainty.Happened),
+                (frames[^1].Result.TerminationReason, frames[^1].Result.ExitCode, frames[^1].Result.Effect));
+            var chunks = frames.Where(frame => frame.FrameCase == TaskServiceAttachTaskFrame.FrameOneofCase.Output)
+                .Select(frame => frame.Output).ToArray();
+            Assert.True(chunks.Length > 4);
+            Assert.All(chunks, chunk => Assert.InRange(chunk.Data.Length, 1, 64 * 1024));
+            Assert.Equal(merged, chunks.SelectMany(chunk => chunk.Data).ToArray());
+
+            using var watch = channel.Tasks.WatchTaskOutput(new TaskServiceWatchTaskOutputRequest
+            {
+                Meta = Tasks.Meta(),
+                AttemptId = attemptId,
+                Stream = OutputStream.Stdout,
+                FromOffset = 1_000,
+            }, cancellationToken: Ct);
+            var observed = new List<TaskServiceWatchTaskOutputFrame>();
+            while (await watch.ResponseStream.MoveNext(Ct))
+            {
+                observed.Add(watch.ResponseStream.Current);
+            }
+
+            Assert.Equal(TaskServiceWatchTaskOutputFrame.FrameOneofCase.Result, observed[^1].FrameCase);
+            Assert.Equal(frames[^1].Result, observed[^1].Result);
+            var watched = observed.Where(frame => frame.FrameCase == TaskServiceWatchTaskOutputFrame.FrameOneofCase.Output)
+                .Select(frame => frame.Output).ToArray();
+            ulong offset = 1_000;
+            foreach (var chunk in watched)
+            {
+                Assert.Equal(attemptId, chunk.AttemptId);
+                Assert.Equal(OutputStream.Stdout, chunk.Stream);
+                Assert.Equal(offset, chunk.Offset);
+                offset += (ulong)chunk.Data.Length;
+            }
+            Assert.Equal((ulong)stdout.Length, offset);
+            Assert.Equal(stdout[1_000..], watched.SelectMany(chunk => chunk.Data).ToArray());
+
+            var wait = await channel.Tasks.WaitTaskAsync(new TaskServiceWaitTaskRequest
+            {
+                Meta = Tasks.Meta(),
+                TaskId = taskId,
+                WaitMs = 100,
+                TailBytes = 4_096,
+            }, cancellationToken: Ct);
+            Assert.Null(wait.Error);
+            Assert.True(wait.Value.Reached);
+            Assert.Equal(merged[^4_096..], wait.Value.Tail.ToByteArray());
+            Assert.True(wait.Value.TailTruncated);
+
+            var staleAttach = await channel.Tasks.WriteTaskInputAsync(new TaskServiceWriteTaskInputRequest
+            {
+                Meta = Tasks.Meta(),
+                TaskId = taskId,
+                AttachId = frames[0].Started.AttachId,
+                Data = ByteString.CopyFrom(new byte[] { 0, 0xff }),
+            }, cancellationToken: Ct);
+            Assert.Equal("invalid_state", staleAttach.Error.Code);
+            Assert.Equal("NOT_RUNNING", staleAttach.Error.Details.State.State);
+            Assert.Null(staleAttach.Value);
+        });
     }
 
-    [Fact(Timeout = 120_000)]
-    public async Task ASubmissionIsIdempotentByCommandIdAndListedNewestFirst()
+    [Fact(Timeout = 60_000)]
+    public async Task RetainedTaskShowsSealedSecretNamesWithoutExposingValues()
     {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows execution platform.");
-        await using var node = await InProcessNode.Create().StartAsync();
-        await using var channel = await node.ChannelAsync();
-        var request = new TaskServiceSubmitTaskRequest { Meta = Tasks.Meta(), Spec = Tasks.Argv(node.Root, Tasks.Cmd, "/d", "/c", "exit 0") };
-        var first = await channel.Tasks.SubmitTaskAsync(request, cancellationToken: Ct);
-        var replay = await channel.Tasks.SubmitTaskAsync(request, cancellationToken: Ct);
-        Assert.Equal(first.Value.TaskId, replay.Value.TaskId);
-        var changed = request.Clone();
-        changed.Spec.Title = "other";
-        Assert.Equal("command_id_reused", (await channel.Tasks.SubmitTaskAsync(changed, cancellationToken: Ct)).Error.Code);
-        var second = await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, Tasks.Cmd, "/d", "/c", "exit 0"));
-        await Tasks.WaitAsync(channel, first.Value.TaskId);
-        await Tasks.WaitAsync(channel, second);
-        var list = await channel.Tasks.ListTasksAsync(new TaskServiceListTasksRequest { Meta = Tasks.Meta() }, cancellationToken: Ct);
-        Assert.Equal([second, first.Value.TaskId], list.Value.Tasks.Select(task => task.TaskId));
-        var succeeded = await channel.Tasks.ListTasksAsync(new TaskServiceListTasksRequest
+        const string secret = "historical-test-only-secret-value";
+        var secrets = new SecretEnvironment
         {
-            Meta = Tasks.Meta(),
-            Filter = new TaskFilter { States = { TaskState.Succeeded } },
-            Page = new PageRequest { Limit = 1 },
-        }, cancellationToken: Ct);
-        Assert.Single(succeeded.Value.Tasks);
-        Assert.True(succeeded.Value.Page.HasMore);
+            Caller = { new EnvEntry { Name = "GITHUB_TOKEN", Value = "historical-caller-value" } },
+            Set = { new EnvEntry { Name = "API_TOKEN", Value = secret } },
+        };
+        await using var files = InProcessNode.Create();
+        var (taskId, _) = LegacyTaskHistoryFixture.Seed(files, AttemptState.Finished, secrets);
+        var spec = Tasks.Argv(files.Root, "historic.exe");
+        spec.Environment = new EnvironmentSpec { Set = { ["PLAIN_VALUE"] = "visible" } };
+
+        await WithOfflineNodeAsync(files, async (store, channel) =>
+        {
+            store.Write(transaction => StoreSpec(transaction, taskId, spec), CommitDurability.Full);
+            var full = await Tasks.GetAsync(channel, taskId, full: true);
+            Assert.Equal("visible", full.Spec.Environment.Set["PLAIN_VALUE"]);
+            Assert.False(full.Spec.Environment.Set.ContainsKey("API_TOKEN"));
+            Assert.Empty(full.Spec.Environment.CallerEnvironment);
+            using var keys = new NodeDataKeyRing(store, files.Secrets.Selection);
+            var original = new TaskSecrets(store, keys).Unseal(taskId.Value.Span);
+            Assert.Equal(UnsealStatus.Available, original.Status);
+            Assert.Equal(secrets, original.Values);
+            var stored = store.Read(reader => (reader.Scalar("SELECT names_json FROM task_secret WHERE task_id = $id;", ("$id", taskId.Value.ToByteArray())),
+                reader.Scalar("SELECT count(*) FROM task WHERE instr(spec, $value) > 0;", ("$value", Encoding.UTF8.GetBytes(secret)))));
+            Assert.Equal("[\"API_TOKEN\",\"GITHUB_TOKEN\"]", stored.Item1);
+            Assert.Equal(0L, stored.Item2);
+        });
     }
 
-    [Fact(Timeout = 120_000)]
-    public async Task AttachStreamsOutputThenTheResultAndWatchFollowsAnAttempt()
+    [Fact(Timeout = 60_000)]
+    public async Task RetainedSubmitReplaysAndListsHistoricalTasksNewestFirst()
     {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows execution platform.");
-        await using var node = await InProcessNode.Create().StartAsync();
-        await using var channel = await node.ChannelAsync();
-        var taskId = await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, Tasks.TestLoad, "output", "--bytes", "300000", "--stream", "both", "--rate", "600000"));
-        using var call = channel.Tasks.AttachTask(new TaskServiceAttachTaskRequest { Meta = Tasks.Meta(), TaskId = taskId }, cancellationToken: Ct);
-        var frames = new List<TaskServiceAttachTaskFrame>();
-        while (await call.ResponseStream.MoveNext(Ct))
+        await using var files = InProcessNode.Create();
+        var (older, _) = LegacyTaskHistoryFixture.Seed(files, AttemptState.Finished);
+        var (newer, _) = LegacyTaskHistoryFixture.Seed(files, AttemptState.Finished);
+        var request = new TaskServiceSubmitTaskRequest { Meta = Tasks.Meta(), Spec = Tasks.Argv(files.Root, "historic.exe") };
+        var original = new TaskServiceSubmitTaskResponse
         {
-            frames.Add(call.ResponseStream.Current);
+            Meta = new ResponseMeta { CorrelationId = request.Meta.CorrelationId },
+            Value = new()
+            {
+                TaskId = older,
+                State = TaskState.Queued,
+                Receipt = new Receipt { CommandId = request.Meta.CommandId, Effect = EffectCertainty.Happened },
+            },
+        };
+
+        await WithOfflineNodeAsync(files, async (store, channel) =>
+        {
+            store.Write(transaction =>
+            {
+                StoreSpec(transaction, older, request.Spec);
+                transaction.Execute("UPDATE task SET created_at = $at WHERE task_id = $id;",
+                    ("$at", transaction.NowMicroseconds - 1_000_000), ("$id", older.Value.ToByteArray()));
+                RecordPrior(transaction, "SubmitTask", request.Meta, request, original);
+            }, CommitDurability.Full);
+            Assert.Equal(original, await channel.Tasks.SubmitTaskAsync(request, cancellationToken: Ct));
+            var changed = request.Clone();
+            changed.Spec.Title = "different recorded request";
+            Assert.Equal("command_id_reused", (await channel.Tasks.SubmitTaskAsync(changed, cancellationToken: Ct)).Error.Code);
+            var fresh = request.Clone();
+            fresh.Meta = Tasks.Meta();
+            AssertLegacyUnavailable((await channel.Tasks.SubmitTaskAsync(fresh, cancellationToken: Ct)).Error);
+
+            var current = await channel.Tasks.ListTasksAsync(new TaskServiceListTasksRequest { Meta = Tasks.Meta() }, cancellationToken: Ct);
+            Assert.Null(current.Error);
+            Assert.Equal([newer, older], current.Value.Tasks.Select(task => task.TaskId));
+            var page = await channel.Tasks.ListTasksAsync(new TaskServiceListTasksRequest
+            {
+                Meta = Tasks.Meta(),
+                Filter = new TaskFilter { States = { TaskState.Succeeded } },
+                Page = new PageRequest { Limit = 1 },
+            }, cancellationToken: Ct);
+            Assert.Null(page.Error);
+            Assert.Equal(newer, Assert.Single(page.Value.Tasks).TaskId);
+            Assert.True(page.Value.Page.HasMore);
+            Assert.Equal(2L, store.Read(reader => reader.Scalar("SELECT count(*) FROM attempt;")));
+            Assert.Equal(1L, store.Read(reader => reader.Scalar("SELECT count(*) FROM command_dedup;")));
+        });
+    }
+
+    [Fact(Timeout = 60_000)]
+    public async Task RetainedRetryDoesNotCreateAnAttemptAndExistingRecordsCanBePinnedAndPurged()
+    {
+        await using var files = InProcessNode.Create();
+        var (taskId, attemptId) = LegacyTaskHistoryFixture.Seed(files, AttemptState.Finished);
+        var directory = Tasks.Files(files, attemptId).Directory;
+        Directory.CreateDirectory(directory);
+        File.WriteAllBytes(Tasks.Files(files, attemptId).StdoutPath, [0, 1, 0xff]);
+        var request = new TaskServiceRetryTaskRequest { Meta = Tasks.Meta(), TaskId = taskId };
+        var original = new TaskServiceRetryTaskResponse
+        {
+            Meta = new ResponseMeta { CorrelationId = request.Meta.CorrelationId },
+            Value = new()
+            {
+                State = TaskState.Queued,
+                Receipt = new Receipt { CommandId = request.Meta.CommandId, Effect = EffectCertainty.Happened },
+                Warnings = { "unknown prior side effect" },
+            },
+        };
+
+        await WithOfflineNodeAsync(files, async (store, channel) =>
+        {
+            store.Write(transaction =>
+            {
+                var next = CommandIds.New();
+                var source = attemptId.Value.ToByteArray();
+                transaction.Execute("""
+                    INSERT INTO attempt (attempt_id, task_id, number, kind, state, executor_node_id, boot_identity,
+                        request_cpu_millicores, request_mem_expected_bytes, request_mem_ceiling_bytes, request_source,
+                        accounted_mem_bytes, created_at, started_at, finished_at, exit_code, termination_reason, effect, rev)
+                    SELECT $next, task_id, 2, kind, state, executor_node_id, boot_identity,
+                        request_cpu_millicores, request_mem_expected_bytes, request_mem_ceiling_bytes, request_source,
+                        accounted_mem_bytes, created_at, started_at, finished_at, 3, termination_reason, effect, 0
+                    FROM attempt WHERE attempt_id = $first;
+                    """, ("$next", next.Value.ToByteArray()), ("$first", source));
+                transaction.Execute("UPDATE attempt SET exit_code = 3 WHERE attempt_id = $first;", ("$first", source));
+                transaction.Execute("UPDATE task SET state = $state, current_attempt_id = $next, attempt_count = 2 WHERE task_id = $task;",
+                    ("$state", (int)TaskState.Failed), ("$next", next.Value.ToByteArray()), ("$task", taskId.Value.ToByteArray()));
+                RecordPrior(transaction, "RetryTask", request.Meta, request, original);
+            }, CommitDurability.Full);
+
+            Assert.Equal(original, await channel.Tasks.RetryTaskAsync(request, cancellationToken: Ct));
+            var current = await Tasks.GetAsync(channel, taskId);
+            Assert.Equal(TaskState.Failed, current.State);
+            Assert.Equal(2u, current.AttemptCount);
+            var attempts = await channel.Tasks.ListAttemptsAsync(new TaskServiceListAttemptsRequest { Meta = Tasks.Meta(), TaskId = taskId },
+                cancellationToken: Ct);
+            Assert.Null(attempts.Error);
+            Assert.Equal([1u, 2u], attempts.Value.Attempts.Select(attempt => attempt.Number));
+            AssertLegacyUnavailable((await channel.Tasks.RetryTaskAsync(new TaskServiceRetryTaskRequest
+            {
+                Meta = Tasks.Meta(),
+                TaskId = taskId,
+            }, cancellationToken: Ct)).Error);
+
+            var pin = await channel.Tasks.PinTaskAsync(new TaskServicePinTaskRequest { Meta = Tasks.Meta(), TaskId = taskId, Pinned = true },
+                cancellationToken: Ct);
+            Assert.Null(pin.Error);
+            Assert.True((await Tasks.GetAsync(channel, taskId)).Pinned);
+            await using var script = await files.ChannelAsync(helloAsHuman: false);
+            var denied = await script.Tasks.PurgeTaskRecordAsync(new TaskServicePurgeTaskRecordRequest { Meta = Tasks.Meta(), TaskId = taskId },
+                cancellationToken: Ct);
+            Assert.Equal("permission_denied", denied.Error.Code);
+            Assert.True(Directory.Exists(directory));
+
+            var purgeRequest = new TaskServicePurgeTaskRecordRequest { Meta = Tasks.Meta(), TaskId = taskId };
+            var purge = await channel.Tasks.PurgeTaskRecordAsync(purgeRequest, cancellationToken: Ct);
+            Assert.Null(purge.Error);
+            Assert.Equal(purgeRequest.Meta.CommandId, purge.Value.Receipt.CommandId);
+            Assert.Equal(EffectCertainty.Happened, purge.Value.Receipt.Effect);
+            Assert.False(Directory.Exists(directory));
+            Assert.Equal(1L, store.Read(reader => reader.Scalar("SELECT count(*) FROM task WHERE purged_at IS NOT NULL;")));
+            Assert.Equal(2L, store.Read(reader => reader.Scalar("SELECT count(*) FROM attempt WHERE output_purged = 1;")));
+            Assert.Equal(original, await channel.Tasks.RetryTaskAsync(request, cancellationToken: Ct));
+        });
+    }
+
+    private static async Task WithOfflineNodeAsync(InProcessNode files, Func<NodeStore, NodeChannel, Task> verify)
+    {
+        using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = files.DataRoot, BootIdentity = BootIdentity.Read(), Clock = files.Clock });
+        using var log = new NodeLog(Path.Combine(files.DataRoot, "logs", "node"), LogLevel.Info, files.Clock);
+        using var heartbeat = new NodeHeartbeatWriter(files.DataRoot, log, files.Clock);
+        using var keys = new NodeDataKeyRing(store, files.Secrets.Selection);
+        var journal = EventJournal.Open(store);
+        var hub = new StreamHub();
+        await using var processor = new CommandProcessor(store, journal, hub);
+        await using var execution = new ExecutionSupervisor(new ExecutionOptions
+        {
+            Store = store,
+            Processor = processor,
+            Log = log,
+            Clock = files.Clock,
+            DataRoot = files.DataRoot,
+            Secrets = new TaskSecrets(store, keys),
+            Heartbeat = heartbeat,
+        });
+        using var runtime = new NodeRuntime(store, journal, hub, processor, log,
+            new NodeSettingsManager(files.ConfigPath, files.DataRoot, log), files.DataRoot, "offline-fixture", files.Clock,
+            new RecoveryReport(false, false, null, store.Opening), new CapabilityReport()) { Execution = execution };
+        if (!OperatingSystem.IsWindows())
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(files.Endpoint.Address)!,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         }
 
-        Assert.Equal(TaskServiceAttachTaskFrame.FrameOneofCase.Started, frames[0].FrameCase);
-        Assert.Equal(TaskServiceAttachTaskFrame.FrameOneofCase.Result, frames[^1].FrameCase);
-        Assert.Equal(TerminationReason.Exited, frames[^1].Result.TerminationReason);
-        var outputs = frames.Where(frame => frame.FrameCase == TaskServiceAttachTaskFrame.FrameOneofCase.Output).Select(frame => frame.Output).ToList();
-        Assert.True(outputs.Count > 2, "Output arrived in several chunks while the task ran.");
-        Assert.All(outputs, chunk => Assert.True(chunk.Data.Length <= 64 * 1024));
-        Assert.Equal(300_000, outputs.Sum(chunk => chunk.Data.Length));
-
-        var attempt = (await Tasks.GetAsync(channel, taskId)).CurrentAttempt.AttemptId;
-        using var watch = channel.Tasks.WatchTaskOutput(new TaskServiceWatchTaskOutputRequest { Meta = Tasks.Meta(), AttemptId = attempt, Stream = OutputStream.Stdout, FromOffset = 1000 },
-            cancellationToken: Ct);
-        long watched = 0;
-        TaskServiceWatchTaskOutputFrame? last = null;
-        while (await watch.ResponseStream.MoveNext(Ct))
-        {
-            last = watch.ResponseStream.Current;
-            watched += last.Output?.Data.Length ?? 0;
-        }
-
-        Assert.Equal(TaskServiceWatchTaskOutputFrame.FrameOneofCase.Result, last!.FrameCase);
-        Assert.Equal(150_000 - 1000, watched);
-        var wait = await channel.Tasks.WaitTaskAsync(new TaskServiceWaitTaskRequest { Meta = Tasks.Meta(), TaskId = taskId, WaitMs = 100, TailBytes = 4096 }, cancellationToken: Ct);
-        Assert.True(wait.Value.Reached);
-        Assert.Equal(4096, wait.Value.Tail.Length);
-        Assert.True(wait.Value.TailTruncated);
+        await using var server = NodeApiServer.Build(files.Endpoint, runtime, new ClientSessions());
+        await server.StartAsync(Ct);
+        await using var channel = await files.ChannelAsync(helloAsHuman: true);
+        await verify(store, channel);
+        Assert.Null(execution.Platform);
+        Assert.Empty(execution.RunningAttempts);
     }
 
-    [Fact(Timeout = 120_000)]
-    public async Task AFailedTaskCanBeRetriedPinnedAndItsRecordPurged()
+    private static void StoreSpec(StoreTransaction transaction, Id task, TaskSpec spec)
     {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows execution platform.");
-        await using var node = await InProcessNode.Create().StartAsync();
-        await using var channel = await node.ChannelAsync(helloAsHuman: true);
-        var spec = Tasks.Argv(node.Root, Tasks.Cmd, "/d", "/c", "echo attempt & exit 3");
-        spec.Environment.Set["API_TOKEN"] = "kept-for-retry";
-        var taskId = await Tasks.SubmitAsync(channel, spec);
-        var failed = await Tasks.WaitAsync(channel, taskId);
-        Assert.Equal(TaskState.Failed, failed.State);
+        var bytes = spec.ToByteArray();
+        transaction.Execute("UPDATE task SET spec = $spec, spec_digest = $digest WHERE task_id = $task;",
+            ("$spec", bytes), ("$digest", SHA256.HashData(bytes)), ("$task", task.Value.ToByteArray()));
+    }
 
-        var retry = await channel.Tasks.RetryTaskAsync(new TaskServiceRetryTaskRequest { Meta = Tasks.Meta(), TaskId = taskId }, cancellationToken: Ct);
-        Assert.Null(retry.Error);
-        Assert.Contains(retry.Value.Warnings, warning => warning.Contains("unknown", StringComparison.OrdinalIgnoreCase));
-        var again = await Tasks.WaitAsync(channel, taskId);
-        Assert.Equal(2u, again.AttemptCount);
-        var attempts = await channel.Tasks.ListAttemptsAsync(new TaskServiceListAttemptsRequest { Meta = Tasks.Meta(), TaskId = taskId }, cancellationToken: Ct);
-        Assert.Equal([1u, 2u], attempts.Value.Attempts.Select(attempt => attempt.Number));
-        var invalid = await channel.Tasks.RetryTaskAsync(new TaskServiceRetryTaskRequest { Meta = Tasks.Meta(), TaskId = CommandIds.New() }, cancellationToken: Ct);
-        Assert.Equal("not_found", invalid.Error.Code);
+    private static void RecordPrior(StoreTransaction transaction, string method, RequestMeta meta, IMessage request, IMessage response)
+    {
+        Assert.Equal(DedupStatus.Execute, CommandDeduplication.Begin(transaction, meta.CommandId.Value.Span,
+            TaskService + method, PayloadDigest.Compute(request), Origin.Human).Status);
+        CommandDeduplication.Complete(transaction, meta.CommandId.Value.Span, response.ToByteArray());
+    }
 
-        Assert.Null((await channel.Tasks.PinTaskAsync(new TaskServicePinTaskRequest { Meta = Tasks.Meta(), TaskId = taskId, Pinned = true }, cancellationToken: Ct)).Error);
-        Assert.True((await Tasks.GetAsync(channel, taskId)).Pinned);
+    private static byte[] SeedOutput(InProcessNode node, Id attempt, byte[] stdout, byte[] stderr)
+    {
+        var files = Tasks.Files(node, attempt);
+        Directory.CreateDirectory(files.Directory);
+        File.WriteAllBytes(files.StdoutPath, stdout);
+        using var errorFile = File.Create(files.OutputPath(OutputStreamKind.Stderr));
+        errorFile.Write(stderr);
+        using var index = File.Create(files.IndexPath);
+        using var merged = new MemoryStream();
+        const int recordSize = 75_000;
+        var buffer = new byte[OutputIndexRecord.Size];
+        for (var offset = 0; offset < stdout.Length; offset += recordSize)
+        {
+            new OutputIndexRecord(OutputStreamKind.Stdout, offset, recordSize, offset + 1, OutputChunkMarks.None).Write(buffer);
+            index.Write(buffer);
+            merged.Write(stdout.AsSpan(offset, recordSize));
+            new OutputIndexRecord(OutputStreamKind.Stderr, offset, recordSize, offset + 2, OutputChunkMarks.None).Write(buffer);
+            index.Write(buffer);
+            merged.Write(stderr.AsSpan(offset, recordSize));
+        }
 
-        var directory = Tasks.Files(node, again.CurrentAttempt.AttemptId).Directory;
-        Assert.True(Directory.Exists(directory));
-        var purge = await channel.Tasks.PurgeTaskRecordAsync(new TaskServicePurgeTaskRecordRequest { Meta = Tasks.Meta(), TaskId = taskId }, cancellationToken: Ct);
-        Assert.Null(purge.Error);
-        Assert.False(Directory.Exists(directory));
-        var afterPurge = await channel.Tasks.RetryTaskAsync(new TaskServiceRetryTaskRequest { Meta = Tasks.Meta(), TaskId = taskId }, cancellationToken: Ct);
-        Assert.Equal("not_found", afterPurge.Error.Code);
+        return merged.ToArray();
+    }
 
-        // A script caller may not purge (tasks.proto: SCRIPT=D).
-        await using var script = await node.ChannelAsync(helloAsHuman: false);
-        var other = await Tasks.WaitAsync(script, await Tasks.SubmitAsync(script, Tasks.Argv(node.Root, Tasks.Cmd, "/d", "/c", "exit 0")));
-        var denied = await script.Tasks.PurgeTaskRecordAsync(new TaskServicePurgeTaskRecordRequest { Meta = Tasks.Meta(), TaskId = other.TaskId }, cancellationToken: Ct);
-        Assert.Equal("permission_denied", denied.Error.Code);
+    private static void AssertLegacyUnavailable(ArcError error)
+    {
+        Assert.Equal(("operation_failed", EffectCertainty.Unknown, RetryMode.Never), (error.Code, error.Effect, error.Retry.Mode));
+        Assert.Equal("legacy_task_outcome_unavailable", error.Details.State.Reason);
     }
 }
