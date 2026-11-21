@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
+using ArcForges.Node.Api;
+using ArcForges.Node.CloudLink;
 using ArcForges.Node.Core.Files;
 using ArcForges.Node.Core.Platform;
 using ArcForges.Node.Store;
+using ArcForges.Node.Store.Migrations;
 using Google.Protobuf;
 using Microsoft.Data.Sqlite;
 using NodeShapes = ArcForges.Contracts.Node.Shapes.ContractShapeValidation;
@@ -142,22 +146,50 @@ public sealed partial class FileMutationJournalTests
     }
 
     [Fact(Timeout = 120_000)]
-    public async Task NodeShutdownLeavesAnExistingLegacyPreparationForExplicitMigration()
+    public async Task NodeRefusesToStartWithALegacyPreparationAndLeavesItForMigration()
     {
         using var fixture = new Fixture();
-        await using var node = await InProcessNode.Create().StartAsync();
-        var registered = new RegisteredWorkspaces(node.Runtime.Store).RegisterFromVerifiedHuman(fixture.Workspace, "journal-test",
-            cancellationToken: TestContext.Current.CancellationToken);
-        var (intent, raw) = fixture.WriteIntent(registered.Id, Encoding.UTF8.GetBytes("restart-test-content"));
-        Assert.Equal(FileJournalPreparation.Prepared, node.Runtime.Store.Write(
-            t => FileMutationJournal.Prepare(t, intent, raw), CommitDurability.Full));
-        var before = node.Runtime.Store.Read(r => FileMutationJournal.GetForCaller(r, intent.CommandId, intent.Caller));
-        Assert.NotNull(before);
-        Assert.True(before.Held);
-        Assert.Equal(SHA256.HashData(raw), before.RequestSha256.ToByteArray());
+        await using var node = InProcessNode.Create();
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        var historicalOptions = new NodeStoreOptions { DataRoot = node.DataRoot, BootIdentity = "journal-history-inspection" };
+        FileJournalIntent intent;
+        FileOperation before;
+        using (var historical = NodeStore.Open(historicalOptions, StoreMigrations.Expanded))
+        {
+            var registered = new RegisteredWorkspaces(historical).RegisterFromVerifiedHuman(fixture.Workspace, "journal-test",
+                cancellationToken: cancellation);
+            byte[] raw;
+            (intent, raw) = fixture.WriteIntent(registered.Id, Encoding.UTF8.GetBytes("restart-test-content"));
+            Assert.Equal(FileJournalPreparation.Prepared, historical.Write(
+                t => FileMutationJournal.Prepare(t, intent, raw), CommitDurability.Full));
+            before = Assert.IsType<FileOperation>(historical.Read(r => FileMutationJournal.GetForCaller(r, intent.CommandId, intent.Caller)));
+            Assert.True(before.Held);
+            Assert.Equal(SHA256.HashData(raw), before.RequestSha256.ToByteArray());
+        }
 
-        Assert.Equal(0, await node.StopAsync());
-        using var reopened = NodeStore.Open(new NodeStoreOptions { DataRoot = node.DataRoot, BootIdentity = "journal-history-inspection" });
+        string database = StorePaths.Database(node.DataRoot);
+        byte[] original = File.ReadAllBytes(database);
+        bool ready = false;
+        using var errors = new StringWriter(CultureInfo.InvariantCulture);
+        var options = new NodeHostOptions
+        {
+            ConfigPath = node.ConfigPath,
+            Endpoint = node.Endpoint,
+            SecretStore = _ => node.Secrets.Selection,
+            NodeKeys = NodeKeyStores.ForTestDataRoot,
+            Output = TextWriter.Null,
+            Error = errors,
+            Ready = _ => ready = true,
+        };
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        deadline.CancelAfter(TimeSpan.FromSeconds(30));
+        Assert.Equal(NodeExitCodes.Failure, await NodeHost.RunAsync(options, deadline.Token));
+        Assert.Contains("legacy_store_requires_offline_cutover", errors.ToString(), StringComparison.Ordinal);
+        Assert.False(ready);
+        Assert.False(File.Exists(NodeLocations.EndpointDescriptorFile(node.DataRoot)));
+        Assert.Equal(original, File.ReadAllBytes(database));
+
+        using var reopened = NodeStore.Open(historicalOptions, StoreMigrations.Expanded);
         var after = reopened.Read(r => FileMutationJournal.GetForCaller(r, intent.CommandId, intent.Caller));
         Assert.Equal(before, after);
         Assert.Equal("original test bytes", File.ReadAllText(fixture.Target));
@@ -192,7 +224,7 @@ public sealed partial class FileMutationJournalTests
         {
             DataRoot = Path.Combine(_root.FullName, "node-data"),
             BootIdentity = "journal-test",
-        });
+        }, StoreMigrations.Expanded);
 
         internal (FileJournalIntent Intent, byte[] Raw) WriteIntent(byte[] workspaceId, byte[] data)
         {

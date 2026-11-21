@@ -2,6 +2,7 @@
 using ArcForges.Node.Core.Files;
 using ArcForges.Node.Core.Platform;
 using ArcForges.Node.Store;
+using ArcForges.Node.Store.Migrations;
 
 namespace ArcForges.Node.Core.Tests;
 
@@ -19,7 +20,9 @@ public sealed class AttemptDirectoryTrackingObservationTests
             Directory.CreateDirectory(Path.Combine(tree, "tracked"));
             Directory.CreateDirectory(Path.Combine(tree, "untracked"));
             File.WriteAllText(Path.Combine(tree, "file.txt"), "test body");
-            using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = Path.Combine(owned, "store"), BootIdentity = "tracking-test" });
+            using var store = NodeStore.Open(
+                new NodeStoreOptions { DataRoot = Path.Combine(owned, "store"), BootIdentity = "tracking-test" },
+                StoreMigrations.Expanded);
             store.Write(transaction =>
             {
                 transaction.Execute("INSERT INTO root_location (root_class, path) VALUES ('tmp', $path);", ("$path", managed));

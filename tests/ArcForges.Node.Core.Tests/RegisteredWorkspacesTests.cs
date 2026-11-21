@@ -3,6 +3,7 @@ using System.Diagnostics;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Node.Core.Files;
 using ArcForges.Node.Store;
+using ArcForges.Node.Store.Migrations;
 
 namespace ArcForges.Node.Core.Tests;
 
@@ -395,7 +396,8 @@ public sealed class RegisteredWorkspacesTests
         using var store = fixture.Open();
         var alias = Path.Combine(fixture.Root, "data-alias");
         Directory.CreateSymbolicLink(alias, Path.Combine(fixture.Root, "node-data"));
-        using var aliasStore = NodeStore.Open(new NodeStoreOptions { DataRoot = alias, BootIdentity = "synthetic-test-boot" });
+        using var aliasStore = NodeStore.Open(
+            new NodeStoreOptions { DataRoot = alias, BootIdentity = "synthetic-test-boot" }, StoreMigrations.Expanded);
         var manager = new RegisteredWorkspaces(store);
         var aliasManager = new RegisteredWorkspaces(aliasStore);
         var registered = manager.RegisterFromVerifiedHuman(path, cancellationToken: Ct);
@@ -750,7 +752,7 @@ public sealed class RegisteredWorkspacesTests
             DataRoot = Path.Combine(Root, "node-data"),
             BootIdentity = "synthetic-test-boot",
             Clock = clock ?? TimeProvider.System,
-        });
+        }, StoreMigrations.Expanded);
         public void Dispose() => _root.Delete(recursive: true);
     }
 }

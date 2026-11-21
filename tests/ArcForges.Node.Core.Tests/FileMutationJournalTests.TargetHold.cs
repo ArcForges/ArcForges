@@ -7,6 +7,7 @@ using ArcForges.Contracts.Node.V1;
 using ArcForges.Node.Core.Files;
 using ArcForges.Node.Core.Platform;
 using ArcForges.Node.Store;
+using ArcForges.Node.Store.Migrations;
 using Google.Protobuf;
 
 namespace ArcForges.Node.Core.Tests;
@@ -251,7 +252,7 @@ public sealed partial class FileMutationJournalTests
         {
             DataRoot = Path.Combine(_root.FullName, "node-data"),
             BootIdentity = "target-hold-test",
-        });
+        }, StoreMigrations.Expanded);
 
         internal (FileJournalIntent Intent, byte[] Raw) Intent(byte[] workspaceId, string workspace, string relative, string desired)
         {
