@@ -43,7 +43,8 @@ public sealed class MigrationContractionNativeScopeTests
 
             using var child = Process.Start(new ProcessStartInfo(
                 Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe"),
-                ["-NoProfile", "-NonInteractive", "-Command", "Start-Sleep -Seconds 60"]) { UseShellExecute = false, CreateNoWindow = true })!;
+                ["-NoProfile", "-NonInteractive", "-Command", "Start-Sleep -Seconds 60"])
+            { UseShellExecute = false, CreateNoWindow = true })!;
             try
             {
                 Assert.True(assignJob(job, child.SafeHandle), $"AssignProcessToJobObject failed with {Marshal.GetLastPInvokeError()}.");
@@ -184,7 +185,8 @@ public sealed class MigrationContractionNativeScopeTests
         [
             "--user", "--quiet", "--collect", "--service-type=exec", "--unit=" + name, "--description=" + description,
             "--property=Restart=no", "--property=KillMode=control-group", "--", "/usr/bin/sleep", "60",
-        ]) { UseShellExecute = false, RedirectStandardError = true };
+        ])
+        { UseShellExecute = false, RedirectStandardError = true };
         using var child = Process.Start(start)!;
         using var bound = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         bound.CancelAfter(CommandBound);
