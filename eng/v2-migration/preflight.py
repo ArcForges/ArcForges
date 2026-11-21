@@ -34,7 +34,7 @@ PREREQUISITES = [
     "exclusive offline store/control ownership and native process-scope drain proof",
     "consistent database/owned-path backup with tested restore and cohort manifest",
     "preserve unresolved receipts, journals, quarantine, worker identities and recovery floors",
-    "retain applied 0001..0015 SQL and published package bytes",
+    "retain all applied migration SQL and published package bytes",
     "qualify both MXC profiles and new Core before retiring the old executor",
     "review consumer inventory before source/schema contraction",
 ]
@@ -187,12 +187,13 @@ def expansion_checkpoint_version(connection: sqlite3.Connection, version: int, r
 
 
 def inventory(database: Path, binary: Path | None = None) -> dict:
+    unknown_database = {"classification": "unknown", "schema_version": None, "min_reader_version": None}
     report = {
         "schema": 1,
         "kind": "arcforges-v2-node-preflight",
         "source": source_identity(),
         "installation": {"state": "unknown", "binary_sha256": None},
-        "database": {"classification": "unknown", "schema_version": None, "min_reader_version": None},
+        "database": unknown_database.copy(),
         "counts": {},
         "blockers": [],
         "destructive_contraction_allowed": False,
@@ -209,6 +210,7 @@ def inventory(database: Path, binary: Path | None = None) -> dict:
                 blockers.append("installed_binary_unreadable")
     else:
         blockers.append("installed_cohort_unknown")
+    precheck_blocker_count = len(blockers)
     try:
         steps = migration_sources()
         report["source"]["migrations"] = [
@@ -277,7 +279,6 @@ def inventory(database: Path, binary: Path | None = None) -> dict:
                 report["database"].update(classification="node_v2_expanded", expansion_metadata_schema_version=mirror,
                                           expansion_checkpoint_matches=True,
                                           applied_migration_checksum_ledger="step16_checkpoint_only")
-            report["source"]["migrations"] = report["source"]["migrations"][:version]
             report["database"]["schema_objects_match"] = True
             if not clean:
                 blockers.append("node_running_or_unclean_shutdown")
@@ -289,13 +290,14 @@ def inventory(database: Path, binary: Path | None = None) -> dict:
                 if count:
                     blockers.append(name)
             blockers.append("native_scope_and_exclusive_owner_proof_required")
-    except InspectionRefused as error:
-        blockers.append(str(error))
-        report["database"]["classification"] = "unknown"
-    except (OSError, sqlite3.Error, ValueError, KeyError, TypeError, AttributeError):
-        # Database errors can quote data/path values; never include them in a report.
-        blockers.append("inspection_failed_or_locked")
-        report["database"]["classification"] = "unknown"
+        report["source"]["migrations"] = report["source"]["migrations"][:version]
+    except (InspectionRefused, OSError, sqlite3.Error, ValueError, KeyError, TypeError, AttributeError) as error:
+        # Snapshot identity must still match on exit before any derived result can be used.
+        report["database"] = unknown_database
+        report["counts"].clear()
+        del blockers[precheck_blocker_count:]
+        # Only InspectionRefused carries fixed codes; other errors may quote private values.
+        blockers.append(str(error) if isinstance(error, InspectionRefused) else "inspection_failed_or_locked")
     return report
 
 

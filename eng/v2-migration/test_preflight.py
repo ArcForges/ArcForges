@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 spec = importlib.util.spec_from_file_location("node_preflight", Path(__file__).with_name("preflight.py"))
 preflight = importlib.util.module_from_spec(spec)
@@ -131,6 +132,25 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(19, result["database"]["expansion_metadata_schema_version"])
         self.assertTrue(result["database"]["expansion_checkpoint_matches"])
         self.assertTrue(all(value == 0 for value in result["counts"].values()))
+
+    def test_post_read_snapshot_identity_failure_discards_inventory(self):
+        fixture(self.database, journal=True, version=18)
+        binary = self.root / "fixture-node"
+        binary.write_bytes(b"test-only binary bytes")
+        with self.database.open("rb") as stream:
+            before = preflight.stream_identity(stream)
+        changed = (*before[:-1], "0" * 64)
+        with mock.patch.object(preflight, "stream_identity", side_effect=[before, changed]) as identity:
+            result = preflight.inventory(self.database, binary)
+        self.assertEqual(2, identity.call_count)
+        self.assertEqual({"classification": "unknown", "schema_version": None, "min_reader_version": None},
+                         result["database"])
+        self.assertEqual({}, result["counts"])
+        self.assertEqual(["snapshot_changed_during_inspection"], result["blockers"])
+        self.assertFalse(result["destructive_contraction_allowed"])
+        self.assertEqual(list(range(1, 20)), [step["version"] for step in result["source"]["migrations"]])
+        self.assertEqual({"state": "bytes_observed_provenance_unproven", "binary_sha256": preflight.digest_file(binary)},
+                         result["installation"])
 
     def test_expanded_metadata_cannot_describe_a_legacy_layout(self):
         fixture(self.database)
