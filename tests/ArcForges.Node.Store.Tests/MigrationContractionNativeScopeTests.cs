@@ -18,15 +18,17 @@ public sealed class MigrationContractionNativeScopeTests
     private const string NativeRefusal = "node_contraction_native_scope_refused: ";
     private static readonly TimeSpan CommandBound = TimeSpan.FromSeconds(10);
 
-    [Fact(Timeout = 90_000, DisableParallelization = true)]
+    [Theory(Timeout = 90_000, DisableParallelization = true)]
+    [InlineData(false)]
+    [InlineData(true)]
     [Trait("isolation", "exclusive")]
     [Trait("env", "windows-real")]
-    public async Task AFinishedAttemptWithALiveWindowsJobCannotBeContracted()
+    public async Task AFinishedAttemptWithALiveWindowsJobCannotBeContracted(bool precedingBoot)
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         if (!OperatingSystem.IsWindows()) { Assert.Skip("Requires the Windows Job API."); return; }
         using var root = new TemporaryDataRoot();
-        string name = SeedFinishedAttempt(root, windows: true);
+        string name = SeedFinishedAttempt(root, windows: true, precedingBoot);
         string[] before = StoreInventory(root);
         nint kernel = NativeLibrary.Load("kernel32.dll", typeof(MigrationContractionNativeScopeTests).Assembly, DllImportSearchPath.System32);
         try
@@ -122,10 +124,16 @@ public sealed class MigrationContractionNativeScopeTests
         RequireReleasedScope(root, before);
     }
 
-    private static string SeedFinishedAttempt(TemporaryDataRoot root, bool windows)
+    private static string SeedFinishedAttempt(TemporaryDataRoot root, bool windows, bool precedingBoot = false)
     {
         var clock = new ManualClock();
         string boot = NodeContractionScope.ReadCurrentBootIdentity();
+        if (precedingBoot)
+        {
+            int separator = boot.LastIndexOf(':');
+            long previous = long.Parse(boot.AsSpan(separator + 1), NumberStyles.None, CultureInfo.InvariantCulture) - 60;
+            boot = boot[..(separator + 1)] + previous.ToString(CultureInfo.InvariantCulture);
+        }
         using var store = root.Open(clock, StoreMigrations.Expanded, boot);
         Assert.Equal(19, store.Metadata.SchemaVersion);
         byte[] node = store.Metadata.NodeId.ToArray();

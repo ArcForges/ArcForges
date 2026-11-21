@@ -146,7 +146,7 @@ internal sealed partial class NodeContractionScope : IDisposable
         command.CommandText = "SELECT node_id, schema_version, node_role, boot_identity, clean_shutdown_at, min_reader_version FROM store_meta WHERE singleton=1;";
         using var rows = command.ExecuteReader();
         if (!rows.Read() || rows.GetValue(0) is not byte[] { Length: 16 } id || rows.GetInt32(1) is < 15 or > 19 ||
-            rows.GetInt32(2) != 1 || !string.Equals(rows.GetString(3), boot, StringComparison.OrdinalIgnoreCase) || rows.IsDBNull(4))
+            rows.GetInt32(2) != 1 || !TryCompareBoot(rows.GetString(3), boot, out _) || rows.IsDBNull(4))
             throw Refused("original_node_or_boot_unconfirmed");
 
         if (_prepareSchema15 && (rows.GetInt32(1) != 15 || rows.GetInt32(5) != 15))
@@ -198,11 +198,14 @@ internal sealed partial class NodeContractionScope : IDisposable
 
             if (rows.IsDBNull(4) != rows.IsDBNull(5))
                 throw Refused("legacy_process_identity_incomplete");
+            bool sameBoot = false;
+            if (!rows.IsDBNull(6) && !TryCompareBoot(rows.GetString(6), boot, out sameBoot))
+                throw Refused("legacy_process_boot_unconfirmed");
             if (!rows.IsDBNull(4))
             {
-                if (rows.IsDBNull(6) || !string.Equals(rows.GetString(6), boot, StringComparison.OrdinalIgnoreCase))
+                if (rows.IsDBNull(6))
                     throw Refused("legacy_process_boot_unconfirmed");
-                RequireProcessEnded(rows.GetInt32(4), rows.GetInt64(5), nativeTicks: false);
+                RequireProcessEnded(rows.GetInt32(4), rows.GetInt64(5), nativeTicks: false, sameBoot);
             }
         }
 
@@ -226,18 +229,57 @@ internal sealed partial class NodeContractionScope : IDisposable
                 recordedBoot = "linux:" + recordedBoot;
 
             if (rows.GetInt32(0) != (windows ? 1 : 2) || rows.GetInt32(5) != 1 ||
-                !string.Equals(recordedBoot, boot, StringComparison.OrdinalIgnoreCase) ||
+                !TryCompareBoot(recordedBoot, boot, out bool sameBoot) ||
                 (!windows && (rows.IsDBNull(2) || rows.GetString(2) != PidNamespace("self"))))
                 throw Refused("legacy_worker_identity_unresolved");
 
-            RequireProcessEnded(rows.GetInt32(3), rows.GetInt64(4), nativeTicks: true);
+            RequireProcessEnded(rows.GetInt32(3), rows.GetInt64(4), nativeTicks: true, sameBoot);
         }
     }
 
-    private static void RequireProcessEnded(int pid, long start, bool nativeTicks)
+    private static bool TryCompareBoot(string recorded, string current, out bool sameBoot)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            sameBoot = string.Equals(recorded, current, StringComparison.OrdinalIgnoreCase);
+            return sameBoot;
+        }
+
+        sameBoot = false;
+        if (!TryParseWindowsBoot(recorded, out var recordedMachine, out long recordedTime) ||
+            !TryParseWindowsBoot(current, out var currentMachine, out long currentTime) ||
+            recordedMachine != currentMachine || recordedTime > currentTime)
+            return false;
+
+        sameBoot = recordedTime == currentTime;
+        return true;
+    }
+
+    private static bool TryParseWindowsBoot(string value, out Guid machine, out long time)
+    {
+        machine = Guid.Empty;
+        time = 0;
+        if (!value.StartsWith("windows:", StringComparison.Ordinal))
+            return false;
+
+        var identity = value.AsSpan(8);
+        int separator = identity.IndexOf(':');
+        if (separator != 36 || !Guid.TryParseExact(identity[..separator], "D", out machine) || machine == Guid.Empty)
+            return false;
+
+        var timestamp = identity[(separator + 1)..];
+        return !timestamp.IsEmpty && timestamp.IndexOfAnyExceptInRange('0', '9') < 0 &&
+            long.TryParse(timestamp, NumberStyles.None, CultureInfo.InvariantCulture, out time) &&
+            time > 0 && time <= DateTimeOffset.MaxValue.ToFileTime() / TimeSpan.TicksPerSecond;
+    }
+
+    private static void RequireProcessEnded(int pid, long start, bool nativeTicks, bool sameBoot)
     {
         if (pid <= 1 || start <= 0)
             throw Refused("legacy_process_identity_invalid");
+        // On Windows this identity has already been bound to an earlier boot of this exact machine.
+        if (!sameBoot)
+            return;
 
         if (OperatingSystem.IsWindows())
         {
