@@ -20,15 +20,18 @@ internal sealed partial class NodeContractionScope : IDisposable
     private readonly IDisposable _owner;
     private readonly FileStream _database;
     private readonly FileIdentity _identity;
+    private readonly bool _prepareSchema15;
+    private readonly byte[] _databaseDigest;
     private bool _disposed;
 
-    private NodeContractionScope(string root, IDisposable owner, FileStream database)
+    private NodeContractionScope(string root, IDisposable owner, FileStream database, bool prepareSchema15)
     {
         DataRoot = root;
         _owner = owner;
         _database = database;
         _identity = Identity(database.SafeFileHandle);
-        ReceiptSha256 = Observe();
+        _prepareSchema15 = prepareSchema15;
+        (ReceiptSha256, _databaseDigest) = Observe();
     }
 
     internal string DataRoot { get; }
@@ -38,7 +41,7 @@ internal sealed partial class NodeContractionScope : IDisposable
     internal static string ReadCurrentBootIdentity() => OperatingSystem.IsWindows() ? WindowsBoot()
         : OperatingSystem.IsLinux() ? "linux:" + ReadLinuxBootId() : throw Refused("native_boot_unavailable");
 
-    internal static NodeContractionScope Acquire(string dataRoot)
+    internal static NodeContractionScope Acquire(string dataRoot, bool prepareSchema15 = false)
     {
         if (!Path.IsPathFullyQualified(dataRoot) || !(OperatingSystem.IsWindows() || OperatingSystem.IsLinux()))
             throw Refused("local_absolute_data_root_required");
@@ -54,7 +57,7 @@ internal sealed partial class NodeContractionScope : IDisposable
             string path = StorePaths.Database(root);
             RequireRegular(path);
             database = File.OpenRead(path);
-            return new NodeContractionScope(root, owner, database);
+            return new NodeContractionScope(root, owner, database, prepareSchema15);
         }
         catch
         {
@@ -67,7 +70,7 @@ internal sealed partial class NodeContractionScope : IDisposable
     internal void VerifyHeld()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (!string.Equals(ReceiptSha256, Observe(), StringComparison.Ordinal))
+        if (!string.Equals(ReceiptSha256, Observe().ReceiptSha256, StringComparison.Ordinal))
             throw Refused("native_custody_changed");
     }
 
@@ -81,7 +84,7 @@ internal sealed partial class NodeContractionScope : IDisposable
         _owner.Dispose();
     }
 
-    private string Observe()
+    private (string ReceiptSha256, byte[] DatabaseDigest) Observe()
     {
         string path = StorePaths.Database(DataRoot);
         RequireNamedDatabase(path);
@@ -99,6 +102,8 @@ internal sealed partial class NodeContractionScope : IDisposable
         using var sqlite = new SqliteConnection(StorePaths.ConnectionString(uri, SqliteOpenMode.ReadOnly));
         sqlite.Open();
         byte[] nodeId = ReadOwner(sqlite, boot);
+        if (_prepareSchema15)
+            VerifiedNodeContractionArchive.VerifySchema15(sqlite);
         if (OperatingSystem.IsWindows())
             CheckWindowsSessions();
         else
@@ -115,8 +120,9 @@ internal sealed partial class NodeContractionScope : IDisposable
         // Include the exact original bytes rather than just the rows observed by the native check.
         _database.Position = 0;
         byte[] dbDigest = SHA256.HashData(_database);
-        return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(FormattableString.Invariant(
+        string receipt = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(FormattableString.Invariant(
             $"arcforges-node-native-drain-v1\n{DataRoot}\n{_identity}\n{boot}\n{Convert.ToHexStringLower(nodeId)}\n{Convert.ToHexStringLower(dbDigest)}"))));
+        return (receipt, dbDigest);
     }
 
     private void RequireNamedDatabase(string path)
@@ -132,14 +138,17 @@ internal sealed partial class NodeContractionScope : IDisposable
                 throw Refused("original_database_has_sidecars");
     }
 
-    private static byte[] ReadOwner(SqliteConnection sqlite, string boot)
+    private byte[] ReadOwner(SqliteConnection sqlite, string boot)
     {
         using var command = sqlite.CreateCommand();
-        command.CommandText = "SELECT node_id, schema_version, node_role, boot_identity, clean_shutdown_at FROM store_meta WHERE singleton=1;";
+        command.CommandText = "SELECT node_id, schema_version, node_role, boot_identity, clean_shutdown_at, min_reader_version FROM store_meta WHERE singleton=1;";
         using var rows = command.ExecuteReader();
         if (!rows.Read() || rows.GetValue(0) is not byte[] { Length: 16 } id || rows.GetInt32(1) is < 15 or > 19 ||
             rows.GetInt32(2) != 1 || !string.Equals(rows.GetString(3), boot, StringComparison.OrdinalIgnoreCase) || rows.IsDBNull(4))
             throw Refused("original_node_or_boot_unconfirmed");
+
+        if (_prepareSchema15 && (rows.GetInt32(1) != 15 || rows.GetInt32(5) != 15))
+            throw Refused("original_schema15_required");
 
         return id;
     }

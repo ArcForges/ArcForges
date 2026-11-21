@@ -9,7 +9,7 @@ if (args.Length == 1 && args[0] is "--help" or "-h")
     return 0;
 }
 
-if (args.Length is < 4 or > 5 || args[0] != "stage" || args.Length == 5 && args[4] != "--test-mode")
+if (args.Length is < 4 or > 5 || args[0] is not ("prepare" or "stage") || args.Length == 5 && args[4] != "--test-mode")
 {
     PrintUsage();
     return 2;
@@ -17,13 +17,24 @@ if (args.Length is < 4 or > 5 || args[0] != "stage" || args.Length == 5 && args[
 
 try
 {
-    string source = Path.GetFullPath(args[1]);
-    string backup = Path.GetFullPath(args[2]);
-    string stage = Path.GetFullPath(args[3]);
+    bool prepare = args[0] == "prepare";
+    string source = Root(args[1]);
+    string second = Root(args[2]);
+    string third = Root(args[3]);
     bool testMode = args.Length == 5;
     NodeSecretStores.ApplyTestModeTripwire(testMode, optIn: null);
-    using var scope = NodeContractionScope.Acquire(source);
-    var proof = VerifiedNodeContractionArchive.Restore(scope, Secrets(source), backup, Secrets(backup), stage, Secrets(stage));
+    using var scope = NodeContractionScope.Acquire(source, prepareSchema15: prepare);
+    if (prepare)
+    {
+        PreparedNodeMigration.Prepare(scope, second, third, testMode);
+        Console.WriteLine("Prepared a detached Node schema 19 store and an authenticated backup.");
+        Console.WriteLine(second);
+        Console.WriteLine(third);
+        Console.WriteLine("Original native scope SHA-256 " + scope.ReceiptSha256);
+        return 0;
+    }
+
+    var proof = VerifiedNodeContractionArchive.Restore(scope, Secrets(source), second, Secrets(second), third, Secrets(third));
     NodeStore.ContractVerifiedCopy(proof, TimeProvider.System);
     Console.WriteLine("Staged an authenticated Node schema 20 database.");
     Console.WriteLine(proof.StagedDatabasePath);
@@ -34,14 +45,18 @@ try
 catch (Exception failure) when (failure is StoreIncompatibleException or DurableStoreMaintenanceException
     or IOException or UnauthorizedAccessException or SqliteException or ArgumentException)
 {
-    Console.Error.WriteLine("Node contraction refused.");
+    Console.Error.WriteLine("Node migration refused.");
     Console.Error.WriteLine(failure.Message);
     return 1;
 }
 
+static string Root(string path) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+
 static void PrintUsage()
 {
-    Console.WriteLine("arcforges-migrate-node stage SOURCE BACKUP STAGE [--test-mode]");
+    Console.WriteLine("arcforges-migrate-node prepare SOURCE EXPANDED BACKUP [--test-mode]");
+    Console.WriteLine("Copy a closed schema 15 Node to a new expanded store and create a separate authenticated backup.");
+    Console.WriteLine("arcforges-migrate-node stage EXPANDED BACKUP STAGE [--test-mode]");
     Console.WriteLine("Stage schema contraction from an offline, expanded source and its authenticated backup.");
     Console.WriteLine("STAGE is a new private directory. The command produces a database for later cutover.");
 }

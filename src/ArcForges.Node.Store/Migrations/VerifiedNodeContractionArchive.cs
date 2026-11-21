@@ -83,7 +83,7 @@ internal sealed class VerifiedNodeContractionArchive
         using var original = OpenSnapshot(source);
         using var restored = OpenSnapshot(restore);
         var originalSchema = Schema(original);
-        if (!originalSchema.SequenceEqual(ExpandedSchema()) || !originalSchema.SequenceEqual(Schema(restored)))
+        if (!originalSchema.SequenceEqual(ReferenceSchema(StoreMigrations.ExpandedSchemaVersion)) || !originalSchema.SequenceEqual(Schema(restored)))
             throw new StoreIncompatibleException("The original and restored schemas must match the released expanded store.");
 
         foreach (var table in originalSchema.Where(entry => entry.Type == "table"))
@@ -153,13 +153,19 @@ internal sealed class VerifiedNodeContractionArchive
         return [.. definitions];
     }
 
-    private static (string Type, string Name, string? Sql)[] ExpandedSchema()
+    internal static void VerifySchema15(SqliteConnection source)
+    {
+        if (!Schema(source).SequenceEqual(ReferenceSchema(15)))
+            throw new StoreIncompatibleException("Preparation requires the original, released Node schema 15.");
+    }
+
+    private static (string Type, string Name, string? Sql)[] ReferenceSchema(int version)
     {
         using var database = new SqliteConnection("Data Source=:memory:;Pooling=False");
         database.Open();
-        database.CreateFunction<long>("arcforges_store_reader_version", () => StoreMigrations.ExpandedSchemaVersion);
+        database.CreateFunction<long>("arcforges_store_reader_version", () => version);
         using var step = database.CreateCommand();
-        foreach (var migration in StoreMigrations.Expanded.Steps)
+        foreach (var migration in StoreMigrations.Expanded.Steps.Take(version))
         {
             step.CommandText = migration.Sql;
             step.ExecuteNonQuery();
@@ -205,7 +211,7 @@ internal sealed class VerifiedNodeContractionArchive
         }
     }
 
-    private static void RequireSeparateRoots(string left, string right)
+    internal static void RequireSeparateRoots(string left, string right)
     {
         if (!Path.IsPathFullyQualified(left) || !Path.IsPathFullyQualified(right) || IsWithin(left, right) || IsWithin(right, left))
             throw new StoreIncompatibleException("Contraction requires separate original, backup and staging roots.");

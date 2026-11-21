@@ -33,7 +33,7 @@ internal sealed partial class DurableCommandStore
 
     // A complete snapshot is a DB, every referenced epoch key, and an authenticated manifest.
     // A legacy pre-migration DB-only backup is intentionally not a ready V2 restore package.
-    internal void CreateBackup(string backupRoot, NodeSecretStore backupSecrets)
+    internal void CreateBackup(string backupRoot, NodeSecretStore backupSecrets, NodeContractionScope? preparationScope = null)
     {
         lock (_gate)
         {
@@ -58,7 +58,15 @@ internal sealed partial class DurableCommandStore
                     var authority = DurableEpochFence.Read(DurableEpochFence.PathFor(_store.DataRoot, entry.Owner), key);
                     if (!Matches(entry, authority)) throw new DurableStoreMaintenanceException();
                 }
-                StorePaths.CreatePrivateDirectory(backupRoot);
+                if (preparationScope is not null)
+                {
+                    preparationScope.ValidatePreparationRoot(backupRoot);
+                    NodeContractionScope.CreateNewPreparationRoot(backupRoot);
+                }
+                else
+                {
+                    StorePaths.CreatePrivateDirectory(backupRoot);
+                }
                 string database = StorePaths.Database(backupRoot);
                 StorePaths.CreatePrivateDirectory(Path.GetDirectoryName(database)!);
                 _store.CopyOwnerSnapshot(database); // Reuses the V1 secret-retention sanitization, not V1 identity expiry.
@@ -73,6 +81,7 @@ internal sealed partial class DurableCommandStore
                 var manifest = new DurableBackupManifest(_store.Metadata.SchemaVersion, Convert.ToHexStringLower(SHA256.HashData(stream)),
                     _fence.KeyReference, entries);
                 byte[] body = JsonSerializer.SerializeToUtf8Bytes(manifest, DurableBackupJsonContext.Default.DurableBackupManifest);
+                preparationScope?.VerifyHeld();
                 DurableEpochFence.WritePrivate(Path.Combine(backupRoot, "v2-backup.manifest"),
                     [.. body, .. HMACSHA256.HashData(_key, body)]);
             }
