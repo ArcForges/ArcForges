@@ -76,7 +76,9 @@ public sealed class RecoveredLegacyTaskControlsTests
             fixture.Execution.Start();
             var waited = await fixture.Tasks.WaitTask(Human, new TaskServiceWaitTaskRequest
             {
-                TaskId = fixture.TaskId, Target = WaitTarget.Terminal, WaitMs = 10_000,
+                TaskId = fixture.TaskId,
+                Target = WaitTarget.Terminal,
+                WaitMs = 10_000,
             }, Ct);
             Assert.Null(waited.Error);
             Assert.True(waited.Value.Reached);
@@ -87,6 +89,48 @@ public sealed class RecoveredLegacyTaskControlsTests
             Assert.Equal(EffectCertainty.Happened, settled.CurrentAttempt.Result.Effect);
             Assert.Empty(fixture.Platform.Calls);
         }, initiallyUnavailable: true, useRetainedExit: true);
+    }
+
+    [Theory(Timeout = 30_000)]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task UnavailableLateStartWatchLeavesStopDueAndRetryForcesOnce(int unavailableObservations)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        ct.ThrowIfCancellationRequested();
+        await WithRecoveredTaskAsync(AttemptState.Starting, null, async fixture =>
+        {
+            var name = IdText.Format(fixture.AttemptId);
+            var attempt = Assert.IsType<RunningAttempt>(fixture.Execution.Running(name));
+            fixture.Platform.UnavailableLateWatchObservations = unavailableObservations;
+
+            await fixture.Execution.StopAsync(name, TerminationReason.Cancelled, null, graceful: false).WaitAsync(ct);
+            var pending = await fixture.ReadAsync();
+            Assert.Equal(AttemptState.Stopping, pending.CurrentAttempt.State);
+            Assert.Null(pending.CurrentAttempt.Result);
+            Assert.False(attempt.Forced);
+            Assert.False(attempt.Finalizing);
+            Assert.False(attempt.TerminationOwed);
+            Assert.False(attempt.LaunchProcessesWatched);
+            Assert.Equal(fixture.Clock.GetTimestamp(), attempt.GraceDeadline);
+            Assert.Equal(1, fixture.Platform.LateWatchCalls);
+            Assert.Equal(0, fixture.Platform.LaunchSubscribers);
+            Assert.Equal(0, fixture.Platform.ForceCalls);
+
+            fixture.Execution.Start();
+            await fixture.Platform.ForcedReached.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
+            await fixture.Execution.StopAsync(name, TerminationReason.Cancelled, null, graceful: false).WaitAsync(ct);
+            lock (attempt)
+            {
+                Assert.True(attempt.Forced);
+                Assert.True(attempt.TerminationOwed);
+                Assert.True(attempt.LaunchProcessesWatched);
+                Assert.False(attempt.Finalizing);
+                Assert.Equal(unavailableObservations + 1, fixture.Platform.LateWatchCalls);
+                Assert.Equal(1, fixture.Platform.LaunchSubscribers);
+                Assert.Equal(1, fixture.Platform.ForceCalls);
+            }
+        }, rootPending: true);
     }
 
     [Fact(Timeout = 30_000)]
@@ -164,12 +208,12 @@ public sealed class RecoveredLegacyTaskControlsTests
     }
 
     private static async Task WithRecoveredTaskAsync(AttemptState phase, string? reason, Func<RecoveredControlFixture, Task> verify,
-        bool initiallyUnavailable = false, bool useRetainedExit = false)
+        bool initiallyUnavailable = false, bool useRetainedExit = false, bool rootPending = false)
     {
         await using var node = InProcessNode.Create();
         var clock = new ControlledClock();
         node.Clock = clock;
-        var root = new RootProcess(int.MaxValue, clock.GetUtcNow());
+        var root = rootPending ? null : new RootProcess(int.MaxValue, clock.GetUtcNow());
         var (taskId, attemptId) = LegacyTaskHistoryFixture.Seed(node, phase, root: root, stateReason: reason);
         var name = IdText.Format(attemptId);
         var files = new AttemptFiles(node.DataRoot, name);
@@ -197,7 +241,8 @@ public sealed class RecoveredLegacyTaskControlsTests
         });
         using var runtime = new NodeRuntime(store, journal, hub, processor, log,
             new NodeSettingsManager(node.ConfigPath, node.DataRoot, log), node.DataRoot, "offline-fixture", clock,
-            recovery, new CapabilityReport()) { Execution = execution };
+            recovery, new CapabilityReport())
+        { Execution = execution };
         await runtime.TransitionAsync(NodeLifecycleState.Recovering, "fixture").WaitAsync(Ct);
         if (initiallyUnavailable)
         {
@@ -271,22 +316,51 @@ public sealed class RecoveredLegacyTaskControlsTests
         public void Advance(TimeSpan elapsed) => Interlocked.Add(ref _ticks, elapsed.Ticks);
     }
 
-    private sealed class ReopenedPlatform(string nodeName, string attemptName, RootProcess root, bool frozen) : IExecutionPlatform, IAttemptHandle
+    private sealed class ReopenedPlatform(string nodeName, string attemptName, RootProcess? root, bool frozen) : IExecutionPlatform, IAttemptHandle
     {
         private bool _frozen = frozen;
+        private int _lateWatchCalls;
+        private int _forceCalls;
+        private Action<int>? _launchEntered;
         public List<(string Operation, long Value)> Calls { get; } = [];
         public int ReopenCalls { get; private set; }
         public Exception? ReopenError { get; set; }
+        public int UnavailableLateWatchObservations { get; set; }
+        public int LateWatchCalls => Volatile.Read(ref _lateWatchCalls);
+        public int ForceCalls => Volatile.Read(ref _forceCalls);
+        public int LaunchSubscribers => _launchEntered?.GetInvocationList().Length ?? 0;
+        public TaskCompletionSource ForcedReached { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public string Name => "reopened-fixture";
         public MachineCapacity Capacity => new(4, 1L << 30);
         public string ContainerName => "retained-fixture";
         public RootProcess? Root => root;
         public Task<RootProcess?> Started => Task.FromResult(Root);
         public Stream? StdinWriter => null;
-        public bool RootRunning => true;
+        public bool RootRunning => root is not null;
         public bool MemoryLimitHit => false;
         public bool CanPause => true;
         public event Action? Changed { add { } remove { } }
+        public event Action<int>? LaunchProcessEntered
+        {
+            add => _launchEntered += value;
+            remove => _launchEntered -= value;
+        }
+
+        public bool WatchLaunch()
+        {
+            if (UnavailableLateWatchObservations == 0)
+            {
+                return false;
+            }
+
+            Assert.Null(Root);
+            if (Interlocked.Increment(ref _lateWatchCalls) <= UnavailableLateWatchObservations)
+            {
+                throw new LegacyCustodyUnavailableException("The pending-start observation is unavailable.");
+            }
+
+            return true;
+        }
 
         public IAttemptHandle Reopen(string node, AttemptFiles files, RootProcess? persistedRoot, bool stopping)
         {
@@ -331,7 +405,16 @@ public sealed class RecoveredLegacyTaskControlsTests
         public void Dispose() { }
 
         public void Start(string node, RootLimits limits, string helperExecutable) => throw new NotSupportedException();
-        public void Terminate() => throw new NotSupportedException();
+        public void Terminate()
+        {
+            if (UnavailableLateWatchObservations == 0)
+            {
+                throw new NotSupportedException();
+            }
+
+            Interlocked.Increment(ref _forceCalls);
+            ForcedReached.TrySetResult();
+        }
         public GracefulOutcome RequestGracefulStop() => throw new NotSupportedException();
     }
 }

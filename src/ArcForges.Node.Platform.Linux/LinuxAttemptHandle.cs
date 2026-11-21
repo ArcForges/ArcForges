@@ -254,9 +254,16 @@ public sealed class LinuxAttemptHandle : IAttemptHandle
         {
             job = _platform.Manager.PendingStartJob(Unit);
         }
-        catch (Exception exception) when (exception is DBusExceptionBase or TimeoutException or InvalidOperationException or IOException)
+        catch (Exception exception) when (exception is DBusExceptionBase or TimeoutException or OperationCanceledException or InvalidOperationException
+            or IOException)
         {
-            return false;
+            Volatile.Write(ref _launchWatchable, 1);
+            if (exception is LegacyCustodyUnavailableException)
+            {
+                throw;
+            }
+
+            throw new LegacyCustodyUnavailableException("The systemd user manager did not confirm the attempt's late start.", exception);
         }
 
         if (job is null)

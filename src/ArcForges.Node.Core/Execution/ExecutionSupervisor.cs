@@ -1072,12 +1072,22 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             return;
         }
 
-        attempt.LaunchProcessesWatched = true;
-        handle.LaunchProcessEntered += entered => _ = Task.Run(() => TerminateAgain(attempt, handle, reason));
-        if (handle.WatchLaunch())
+        Action<int> onEntered = entered => _ = Task.Run(() => TerminateAgain(attempt, handle, reason));
+        handle.LaunchProcessEntered += onEntered;
+        try
         {
-            attempt.TerminationOwed = true;
+            if (handle.WatchLaunch())
+            {
+                attempt.TerminationOwed = true;
+            }
         }
+        catch
+        {
+            handle.LaunchProcessEntered -= onEntered;
+            throw;
+        }
+
+        attempt.LaunchProcessesWatched = true;
     }
 
     /// <summary>
@@ -1104,8 +1114,8 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             return false;
         }
 
-        attempt.Forced = true;
         TerminateEachLaunchProcess(attempt, handle, reason);
+        attempt.Forced = true;
         TerminateNow(attempt, handle, reason);
         return true;
     }
@@ -1858,9 +1868,9 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             {
                 // The forced phase after the grace period. A STOPPING attempt recovered after a node restart gets here at once, possibly in the
                 // middle of its launch (its handle's start still pending): read before the termination, as in ForceWhenStarted.
-                _forcedPhase?.Invoke(handle, false);
                 var startPending = !handle.Started.IsCompleted;
                 TerminateEachLaunchProcess(attempt, handle, stopReason);
+                _forcedPhase?.Invoke(handle, false);
                 handle.Terminate();
                 TerminateEscaped(attempt, stopReason);
                 attempt.Forced = true;
