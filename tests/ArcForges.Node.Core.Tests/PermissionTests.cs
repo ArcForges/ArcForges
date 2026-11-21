@@ -217,7 +217,10 @@ public sealed class PermissionTests
         // whose recorded start differs (a reused ID) covers nothing.
         var roots = new AgentRoots();
         var started = ProtoTime.ToDateTimeOffset(ClientProcess.Identity(Environment.ProcessId)!.StartTime)!.Value;
-        using var child = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Tasks.TestLoad, ["hold", "--hold-ms", "30000"])
+        var testLoad = Environment.GetEnvironmentVariable("ARCFORGES_TESTLOAD_PATH") is { Length: > 0 } configured
+            ? configured
+            : Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "arcforges-testload.exe" : "arcforges-testload");
+        using var child = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(testLoad, ["hold", "--hold-ms", "30000"])
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,

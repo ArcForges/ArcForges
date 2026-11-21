@@ -17,17 +17,17 @@ public sealed class FileCreationOwnershipPlanTests
 
     [Fact]
     public Task CompletedCreationOwnershipStaysBoundToItsOriginalReceiptAndObservedObject() =>
-        LegacyPlannerHistoryFixture.WithStoreAsync((node, _) =>
+        LegacyPlannerHistoryFixture.WithStoreAsync(store =>
         {
-            var owner = LegacyPlannerHistoryFixture.Owner(node);
+            var owner = LegacyPlannerHistoryFixture.Owner(store);
             var evidence = CreationEvidence();
-            var original = node.Store.Write(transaction =>
+            var original = store.Write(transaction =>
             {
-                var workspace = LegacyPlannerHistoryFixture.SeedWorkspace(transaction, Path.Combine(node.DataRoot, "workspace"));
+                var workspace = LegacyPlannerHistoryFixture.SeedWorkspace(transaction, Path.Combine(store.DataRoot, "workspace"));
                 return SeedCreation(transaction, workspace, owner, evidence);
             }, CommitDurability.Full);
 
-            Assert.True(node.Store.Read(reader =>
+            Assert.True(store.Read(reader =>
             {
                 using var command = reader.CreateCommand("""
                     SELECT caller, creation_command_id, root_identity, object_identity, creation_marker,
@@ -47,40 +47,40 @@ public sealed class FileCreationOwnershipPlanTests
                 Assert.Equal(original.Hash, (byte[])row.GetValue(6));
                 return !row.Read();
             }));
-            Assert.False(Directory.Exists(Path.Combine(node.DataRoot, "workspace")));
+            Assert.False(Directory.Exists(Path.Combine(store.DataRoot, "workspace")));
             return Task.CompletedTask;
         });
 
     [Fact]
     public Task UnknownUnidentifiedCreateInvalidatesGenerationAndCannotReviveAnOldProof() =>
-        LegacyPlannerHistoryFixture.WithStoreAsync((node, _) =>
+        LegacyPlannerHistoryFixture.WithStoreAsync(store =>
         {
-            var actor = LegacyPlannerHistoryFixture.Owner(node);
+            var actor = LegacyPlannerHistoryFixture.Owner(store);
             var evidence = CreationEvidence();
             var root = RootIdentity();
-            var (workspace, original) = node.Store.Write(transaction =>
+            var (workspace, original) = store.Write(transaction =>
             {
-                var registered = LegacyPlannerHistoryFixture.SeedWorkspace(transaction, Path.Combine(node.DataRoot, "workspace"));
+                var registered = LegacyPlannerHistoryFixture.SeedWorkspace(transaction, Path.Combine(store.DataRoot, "workspace"));
                 return (registered, SeedCreation(transaction, registered, actor, evidence));
             }, CommitDurability.Full);
             var oldProof = new FileCreationOwnership.UpdateProof(original.Workspace, ExistingPath, actor,
                 original.CallerBytes, root.Platform, original.RootIdentity, evidence.Identity.Platform,
                 original.ObjectIdentity, original.Marker, original.Size, original.Hash,
                 GlobalGeneration: 0, original.ObjectGeneration);
-            var uncertain = node.Store.Write(transaction =>
+            var uncertain = store.Write(transaction =>
                 SeedIntent(transaction, workspace, actor, root, "unobserved.txt", phase: 1,
                     target: null, size: 0, SHA256.HashData(ReadOnlySpan<byte>.Empty)), CommitDurability.Full);
-            node.Store.Write(transaction => FileMutationJournal.MarkUnknown(transaction, uncertain.Command), CommitDurability.Full);
-            Assert.Equal(1L, node.Store.Read(reader => reader.Scalar("SELECT generation FROM file_ownership_generation WHERE singleton = 1;")));
-            Assert.Equal(1L, node.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_creation_ownership;")));
-            Assert.Equal(FileJournalAcknowledgment.Acknowledged, node.Store.Write(transaction =>
+            store.Write(transaction => FileMutationJournal.MarkUnknown(transaction, uncertain.Command), CommitDurability.Full);
+            Assert.Equal(1L, store.Read(reader => reader.Scalar("SELECT generation FROM file_ownership_generation WHERE singleton = 1;")));
+            Assert.Equal(1L, store.Read(reader => reader.Scalar("SELECT count(*) FROM file_creation_ownership;")));
+            Assert.Equal(FileJournalAcknowledgment.Acknowledged, store.Write(transaction =>
                 FileMutationJournal.AcknowledgeFromVerifiedHuman(transaction, uncertain.Command, uncertain.RequestHash,
                     new ActorRef { Origin = Origin.Human, ClientKind = ClientKind.Cli }), CommitDurability.Full));
-            Assert.Equal(FileOperationState.Unknown, node.Store.Read(reader =>
+            Assert.Equal(FileOperationState.Unknown, store.Read(reader =>
                 FileMutationJournal.GetForCaller(reader, uncertain.Command, actor))!.State);
 
             var laterHash = SHA256.HashData("subsequent write"u8);
-            Assert.False(node.Store.Write(transaction =>
+            Assert.False(store.Write(transaction =>
             {
                 var later = SeedIntent(transaction, workspace, actor, root, ExistingPath, phase: 2,
                     evidence.Identity.Bytes, original.Size, laterHash);
@@ -90,11 +90,11 @@ public sealed class FileCreationOwnershipPlanTests
                     actor, original.Size, laterHash, generation!.Value);
             }, CommitDurability.Full));
 
-            Assert.Equal(0L, node.Store.Read(reader => reader.Scalar("""
+            Assert.Equal(0L, store.Read(reader => reader.Scalar("""
                 SELECT count(*) FROM file_creation_ownership c JOIN file_ownership_generation g ON c.global_generation = g.generation;
                 """)));
-            Assert.Equal(original.Hash, (byte[]?)node.Store.Read(reader => reader.Scalar("SELECT last_written_sha256 FROM file_creation_ownership;")));
-            Assert.False(Directory.Exists(Path.Combine(node.DataRoot, "workspace")));
+            Assert.Equal(original.Hash, (byte[]?)store.Read(reader => reader.Scalar("SELECT last_written_sha256 FROM file_creation_ownership;")));
+            Assert.False(Directory.Exists(Path.Combine(store.DataRoot, "workspace")));
             return Task.CompletedTask;
         });
 

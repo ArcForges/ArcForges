@@ -413,48 +413,34 @@ public sealed class NodeServiceTests
     }
 
     [Fact(Timeout = 60_000)]
-    public async Task HealthAndCapabilitiesReportTheBuildsEnforcement()
+    public async Task HealthAndCapabilitiesReportNodeReadinessAndTheSeparateRunProfile()
     {
-        // Windows enforces through job objects (AF-EXEC-01) and is READY; Linux enforces through transient units of the user manager
-        // (AF-EXEC-02) and is READY when the manager delegates cpu, memory and pids, observe-only (DEGRADED) without a user manager.
         var ct = TestContext.Current.CancellationToken;
         await using var node = await InProcessNode.Create().StartAsync();
         await using var channel = await node.ChannelAsync();
 
         var health = await channel.Node.GetHealthAsync(new NodeServiceGetHealthRequest(), deadline: DateTime.UtcNow + Deadline, cancellationToken: ct);
+        Assert.Null(health.Error);
         Assert.Equal(InProcessNode.ExpectedState, health.Value.State);
-        Assert.Contains(health.Value.Checks, check => check.CheckId == "node.enforcement"
-            && check.Status == (InProcessNode.ExpectedState == NodeLifecycleState.Ready ? CheckStatus.Pass : CheckStatus.Warn));
+        var nodeEnforcement = Assert.Single(health.Value.Checks, check => check.CheckId == "node.enforcement");
+        Assert.Equal(CheckStatus.Warn, nodeEnforcement.Status);
+        Assert.Contains(NodeCapabilities.NotInBuild, nodeEnforcement.Summary, StringComparison.Ordinal);
+        var runProfile = Assert.Single(health.Value.Checks, check => check.CheckId == "node.v2_run_profile");
+        Assert.Equal(CheckStatus.Warn, runProfile.Status);
+        Assert.Contains("run_profile_not_observed", runProfile.Summary, StringComparison.Ordinal);
         Assert.Contains(health.Value.Metrics, metric => metric.Name == "rpc.peers_admitted" && metric.Value >= 1);
+
         var capabilities = await channel.Node.GetCapabilitiesAsync(new NodeServiceGetCapabilitiesRequest { Reevaluate = true }, deadline: DateTime.UtcNow + Deadline, cancellationToken: ct);
+        Assert.Null(capabilities.Error);
         var report = capabilities.Value.Capabilities;
         Assert.Contains(report.PlatformFacts, fact => fact.Name == "os");
-        if (OperatingSystem.IsWindows())
-        {
-            Assert.Equal(CpuControl.EnforcedShareAndCap, report.Cpu);
-            Assert.Equal(MemoryControl.EnforcedCommit, report.Memory);
-            Assert.Equal(ProcessCountControl.ObserveOnly, report.Pids);
-            Assert.Contains("no policy field", report.PidsReason, StringComparison.Ordinal);
-            Assert.Equal(PauseSupport.Unsupported, report.Pause);
-            Assert.Equal(KillTreeGuarantee.Guaranteed, report.KillTree);
-            Assert.True(report.RestartSurvival);
-            Assert.Contains(report.PlatformFacts, fact => fact.Name == "root_job");
-        }
-        else if (ArcForges.Tests.SystemdTestEnvironment.FullyEnforced)
-        {
-            Assert.Equal(CpuControl.EnforcedShareAndCap, report.Cpu);
-            Assert.Equal(MemoryControl.EnforcedSoftAndHard, report.Memory);
-            Assert.Equal(ProcessCountControl.Enforced, report.Pids);
-            Assert.Equal(PauseSupport.Supported, report.Pause);
-            Assert.Equal(KillTreeGuarantee.Guaranteed, report.KillTree);
-            Assert.True(report.RestartSurvival);
-            Assert.Contains(report.PlatformFacts, fact => fact.Name == "slice" && fact.Value == node.Slice);
-        }
-        else
-        {
-            Assert.Equal(CpuControl.ObserveOnly, report.Cpu);
-            Assert.False(report.RestartSurvival);
-        }
+        Assert.Equal(CpuControl.ObserveOnly, report.Cpu);
+        Assert.Equal(MemoryControl.ObserveOnly, report.Memory);
+        Assert.Equal(ProcessCountControl.ObserveOnly, report.Pids);
+        Assert.Equal(IoControl.ObserveOnly, report.Io);
+        Assert.Equal(AdoptSupport.Unsupported, report.Adopt);
+        Assert.False(report.RestartSurvival);
+        Assert.DoesNotContain(report.PlatformFacts, fact => fact.Name is "root_job" or "slice");
     }
 
     private static Id Id(byte[] bytes) => new() { Value = Google.Protobuf.ByteString.CopyFrom(bytes) };
