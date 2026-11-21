@@ -490,31 +490,49 @@ public sealed class WindowsExecutionPlatform : IExecutionPlatform
             throw new LegacyCustodyUnavailableException("The recorded attempt job was not found in this Windows session.");
         }
 
-        var key = (nuint)Interlocked.Increment(ref _nextKey);
-        var handle = new WindowsAttemptHandle(this, key, job, files, stdinWriter: null, root);
-        if (root is null && !File.Exists(files.ExitPath) && !File.Exists(files.LaunchPath))
+        WindowsAttemptHandle? handle = null;
+        try
         {
-            // The node stopped in the middle of the attempt's launch: the holder may still start a launch step or the command. A stop awaits
-            // it; any other attempt may be stopped later, and that forced phase must see it too (WatchLaunch). Before the port is associated:
-            // the association posts a new-process message for every process in the job then (observed on the workstation), so the ones present
-            // now are told apart, and none that enters later is missed.
-            handle.AwaitLaunch(stopping);
-        }
+            var key = (nuint)Interlocked.Increment(ref _nextKey);
+            handle = new WindowsAttemptHandle(this, key, job, files, stdinWriter: null, root);
+            if (root is null && !File.Exists(files.ExitPath) && !File.Exists(files.LaunchPath))
+            {
+                // The node stopped in the middle of the attempt's launch: the holder may still start a launch step or the command. A stop awaits
+                // it; any other attempt may be stopped later, and that forced phase must see it too (WatchLaunch). Before the port is associated:
+                // the association posts a new-process message for every process in the job then (observed on the workstation), so the ones present
+                // now are told apart, and none that enters later is missed.
+                handle.AwaitLaunch(stopping);
+            }
 
-        _attempts[key] = handle;
-        job.AssociateCompletionPort(_port, key, clearFirst: true);
-        var ack = Native.OpenEvent(Native.EventModifyState | Native.Synchronize, inherit: false, AckName(nodeName, files.AttemptName));
-        if (ack.IsInvalid)
-        {
-            ack.Dispose();
-        }
-        else
-        {
-            handle.Ack = ack;
-        }
+            _attempts[key] = handle;
+            job.AssociateCompletionPort(_port, key, clearFirst: true);
+            var ack = Native.OpenEvent(Native.EventModifyState | Native.Synchronize, inherit: false, AckName(nodeName, files.AttemptName));
+            if (ack.IsInvalid)
+            {
+                ack.Dispose();
+            }
+            else
+            {
+                handle.Ack = ack;
+            }
 
-        handle.MarkReopened();
-        return handle;
+            handle.MarkReopened();
+            return handle;
+        }
+        catch
+        {
+            // The caller has not received this handle. Release only our reference, without signalling the holder or its Job.
+            if (handle is null)
+            {
+                job.Dispose();
+            }
+            else
+            {
+                handle.Dispose();
+            }
+
+            throw;
+        }
     }
 
     /// <inheritdoc />
