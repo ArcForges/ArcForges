@@ -3,44 +3,6 @@ using ArcForges.Contracts.Node.V1;
 
 namespace ArcForges.Node.Platform;
 
-/// <summary>What to run: an argument vector or a shell script, in a working directory, with the resolved environment.</summary>
-public sealed class CommandRequest
-{
-    /// <summary>The argument vector (argv mode), or <see langword="null"/> in shell mode.</summary>
-    public IReadOnlyList<string>? Argv { get; init; }
-
-    /// <summary>The shell kind (shell mode).</summary>
-    public ShellKind Shell { get; init; }
-
-    /// <summary>The script (shell mode).</summary>
-    public string? Script { get; init; }
-
-    /// <summary>An absolute shell executable overriding the detected one (shell mode).</summary>
-    public string? ShellPath { get; init; }
-
-    /// <summary>The absolute working directory.</summary>
-    public required string WorkingDirectory { get; init; }
-
-    /// <summary>The resolved environment (its <c>PATH</c> and <c>PATHEXT</c> drive the program lookup).</summary>
-    public required IReadOnlyDictionary<string, string> Environment { get; init; }
-
-    /// <summary>The attempt's temporary directory, where long scripts are written; <see langword="null"/> while validating.</summary>
-    public string? TempDirectory { get; init; }
-}
-
-/// <summary>The stdin of an attempt (04 section 3: NUL, a temporary file, a file, or a pipe).</summary>
-public enum StdinKind
-{
-    /// <summary>The null device.</summary>
-    None = 0,
-
-    /// <summary>A file (FILE, or BYTES written to the temporary directory).</summary>
-    File = 1,
-
-    /// <summary>A pipe the node writes (STREAM).</summary>
-    Stream = 2,
-}
-
 /// <summary>The limits of an attempt's container (03 section 5.2).</summary>
 public sealed class ContainerLimits
 {
