@@ -234,12 +234,13 @@ public sealed partial class MxcRunServiceTests
     [Trait("isolation", "exclusive")]
     public async Task InstalledWeightedSandboxesShareReducedNativeCpuHeadroomAndRecover()
     {
+        const uint minimumBudget = 400;
         var cancellation = TestContext.Current.CancellationToken;
         cancellation.ThrowIfCancellationRequested();
         RequireExtractedPackage();
         await using var package = await ResourcePackage.StartAsync(policy =>
         {
-            policy.Resources.MinManagedCpuMillicores = 400;
+            policy.Resources.MinManagedCpuMillicores = minimumBudget;
             policy.Resources.SmoothingAlphaUp = 1;
             policy.Resources.SmoothingAlphaDown = 0.8;
         });
@@ -290,19 +291,36 @@ public sealed partial class MxcRunServiceTests
         var initialLightLimit = RequireEffectiveRunLimit(lightInitial, "cpu", perScope);
         var initialHeavyLimit = RequireEffectiveRunLimit(heavyInitial, "cpu", perScope);
 
-        // The host-owned producer consumes only the CPU needed to cross the calibrated threshold.
         uint heldBudget = combined - threshold - 100;
-        int threads = (int)Math.Clamp(((initialHeadroom - heldBudget + 999) / 1000) + 1, 2U, 4U);
         var latest = await ReadInstalledBudgetAsync(package.Resources, "node", null, cancellation);
-        await WaitForResourceBudgetAsync(package.Resources, "node", null,
-            sample => sample.SampleSequence > latest.SampleSequence && sample.BudgetCpuMillicores >= combined);
+        var beforeLoad = await WaitForResourceBudgetAsync(package.Resources, "node", null,
+            sample => sample.SampleSequence > latest.SampleSequence && sample.BudgetCpuMillicores >= combined
+                && sample.HasUnmanagedCpuMillicores && sample.HostCpuMillicores == host && sample.ReservedCpuMillicores == reserve);
+        // Calibrate against the latest unmanaged usage and aim for the configured floor. The
+        // floor keeps native grants stable long enough for an interval of cumulative CPU accounting.
+        long additionalCpu = Math.Max(0L, (long)host - reserve - beforeLoad.UnmanagedCpuMillicores - minimumBudget);
+        int threads = (int)Math.Clamp(((additionalCpu + 999) / 1000) + 1, 2L, 4L);
+        var output = TestContext.Current.TestOutputHelper;
+        output?.WriteLine(FormattableString.Invariant(
+            $"Calibration sample {beforeLoad.SampleSequence}: capacity {beforeLoad.HostCpuMillicores}m, unmanaged {beforeLoad.UnmanagedCpuMillicores}m, reserve {reserve}m, budget {beforeLoad.BudgetCpuMillicores}m, expected {minimumBudget}-{heldBudget}m, producer threads {threads}."));
         var load = package.Fixture.Start(TestNode.TestLoad, ["cpu", "--threads", threads.ToString(CultureInfo.InvariantCulture),
             "--iterations", "20000000000"]);
         DateTimeOffset reducedAt;
         try
         {
+            var observedSequence = beforeLoad.SampleSequence;
             var reduced = await WaitForResourceBudgetAsync(package.Resources, "node", null, sample =>
-                sample.HasBudgetCpuMillicores && sample.BudgetCpuMillicores is >= 400 && sample.BudgetCpuMillicores <= heldBudget);
+            {
+                if (observedSequence != sample.SampleSequence)
+                {
+                    observedSequence = sample.SampleSequence;
+                    var cpu = load.HasExited ? "exited" : load.TotalProcessorTime.TotalMilliseconds.ToString("F0", CultureInfo.InvariantCulture);
+                    output?.WriteLine(FormattableString.Invariant(
+                        $"Host sample {sample.SampleSequence}: budget {sample.BudgetCpuMillicores}m, unmanaged {sample.UnmanagedCpuMillicores}m, pressure {sample.Pressure}, producer CPU ms {cpu}."));
+                }
+
+                return sample.HasBudgetCpuMillicores && sample.BudgetCpuMillicores is >= minimumBudget && sample.BudgetCpuMillicores <= heldBudget;
+            });
             var shared = await AwaitWeightedReadbackAsync(package, lighter, heavier, heldBudget, cancellation);
             Assert.Equal(initialLightLimit.Scope, shared.Light.Scope);
             Assert.Equal(initialHeavyLimit.Scope, shared.Heavy.Scope);

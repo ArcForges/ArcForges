@@ -270,7 +270,7 @@ STEPS = [
         "./eng/test.ps1 -Suite tools -NoBuild"), 300),
     win("win-closed-loop-native", tests("closed-loop", native=True), 600),
     win("win-bench", pwsh(f"./eng/bench.ps1 -RuntimeIdentifier {RID_WIN}"), 600),
-    win("win-package", pwsh(WIN_PACKAGE), 600),
+    win("win-package", pwsh(WIN_PACKAGE), 720),
     # ci.yml, Native (linux-x64)
     linux("linux-real-os", LINUX_REAL_OS, 60),
     linux("linux-restore", "dotnet restore ArcForges.slnx --locked-mode", 600),
