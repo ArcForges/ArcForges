@@ -535,23 +535,45 @@ public sealed class NodeStore : IDisposable
 
         // The host holds the node-instance guard. An immutable connection leaves a checkpointed store alone.
         // It would skip pending WAL frames, so inspect those on a private copy with the normal SQLite reader.
+        using var original = File.OpenRead(path);
         string wal = path + "-wal";
-        if (!HasFileEntry(wal))
-            return Inspect(path, new Uri(path, UriKind.Absolute).AbsoluteUri + "?immutable=1", plan, requireV2Runtime: true);
+        bool hasWal = HasFileEntry(wal);
+        if (!hasWal && ImmutableStoreUri(path) is { } uri)
+            return Inspect(path, uri, plan, requireV2Runtime: true);
 
+        using var originalWal = hasWal ? File.OpenRead(wal) : null;
         string work = Path.Combine(Path.GetDirectoryName(path)!, $".inspect-{Guid.NewGuid():N}");
         StorePaths.CreatePrivateDirectory(work);
         try
         {
             string copy = Path.Combine(work, Path.GetFileName(path));
-            CopyInspectionFile(path, copy);
-            CopyInspectionFile(wal, copy + "-wal");
+            CopyInspectionFile(original, copy);
+            if (originalWal is not null)
+                CopyInspectionFile(originalWal, copy + "-wal");
             return Inspect(path, copy, plan, requireV2Runtime: true);
         }
         finally
         {
             Directory.Delete(work, recursive: true);
         }
+    }
+
+    private static string? ImmutableStoreUri(string path)
+    {
+        string prefix = "file://";
+        if (OperatingSystem.IsWindows())
+        {
+            if (path.Length < 3 || !char.IsAsciiLetter(path[0]) || path[1] != ':')
+                return null;
+
+            prefix += "/" + path[..2];
+            path = path[2..];
+        }
+
+        // Escape the physical path, including any percent characters that form part of a filename.
+        string escaped = string.Join('/', path.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            .Select(Uri.EscapeDataString));
+        return prefix + escaped + "?immutable=1";
     }
 
     private static bool HasFileEntry(string path)
@@ -567,11 +589,10 @@ public sealed class NodeStore : IDisposable
         }
     }
 
-    private static void CopyInspectionFile(string source, string destination)
+    private static void CopyInspectionFile(Stream source, string destination)
     {
-        using var input = File.OpenRead(source);
         using var output = DurableEpochFence.OpenPrivate(destination, FileMode.CreateNew);
-        input.CopyTo(output);
+        source.CopyTo(output);
     }
 
     private static ExistingStore? Inspect(string path, string source, MigrationPlan plan, bool requireV2Runtime)

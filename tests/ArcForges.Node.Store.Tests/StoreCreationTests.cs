@@ -133,6 +133,26 @@ public sealed partial class StoreCreationTests
     }
 
     [Fact]
+    public void V2RuntimeInspectsTheLiteralDataRootPath()
+    {
+        using var fixture = new TemporaryDataRoot();
+        var original = new NodeStoreOptions { DataRoot = Path.Combine(fixture.Path, "100%61 # 私有"), BootIdentity = "original" };
+        var sibling = new NodeStoreOptions { DataRoot = Path.Combine(fixture.Path, "100a # 私有"), BootIdentity = "sibling" };
+        using (var legacy = NodeStore.Open(original, new MigrationPlan(StoreMigrations.Released.Steps.Take(15))))
+        using (var current = NodeStore.OpenForV2Runtime(sibling))
+        {
+            Assert.Equal(15, legacy.Opening.SchemaVersion);
+            Assert.Equal(StoreMigrations.SupportedSchemaVersion, current.Opening.SchemaVersion);
+        }
+
+        string database = StorePaths.Database(original.DataRoot);
+        byte[] before = File.ReadAllBytes(database);
+        var refusal = Assert.Throws<StoreIncompatibleException>(() => NodeStore.OpenForV2Runtime(original));
+        Assert.Contains("legacy_store_requires_offline_cutover", refusal.Message, StringComparison.Ordinal);
+        Assert.Equal(before, File.ReadAllBytes(database));
+    }
+
+    [Fact]
     public void V2RuntimeRefusesUnsettledLegacyApprovalWithoutCreatingAnOutcome()
     {
         using var root = new TemporaryDataRoot();
