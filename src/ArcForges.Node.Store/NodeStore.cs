@@ -466,7 +466,7 @@ public sealed partial class NodeStore : IDisposable
                 if (protectedInspection ? HasFileEntry(path) : File.Exists(path))
                 {
                     existing = protectedInspection
-                        ? InspectRuntimeStore(path, plan)
+                        ? InspectRuntimeStore(path, plan, allowWindowsSharing: !requireV2Runtime)
                         : Inspect(path, path, plan, requireV2Runtime: false);
                 }
                 if (existing is null && protectedInspection &&
@@ -532,28 +532,38 @@ public sealed partial class NodeStore : IDisposable
         }
     }
 
-    private static ExistingStore? InspectRuntimeStore(string path, MigrationPlan plan)
+    private static ExistingStore? InspectRuntimeStore(string path, MigrationPlan plan, bool allowWindowsSharing)
     {
-        if (HasFileEntry(path + "-journal"))
+        string journal = path + "-journal";
+        if (HasFileEntry(journal))
             throw new StoreIncompatibleException("The node store has a rollback journal and requires offline recovery; it was not changed.");
 
         // The host holds the node-instance guard. An immutable connection leaves a checkpointed store alone.
         // It would skip pending WAL frames, so inspect those on a private copy with the normal SQLite reader.
-        using var original = File.OpenRead(path);
+        using var original = OpenInspectionInput(path, allowWindowsSharing, out bool sharedDatabase);
         string wal = path + "-wal";
         bool hasWal = HasFileEntry(wal);
-        if (!hasWal && ImmutableStoreUri(path) is { } uri)
+        if (!sharedDatabase && !hasWal && ImmutableStoreUri(path) is { } uri)
             return Inspect(path, uri, plan, requireV2Runtime: true);
 
-        using var originalWal = hasWal ? File.OpenRead(wal) : null;
+        bool sharedWal = false;
+        using var originalWal = hasWal ? OpenInspectionInput(wal, allowWindowsSharing, out sharedWal) : null;
         string work = Path.Combine(Path.GetDirectoryName(path)!, $".inspect-{Guid.NewGuid():N}");
         StorePaths.CreatePrivateDirectory(work);
         try
         {
             string copy = Path.Combine(work, Path.GetFileName(path));
-            CopyInspectionFile(original, copy);
-            if (originalWal is not null)
-                CopyInspectionFile(originalWal, copy + "-wal");
+            if (sharedDatabase || sharedWal)
+            {
+                CopySharedInspectionPair(path, original, originalWal, copy);
+            }
+            else
+            {
+                CopyInspectionFile(original, copy);
+                if (originalWal is not null)
+                    CopyInspectionFile(originalWal, copy + "-wal");
+            }
+
             return Inspect(path, copy, plan, requireV2Runtime: true);
         }
         finally
@@ -561,6 +571,81 @@ public sealed partial class NodeStore : IDisposable
             Directory.Delete(work, recursive: true);
         }
     }
+
+    private static FileStream OpenInspectionInput(string path, bool allowWindowsSharing, out bool shared)
+    {
+        shared = false;
+        try
+        {
+            return File.OpenRead(path);
+        }
+        catch (IOException failure) when (allowWindowsSharing && OperatingSystem.IsWindows() &&
+            failure.HResult == unchecked((int)0x80070020)) // ERROR_SHARING_VIOLATION
+        {
+            shared = true;
+            // Hold the name against replacement and reread the OS bytes on each verification pass.
+            return new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, bufferSize: 1);
+        }
+    }
+
+    private static void CopySharedInspectionPair(string path, FileStream original, FileStream? wal, string copy)
+    {
+        long databaseLength = original.Length;
+        long walLength = wal?.Length ?? 0;
+        byte[] temporary = new byte[64 * 1024];
+        byte[] databaseBefore = ReadInspectionBytes(original, databaseLength, temporary);
+        byte[]? walBefore = wal is null ? null : ReadInspectionBytes(wal, walLength, temporary);
+        byte[] databaseCopied;
+        using (var destination = DurableEpochFence.OpenPrivate(copy, FileMode.CreateNew))
+            databaseCopied = ReadInspectionBytes(original, databaseLength, temporary, destination);
+
+        byte[]? walCopied = null;
+        if (wal is not null)
+        {
+            using var destination = DurableEpochFence.OpenPrivate(copy + "-wal", FileMode.CreateNew);
+            walCopied = ReadInspectionBytes(wal, walLength, temporary, destination);
+        }
+
+        if (!databaseBefore.AsSpan().SequenceEqual(databaseCopied) ||
+            (wal is not null && !walBefore.AsSpan().SequenceEqual(walCopied)) ||
+            !databaseBefore.AsSpan().SequenceEqual(ReadInspectionBytes(original, databaseLength, temporary)) ||
+            (wal is not null && !walBefore.AsSpan().SequenceEqual(ReadInspectionBytes(wal, walLength, temporary))) ||
+            HasFileEntry(path + "-wal") != (wal is not null) || HasFileEntry(path + "-journal"))
+            throw UnstableInspection();
+    }
+
+    private static byte[] ReadInspectionBytes(FileStream input, long length, byte[] buffer, FileStream? copy = null)
+    {
+        input.Position = 0;
+        if (input.Length != length)
+            throw UnstableInspection();
+
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        for (long remaining = length; remaining != 0;)
+        {
+            var block = buffer.AsSpan(0, (int)Math.Min(remaining, buffer.Length));
+            try
+            {
+                input.ReadExactly(block);
+            }
+            catch (EndOfStreamException)
+            {
+                throw UnstableInspection();
+            }
+
+            hash.AppendData(block);
+            copy?.Write(block);
+            remaining -= block.Length;
+        }
+
+        if (input.Length != length)
+            throw UnstableInspection();
+
+        return hash.GetHashAndReset();
+    }
+
+    private static StoreIncompatibleException UnstableInspection() =>
+        new("The node store or its journals changed during inspection; the original was not changed. Retry after its writer has stopped.");
 
     internal static string? ImmutableStoreUri(string path)
     {
