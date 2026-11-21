@@ -9,7 +9,6 @@ using ArcForges.Node.CloudLink;
 using ArcForges.Node.Core;
 using ArcForges.Node.Core.Events;
 using ArcForges.Node.Core.Execution;
-using ArcForges.Node.Core.Files;
 using ArcForges.Node.Core.Platform;
 using ArcForges.Node.Core.Sandboxes;
 using ArcForges.Node.Core.Security;
@@ -39,13 +38,6 @@ public sealed record NodeHostOptions
 {
     /// <summary>Honour the <c>ARCFORGES_*</c> test hooks (endpoint, configuration directory).</summary>
     public bool TestMode { get; init; }
-
-    /// <summary>
-    /// Whether a local SCRIPT caller may submit a task (AD-0021 section 5): <see langword="null"/> (the host) derives it from
-    /// <see cref="TestMode"/> and <see cref="LocalSubmission.Variable"/> (<see cref="LocalSubmission.ScriptAllowed"/>); in-process
-    /// test nodes set it.
-    /// </summary>
-    internal bool? AllowLocalScriptSubmit { get; init; }
 
     /// <summary>Started by the systemd user unit (<c>--systemd</c>); readiness and watchdog go to <c>NOTIFY_SOCKET</c> either way.</summary>
     public bool Systemd { get; init; }
@@ -102,20 +94,8 @@ public sealed record NodeHostOptions
     internal IBrowserOpener? Opener { get; init; }
 
     /// <summary>
-    /// Test seam, set only by in-process tests: wraps routed dispatch to hold a result after the real effect, before the channel sends it.
-    /// The executable never sets it.
-    /// </summary>
-    internal Func<IRoutedDispatcher, IRoutedDispatcher>? WrapRoutedDispatcher { get; init; }
-
-    /// <summary>
-    /// The <c>arcforges</c> executable whose helper roles (<c>node exec-wrap</c>, <c>node signal</c>) the node starts: by default the
-    /// executable beside this one (04 section 3: helpers are invoked by path); component tests name the host built next to them.
-    /// </summary>
-    public string? HelperExecutable { get; init; }
-
-    /// <summary>
     /// The version directory the node runs from, whose <c>digests.json</c> the node verifies after startup (AD-0007 section 8): by default
-    /// the directory of <see cref="HelperExecutable"/>, else of this executable; component tests name a temporary one.
+    /// the application directory; component tests name a temporary one.
     /// </summary>
     public string? VersionDirectory { get; init; }
 
@@ -124,46 +104,6 @@ public sealed record NodeHostOptions
     /// commit's failure handling, so a test can hold the commit (as a commit queued behind other writes waits) or fail it.
     /// </summary>
     internal Func<Task>? VersionFindingCommitting { get; init; }
-
-    /// <summary>
-    /// Test seam, set only by in-process component tests: the node evaluates its budgets and pressure as if it were alone on the machine
-    /// (<see cref="ArcForges.Node.Core.Resources.MachineIsolation"/>). The executable never sets it: <c>ServeAsync</c> isolates the node
-    /// also when this is false and the process runs with <c>--test-mode</c> and <c>ARCFORGES_TEST_MACHINE=isolated</c>.
-    /// </summary>
-    internal bool IsolatedFromMachineLoad { get; init; }
-
-    /// <summary>
-    /// Test seam, set only by in-process component tests: wraps the platform's resource sampler, so a test can script the machine-wide
-    /// figures over the real sampler's (a busy machine without creating the load). The executable never sets it.
-    /// </summary>
-    internal Func<IResourceSampler, IResourceSampler>? WrapSampler { get; init; }
-
-    /// <summary>
-    /// Test seam, set only by in-process component tests (fault injection): the execution supervisor calls it right after a stop's forced
-    /// phase terminated an attempt whose start had not completed (<c>ExecutionOptions.ForcedBeforeStart</c>). The executable never sets it.
-    /// </summary>
-    internal Action<IAttemptHandle>? ForcedBeforeStart { get; init; }
-
-    /// <summary>
-    /// Test seam, set only by in-process component tests (fault injection): the execution supervisor calls it before and after the termination
-    /// that follows a forced phase's pending start (<c>ExecutionOptions.StartObserved</c>). The executable never sets it.
-    /// </summary>
-    internal Action<IAttemptHandle, bool>? StartObserved { get; init; }
-
-    /// <summary>
-    /// Test seam, set only by in-process component tests (fault injection): the execution supervisor calls it before and after the termination
-    /// of the forced phase after the grace period (<c>ExecutionOptions.ForcedPhase</c>). The executable never sets it.
-    /// </summary>
-    internal Action<IAttemptHandle, bool>? ForcedPhase { get; init; }
-
-    /// <summary>Linux: the root slice (component tests give each node its own; default <c>arcforges.slice</c>, or the test hook in test mode).</summary>
-    public string? LinuxSlice { get; init; }
-
-    /// <summary>Linux: the user manager's D-Bus address (component tests may name an absent one; default the user bus, else the manager's private socket).</summary>
-    public string? SystemdAddress { get; init; }
-
-    /// <summary>Linux: the controllers treated as delegated (component tests simulate a manager without a controller; default as read).</summary>
-    public IReadOnlyCollection<string>? LinuxControllers { get; init; }
 }
 
 /// <summary>
@@ -268,7 +208,7 @@ public static class NodeHost
         try
         {
             DurableCommandStore.VerifyRestorePublication(dataRoot);
-            store = NodeStore.Open(new NodeStoreOptions { DataRoot = dataRoot, BootIdentity = BootIdentity.Read(), Clock = clock });
+            store = NodeStore.OpenForV2Runtime(new NodeStoreOptions { DataRoot = dataRoot, BootIdentity = BootIdentity.Read(), Clock = clock });
         }
         catch (DurableStoreMaintenanceException)
         {
@@ -353,34 +293,10 @@ public static class NodeHost
             return await RefuseUnreconciledAuthorityAsync(options, log, cancellationToken).ConfigureAwait(false);
         }
 
-        var keys = new NodeDataKeyRing(store, secretStore);
-        var keyLoad = Task.Run(() =>
-        {
-            var keyId = keys.Prepare(out var reason);
-            if (keyId is null)
-            {
-                log.Warning("node.data_key.unavailable", new LogField("backend", keys.Backend), new LogField("reason", NodeLog.OneLine(reason)));
-            }
-            else
-            {
-                log.Info("node.data_key.loaded", new LogField("keyId", keyId), new LogField("backend", keys.Backend), new LogField("protection", keys.Protection),
-                    new LogField("isolated", keys.Isolated));
-            }
-        }, CancellationToken.None);
-
-        // 02 section 2 step 6: the platform layer creates or re-opens the root container and verifies enforcement with a probe.
-        var platform = protectedStorage ? null : StartPlatform(options, store, log);
-        CapabilityReport ReadLegacyCapabilities()
-        {
-            var report = platform is null ? NodeCapabilities.Evaluate(clock) : NodeCapabilities.FromPlatform(platform, clock);
-            report.Adopt = AdoptSupport.Unsupported;
-            report.AdoptReason = "New legacy process adoption has been retired. Cleanup of recorded adoptions requires confirmed custody.";
-            return report;
-        }
-        var capabilities = ReadLegacyCapabilities();
+        var capabilities = NodeCapabilities.Evaluate(clock);
         if (OperatingSystem.IsLinux())
         {
-            // An in-memory data root: captured output and temporary files count against the attempts' memory (no swap to reclaim into).
+            // Report when a Node-owned path is backed by memory.
             var inMemory = NodeCapabilities.AddDataRootFact(capabilities, dataRoot);
             foreach (var (path, kind) in inMemory)
             {
@@ -391,55 +307,18 @@ public static class NodeHost
         using var heartbeat = new NodeHeartbeatWriter(dataRoot, log, clock);
         if (notifier.WatchdogInterval is { } watchdogInterval)
         {
-            // 13 section 3.4: WatchdogSec=30, pinged with each heartbeat renewal from the enforcement loop (06 section 5).
+            // Systemd receives watchdog notifications from the Node heartbeat.
             heartbeat.Renewed = () => notifier.Notify("WATCHDOG=1");
             log.Info("node.watchdog", new LogField("intervalMs", (long)watchdogInterval.TotalMilliseconds));
         }
-        var isolated = options.IsolatedFromMachineLoad || ArcForges.Node.Core.Resources.MachineIsolation.FromEnvironment(options.TestMode);
-        if (isolated)
-        {
-            log.Info("node.machine_isolated", new LogField("detail", "test hook: budgets and pressure see only this node and its attempts on the machine"));
-        }
-
         var sampler = CreateSampler();
-        if (sampler is not null && options.WrapSampler is { } wrap)
-        {
-            sampler = wrap(sampler);
-        }
-        var execution = protectedStorage ? null : new ExecutionSupervisor(new ExecutionOptions
-        {
-            Store = store,
-            Processor = processor,
-            Log = log,
-            Clock = clock,
-            DataRoot = dataRoot,
-            Platform = platform,
-            Faults = faults,
-            Heartbeat = heartbeat,
-            Unenforced = platform is not null && !NodeCapabilities.FullyEnforced(capabilities),
-            Sampler = sampler,
-            IsolatedFromMachineLoad = isolated,
-            ForcedBeforeStart = options.ForcedBeforeStart,
-            StartObserved = options.StartObserved,
-            ForcedPhase = options.ForcedPhase,
-        });
         using var node = new NodeRuntime(store, journal, hub, processor, log, settings, dataRoot, endpoint.Address, clock, recovery, capabilities)
         {
-            Execution = execution,
             Sandboxes = sandboxes,
-            ReadLegacyCapabilities = ReadLegacyCapabilities,
-
-            // AD-0021 section 5 (Plan decision Q8): a local SCRIPT submission only on a --test-mode node with the allowance; never in production.
-            LocalScriptSubmit = !protectedStorage && (options.AllowLocalScriptSubmit
-                ?? LocalSubmission.ScriptAllowed(options.TestMode, Environment.GetEnvironmentVariable(LocalSubmission.Variable))),
         };
 
-        // AF-CTR-05 N2b: the center-routed dispatcher, bound to the TaskService once the local server builds it.
-        using var routed = protectedStorage ? null : new RoutedDispatcher(node);
-        node.RoutedDispatcher = routed;
-        var versionDirectory = options.VersionDirectory
-            ?? (options.HelperExecutable is { } helperPath ? Path.GetDirectoryName(Path.GetFullPath(helperPath)) : null)
-            ?? AppContext.BaseDirectory;
+        var routed = protectedStorage ? null : new RoutedDispatcher(node);
+        var versionDirectory = options.VersionDirectory ?? AppContext.BaseDirectory;
         node.SetFact(VersionIntegrity.FactName, VersionIntegrity.InitialFact(versionDirectory));
 
         // 02 section 2 step 8, the cloud link (AF-CTR-04): the node credential in the same secret store as the data key, the node key from
@@ -452,6 +331,7 @@ public static class NodeHost
             Keys = options.NodeKeys?.Invoke(dataRoot) ?? NodeKeyStores.ForNode(dataRoot, options.TestMode),
             Center = settings.Center,
             ConfigureCenter = center => processor.ExecuteAsync(_ => settings.Update(null, LogLevel.Unspecified, null, center.Url).Error),
+            ChannelEnabled = true,
             V2Snapshot = () => DescribeV2Channel(sandboxes),
             V2EnrollmentChanged = enrollment => ObserveV2Enrollment(sandboxes, enrollment),
             V2ControlDispatch = routed.DispatchV2Async,
@@ -474,9 +354,6 @@ public static class NodeHost
             Opener = options.Opener
                 ?? new BrowserOpener(options.TestMode, CloudLinkTestHooks.Browser(options.TestMode, Environment.GetEnvironmentVariable(CloudLinkTestHooks.BrowserFile))),
 
-            // AF-CTR-05 N1: the node channel logs every received call in routed_call_log through the single writer.
-            RoutedCalls = new ProcessorRoutedCallStore(processor),
-            Dispatcher = options.WrapRoutedDispatcher?.Invoke(routed) ?? routed,
             Version = NodeContract.ProductVersion,
         });
         await using var cloudScope = cloud;
@@ -490,11 +367,6 @@ public static class NodeHost
             }
         }
 
-        // The capability report's root_* facts follow the root limits the scheduler applies from the measured budgets (03 section 5.1).
-        if (execution is not null)
-        {
-            execution.RootLimitsApplied = _ => node.Reevaluate();
-        }
         using var stopSignals = RegisterSignals(node);
         using var external = cancellationToken.Register(() => node.RequestStop("cancelled"));
         LocalRpcServer? server = null;
@@ -520,24 +392,10 @@ public static class NodeHost
             log.Info("node.recovering", new LogField("uncleanShutdown", unclean), new LogField("bootChanged", bootChanged),
                 new LogField("storeCreated", store.Opening.Created), new LogField("migratedFrom", store.Opening.MigratedFrom ?? 0),
                 new LogField("generation", journal.Generation));
-            try
+            foreach (var participant in options.Recovery)
             {
-                if (!protectedStorage)
-                {
-                    await RecoverFileCustodyAsync(node).ConfigureAwait(false);
-                }
-
-                if (execution is not null)
-                {
-                    await RecoverLegacyExecutionAsync(options, node, execution, recovery).ConfigureAwait(false);
-                }
-            }
-            catch (LegacyCustodyUnavailableException exception)
-            {
-                log.Error("node.legacy_custody.unavailable", exception);
-                await options.Error.WriteLineAsync("arcforges: legacy process custody could not be confirmed. Retry when the original platform scope is available."
-                    .AsMemory(), cancellationToken).ConfigureAwait(false);
-                return NodeExitCodes.Failure;
+                await participant.RecoverAsync(recovery, processor, node.Stopping).ConfigureAwait(false);
+                log.Info("node.recovery.done", new LogField("participant", participant.Name));
             }
 
             if (node.Sandboxes is { } recoveredSandboxes)
@@ -550,11 +408,7 @@ public static class NodeHost
                 sandboxResources = recoveredSandboxes.StartResourceSampling(sampler as IHostResourceSource, log);
             }
 
-            var sessions = new ClientSessions
-            {
-                Opened = session => execution?.CallerConnected(new CallerKey(session.Peer.ProcessId, session.Peer.ProcessStartTime.UtcTicks)),
-                Closed = session => execution?.CallerDisconnected(new CallerKey(session.Peer.ProcessId, session.Peer.ProcessStartTime.UtcTicks)),
-            };
+            var sessions = new ClientSessions();
             server = NodeApiServer.Build(endpoint, node, sessions, options.StreamBuffer, ClientImages.ForNode(ClientImages.TestHookApplies(options.TestMode, endpoint.Address, configPath, dataRoot)),
                 cloud, centerControl, protectedStorage);
             try
@@ -597,30 +451,16 @@ public static class NodeHost
                 await beforeReady(node).ConfigureAwait(false);
             }
 
-            housekeepingLoop = HousekeepAsync(node, keys, housekeeping, loops.Token);
+            housekeepingLoop = HousekeepAsync(node, housekeeping, loops.Token);
             if (cloud is not null)
             {
                 await cloud.StartAsync().ConfigureAwait(false);
                 centerControl!.MarkLinkLoaded();
             }
-            if (OperatingSystem.IsLinux() && platform is ArcForges.Node.Platform.Linux.LinuxExecutionPlatform { UnitMode: true } linux)
-            {
-                // 06 section 5: arcforges-guard.service guards the attempt units while the node is down; started when installed.
-                var guardUnit = LinuxTestHooks.Value(options.TestMode, LinuxTestHooks.GuardUnit) ?? LinuxTestHooks.DefaultGuardUnit;
-                log.Info("node.guard_unit", new LogField("unit", guardUnit), new LogField("state", linux.EnsureGuard(guardUnit)));
-            }
-
-            var enforced = NodeCapabilities.FullyEnforced(node.Capabilities);
-            await node.TransitionAsync(enforced ? NodeLifecycleState.Ready : NodeLifecycleState.Degraded,
-                enforced ? "ready" : NodeCapabilities.DegradedReason).ConfigureAwait(false);
-            if (execution is null)
-            {
-                heartbeat.Start();
-            }
-            else
-            {
-                execution.Start();
-            }
+            var available = node.Sandboxes is not null;
+            await node.TransitionAsync(available ? NodeLifecycleState.Ready : NodeLifecycleState.Degraded,
+                available ? "ready" : "sandbox_store_unavailable").ConfigureAwait(false);
+            heartbeat.Start();
             if (node.ResumeApprovals is { } resume)
             {
                 // 11 section 1: an approval the previous run approved but did not execute runs now, under its original command ID.
@@ -641,7 +481,7 @@ public static class NodeHost
             ready?.Set();
             options.Ready?.Invoke(node);
             log.Info("node.ready", new LogField("state", node.Lifecycle.State), new LogField("endpoint", endpoint.Address),
-                new LogField("transport", endpoint.Transport), new LogField("platform", platform?.Name ?? "none"),
+                new LogField("transport", endpoint.Transport),
                 new LogField("heartbeatInstance", heartbeat.Instance));
 
             // AD-0007 section 8: the version directory is made read-only and verified against its digests off the startup path.
@@ -655,7 +495,7 @@ public static class NodeHost
             {
             }
 
-            return await ShutdownAsync(node, server, ready, notifier, processor, dataRoot, loops, [housekeepingLoop, keyLoad, versionCheck], cloud).ConfigureAwait(false);
+            return await ShutdownAsync(node, server, ready, notifier, processor, dataRoot, loops, [housekeepingLoop, versionCheck], cloud).ConfigureAwait(false);
         }
         finally
         {
@@ -669,42 +509,7 @@ public static class NodeHost
                 await sandboxResources.DisposeAsync().ConfigureAwait(false);
             }
 
-            if (execution is not null)
-            {
-                await execution.DisposeAsync().ConfigureAwait(false);
-            }
-            platform?.Dispose();
-            keys.Dispose();
             await processor.DisposeAsync().ConfigureAwait(false);
-        }
-    }
-
-    private static async Task RecoverFileCustodyAsync(NodeRuntime node)
-    {
-        // Persist uncertainty before enabling any legacy API that can observe or mutate its target.
-        var interruptedFiles = await node.Processor.ExecuteAsync(context =>
-            FileMutationJournal.RecoverInterrupted(context.Transaction), CommitDurability.Full).ConfigureAwait(false);
-        if (interruptedFiles > 0)
-        {
-            node.Log.Warning("node.file_recovery.pending", new LogField("count", interruptedFiles));
-        }
-
-        // The FULL writer fences only unraised reservations without a target journal; active approvals remain.
-        var recoveredStages = await node.Processor.ExecuteAsync(context =>
-            PrivateStageTerminal.RecoverUnraised(context.Transaction) +
-            PrivateStageTerminal.RecoverTerminalApprovals(context.Transaction), CommitDurability.Full).ConfigureAwait(false);
-        if (recoveredStages > 0)
-        {
-            node.Log.Warning("node.file_recovery.stages_terminal", new LogField("count", recoveredStages));
-        }
-    }
-
-    private static async Task RecoverLegacyExecutionAsync(NodeHostOptions options, NodeRuntime node, ExecutionSupervisor execution, RecoveryReport recovery)
-    {
-        foreach (var participant in options.Recovery.Prepend(execution))
-        {
-            await participant.RecoverAsync(recovery, node.Processor, node.Stopping).ConfigureAwait(false);
-            node.Log.Info("node.recovery.done", new LogField("participant", participant.Name));
         }
     }
 
@@ -763,12 +568,6 @@ public static class NodeHost
             await cloud.DisposeAsync().ConfigureAwait(false);
         }
 
-        // Running attempts stay with their holders (their guards take over the disk limits); kill_with_node attempts end here.
-        if (node.Execution is { } execution)
-        {
-            await execution.StopAsync().ConfigureAwait(false);
-        }
-
         node.Sandboxes?.StopDeletionWorkers();
         await processor.DisposeAsync().ConfigureAwait(false);
         node.Store.Checkpoint();
@@ -809,7 +608,7 @@ public static class NodeHost
         }
     }
 
-    private static async Task HousekeepAsync(NodeRuntime node, NodeDataKeyRing keys, PeriodicTimer timer, CancellationToken cancellationToken)
+    private static async Task HousekeepAsync(NodeRuntime node, PeriodicTimer timer, CancellationToken cancellationToken)
     {
         try
         {
@@ -817,20 +616,12 @@ public static class NodeHost
             {
                 try
                 {
-                    // Approvals past their TTL expire; decided approvals (90 days), audit entries (1 year) and routed calls (node-store.md section 2a)
-                    // are pruned (node-store.md).
                     var removed = await node.Processor.ExecuteAsync(context =>
                         EventJournal.Prune(context.Transaction) + Notifications.Prune(context.Transaction) + Jobs.Prune(context.Transaction)
-                        + Approvals.Expire(context) + PrivateStageTerminal.RecoverTerminalApprovals(context.Transaction)
-                        + Approvals.Prune(context.Transaction) + AuditLog.Prune(context.Transaction)
-                        + RoutedCallLog.Prune(context.Transaction) + RoutedFileRetention.Prune(context.Transaction), CommitDurability.Full).ConfigureAwait(false);
-                    var commands = node.Store.Commands.PurgeExpired();
-
-                    // Sealed secret values past storage.secret_retention_hours (04 section 2) and kept temporary directories of failed attempts.
-                    var secrets = new TaskSecrets(node.Store, keys).PurgeDue();
-                    var temporary = node.Execution?.RemoveExpiredTemp() ?? 0;
-                    node.Log.Debug("node.housekeeping", new LogField("rowsRemoved", removed + commands), new LogField("secretsPurged", secrets),
-                        new LogField("tmpRemoved", temporary));
+                        + Approvals.Expire(context, NodeServiceHandler.UpdateSettingsMethod)
+                        + Approvals.Prune(context.Transaction, NodeServiceHandler.UpdateSettingsMethod)
+                        + AuditLog.Prune(context.Transaction), CommitDurability.Full).ConfigureAwait(false);
+                    node.Log.Debug("node.housekeeping", new LogField("rowsRemoved", removed));
                 }
                 catch (Exception exception) when (exception is CommandQueueFullException or Microsoft.Data.Sqlite.SqliteException)
                 {
@@ -1030,71 +821,6 @@ public static class NodeHost
         }
 
         return null;
-    }
-
-    private static IExecutionPlatform? StartPlatform(NodeHostOptions options, NodeStore store, NodeLog log)
-    {
-        if (OperatingSystem.IsLinux())
-        {
-            return StartLinuxPlatform(options, store, log);
-        }
-
-        if (!OperatingSystem.IsWindows())
-        {
-            return null;
-        }
-
-        var helper = options.HelperExecutable ?? Path.Combine(AppContext.BaseDirectory, "arcforges.exe");
-        var platform = new ArcForges.Node.Platform.Windows.WindowsExecutionPlatform();
-        try
-        {
-            var settings = new ExecutionSettings(store.Policies.Current().Document, platform.Capacity.LogicalProcessors, platform.Capacity.PhysicalMemoryBytes);
-            var limits = settings.RootLimits();
-            platform.Start(IdText.Format(store.Metadata.NodeId.Span), limits, helper);
-            log.Info("node.platform.started", new LogField("platform", platform.Name), new LogField("rootJob", platform.RootJobName),
-                new LogField("rootCpuRate", limits.CpuRate), new LogField("rootCommitLimit", limits.CommitLimitBytes), new LogField("helper", helper));
-            return platform;
-        }
-        catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or IOException or UnauthorizedAccessException)
-        {
-            log.Error("node.platform.failed", exception);
-            platform.Dispose();
-            return null;
-        }
-    }
-
-    /// <summary>
-    /// Recovers legacy transient units through the Linux user manager. Without the manager, resource reporting is observe-only.
-    /// Test mode takes the slice, manager address and simulated delegation from <see cref="LinuxTestHooks"/>.
-    /// </summary>
-    [System.Runtime.Versioning.SupportedOSPlatform("linux")]
-    private static ArcForges.Node.Platform.Linux.LinuxExecutionPlatform StartLinuxPlatform(NodeHostOptions options, NodeStore store, NodeLog log)
-    {
-        var helper = options.HelperExecutable ?? Path.Combine(AppContext.BaseDirectory, "arcforges");
-        var controllers = LinuxTestHooks.Value(options.TestMode, LinuxTestHooks.Controllers);
-        var platform = new ArcForges.Node.Platform.Linux.LinuxExecutionPlatform(new ArcForges.Node.Platform.Linux.LinuxPlatformOptions
-        {
-            Slice = options.LinuxSlice ?? LinuxTestHooks.Value(options.TestMode, LinuxTestHooks.Slice) ?? ArcForges.Node.Platform.Linux.LinuxExecutionPlatform.DefaultSlice,
-            ManagerAddress = options.SystemdAddress ?? LinuxTestHooks.Value(options.TestMode, LinuxTestHooks.ManagerAddress),
-            DelegatedControllers = options.LinuxControllers ?? controllers?.Split(' ', StringSplitOptions.RemoveEmptyEntries),
-
-            // AD-0007 section 8: attempt units must not reach the node store or the data root's secret stores (where the hardening applies).
-            ProtectedPaths = [Path.GetDirectoryName(store.DatabasePath)!, Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(store.DatabasePath)!)!, "run", "secrets"),
-                Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(store.DatabasePath)!)!, "run", "test-secrets")],
-        });
-        var settings = new ExecutionSettings(store.Policies.Current().Document, platform.Capacity.LogicalProcessors, platform.Capacity.PhysicalMemoryBytes);
-        var limits = settings.RootLimits();
-        platform.Start(IdText.Format(store.Metadata.NodeId.Span), limits, helper);
-        log.Info("node.platform.started", new LogField("platform", platform.Name), new LogField("slice", platform.Slice),
-            new LogField("unitMode", platform.UnitMode), new LogField("managerUnavailable", platform.ManagerUnavailableReason ?? "-"),
-            new LogField("controllers", string.Join(' ', platform.Controllers.Order(StringComparer.Ordinal))), new LogField("rootCpuRate", limits.CpuRate),
-            new LogField("rootMemoryMax", limits.HardMemoryBytes), new LogField("rootSwapMax", limits.SwapAllowanceBytes), new LogField("helper", helper));
-        foreach (var cgroup in platform.ReleasedFreezes)
-        {
-            log.Warning("node.platform.freeze_released", new LogField("cgroup", cgroup));
-        }
-
-        return platform;
     }
 
     private static Registrations RegisterSignals(NodeRuntime node)

@@ -88,6 +88,68 @@ public sealed partial class StoreCreationTests
     }
 
     [Fact]
+    public void V2RuntimeCreatesAndReopensAnIsolatedStore()
+    {
+        using var root = new TemporaryDataRoot();
+        var options = new NodeStoreOptions { DataRoot = root.Path, BootIdentity = "first" };
+        byte[] nodeId;
+        using (var created = NodeStore.OpenForV2Runtime(options))
+        {
+            Assert.True(created.Opening.Created);
+            nodeId = created.Metadata.NodeId.ToArray();
+        }
+
+        using var reopened = NodeStore.OpenForV2Runtime(new NodeStoreOptions { DataRoot = root.Path, BootIdentity = "second" });
+        Assert.False(reopened.Opening.Created);
+        Assert.Equal(nodeId, reopened.Metadata.NodeId.ToArray());
+        Assert.Equal("first", reopened.Metadata.PreviousBootIdentity);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void V2RuntimeRefusesOriginalStoresBeforeChangingDatabaseBytes(bool expanded)
+    {
+        using var root = new TemporaryDataRoot();
+        var plan = expanded ? StoreMigrations.Released : new MigrationPlan(StoreMigrations.Released.Steps.Take(15));
+        using (var original = root.Open(new ManualClock(), plan))
+        {
+            if (expanded)
+            {
+                original.Write(transaction => transaction.Execute("""
+                    INSERT INTO task(task_id,state,kind,title,command_summary,spec,spec_digest,owner,owner_origin,pool,
+                        priority,effective_priority,side_effect,side_effect_source,command_fingerprint,command_digest,created_at,rev)
+                    VALUES(randomblob(16),7,1,'original','original',x'',zeroblob(32),x'00',1,'fixture',1,1,1,1,
+                        'fixture',zeroblob(32),1,0);
+                    """));
+            }
+        }
+
+        byte[] before = File.ReadAllBytes(root.Database);
+        var refusal = Assert.Throws<StoreIncompatibleException>(() => NodeStore.OpenForV2Runtime(
+            new NodeStoreOptions { DataRoot = root.Path, BootIdentity = "after" }));
+        Assert.Contains("legacy_store_requires_offline_cutover", refusal.Message, StringComparison.Ordinal);
+        Assert.Equal(before, File.ReadAllBytes(root.Database));
+    }
+
+    [Fact]
+    public void V2RuntimeDoesNotInitializeAnEmptyDatabaseBesideExistingAuthority()
+    {
+        using var root = new TemporaryDataRoot();
+        string directory = Path.GetDirectoryName(root.Database)!;
+        Directory.CreateDirectory(directory);
+        File.WriteAllBytes(root.Database, []);
+        string authority = Path.Combine(directory, "v2-owner-original.fence");
+        byte[] original = [1, 2, 3];
+        File.WriteAllBytes(authority, original);
+
+        Assert.Throws<StoreIncompatibleException>(() => NodeStore.OpenForV2Runtime(
+            new NodeStoreOptions { DataRoot = root.Path, BootIdentity = "after" }));
+        Assert.Empty(File.ReadAllBytes(root.Database));
+        Assert.Equal(original, File.ReadAllBytes(authority));
+    }
+
+    [Fact]
     public void AGuestNodeStoreIsRefused()
     {
         // WSL guest nodes are retired (ArcForges-Design AD-0018): every node is a HOST, and the store refuses any other role.
