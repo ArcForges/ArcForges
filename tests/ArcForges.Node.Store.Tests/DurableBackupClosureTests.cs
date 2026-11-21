@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using ArcForges.Contracts.Foundation.V1;
+using ArcForges.Contracts.Node.V1;
+using ArcForges.Node.Store.Migrations;
+using Google.Protobuf;
 using Microsoft.Data.Sqlite;
 
 namespace ArcForges.Node.Store.Tests;
@@ -73,6 +77,103 @@ public sealed partial class DurableCommandStoreTests
         Assert.Equal(DurableDecision.InProgress, restoredSecond.Admit(second).Decision);
         Assert.Contains("uncertain_second_owner", restoredSecond.Inspect(second.CommandId)!.ResponseJson, StringComparison.Ordinal);
         Assert.Equal(2, new TestDataRootSecretStore(destination.Path).Names().Count);
+    }
+
+    [Fact]
+    public void AuthorizedRestorePreservesExpandedLegacyCustodyAndOriginalOwnerReceipts()
+    {
+        using var source = new TemporaryDataRoot();
+        using var backup = new TemporaryDataRoot();
+        using var destination = new TemporaryDataRoot();
+        var clock = new ManualClock();
+        var sourceSecrets = NodeSecretStores.ForTestDataRoot(source.Path);
+        var backupSecrets = NodeSecretStores.ForTestDataRoot(backup.Path);
+        var destinationSecrets = NodeSecretStores.ForTestDataRoot(destination.Path);
+        var oldPlan = new MigrationPlan(StoreMigrations.Released.Steps.Take(15));
+        const string retryMethod = "arcforges.node.v1.TaskService/RetryTask";
+        const string fileMethod = "arcforges.node.v1.FileService/WriteFile";
+        Id NewId() => new() { Value = ByteString.CopyFrom(StoreIds.NewUuid7(clock)) };
+        var legacyRetry = new TaskServiceRetryTaskRequest
+        {
+            Meta = new() { CommandId = NewId(), CorrelationId = NewId() }, TaskId = NewId(),
+        };
+        var knownLegacy = legacyRetry.Meta.CommandId.Value.ToByteArray();
+        var knownDigest = PayloadDigest.Compute(legacyRetry);
+        var originalReply = new TaskServiceRetryTaskResponse
+        {
+            Meta = new() { CorrelationId = legacyRetry.Meta.CorrelationId },
+            Error = StoreErrors.SecretsUnavailable(StoreTime.ToMicroseconds(clock.GetUtcNow())),
+        }.ToByteArray();
+        var unresolvedFile = NewId().Value.ToByteArray();
+        var workspace = NewId().Value.ToByteArray();
+        var fileDigest = new byte[32];
+        // Supplied history metadata. Native ownership and owned-path restore are separate evidence.
+        byte[] historicalIdentity = [1, .. new byte[32]];
+        using (var legacy = source.Open(clock, oldPlan))
+        {
+            legacy.Write(tx =>
+            {
+                Assert.Equal(DedupStatus.Execute, CommandDeduplication.Begin(tx, knownLegacy, retryMethod, knownDigest, Origin.Human).Status);
+                CommandDeduplication.Complete(tx, knownLegacy, originalReply);
+                tx.Execute("INSERT INTO workspace(workspace_id,kind,state,name,root_path,created_at,last_used_at,rev) VALUES($w,1,2,'historical','/fixture',0,0,0);",
+                    ("$w", workspace));
+                tx.Execute("INSERT INTO command_dedup(command_id,method,payload_digest,origin,created_at,expires_at) VALUES($id,$method,$digest,4,0,1);",
+                    ("$id", unresolvedFile), ("$method", fileMethod), ("$digest", fileDigest));
+                tx.Execute("""
+                    INSERT INTO file_operation_journal(command_id,kind,phase,request_sha256,caller,correlation_id,workspace_id,relative_path,
+                      identity_platform,root_identity,parent_identity,expected_absent,intended_size,intended_sha256,intended_stage_identity,
+                      created_at,updated_at,held,acknowledged)
+                    VALUES($id,1,3,$digest,x'01',$id,$w,'fixture',1,$identity,$identity,1,0,zeroblob(32),$identity,0,0,1,0);
+                    """, ("$id", unresolvedFile), ("$digest", fileDigest), ("$w", workspace), ("$identity", historicalIdentity));
+            }, CommitDurability.Full);
+        }
+
+        DurableIntent known;
+        DurableIntent uncertain;
+        DurableReceipt knownReceipt;
+        DurableReceipt uncertainReceipt;
+        using (var expanded = source.Open(clock))
+        using (var owner = Commands(expanded, source.Path))
+        {
+            Assert.Equal(15, expanded.Opening.MigratedFrom);
+            known = Intent(owner, body: "fixture-known");
+            uncertain = Intent(owner, body: "fixture-uncertain");
+            Assert.Equal(DurableDecision.Execute, owner.Admit(known).Decision);
+            Assert.Equal(DurableDecision.Execute, owner.Admit(uncertain).Decision);
+            knownReceipt = owner.SetResult(known.CommandId, "SUCCEEDED", 2, "{\"fixture\":\"observed\"}");
+            uncertainReceipt = owner.SetResult(uncertain.CommandId, "UNKNOWN", 3, "{\"fixture\":\"uncertain\"}");
+            owner.CreateBackup(backup.Path, backupSecrets);
+        }
+
+        var sourceBytes = File.ReadAllBytes(source.Database);
+        var backupBytes = File.ReadAllBytes(backup.Database);
+        DurableCommandStore.RestoreBackup(backup.Path, backupSecrets, source.Path, sourceSecrets, destination.Path, destinationSecrets);
+        Assert.Equal(sourceBytes, File.ReadAllBytes(source.Database));
+        Assert.Equal(backupBytes, File.ReadAllBytes(backup.Database));
+        Assert.Equal(backupBytes, File.ReadAllBytes(destination.Database));
+
+        using var restored = destination.Open(clock);
+        using var restoredOwner = Commands(restored, destination.Path);
+        Assert.Equal(known.OwnerEpoch, restoredOwner.OwnerEpoch.ToArray());
+        Assert.Equal(new DurableAdmission(DurableDecision.Replay, knownReceipt), restoredOwner.Admit(known));
+        Assert.Equal(new DurableAdmission(DurableDecision.InProgress, uncertainReceipt), restoredOwner.Admit(uncertain));
+        restored.Read(reader =>
+        {
+            var legacyOutcome = CommandDeduplication.ReadRetained(reader, knownLegacy, retryMethod, knownDigest, reader.NowMicroseconds);
+            Assert.NotNull(legacyOutcome);
+            Assert.Equal(DedupStatus.Replay, legacyOutcome.Status);
+            Assert.Equal(originalReply, legacyOutcome.Outcome!.Value.ToArray());
+            Assert.Equal((long)Origin.Human, reader.Scalar("SELECT origin FROM command_dedup WHERE command_id = $id;", ("$id", knownLegacy)));
+            Assert.True(RoutedFileRetention.IsHeld(reader, unresolvedFile));
+            Assert.Equal(DedupStatus.InProgress, CommandDeduplication.ReadRetained(reader, unresolvedFile, fileMethod, fileDigest, reader.NowMicroseconds)?.Status);
+            Assert.Equal(historicalIdentity, reader.Scalar("""
+                SELECT intended_stage_identity FROM file_operation_journal
+                WHERE command_id = $id AND workspace_id = $w AND phase = 3 AND held = 1 AND acknowledged = 0;
+                """, ("$id", unresolvedFile), ("$w", workspace)) as byte[]);
+            Assert.Equal(2L, reader.Scalar("SELECT count(*) FROM command_dedup;"));
+            Assert.Equal(2L, reader.Scalar("SELECT count(*) FROM command_receipt;"));
+            return 0;
+        });
     }
 
     [Fact]
