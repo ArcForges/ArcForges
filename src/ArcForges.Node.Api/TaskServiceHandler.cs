@@ -145,7 +145,11 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
     {
         ArgumentNullException.ThrowIfNull(caller);
         ArgumentNullException.ThrowIfNull(request);
-        TaskServiceSubmitTaskResponse Failed(ArcError error) => new() { Meta = Meta(request.Meta), Error = error };
+        TaskServiceSubmitTaskResponse Failed(ArcError error) => new()
+        {
+            Meta = Meta(request.Meta),
+            Error = WithReconciliationCorrelation(error, request.Meta),
+        };
         if ((Stopping() ?? Validation.CommandId(request.Meta) ?? LocalBound(caller)) is { } refused)
         {
             return Task.FromResult(Failed(refused));
@@ -702,7 +706,11 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
     {
         ArgumentNullException.ThrowIfNull(caller);
         ArgumentNullException.ThrowIfNull(request);
-        TaskServiceRetryTaskResponse Failed(ArcError error) => new() { Meta = Meta(request.Meta), Error = error };
+        TaskServiceRetryTaskResponse Failed(ArcError error) => new()
+        {
+            Meta = Meta(request.Meta),
+            Error = WithReconciliationCorrelation(error, request.Meta),
+        };
         if ((Stopping() ?? Validation.CommandId(request.Meta) ?? Validation.RequiredId(request.TaskId, "task_id")) is { } refused)
         {
             return (Failed(refused), false);
@@ -738,6 +746,16 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
         }
 
         return (response, retained);
+    }
+
+    private static ArcError WithReconciliationCorrelation(ArcError error, RequestMeta? request)
+    {
+        if (error.CorrelationId is null && request?.CorrelationId is { Value.Length: 16 } correlation)
+        {
+            error.CorrelationId = correlation.Clone();
+        }
+
+        return error;
     }
 
     private static bool ValidTaskReceipt(Receipt? receipt, Id commandId) =>

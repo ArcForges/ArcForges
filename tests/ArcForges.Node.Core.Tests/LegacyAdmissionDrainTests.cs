@@ -8,6 +8,7 @@ using ArcForges.Node.Core.Events;
 using ArcForges.Node.Core.Security;
 using ArcForges.Node.Store;
 using Google.Protobuf;
+using NodeShapes = ArcForges.Contracts.Node.Shapes.ContractShapeValidation;
 
 namespace ArcForges.Node.Core.Tests;
 
@@ -44,41 +45,63 @@ public sealed class LegacyAdmissionDrainTests
         };
 
         await using var node = InProcessNode.Create();
-        using (var store = NodeStore.Open(new NodeStoreOptions { DataRoot = node.DataRoot, BootIdentity = "legacy-fixture" }))
+        using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = node.DataRoot, BootIdentity = "legacy-fixture", Clock = node.Clock });
+        store.Write(transaction =>
         {
-            store.Write(transaction =>
-            {
-                SeedQueuedTask(transaction, taskId);
-                SeedCommand(transaction, TaskService + "SubmitTask", submit.Meta.CommandId, submit, originalSubmit);
-                SeedCommand(transaction, TaskService + "RetryTask", retry.Meta.CommandId, retry, originalRetry);
-                SeedCommand(transaction, TaskService + "RetryTask", unresolved.Meta.CommandId, unresolved, null);
-                SeedCommand(transaction, TaskService + "RetryTask", incompleteOutcome.Meta.CommandId, incompleteOutcome, new TaskServiceRetryTaskResponse());
-            }, CommitDurability.Full);
-        }
+            SeedQueuedTask(transaction, taskId);
+            SeedCommand(transaction, TaskService + "SubmitTask", submit.Meta.CommandId, submit, originalSubmit);
+            SeedCommand(transaction, TaskService + "RetryTask", retry.Meta.CommandId, retry, originalRetry);
+            SeedCommand(transaction, TaskService + "RetryTask", unresolved.Meta.CommandId, unresolved, null);
+            SeedCommand(transaction, TaskService + "RetryTask", incompleteOutcome.Meta.CommandId, incompleteOutcome, new TaskServiceRetryTaskResponse());
+        }, CommitDurability.Full);
 
-        await node.StartAsync();
-        await using var channel = await node.ChannelAsync(helloAsHuman: true);
-        Assert.Equal(originalSubmit, await channel.Tasks.SubmitTaskAsync(submit, cancellationToken: ct));
-        Assert.Equal(originalRetry, await channel.Tasks.RetryTaskAsync(retry, cancellationToken: ct));
+        using var log = new NodeLog(Path.Combine(node.DataRoot, "logs", "node"), LogLevel.Info, node.Clock);
+        var journal = EventJournal.Open(store);
+        var hub = new StreamHub();
+        await using var processor = new CommandProcessor(store, journal, hub);
+        using var runtime = new NodeRuntime(store, journal, hub, processor, log,
+            new NodeSettingsManager(node.ConfigPath, node.DataRoot, log), node.DataRoot, "offline-fixture", node.Clock,
+            new RecoveryReport(false, false, null, store.Opening), new CapabilityReport());
+        Assert.Null(runtime.Execution);
+        var taskService = new TaskServiceHandler(runtime, new ClientSessions());
+        var caller = new Caller(Origin.Human, ClientKind.Cli, null);
+        Task<TaskServiceSubmitTaskResponse> SubmitAsync(TaskServiceSubmitTaskRequest request) => taskService.SubmitTask(caller, request, ct);
+        Task<TaskServiceRetryTaskResponse> RetryAsync(TaskServiceRetryTaskRequest request) => taskService.RetryTask(caller, request, ct);
+
+        var replaySubmit = submit.Clone();
+        replaySubmit.Meta.CorrelationId = CommandIds.New();
+        var replayRetry = retry.Clone();
+        replayRetry.Meta.CorrelationId = CommandIds.New();
+        Assert.Equal(originalSubmit.ToByteArray(), (await SubmitAsync(replaySubmit)).ToByteArray());
+        Assert.Equal(originalRetry.ToByteArray(), (await RetryAsync(replayRetry)).ToByteArray());
 
         var changed = submit.Clone();
         changed.Spec.Title = "different payload under the original command";
-        Assert.Equal("command_id_reused", (await channel.Tasks.SubmitTaskAsync(changed, cancellationToken: ct)).Error.Code);
+        Assert.Equal("command_id_reused", (await SubmitAsync(changed)).Error.Code);
 
-        var pending = await channel.Tasks.RetryTaskAsync(unresolved, cancellationToken: ct);
+        var pending = await RetryAsync(unresolved);
         Assert.Equal(EffectCertainty.Unknown, pending.Error.Effect);
         Assert.Equal("command_in_progress", pending.Error.Details.State.Reason);
         Assert.Equal(RetryMode.SameCommand, pending.Error.Retry.Mode);
-        AssertLegacyTaskUnknown((await channel.Tasks.RetryTaskAsync(incompleteOutcome, cancellationToken: ct)).Error);
+        AssertLegacyTaskUnknown((await RetryAsync(incompleteOutcome)).Error);
 
         var freshSubmit = submit.Clone();
         freshSubmit.Meta = Tasks.Meta();
         var freshRetry = retry.Clone();
         freshRetry.Meta = Tasks.Meta();
-        AssertLegacyTaskUnknown((await channel.Tasks.SubmitTaskAsync(freshSubmit, cancellationToken: ct)).Error);
-        AssertLegacyTaskUnknown((await channel.Tasks.RetryTaskAsync(freshRetry, cancellationToken: ct)).Error);
+        var refusedSubmit = await SubmitAsync(freshSubmit);
+        AssertLegacyTaskUnknown(refusedSubmit.Error);
+        Assert.Equal(freshSubmit.Meta.CorrelationId, refusedSubmit.Meta.CorrelationId);
+        Assert.Equal(freshSubmit.Meta.CorrelationId, refusedSubmit.Error.CorrelationId);
+        Assert.True(NodeShapes.IsValid(refusedSubmit.Error));
 
-        node.Runtime.Store.Read(reader =>
+        var refusedRetry = await RetryAsync(freshRetry);
+        AssertLegacyTaskUnknown(refusedRetry.Error);
+        Assert.Equal(freshRetry.Meta.CorrelationId, refusedRetry.Meta.CorrelationId);
+        Assert.Equal(freshRetry.Meta.CorrelationId, refusedRetry.Error.CorrelationId);
+        Assert.True(NodeShapes.IsValid(refusedRetry.Error));
+
+        store.Read(reader =>
         {
             Assert.Equal(1L, reader.Scalar("SELECT count(*) FROM task;"));
             Assert.Equal(0L, reader.Scalar("SELECT count(*) FROM attempt;"));
@@ -90,25 +113,27 @@ public sealed class LegacyAdmissionDrainTests
 
         var originalSubmitId = submit.Meta.CommandId.Value.ToByteArray();
         var originalRetryId = retry.Meta.CommandId.Value.ToByteArray();
-        node.Runtime.Store.Write(transaction => Assert.Equal(2, transaction.Execute("""
+        store.Write(transaction => Assert.Equal(2, transaction.Execute("""
             UPDATE command_dedup SET created_at = created_at - $age, expires_at = expires_at - $age
             WHERE command_id IN ($submit, $retry);
             """, ("$age", 2 * CommandDeduplication.Window.Ticks / TimeSpan.TicksPerMicrosecond), ("$submit", originalSubmitId), ("$retry", originalRetryId))),
             CommitDurability.Full);
 
-        AssertLegacyTaskUnknown((await channel.Tasks.SubmitTaskAsync(submit, cancellationToken: ct)).Error);
-        AssertLegacyTaskUnknown((await channel.Tasks.RetryTaskAsync(retry, cancellationToken: ct)).Error);
-        node.Runtime.Store.Read(reader =>
+        AssertLegacyTaskUnknown((await SubmitAsync(submit)).Error);
+        AssertLegacyTaskUnknown((await RetryAsync(retry)).Error);
+        store.Read(reader =>
         {
             Assert.Equal(originalSubmit.ToByteArray(), (byte[]?)reader.Scalar("SELECT outcome FROM command_dedup WHERE command_id = $id;", ("$id", originalSubmitId)));
             Assert.Equal(originalRetry.ToByteArray(), (byte[]?)reader.Scalar("SELECT outcome FROM command_dedup WHERE command_id = $id;", ("$id", originalRetryId)));
             return 0;
         });
-        Assert.Equal(2, node.Runtime.Store.Commands.PurgeExpired());
-        AssertLegacyTaskUnknown((await channel.Tasks.SubmitTaskAsync(submit, cancellationToken: ct)).Error);
-        AssertLegacyTaskUnknown((await channel.Tasks.RetryTaskAsync(retry, cancellationToken: ct)).Error);
-        Assert.Equal(TaskState.Queued, (await Tasks.GetAsync(channel, id)).State);
-        Assert.Equal(2L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM command_dedup;")));
+        Assert.Equal(2, store.Commands.PurgeExpired());
+        AssertLegacyTaskUnknown((await SubmitAsync(submit)).Error);
+        AssertLegacyTaskUnknown((await RetryAsync(retry)).Error);
+        var queued = await taskService.GetTask(caller, new TaskServiceGetTaskRequest { Meta = Tasks.Meta(), TaskId = id }, ct);
+        Assert.Null(queued.Error);
+        Assert.Equal(TaskState.Queued, queued.Value.Task.State);
+        Assert.Equal(2L, store.Read(reader => reader.Scalar("SELECT count(*) FROM command_dedup;")));
     }
 
     [Fact(Timeout = 30_000)]
