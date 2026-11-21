@@ -205,9 +205,6 @@ public sealed class WindowsExecutionPlatform : IExecutionPlatform
         return (inJob, total);
     }
 
-    /// <summary>Prepares a command for the legacy Windows platform fixtures.</summary>
-    public PreparedCommand Prepare(CommandRequest request) => WindowsCommands.Prepare(request);
-
     /// <summary>Adopts an existing process for the legacy Windows platform fixtures.</summary>
     public AdoptionResult Adopt(AdoptionRequest request)
     {
