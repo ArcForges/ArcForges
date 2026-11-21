@@ -128,11 +128,15 @@ def observed_window(pid, seconds, expected_creation=None):
 
 def wait_for_install_check(data, node):
     """Keep the installed version's background digest pass out of the idle measurement."""
+    log = data / "logs" / "node" / "node.log"
     until = time.monotonic() + 30
     while node.poll() is None and time.monotonic() < until:
-        for candidate in (data / "logs" / "node").glob("*.jsonl"):
-            if b'"event":"node.version_integrity.verified"' in candidate.read_bytes():
-                return
+        try:
+            with log.open("rb") as stream:
+                if b'"event":"node.version_integrity.verified"' in stream.read(256 * 1024):
+                    return
+        except FileNotFoundError:
+            pass
         time.sleep(0.25)
     raise ValueError("The exact installed version digest pass did not settle before the idle window")
 
