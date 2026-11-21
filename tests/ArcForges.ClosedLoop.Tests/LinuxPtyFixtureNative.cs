@@ -1,0 +1,214 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
+
+namespace ArcForges.Node.Platform.Linux;
+
+/// <summary>Linux calls for the real PTY fixture to start, observe and release its own children.</summary>
+[SupportedOSPlatform("linux")]
+internal static unsafe partial class Libc
+{
+    public const int SigKill = 9;
+    public const int SigTerm = 15;
+
+    public const int WNoHang = 1;
+    public const int OCloexec = 0x80000;
+
+    private const string Library = "libc";
+    private const int SigSetBytes = 128;
+    private const int SpawnStructBytes = 1024;
+    private const short SpawnSetPgroup = 0x02;
+    private const short SpawnSetSigDef = 0x04;
+    private const short SpawnSetSigMask = 0x08;
+
+    public static int LastError => Marshal.GetLastPInvokeError();
+
+    [LibraryImport(Library, EntryPoint = "kill", SetLastError = true)]
+    public static partial int Kill(int pid, int signal);
+
+    /// <summary><c>pidfd_open(pid, 0)</c> (Linux 5.3): a descriptor that names this process even after its ID is reused; -1 on failure.</summary>
+    public static int PidfdOpen(int pid) => (int)Syscall(434, pid, 0, 0, 0);
+
+    /// <summary><c>pidfd_send_signal(fd, signal, NULL, 0)</c> (Linux 5.1): signals exactly the process the descriptor names.</summary>
+    public static int PidfdSendSignal(int fd, int signal) => (int)Syscall(424, fd, signal, 0, 0);
+
+    // The generic syscall numbers (434 pidfd_open, 424 pidfd_send_signal) are the same on x86_64 and aarch64.
+    [LibraryImport(Library, EntryPoint = "syscall", SetLastError = true)]
+    private static partial long Syscall(long number, long first, long second, long third, long fourth);
+
+    [LibraryImport(Library, EntryPoint = "waitpid", SetLastError = true)]
+    public static partial int WaitPid(int pid, out int status, int options);
+
+    [LibraryImport(Library, EntryPoint = "sigemptyset")]
+    private static partial int SigEmptySet(byte* set);
+
+    [LibraryImport(Library, EntryPoint = "sigfillset")]
+    private static partial int SigFillSet(byte* set);
+
+    [LibraryImport(Library, EntryPoint = "sigdelset")]
+    private static partial int SigDelSet(byte* set, int signal);
+
+    [LibraryImport(Library, EntryPoint = "posix_spawn", StringMarshalling = StringMarshalling.Utf8)]
+    private static partial int PosixSpawn(out int pid, string path, void* fileActions, void* attributes, nint* argv, nint* envp);
+
+    [LibraryImport(Library, EntryPoint = "posix_spawn_file_actions_init")]
+    private static partial int FileActionsInit(void* actions);
+
+    [LibraryImport(Library, EntryPoint = "posix_spawn_file_actions_destroy")]
+    private static partial int FileActionsDestroy(void* actions);
+
+    [LibraryImport(Library, EntryPoint = "posix_spawn_file_actions_adddup2")]
+    private static partial int FileActionsAddDup2(void* actions, int fd, int newFd);
+
+    [LibraryImport(Library, EntryPoint = "posix_spawn_file_actions_addopen", StringMarshalling = StringMarshalling.Utf8)]
+    private static partial int FileActionsAddOpen(void* actions, int fd, string path, int flags, int mode);
+
+    [LibraryImport(Library, EntryPoint = "posix_spawn_file_actions_addchdir_np", StringMarshalling = StringMarshalling.Utf8)]
+    private static partial int FileActionsAddChdir(void* actions, string path);
+
+    [LibraryImport(Library, EntryPoint = "posix_spawnattr_init")]
+    private static partial int AttributesInit(void* attributes);
+
+    [LibraryImport(Library, EntryPoint = "posix_spawnattr_destroy")]
+    private static partial int AttributesDestroy(void* attributes);
+
+    [LibraryImport(Library, EntryPoint = "posix_spawnattr_setflags")]
+    private static partial int AttributesSetFlags(void* attributes, short flags);
+
+    [LibraryImport(Library, EntryPoint = "posix_spawnattr_setpgroup")]
+    private static partial int AttributesSetPgroup(void* attributes, int pgroup);
+
+    [LibraryImport(Library, EntryPoint = "posix_spawnattr_setsigdefault")]
+    private static partial int AttributesSetSigDefault(void* attributes, byte* set);
+
+    [LibraryImport(Library, EntryPoint = "posix_spawnattr_setsigmask")]
+    private static partial int AttributesSetSigMask(void* attributes, byte* set);
+
+    /// <summary>
+    /// Starts <paramref name="path"/> with <c>posix_spawn</c>: the standard streams from <paramref name="stdio"/> (file descriptors; -1
+    /// opens <c>/dev/null</c>), default signal dispositions and an empty mask, an optional working directory, and its own process group
+    /// when <paramref name="newProcessGroup"/> is set. Returns the process ID.
+    /// </summary>
+    /// <exception cref="Win32Exception">The spawn failed.</exception>
+    public static int Spawn(string path, IReadOnlyList<string> argv, IReadOnlyList<string> environment, (int Stdin, int Stdout, int Stderr) stdio,
+        string? workingDirectory, bool newProcessGroup)
+    {
+        ArgumentNullException.ThrowIfNull(argv);
+        ArgumentNullException.ThrowIfNull(environment);
+        var actions = NativeMemory.AllocZeroed(SpawnStructBytes);
+        var attributes = NativeMemory.AllocZeroed(SpawnStructBytes);
+        var arguments = Strings(argv);
+        var variables = Strings(environment);
+        try
+        {
+            _ = FileActionsInit(actions);
+            _ = AttributesInit(attributes);
+            AddStream(actions, stdio.Stdin, 0, write: false);
+            AddStream(actions, stdio.Stdout, 1, write: true);
+            AddStream(actions, stdio.Stderr, 2, write: true);
+            if (workingDirectory is { Length: > 0 })
+            {
+                _ = FileActionsAddChdir(actions, workingDirectory);
+            }
+
+            var all = stackalloc byte[SigSetBytes];
+            _ = SigFillSet(all);
+            _ = SigDelSet(all, SigKill);
+            _ = SigDelSet(all, 19);
+            var empty = stackalloc byte[SigSetBytes];
+            _ = SigEmptySet(empty);
+            _ = AttributesSetSigDefault(attributes, all);
+            _ = AttributesSetSigMask(attributes, empty);
+            var flags = (short)(SpawnSetSigDef | SpawnSetSigMask);
+            if (newProcessGroup)
+            {
+                flags |= SpawnSetPgroup;
+                _ = AttributesSetPgroup(attributes, 0);
+            }
+
+            _ = AttributesSetFlags(attributes, flags);
+            fixed (nint* argumentPointer = arguments)
+            fixed (nint* variablePointer = variables)
+            {
+                var error = PosixSpawn(out var pid, path, actions, attributes, argumentPointer, variablePointer);
+                return error == 0 ? pid : throw new Win32Exception(error, $"posix_spawn {path} failed");
+            }
+        }
+        finally
+        {
+            _ = FileActionsDestroy(actions);
+            _ = AttributesDestroy(attributes);
+            NativeMemory.Free(actions);
+            NativeMemory.Free(attributes);
+            Free(arguments);
+            Free(variables);
+        }
+    }
+
+    /// <summary>Waits for <paramref name="pid"/> up to <paramref name="timeout"/>; null while it still runs, else its wait status.</summary>
+    public static int? Wait(int pid, TimeSpan timeout)
+    {
+        var deadline = Environment.TickCount64 + (long)timeout.TotalMilliseconds;
+        while (true)
+        {
+            var result = WaitPid(pid, out var status, WNoHang);
+            if (result == pid)
+            {
+                return status;
+            }
+
+            if (result < 0 && LastError != 4)
+            {
+                // ECHILD: not ours or already reaped.
+                return -1;
+            }
+
+            if (timeout != Timeout.InfiniteTimeSpan && Environment.TickCount64 >= deadline)
+            {
+                return null;
+            }
+
+            Thread.Sleep(10);
+        }
+    }
+
+    /// <summary>Decodes a wait status: (exited, code or signal, core dumped).</summary>
+    public static (bool Exited, int Value, bool CoreDumped) Decode(int status) => (status & 0x7f) == 0
+        ? (true, (status >> 8) & 0xff, false)
+        : (false, status & 0x7f, (status & 0x80) != 0);
+
+    private static void AddStream(void* actions, int fd, int target, bool write)
+    {
+        if (fd < 0)
+        {
+            _ = FileActionsAddOpen(actions, target, "/dev/null", write ? 1 : 0, 0);
+        }
+        else
+        {
+            _ = FileActionsAddDup2(actions, fd, target);
+        }
+    }
+
+    private static nint[] Strings(IReadOnlyList<string> values)
+    {
+        var pointers = new nint[values.Count + 1];
+        for (var index = 0; index < values.Count; index++)
+        {
+            pointers[index] = Marshal.StringToCoTaskMemUTF8(values[index]);
+        }
+
+        return pointers;
+    }
+
+    private static void Free(nint[] pointers)
+    {
+        foreach (var pointer in pointers)
+        {
+            if (pointer != 0)
+            {
+                Marshal.FreeCoTaskMem(pointer);
+            }
+        }
+    }
+}

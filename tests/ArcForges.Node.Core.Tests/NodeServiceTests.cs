@@ -14,6 +14,7 @@ namespace ArcForges.Node.Core.Tests;
 public sealed class NodeServiceTests
 {
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan StartupTestBound = TimeSpan.FromSeconds(60);
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -274,7 +275,7 @@ public sealed class NodeServiceTests
         var starting = node.StartAsync();
         try
         {
-            Assert.Same(reached.Task, await Task.WhenAny(reached.Task, starting).WaitAsync(Tasks.Bound, ct));
+            Assert.Same(reached.Task, await Task.WhenAny(reached.Task, starting).WaitAsync(StartupTestBound, ct));
             var runtime = await reached.Task;
             Assert.Equal(NodeLifecycleState.Recovering, runtime.Lifecycle.State);
             await using (var channel = await node.ChannelAsync(helloAsHuman: true))
@@ -293,7 +294,7 @@ public sealed class NodeServiceTests
                 Assert.False(node.Exit.IsCompleted);
 
                 proceed.TrySetResult();
-                await starting.WaitAsync(Tasks.Bound, ct);
+                await starting.WaitAsync(StartupTestBound, ct);
                 Assert.Equal(InProcessNode.ExpectedState, runtime.Lifecycle.State);
 
                 var replay = await channel.Node.StopNodeAsync(request, deadline: DateTime.UtcNow + Deadline, cancellationToken: ct);
@@ -308,12 +309,12 @@ public sealed class NodeServiceTests
             }
 
             Assert.Equal(0, await node.Exit.WaitAsync(TimeSpan.FromSeconds(15), ct));
-            Assert.DoesNotContain("api.command.failed", Tasks.ReadShared(Path.Combine(node.DataRoot, "logs", "node", "node.log")), StringComparison.Ordinal);
+            Assert.DoesNotContain("api.command.failed", ReadShared(Path.Combine(node.DataRoot, "logs", "node", "node.log")), StringComparison.Ordinal);
         }
         finally
         {
             proceed.TrySetResult();
-            await starting.WaitAsync(Tasks.Bound, ct);
+            await starting.WaitAsync(StartupTestBound, ct);
         }
     }
 
@@ -412,48 +413,34 @@ public sealed class NodeServiceTests
     }
 
     [Fact(Timeout = 60_000)]
-    public async Task HealthAndCapabilitiesReportTheBuildsEnforcement()
+    public async Task HealthAndCapabilitiesReportNodeReadinessAndTheSeparateRunProfile()
     {
-        // Windows enforces through job objects (AF-EXEC-01) and is READY; Linux enforces through transient units of the user manager
-        // (AF-EXEC-02) and is READY when the manager delegates cpu, memory and pids, observe-only (DEGRADED) without a user manager.
         var ct = TestContext.Current.CancellationToken;
         await using var node = await InProcessNode.Create().StartAsync();
         await using var channel = await node.ChannelAsync();
 
         var health = await channel.Node.GetHealthAsync(new NodeServiceGetHealthRequest(), deadline: DateTime.UtcNow + Deadline, cancellationToken: ct);
+        Assert.Null(health.Error);
         Assert.Equal(InProcessNode.ExpectedState, health.Value.State);
-        Assert.Contains(health.Value.Checks, check => check.CheckId == "node.enforcement"
-            && check.Status == (InProcessNode.ExpectedState == NodeLifecycleState.Ready ? CheckStatus.Pass : CheckStatus.Warn));
+        var nodeEnforcement = Assert.Single(health.Value.Checks, check => check.CheckId == "node.enforcement");
+        Assert.Equal(CheckStatus.Warn, nodeEnforcement.Status);
+        Assert.Contains(NodeCapabilities.NotInBuild, nodeEnforcement.Summary, StringComparison.Ordinal);
+        var runProfile = Assert.Single(health.Value.Checks, check => check.CheckId == "node.v2_run_profile");
+        Assert.Equal(CheckStatus.Warn, runProfile.Status);
+        Assert.Contains("run_profile_not_observed", runProfile.Summary, StringComparison.Ordinal);
         Assert.Contains(health.Value.Metrics, metric => metric.Name == "rpc.peers_admitted" && metric.Value >= 1);
+
         var capabilities = await channel.Node.GetCapabilitiesAsync(new NodeServiceGetCapabilitiesRequest { Reevaluate = true }, deadline: DateTime.UtcNow + Deadline, cancellationToken: ct);
+        Assert.Null(capabilities.Error);
         var report = capabilities.Value.Capabilities;
         Assert.Contains(report.PlatformFacts, fact => fact.Name == "os");
-        if (OperatingSystem.IsWindows())
-        {
-            Assert.Equal(CpuControl.EnforcedShareAndCap, report.Cpu);
-            Assert.Equal(MemoryControl.EnforcedCommit, report.Memory);
-            Assert.Equal(ProcessCountControl.ObserveOnly, report.Pids);
-            Assert.Contains("no policy field", report.PidsReason, StringComparison.Ordinal);
-            Assert.Equal(PauseSupport.Unsupported, report.Pause);
-            Assert.Equal(KillTreeGuarantee.Guaranteed, report.KillTree);
-            Assert.True(report.RestartSurvival);
-            Assert.Contains(report.PlatformFacts, fact => fact.Name == "root_job");
-        }
-        else if (ArcForges.Tests.SystemdTestEnvironment.FullyEnforced)
-        {
-            Assert.Equal(CpuControl.EnforcedShareAndCap, report.Cpu);
-            Assert.Equal(MemoryControl.EnforcedSoftAndHard, report.Memory);
-            Assert.Equal(ProcessCountControl.Enforced, report.Pids);
-            Assert.Equal(PauseSupport.Supported, report.Pause);
-            Assert.Equal(KillTreeGuarantee.Guaranteed, report.KillTree);
-            Assert.True(report.RestartSurvival);
-            Assert.Contains(report.PlatformFacts, fact => fact.Name == "slice" && fact.Value == node.Slice);
-        }
-        else
-        {
-            Assert.Equal(CpuControl.ObserveOnly, report.Cpu);
-            Assert.False(report.RestartSurvival);
-        }
+        Assert.Equal(CpuControl.ObserveOnly, report.Cpu);
+        Assert.Equal(MemoryControl.ObserveOnly, report.Memory);
+        Assert.Equal(ProcessCountControl.ObserveOnly, report.Pids);
+        Assert.Equal(IoControl.ObserveOnly, report.Io);
+        Assert.Equal(AdoptSupport.Unsupported, report.Adopt);
+        Assert.False(report.RestartSurvival);
+        Assert.DoesNotContain(report.PlatformFacts, fact => fact.Name is "root_job" or "slice");
     }
 
     private static Id Id(byte[] bytes) => new() { Value = Google.Protobuf.ByteString.CopyFrom(bytes) };
@@ -464,5 +451,11 @@ public sealed class NodeServiceTests
         hello.CiMarkers.Clear();
         change(hello);
         return await channel.Node.HelloAsync(new NodeServiceHelloRequest { Hello = hello }, deadline: DateTime.UtcNow + Deadline, cancellationToken: Ct);
+    }
+    private static string ReadShared(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
     }
 }

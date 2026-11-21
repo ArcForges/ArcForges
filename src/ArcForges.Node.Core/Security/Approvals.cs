@@ -183,16 +183,18 @@ public static class Approvals
         return (items, (offset + limit).ToString(System.Globalization.CultureInfo.InvariantCulture));
     }
 
-    /// <summary>Moves every PENDING approval past its TTL to EXPIRED (journaled and audited). Returns the number expired.</summary>
-    public static int Expire(CommandContext context)
+    /// <summary>Moves overdue PENDING approvals for the specified method to EXPIRED (journaled and audited).</summary>
+    public static int Expire(CommandContext context, string? method = null)
     {
         ArgumentNullException.ThrowIfNull(context);
         var transaction = context.Transaction;
         var due = new List<byte[]>();
-        using (var command = transaction.CreateCommand("SELECT approval_id FROM approval WHERE state = $pending AND expires_at <= $now;"))
+        using (var command = transaction.CreateCommand(
+            "SELECT approval_id FROM approval WHERE state = $pending AND expires_at <= $now AND ($method IS NULL OR operation = $method);"))
         {
             command.Parameters.AddWithValue("$pending", (int)ApprovalState.Pending);
             command.Parameters.AddWithValue("$now", transaction.NowMicroseconds);
+            command.Parameters.AddWithValue("$method", (object?)method ?? DBNull.Value);
             using var rows = command.ExecuteReader();
             while (rows.Read())
             {
@@ -282,13 +284,17 @@ public static class Approvals
         return found;
     }
 
-    /// <summary>Retention (housekeeping): approvals decided (or otherwise ended) more than 90 days ago are deleted.</summary>
-    public static int Prune(StoreTransaction transaction)
+    /// <summary>Deletes approvals for the specified method that ended more than 90 days ago.</summary>
+    public static int Prune(StoreTransaction transaction, string? method = null)
     {
         ArgumentNullException.ThrowIfNull(transaction);
         return transaction.Execute(
-            "DELETE FROM approval WHERE state NOT IN ($pending, $approved) AND coalesce(decided_at, expires_at) < $cutoff;",
-            ("$pending", (int)ApprovalState.Pending), ("$approved", (int)ApprovalState.Approved), ("$cutoff", transaction.NowMicroseconds - RetentionMicroseconds));
+            """
+            DELETE FROM approval WHERE state NOT IN ($pending, $approved) AND coalesce(decided_at, expires_at) < $cutoff
+                AND ($method IS NULL OR operation = $method);
+            """,
+            ("$pending", (int)ApprovalState.Pending), ("$approved", (int)ApprovalState.Approved),
+            ("$cutoff", transaction.NowMicroseconds - RetentionMicroseconds), ("$method", method));
     }
 
     /// <summary>The <c>AUTHORIZATION/approval_required</c> error of a pending approval (errors.md: <c>state.resource = {kind: "approval", id}</c>).</summary>

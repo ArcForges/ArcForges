@@ -1,22 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-using System.Security.Cryptography;
 using System.Text.Json;
-using ArcForges.Client;
 using ArcForges.Contracts.Fleet.V1;
-using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Contracts.Relay.V1;
-using ArcForges.Node.Api;
 using Google.Protobuf;
 
 namespace ArcForges.Node.CloudLink.Tests;
 
 /// <summary>
-/// AF-CTR-05 part N2b against the routed captures of Cloud E2b (<c>center/internal/hub/testdata/routed</c>, vendored byte for byte with a
-/// drift check; re-vendored at the E2b merge): every captured routed request carries, in its <c>request</c> field, exact node.v1 TaskService
-/// request bytes of its method that this node parses, and every captured value carries the method's TaskService response; the node's own
-/// dispatcher answers each captured inner request with a response of that type (the shapes the center forwards unchanged). The FleetService
-/// side of these exchanges (the local proxy) is part N3's.
+/// Verifies the immutable Cloud E2b captures and the published V1 request and response shapes used in their historical bodies.
 /// </summary>
 public sealed class RoutedConformanceTests
 {
@@ -56,62 +48,6 @@ public sealed class RoutedConformanceTests
         if (response is { } bytes)
         {
             Assert.NotNull(ParseResponse(method, bytes));
-        }
-    }
-
-    [Fact(Timeout = 120_000)]
-    public async Task TheNodeAnswersEveryCapturedInnerRequestWithItsMethodsResponse()
-    {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        await using var node = await CloudNode.Create(null).StartAsync();
-        var dispatcher = (RoutedDispatcher)node.Runtime.RoutedDispatcher!;
-        var caller = new CenterCaller
-        {
-            Kind = CenterCallerKind.AccountSession,
-            AccountId = CommandIds.New(),
-            UserId = CommandIds.New(),
-            SessionId = CommandIds.New(),
-        };
-        foreach (var name in Methods.Keys.Select(method => method + "-ok"))
-        {
-            var (method, request, _) = Load(name);
-            var parsed = Parse(method, request);
-            var now = DateTimeOffset.UtcNow;
-            var header = new CallHeader
-            {
-                CallId = CommandIds.New(),
-                Kid = "conformance-key",
-                CenterUrlSha256 = ByteString.CopyFrom(new byte[32]),
-                AccountId = caller.AccountId,
-                TargetNodeId = new Id { Value = ByteString.CopyFrom(node.Runtime.NodeId.Span) },
-                Caller = caller,
-                Method = method,
-                RequestSha256 = ByteString.CopyFrom(SHA256.HashData(request)),
-                RequestSize = (uint)request.Length,
-                IssuedAt = ProtoTime.ToInstant(now),
-                ExpiresAt = ProtoTime.ToInstant(now.AddSeconds(30)),
-                Deadline = ProtoTime.ToInstant(now.AddSeconds(5)),
-            };
-            if (method is RoutedMethod.SubmitNodeTask or RoutedMethod.CancelNodeTask)
-            {
-                header.CommandId = parsed switch
-                {
-                    TaskServiceSubmitTaskRequest submit => submit.Meta.CommandId,
-                    TaskServiceCancelTaskRequest cancel => cancel.Meta.CommandId,
-                    _ => null,
-                };
-            }
-
-            var answer = await dispatcher.DispatchAsync(new VerifiedCall(header, ByteString.CopyFrom(request), 0), new Link(), TestContext.Current.CancellationToken);
-            Assert.NotNull(answer);
-            if (answer.Outcome == RoutedOutcome.Executed)
-            {
-                Assert.NotNull(ParseResponse(method, answer.Response!.ToByteArray()));
-            }
-            else
-            {
-                Assert.True(RoutedRefusals.Closed(answer.Error!), name);
-            }
         }
     }
 
@@ -180,11 +116,4 @@ public sealed class RoutedConformanceTests
         RoutedMethod.ReadNodeTaskOutput => TaskServiceReadTaskOutputResponse.Parser.ParseFrom(bytes),
         _ => TaskServiceCancelTaskResponse.Parser.ParseFrom(bytes),
     };
-
-    private sealed class Link : IRoutedLink
-    {
-        public bool Usable => true;
-
-        public bool Stopping => false;
-    }
 }

@@ -15,7 +15,7 @@ namespace ArcForges.ClosedLoop.Tests;
 /// (pinned Chromium, MOCKED authenticator) through its handshake directory: the test writes <c>&lt;case&gt;.begin.json</c> and
 /// <c>&lt;case&gt;.result.json</c> in node-probe's format (Cloud docs/center-fleet.md, "node-probe and the node-approve run"; data only,
 /// nothing of Cloud is built). Cases (<c>ARCFORGES_E2E_CASES</c>, default <c>device-1,pkce-1</c>): <c>device-*</c> and <c>pkce-*</c> through
-/// the API as HUMAN, <c>cli-device-*</c> through the literal CLI in a pty (Linux). Each case: signed in, the fingerprint and the derived
+/// the authenticated local API. Each case checks sign-in, the fingerprint and the derived
 /// URL, a first contact, two refreshes at the 15 s cadence (counted from the status's last contact), the delivered center keys when
 /// <c>ARCFORGES_E2E_EXPECT_KEYS=command:&lt;kid&gt;,&lt;kid&gt;[;entitlement:&lt;kid&gt;,...]</c> is set (the node's <c>run/cloud-keys.json</c> holds exactly those kids,
 /// after the sign-in and after the refreshes; skipped with its reason otherwise), a restart that keeps credential and key, only the center's authority contacted; after every
@@ -53,6 +53,9 @@ public sealed class CloudSignInTests
         Directory.CreateDirectory(handshake);
         var cases = (Environment.GetEnvironmentVariable(CasesVariable) is { Length: > 0 } list ? list : "device-1,pkce-1")
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        Assert.NotEmpty(cases);
+        Assert.All(cases, name => Assert.True(name.StartsWith("device-", StringComparison.Ordinal) || name.StartsWith("pkce-", StringComparison.Ordinal),
+            "Use a device-* or pkce-* account sign-in case."));
         var nodes = new List<(string Case, TestNode Node)>();
         try
         {
@@ -149,37 +152,24 @@ public sealed class CloudSignInTests
             var renamed = await human.Node.RenameNodeAsync(new NodeServiceRenameNodeRequest { Meta = Command(), Name = nodeName }, cancellationToken: Ct);
             Assert.Null(renamed.Error);
             var device = !name.StartsWith("pkce", StringComparison.Ordinal);
-            if (name.StartsWith("cli-", StringComparison.Ordinal))
+            var begun = await human.Account.BeginSignInAsync(new AccountServiceBeginSignInRequest { Meta = Command(), Method = device ? SignInMethod.DeviceCode : SignInMethod.Browser }, cancellationToken: Ct);
+            Assert.Null(begun.Error);
+            flow = begun.Value.Flow;
+            if (!device)
             {
-                Assert.SkipUnless(OperatingSystem.IsLinux() && File.Exists("/usr/bin/script"), "the literal HUMAN CLI runs in a pty on Linux only (H-C14)");
-                using var cli = CloudSignInHostTests.Pty(node, "login --device-code");
-                await cli.WaitForAsync("Waiting for the approval");
-                flow = await LatestFlowAsync(human, cli.Text);
-                WriteBegin(handshake, name, flow, nodeName, center);
-                Assert.Equal(0, await cli.WaitExitAsync(TimeSpan.FromMinutes(9)));
-                Step("the CLI signed in", cli.Text.Contains("Signed in", StringComparison.Ordinal), "exit 0");
+                await TestNode.WaitAsync(() => File.Exists(browserFile), TimeSpan.FromSeconds(10), "the browser file");
+                Step("the derived authorize URL", File.ReadAllText(browserFile).Trim() == flow.AuthorizeUrl && flow.AuthorizeUrl.StartsWith(center.Url + "/connect#flow=", StringComparison.Ordinal), "derived");
             }
             else
             {
-                var begun = await human.Account.BeginSignInAsync(new AccountServiceBeginSignInRequest { Meta = Command(), Method = device ? SignInMethod.DeviceCode : SignInMethod.Browser }, cancellationToken: Ct);
-                Assert.Null(begun.Error);
-                flow = begun.Value.Flow;
-                if (!device)
-                {
-                    await TestNode.WaitAsync(() => File.Exists(browserFile), TimeSpan.FromSeconds(10), "the browser file");
-                    Step("the derived authorize URL", File.ReadAllText(browserFile).Trim() == flow.AuthorizeUrl && flow.AuthorizeUrl.StartsWith(center.Url + "/connect#flow=", StringComparison.Ordinal), "derived");
-                }
-                else
-                {
-                    Step("the derived verification URIs", flow.VerificationUri == center.ActivateUrl && flow.VerificationUriComplete == center.ActivateCompleteUrl(flow.UserCode), "derived");
-                }
-
-                WriteBegin(handshake, name, flow, nodeName, center);
-                await TestNode.WaitAsync(async () => (await human.Account.GetSignInFlowAsync(new AccountServiceGetSignInFlowRequest { FlowId = flow.FlowId }, cancellationToken: Ct)).Value.Flow.State is not (SignInFlowState.Pending or SignInFlowState.Completing),
-                    TimeSpan.FromMinutes(9), name + ": the decision");
-                var ended = (await human.Account.GetSignInFlowAsync(new AccountServiceGetSignInFlowRequest { FlowId = flow.FlowId }, cancellationToken: Ct)).Value.Flow;
-                Step("signed in", ended.State == SignInFlowState.SignedIn, ended.State + (ended.Error is { } error ? " " + error.Category + "/" + error.Code : string.Empty));
+                Step("the derived verification URIs", flow.VerificationUri == center.ActivateUrl && flow.VerificationUriComplete == center.ActivateCompleteUrl(flow.UserCode), "derived");
             }
+
+            WriteBegin(handshake, name, flow, nodeName, center);
+            await TestNode.WaitAsync(async () => (await human.Account.GetSignInFlowAsync(new AccountServiceGetSignInFlowRequest { FlowId = flow.FlowId }, cancellationToken: Ct)).Value.Flow.State is not (SignInFlowState.Pending or SignInFlowState.Completing),
+                TimeSpan.FromMinutes(9), name + ": the decision");
+            var ended = (await human.Account.GetSignInFlowAsync(new AccountServiceGetSignInFlowRequest { FlowId = flow.FlowId }, cancellationToken: Ct)).Value.Flow;
+            Step("signed in", ended.State == SignInFlowState.SignedIn, ended.State + (ended.Error is { } error ? " " + error.Category + "/" + error.Code : string.Empty));
 
             var status = (await human.Account.GetAccountStatusAsync(new AccountServiceGetAccountStatusRequest(), cancellationToken: Ct)).Value.Status;
             Step("the account status", status.SignedIn && status.CenterUrl == center.Url && !status.CredentialInOsStore && status.NodeKeyFingerprint == flow.NodeKeyFingerprint,
@@ -237,15 +227,6 @@ public sealed class CloudSignInTests
             ["requests"] = new JsonArray([.. lines.Select(line => (JsonNode?)line[(line.LastIndexOf(' ', StringComparison.Ordinal) + 1)..])]),
         };
         Write(handshake, name + ".result.json", result);
-    }
-
-    private static async Task<SignInFlow> LatestFlowAsync(NodeChannel human, string text)
-    {
-        // The CLI's flow is the node's active one: begin returns it again.
-        var begun = await human.Account.BeginSignInAsync(new AccountServiceBeginSignInRequest { Meta = Command(), Method = SignInMethod.DeviceCode }, cancellationToken: Ct);
-        Assert.Null(begun.Error);
-        Assert.Contains(SignInUrls.DisplayUserCode(begun.Value.Flow.UserCode), text, StringComparison.Ordinal);
-        return begun.Value.Flow;
     }
 
     private static void WriteBegin(string handshake, string name, SignInFlow flow, string nodeName, CenterEndpoint center)

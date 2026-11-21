@@ -164,8 +164,7 @@ def package(mxc_release_zip: Path | None = None, mxc_install_root: Path | None =
     shutil.copy2(REPOSITORY / "src" / "ArcForges.Host" / "packages.lock.json", stage)
     units = stage / "packaging" / "linux"
     units.mkdir(parents=True)
-    for name in ("arcforges-node.service", "arcforges-guard.service", "arcforges.slice"):
-        shutil.copy2(REPOSITORY / "packaging" / "linux" / name, units)
+    shutil.copy2(REPOSITORY / "packaging" / "linux" / "arcforges-node.service", units)
 
     stager = [sys.executable, "eng/mxc/stage.py", "--component", "run-supervisor", "--rid", RID,
               "--publish", str(run_publish), "--output", str(stage / "mxc")]

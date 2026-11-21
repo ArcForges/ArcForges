@@ -1,19 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-using System.Security.Cryptography;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Contracts.Relay.V1;
 using ArcForges.Node.Core;
-using ArcForges.Node.Store;
 using Google.Protobuf;
-using Microsoft.Data.Sqlite;
 
 namespace ArcForges.Node.CloudLink.Tests;
 
 /// <summary>
-/// The node channel against FakeCenter's channel peer (AF-CTR-05 part N1; G.2 rows N1-2..N1-6, N1-15, N1-16, N1-18 and the replay rule): REAL
-/// CloudLink code, a REAL ClientWebSocket over loopback, REAL crypto (the file-backed node key), a REAL node store; the center is MOCKED.
+/// Channel identity and lifecycle against a mock Center using the actual CloudLink, loopback transport and file-backed node key.
 /// </summary>
 public sealed class ChannelTests
 {
@@ -51,190 +47,27 @@ public sealed class ChannelTests
         Assert.Equal(ChannelReasons.Connected, status.RelayReason);
         Assert.True(status.CloudLinkEnabled);
 
-        // The hello names this node and the credential's installation, carries the capability and the cohort, and its proof verified at the
-        // peer with the peer's own verifier against the registered key.
+        // The hello names this node and the credential's installation. The peer verifies its proof against the registered key.
         Assert.Equal(link.NodeId, connection.Hello!.NodeId.Value.ToByteArray());
         Assert.Equal(connection.Installation, connection.Hello.InstallationId.Value.ToByteArray());
-        Assert.Equal([ChannelLoop.Capability], connection.Hello.Capabilities);
+        Assert.Empty(connection.Hello.Capabilities);
         Assert.Equal(ChannelContract.Cohort, connection.Hello.ContractVersion);
         Assert.True(connection.Proved);
     }
 
     [Fact]
-    public async Task AVerifiedCallIsAnsweredWithASignedRefusalAndLoggedBeforeAnyEffect()
+    public async Task AFormerTaskCallClosesTheControlOnlyChannelWithoutAResult()
     {
         var (link, connection) = await ConnectedAsync();
         await using (link)
         {
             var (call, _) = link.Center.Channel.BuildCall(connection, new FakeCallSpec { Method = RoutedMethod.SubmitNodeTask, Payload = SubmitPayload() });
             await connection.SendCallAsync(call);
-            var result = await connection.ResultOfAsync(call.CallId);
-
-            await Eventually.TrueAsync(() => connection.VerifiedResults.Count == 1, "a result whose signature verified at the peer");
+            await connection.Done.WaitAsync(TimeSpan.FromSeconds(10), Cancel);
+            await Eventually.TrueAsync(() => link.Service.Status() is { Relay: RelayState.Backoff, RelayReason: ChannelReasons.ProtocolError },
+                "the retired call closes the control-only channel");
+            Assert.Empty(connection.VerifiedResults);
             Assert.Empty(connection.UnverifiedResults);
-            var (header, _) = connection.VerifiedResults.Single();
-            Assert.Equal(RoutedOutcome.RefusedByPolicy, header.Outcome);
-            Assert.Equal(RoutedMethod.SubmitNodeTask, header.Method);
-            Assert.Equal(link.NodeId, header.NodeId.Value.ToByteArray());
-            Assert.Equal("permission_denied", header.Error.Code);
-            Assert.Equal(RoutedRefusals.DispatchUnavailable, header.Error.Details.State.Reason);
-            Assert.Equal("task.submit", header.Error.Details.State.State);
-            Assert.True(ArcForges.Contracts.Relay.Shapes.ContractShapeValidation.IsValid(result));
-            Assert.Empty(result.Payload);
-
-            var row = Assert.Single(link.RoutedLog());
-            Assert.Equal((2L, (string?)null, "AUTHORIZATION/permission_denied", true), row);
-        }
-    }
-
-    [Fact]
-    [Trait("feature", "cross-log-replay")]
-    public async Task AReplayedCallIsRefusedAlsoAfterARestart()
-    {
-        var (link, connection) = await ConnectedAsync();
-        await using (link)
-        {
-            var (call, _) = link.Center.Channel.BuildCall(connection, new FakeCallSpec());
-            await connection.SendCallAsync(call);
-            await Eventually.TrueAsync(() => connection.VerifiedResults.Count == 1, "the first answer");
-            await connection.SendCallAsync(call);
-            await Eventually.TrueAsync(() => connection.VerifiedResults.Count == 2, "the replay's answer");
-            var replay = connection.VerifiedResults.Last().Header;
-            Assert.Equal(RoutedOutcome.RefusedVerification, replay.Outcome);
-            Assert.Equal(RoutedCallLog.Replayed, replay.Error.Details.State.Reason);
-
-            // A restart of the node (the store closed and reopened from disk): the same call ID is still a replay.
-            await link.StopAsync();
-            await link.StartAsync();
-            var again = await link.Center.Channel.ProvedAsync(2);
-            await Eventually.TrueAsync(() => link.Service.Status().Relay == RelayState.Connected, "connected again");
-            await again.SendCallAsync(call);
-            await Eventually.TrueAsync(() => again.VerifiedResults.Count == 1, "the answer after the restart");
-            var afterRestart = again.VerifiedResults.Single().Header;
-            Assert.Equal(RoutedOutcome.RefusedVerification, afterRestart.Outcome);
-            Assert.Equal(RoutedCallLog.Replayed, afterRestart.Error.Details.State.Reason);
-            Assert.Equal([2L, 3L, 3L], link.RoutedLog().Select(row => row.Decision));
-            Assert.All(link.RoutedLog().Skip(1), row => Assert.Equal((RoutedCallLog.Replayed, "AUTHENTICATION/signature_invalid", false), (row.Step, row.Code, row.CallId)));
-        }
-    }
-
-    [Fact]
-    [Trait("feature", "cross-log-replay")]
-    public async Task SharedReceiptReplayIsSignedAuditedAndSurvivesRestart()
-    {
-        // REAL node channel, ES256 verification/result signing and SQLite across restart. The independent loopback
-        // peer is FakeCenter (MOCKED), and the file receipt is a synthetic SQL seed: no file RPC or E2E claim.
-        var dispatcher = new RecordingDispatcher();
-        var (link, connection) = await ConnectedAsync(fixture => fixture.Dispatcher = dispatcher);
-        await using (link)
-        {
-            var fileId = CommandIds.New();
-            SeedFileReceipt(link.Store!, fileId);
-
-            // An unverified frame's caller-controlled ID must not be reserved by either receipt table.
-            var forgedId = CommandIds.New();
-            var (forged, _) = link.Center.Channel.BuildCall(connection, new FakeCallSpec
-            {
-                CallId = forgedId,
-                AlterSignature = signature =>
-                {
-                    var copy = (byte[])signature.Clone();
-                    copy[0] ^= 1;
-                    return copy;
-                },
-            });
-            await connection.SendCallAsync(forged);
-            await Eventually.TrueAsync(() => connection.VerifiedResults.Count == 1, "the node-signed forged-frame refusal");
-            Assert.Equal(RoutedOutcome.RefusedVerification, connection.VerifiedResults.First().Header.Outcome);
-            Assert.Equal("signature", connection.VerifiedResults.First().Header.Error.Details.State.Reason);
-            Assert.Equal(1L, link.Store!.Read(reader => reader.Scalar("SELECT count(*) FROM routed_verified_call_id;")));
-            Assert.Equal(0L, link.Store.Read(reader => reader.Scalar("SELECT count(*) FROM routed_verified_call_id WHERE call_id = $id;",
-                ("$id", forgedId.Value.ToByteArray()))));
-            Assert.Equal(0, dispatcher.Calls);
-
-            // A valid signed old task call using the file receipt's ID must receive call_replayed, rather than
-            // letting the trigger throw out of the channel and lose the signed refusal.
-            var (fileCollision, _) = link.Center.Channel.BuildCall(connection, new FakeCallSpec { CallId = fileId });
-            await connection.SendCallAsync(fileCollision);
-            await Eventually.TrueAsync(() => connection.VerifiedResults.Count == 2, "the signed cross-log replay refusal");
-            Assert.Equal(RoutedOutcome.RefusedVerification, connection.VerifiedResults.Last().Header.Outcome);
-            Assert.Equal(RoutedCallLog.Replayed, connection.VerifiedResults.Last().Header.Error.Details.State.Reason);
-            Assert.Equal(0, dispatcher.Calls);
-
-            // In the other direction a real verified task call owns its ID before a synthetic file writer tries it.
-            var taskId = CommandIds.New();
-            var (taskCall, _) = link.Center.Channel.BuildCall(connection, new FakeCallSpec { CallId = taskId });
-            await connection.SendCallAsync(taskCall);
-            await Eventually.TrueAsync(() => connection.VerifiedResults.Count == 3, "the verified task's answer");
-            Assert.Equal(RoutedOutcome.RefusedByPolicy, connection.VerifiedResults.Last().Header.Outcome);
-            Assert.Equal(1, dispatcher.Calls);
-            var duplicate = Assert.Throws<SqliteException>(() => SeedFileReceipt(link.Store!, taskId));
-            Assert.Equal(19, duplicate.SqliteErrorCode);
-            Assert.Contains("verified_call_id_replayed", duplicate.Message, StringComparison.Ordinal);
-            Assert.Equal(2L, link.Store!.Read(reader => reader.Scalar("SELECT count(*) FROM routed_verified_call_id;")));
-            Assert.Equal(1L, link.Store.Read(reader => reader.Scalar("SELECT count(*) FROM routed_file_call_log;")));
-            Assert.Equal(1L, link.Store.Read(reader => reader.Scalar("SELECT count(*) FROM routed_call_log WHERE call_id IS NOT NULL;")));
-
-            await link.StopAsync();
-            await link.StartAsync();
-            var again = await link.Center.Channel.ProvedAsync(2);
-            await Eventually.TrueAsync(() => link.Service.Status().Relay == RelayState.Connected, "connected after restart");
-            Assert.Equal(2L, link.Store!.Read(reader => reader.Scalar("SELECT count(*) FROM routed_verified_call_id;")));
-            foreach (var replayed in new[] { fileCollision, taskCall })
-            {
-                var expected = again.VerifiedResults.Count + 1;
-                await again.SendCallAsync(replayed);
-                await Eventually.TrueAsync(() => again.VerifiedResults.Count == expected, "the signed replay after restart");
-                var result = again.VerifiedResults.Last().Header;
-                Assert.Equal(RoutedOutcome.RefusedVerification, result.Outcome);
-                Assert.Equal(RoutedCallLog.Replayed, result.Error.Details.State.Reason);
-            }
-
-            Assert.Empty(connection.UnverifiedResults);
-            Assert.Empty(again.UnverifiedResults);
-            Assert.Equal(1, dispatcher.Calls);
-            Assert.Equal([3L, 3L, 2L, 3L, 3L], link.RoutedLog().Select(row => row.Decision));
-            Assert.Equal(["signature", RoutedCallLog.Replayed, RoutedCallLog.Replayed, RoutedCallLog.Replayed],
-                link.RoutedLog().Where(row => row.Decision == 3).Select(row => row.Step));
-            Assert.All(link.RoutedLog().Where(row => row.Decision == 3), row =>
-                Assert.Equal(("AUTHENTICATION/signature_invalid", false), (row.Code, row.CallId)));
-        }
-    }
-
-    private static void SeedFileReceipt(NodeStore store, Id callId) => store.Write(transaction => transaction.Execute("""
-        INSERT INTO routed_file_call_log (received_at, frame_sha256, decision, call_id, signature_kid, method, caller, request_sha256, request_size)
-        VALUES (0, zeroblob(32), 5, $id, 'synthetic-file-kid', 9, x'01', zeroblob(32), 1);
-        """, ("$id", callId.Value.ToByteArray())));
-
-    [Fact]
-    public async Task AVerificationRefusalIsSignedLoggedAndHasNoEffect()
-    {
-        // N1-15 (acceptance bullet 6): a forged call (another target node) is answered REFUSED_VERIFICATION, signed, echoing nothing it
-        // could not verify; it is logged by frame digest and step only; the dispatcher never sees it.
-        var dispatcher = new RecordingDispatcher();
-        var (link, connection) = await ConnectedAsync(fixture => fixture.Dispatcher = dispatcher);
-        await using (link)
-        {
-            var (call, _) = link.Center.Channel.BuildCall(connection, new FakeCallSpec
-            {
-                Method = RoutedMethod.CancelNodeTask,
-                Payload = new TaskServiceCancelTaskRequest { Meta = new RequestMeta { CommandId = CommandIds.New() }, TaskId = CommandIds.New() }.ToByteArray(),
-                TargetNodeId = RandomNumberGenerator.GetBytes(16),
-            });
-            await connection.SendCallAsync(call);
-            await Eventually.TrueAsync(() => connection.VerifiedResults.Count == 1, "the signed refusal");
-            var header = connection.VerifiedResults.Single().Header;
-            Assert.Equal(RoutedOutcome.RefusedVerification, header.Outcome);
-            Assert.Equal(call.CallId, header.CallId);
-            Assert.Null(header.CommandId);
-            Assert.False(header.HasMethod);
-            Assert.False(header.HasRequestSha256);
-            Assert.Equal(("signature_invalid", ErrorCategory.Authentication, "routed_call", "target_mismatch"),
-                (header.Error.Code, header.Error.Category, header.Error.Details.State.State, header.Error.Details.State.Reason));
-            Assert.True(RoutedRefusals.Closed(header.Error));
-            Assert.Equal(0, dispatcher.Calls);
-            Assert.Equal([(3L, (string?)"target_mismatch", (string?)"AUTHENTICATION/signature_invalid", false)], link.RoutedLog());
-            Assert.Equal(0L, link.Store!.Read(reader => reader.Scalar("SELECT count(*) FROM task;")));
         }
     }
 
@@ -511,9 +344,8 @@ public sealed class ChannelTests
     }
 
     [Fact]
-    public async Task AnUnknownSigningKidMakesTheNodeRefreshOnceBeforeItAcceptsCalls()
+    public async Task AnUnknownSigningKidMakesTheNodeRefreshOnceAtHandshake()
     {
-        // PN-14: ChannelAccepted names a kid the node does not hold: one RefreshNodeSession, then calls.
         var (link, connection) = await ConnectedAsync(fixture => fixture.Center.Channel.SigningKids.Add("cmd-rotated-0002"));
         await using (link)
         {
@@ -521,41 +353,9 @@ public sealed class ChannelTests
                 () => link.Center.CallsOf("RefreshNodeSession").Count == 1, "one refresh");
             var (call, _) = link.Center.Channel.BuildCall(connection, new FakeCallSpec { FrameKid = "cmd-rotated-0002", HeaderKid = "cmd-rotated-0002" });
             await connection.SendCallAsync(call);
-            await Eventually.TrueAsync(() => connection.VerifiedResults.Count == 1, "the refusal");
-            Assert.Equal("unknown_key", connection.VerifiedResults.Single().Header.Error.Details.State.Reason);
-
-            // At most once per connection: the unknown kid of the call does not refresh again.
+            await connection.Done.WaitAsync(TimeSpan.FromSeconds(10), Cancel);
+            Assert.Empty(connection.VerifiedResults);
             Assert.Single(link.Center.CallsOf("RefreshNodeSession"));
-        }
-    }
-
-    [Fact]
-    public async Task ARelayAssertionIsSignedWithTheNodeKeyOverACenterSentNonce()
-    {
-        // D0-B1, C-N2: one center-sent nonce per call, the assertion signed under the relay-origin domain string.
-        var (link, connection) = await ConnectedAsync();
-        await using (link)
-        {
-            var request = SHA256.HashData(SubmitPayload());
-            var command = CommandIds.New();
-            var session = CommandIds.New();
-            var target = new Id { Value = ByteString.CopyFrom(link.NodeId) };
-            var assertion = await link.Service.SignRelayAssertionAsync(Origin.Script, session, RoutedMethod.SubmitNodeTask, request, target, command, Cancel);
-            Assert.NotNull(assertion);
-            var nonce = connection.Received.Count(frame => frame.FrameCase == RelayFrame.FrameOneofCase.RelayNonceRequest);
-            Assert.Equal(1, nonce);
-            Assert.Equal(link.NodeId, assertion.RelayingNodeId.Value.ToByteArray());
-            Assert.Equal(connection.Installation, assertion.RelayingInstallationId.Value.ToByteArray());
-            Assert.True(ArcForges.Contracts.Relay.Shapes.ContractShapeValidation.IsValid(assertion));
-            var input = RelaySignatures.AssertionInput(assertion, link.Center.Endpoint)!;
-            Assert.True(FakeChannelPeer.Verify(link.NodePublicKey, input, assertion.Signature.ToByteArray()));
-            Assert.True(ProtoTime.ToDateTimeOffset(assertion.ExpiresAt) - ProtoTime.ToDateTimeOffset(assertion.IssuedAt) <= TimeSpan.FromSeconds(120));
-
-            // Without an answered nonce there is no assertion.
-            link.Center.Channel.AnswerNonces = false;
-            var refused = link.Service.SignRelayAssertionAsync(Origin.Human, session, RoutedMethod.GetNodeTask, request, target, null, Cancel);
-            await Eventually.AdvanceUntilAsync(link, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(20), () => refused.IsCompleted, "the nonce timeout");
-            Assert.Null(await refused);
         }
     }
 
@@ -612,17 +412,20 @@ public sealed class ChannelTests
         }
     }
 
-    /// <summary>A dispatcher that counts the calls it sees (part N2's seam).</summary>
-    private sealed class RecordingDispatcher : IRoutedDispatcher
+    [Fact]
+    public async Task ThereIsNoBindingWhileTheLinkIsOff()
     {
-        private int _calls;
-
-        public int Calls => Volatile.Read(ref _calls);
-
-        public Task<RoutedAnswer?> DispatchAsync(VerifiedCall call, IRoutedLink link, CancellationToken cancellationToken)
+        var (link, _) = await ConnectedAsync();
+        await using (link)
         {
-            Interlocked.Increment(ref _calls);
-            return new RefusingDispatcher(TimeProvider.System).DispatchAsync(call, link, cancellationToken);
+            Assert.NotNull(((IChannelHost)link.Service).Binding());
+            Assert.True(await link.Service.SetCloudLinkAsync(false));
+            Assert.Null(((IChannelHost)link.Service).Binding());
+            Assert.True(await link.Service.SetCloudLinkAsync(true));
+            Assert.NotNull(((IChannelHost)link.Service).Binding());
+            Assert.False(((IChannelHost)link.Service).Stopping);
+            link.Service.BeginStop(TimeSpan.FromSeconds(10));
+            Assert.True(((IChannelHost)link.Service).Stopping);
         }
     }
 

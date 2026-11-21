@@ -227,7 +227,8 @@ public sealed partial class MxcRunServiceTests
     {
         var legacy = await Assert.ThrowsAsync<RpcException>(async () =>
         {
-            await connection.Tasks.ListTasksAsync(new() { Meta = Query() }, deadline: Deadline, cancellationToken: token);
+            var retired = new ArcForges.Contracts.Node.V1.TaskService.TaskServiceClient(connection.CallInvoker);
+            await retired.ListTasksAsync(new() { Meta = Query() }, deadline: Deadline, cancellationToken: token);
         });
         Assert.Equal(StatusCode.Unimplemented, legacy.StatusCode);
         var control = new CenterControlService.CenterControlServiceClient(connection.CallInvoker);

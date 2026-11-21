@@ -56,11 +56,13 @@ public sealed class InstalledVersionTests
             }
 
             await node.StopNodeAsync();
-            using var store = ArcForges.Node.Store.NodeStore.Open(new ArcForges.Node.Store.NodeStoreOptions { DataRoot = node.DataRoot, BootIdentity = "integrity" });
-            var finding = Assert.Single(store.Read(reader => ExecutionFindings.OpenFor(reader, "node", store.Metadata.NodeId.Span)),
-                item => item.Kind == FindingKind.EnforcementDegraded);
-            Assert.Contains(finding.Evidence, item => item.Name == "changed" && item.Value == "notes.txt");
-            Assert.Contains(finding.Evidence, item => item.Name == "unlisted" && item.Value == "extra.txt");
+            using (var store = ArcForges.Node.Store.NodeStore.Open(new ArcForges.Node.Store.NodeStoreOptions { DataRoot = node.DataRoot, BootIdentity = "integrity" }))
+            {
+                var finding = Assert.Single(store.Read(reader => ExecutionFindings.OpenFor(reader, "node", store.Metadata.NodeId.Span)),
+                    item => item.Kind == FindingKind.EnforcementDegraded);
+                Assert.Contains(finding.Evidence, item => item.Name == "changed" && item.Value == "notes.txt");
+                Assert.Contains(finding.Evidence, item => item.Name == "unlisted" && item.Value == "extra.txt");
+            }
 
             // The build output has no manifest: nothing is checked, and that is never reported as verified.
             node.NodeExecutable = TestNode.Host;

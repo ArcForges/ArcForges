@@ -142,7 +142,7 @@ public sealed partial class FileMutationJournalTests
     }
 
     [Fact(Timeout = 120_000)]
-    public async Task NodeStartupRecoversAnExistingPreparedRecordBeforeServing()
+    public async Task NodeShutdownLeavesAnExistingLegacyPreparationForExplicitMigration()
     {
         using var fixture = new Fixture();
         await using var node = await InProcessNode.Create().StartAsync();
@@ -151,161 +151,16 @@ public sealed partial class FileMutationJournalTests
         var (intent, raw) = fixture.WriteIntent(registered.Id, Encoding.UTF8.GetBytes("restart-test-content"));
         Assert.Equal(FileJournalPreparation.Prepared, node.Runtime.Store.Write(
             t => FileMutationJournal.Prepare(t, intent, raw), CommitDurability.Full));
+        var before = node.Runtime.Store.Read(r => FileMutationJournal.GetForCaller(r, intent.CommandId, intent.Caller));
+        Assert.NotNull(before);
+        Assert.True(before.Held);
+        Assert.Equal(SHA256.HashData(raw), before.RequestSha256.ToByteArray());
+
         Assert.Equal(0, await node.StopAsync());
-        await node.StartAsync();
-        var recovered = node.Runtime.Store.Read(r => FileMutationJournal.GetForCaller(r, intent.CommandId, intent.Caller));
-        Assert.NotNull(recovered);
-        Assert.Equal(FileOperationState.Unknown, recovered.State);
-        Assert.True(recovered.Held);
-        Assert.Equal("file_outcome_unknown", recovered.Error.Details.State.Reason);
-        Assert.Equal(SHA256.HashData(raw), recovered.RequestSha256.ToByteArray());
+        using var reopened = NodeStore.Open(new NodeStoreOptions { DataRoot = node.DataRoot, BootIdentity = "journal-history-inspection" });
+        var after = reopened.Read(r => FileMutationJournal.GetForCaller(r, intent.CommandId, intent.Caller));
+        Assert.Equal(before, after);
         Assert.Equal("original test bytes", File.ReadAllText(fixture.Target));
-    }
-
-    [Fact(Timeout = 120_000)]
-    public async Task LocalRecoveryEndpointRequiresHelloHumanAndReplaysExactAcknowledgment()
-    {
-        using var fixture = new Fixture();
-        await using var node = await InProcessNode.Create().StartAsync();
-        var registered = new RegisteredWorkspaces(node.Runtime.Store).RegisterFromVerifiedHuman(fixture.Workspace, "journal-test",
-            cancellationToken: TestContext.Current.CancellationToken);
-        var marker = Encoding.UTF8.GetBytes("local-endpoint-body-8f44651e");
-        var (intent, raw) = fixture.WriteIntent(registered.Id, marker);
-        Assert.Equal(FileJournalPreparation.Prepared, node.Runtime.Store.Write(
-            t => FileMutationJournal.Prepare(t, intent, raw), CommitDurability.Full));
-        Assert.Equal(0, await node.StopAsync());
-        await node.StartAsync();
-        var operationId = new Id { Value = ByteString.CopyFrom(intent.CommandId) };
-        var get = new FileServiceGetFileOperationRequest { Meta = new RequestMeta { CorrelationId = CommandIds.New() }, OperationCommandId = operationId };
-        var token = TestContext.Current.CancellationToken;
-
-        // The in-process fixture reports an interactive terminal for this verified peer. It is not a physical-terminal acceptance test.
-        await using var human = await node.ChannelAsync(helloAsHuman: true);
-        await using var script = await node.ChannelAsync();
-        await using var agent = await node.ChannelAsync(helloAsHuman: true, kind: ClientKind.McpAdapter);
-        await using var noHello = NodeChannel.Create(node.Endpoint);
-        foreach (var deniedClient in new[] { script.Files, agent.Files, noHello.Files })
-        {
-            var denied = await deniedClient.GetFileOperationAsync(get, cancellationToken: token);
-            Assert.Equal("permission_denied", denied.Error.Code);
-            Assert.True(NodeShapes.IsValid(denied));
-            Assert.Equal(get.Meta.CorrelationId, denied.Error.CorrelationId);
-        }
-
-        var shown = await human.Files.GetFileOperationAsync(get, cancellationToken: token);
-        Assert.True(NodeShapes.IsValid(shown));
-        Assert.Equal(FileOperationState.Unknown, shown.Value.Operation.State);
-        Assert.True(shown.Value.Operation.Held);
-        Assert.Equal(SHA256.HashData(raw), shown.Value.Operation.RequestSha256.ToByteArray());
-        Assert.Equal(intent.CorrelationId, shown.Value.Operation.Error.CorrelationId.Value.ToByteArray());
-
-        var deniedAck = new FileServiceAcknowledgeFileOperationRequest
-        {
-            Meta = new RequestMeta { CommandId = CommandIds.New(), CorrelationId = CommandIds.New() },
-            OperationCommandId = operationId,
-            OperationDigest = shown.Value.Operation.RequestSha256,
-        };
-        var deniedReply = await agent.Files.AcknowledgeFileOperationAsync(deniedAck, cancellationToken: token);
-        Assert.Equal("permission_denied", deniedReply.Error.Code);
-        Assert.True(node.Runtime.Store.Read(r => FileMutationJournal.HasWorkspaceHold(r, intent.WorkspaceId)));
-
-        var wrong = deniedAck.Clone();
-        wrong.Meta.CommandId = CommandIds.New();
-        wrong.OperationDigest = ByteString.CopyFrom(new byte[32]);
-        var mismatch = await human.Files.AcknowledgeFileOperationAsync(wrong, cancellationToken: token);
-        Assert.True(NodeShapes.IsValid(mismatch));
-        Assert.Equal("digest_mismatch", mismatch.Error.Code);
-        Assert.Equal("file_operation", mismatch.Error.Details.State.State);
-        Assert.Equal("operation_digest_mismatch", mismatch.Error.Details.State.Reason);
-        Assert.Equal(wrong.Meta.CorrelationId, mismatch.Error.CorrelationId);
-        Assert.True(node.Runtime.Store.Read(r => FileMutationJournal.HasWorkspaceHold(r, intent.WorkspaceId)));
-
-        var ack = deniedAck.Clone();
-        ack.Meta.CommandId = CommandIds.New();
-        var accepted = await human.Files.AcknowledgeFileOperationAsync(ack, cancellationToken: token);
-        Assert.True(NodeShapes.IsValid(accepted));
-        Assert.Equal(ack.Meta.CommandId, accepted.Value.Receipt.CommandId);
-        Assert.Equal(EffectCertainty.Happened, accepted.Value.Receipt.Effect); // acknowledgment only
-        Assert.Equal(FileOperationState.Unknown, accepted.Value.Operation.State);
-        Assert.True(accepted.Value.Operation.Acknowledged);
-        Assert.False(accepted.Value.Operation.Held);
-        var replay = await human.Files.AcknowledgeFileOperationAsync(ack, cancellationToken: token);
-        Assert.Equal(accepted.ToByteArray(), replay.ToByteArray());
-        var reused = ack.Clone();
-        reused.OperationDigest = ByteString.CopyFrom(new byte[32]);
-        var conflict = await human.Files.AcknowledgeFileOperationAsync(reused, cancellationToken: token);
-        Assert.True(NodeShapes.IsValid(conflict));
-        Assert.Equal("command_id_reused", conflict.Error.Code);
-        Assert.Equal(ack.Meta.CorrelationId, conflict.Error.CorrelationId);
-
-        // Mapping this service must not expose the ordinary file mutation entry point on local IPC.
-        var direct = FileServiceWriteFileRequest.Parser.ParseFrom(raw);
-        var rpc = await Assert.ThrowsAsync<Grpc.Core.RpcException>(async () =>
-            await human.Files.WriteFileAsync(direct, cancellationToken: token));
-        Assert.Equal(Grpc.Core.StatusCode.Unimplemented, rpc.StatusCode);
-        Assert.Equal("original test bytes", File.ReadAllText(fixture.Target));
-        AssertNoContent(node.Runtime.Store.DatabasePath, marker);
-    }
-
-    [Fact(Timeout = 45_000, DisableParallelization = true)]
-    [Trait("isolation", "exclusive")]
-    public async Task CanceledQueuedAcknowledgmentCannotReleaseTheHoldAfterTheWriterResumes()
-    {
-        using var fixture = new Fixture();
-        await using var node = await InProcessNode.Create().StartAsync();
-        var registered = new RegisteredWorkspaces(node.Runtime.Store).RegisterFromVerifiedHuman(fixture.Workspace, "journal-test",
-            cancellationToken: TestContext.Current.CancellationToken);
-        var (intent, raw) = fixture.WriteIntent(registered.Id, Encoding.UTF8.GetBytes("queued-ack-test"));
-        Assert.Equal(FileJournalPreparation.Prepared, node.Runtime.Store.Write(
-            t => FileMutationJournal.Prepare(t, intent, raw), CommitDurability.Full));
-        Assert.Equal(0, await node.StopAsync());
-        await node.StartAsync();
-        await using var human = await node.ChannelAsync(helloAsHuman: true);
-        var testToken = TestContext.Current.CancellationToken;
-        using var release = new ManualResetEventSlim();
-        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var blocker = node.Runtime.Processor.ExecuteAsync(_ =>
-        {
-            entered.TrySetResult();
-            if (!release.Wait(TimeSpan.FromSeconds(20), testToken))
-                throw new TimeoutException("The owned writer stall was not released.");
-            return 0;
-        });
-        try
-        {
-            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
-            var commandId = CommandIds.New();
-            var enqueued = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            node.Runtime.Processor.EnqueuedForTests = new Dictionary<string, TaskCompletionSource>
-            {
-                [Convert.ToHexString(commandId.Value.Span)] = enqueued,
-            };
-            var request = new FileServiceAcknowledgeFileOperationRequest
-            {
-                Meta = new RequestMeta { CommandId = commandId, CorrelationId = CommandIds.New() },
-                OperationCommandId = new Id { Value = ByteString.CopyFrom(intent.CommandId) },
-                OperationDigest = ByteString.CopyFrom(SHA256.HashData(raw)),
-            };
-            using var cancel = new CancellationTokenSource();
-            var response = human.Files.AcknowledgeFileOperationAsync(request, cancellationToken: cancel.Token).ResponseAsync;
-            await enqueued.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
-            await cancel.CancelAsync();
-            var failure = await Record.ExceptionAsync(async () => await response.WaitAsync(TimeSpan.FromSeconds(3), TestContext.Current.CancellationToken));
-            Assert.True(failure is OperationCanceledException or Grpc.Core.RpcException { StatusCode: Grpc.Core.StatusCode.Cancelled });
-            release.Set();
-            await blocker.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
-            await node.Runtime.Processor.ExecuteAsync(_ => 0).WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
-            Assert.True(node.Runtime.Store.Read(r => FileMutationJournal.HasWorkspaceHold(r, intent.WorkspaceId)));
-            Assert.Equal(0L, node.Runtime.Store.Read(r => r.Scalar("SELECT count(*) FROM command_dedup WHERE command_id = $id;",
-                ("$id", commandId.Value.ToByteArray()))));
-            Assert.Equal("original test bytes", File.ReadAllText(fixture.Target));
-        }
-        finally
-        {
-            release.Set();
-            node.Runtime.Processor.EnqueuedForTests = null;
-            await blocker;
-        }
     }
 
     private static void AssertNoContent(string database, byte[] marker)

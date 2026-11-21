@@ -4,7 +4,6 @@ using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Node.Core;
-using ArcForges.Node.Core.Files;
 using ArcForges.Node.Core.Security;
 using ArcForges.Node.Store;
 using Google.Protobuf;
@@ -18,7 +17,7 @@ namespace ArcForges.Node.Api;
 /// </summary>
 internal sealed class ApprovalExecutors
 {
-    private readonly Dictionary<string, (string Operation, Func<byte[], Caller, Task<byte[]?>> Run)> _executors = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (string Operation, Func<byte[], Caller, Task<byte[]>> Run)> _executors = new(StringComparer.Ordinal);
 
     /// <summary>Registers the executor of <paramref name="method"/>, gated as the matrix operation <paramref name="operation"/>.</summary>
     public void Register<TRequest, TResponse>(string method, string operation, MessageParser<TRequest> parser, Func<TRequest, Caller, Task<TResponse>> run)
@@ -26,32 +25,8 @@ internal sealed class ApprovalExecutors
         where TResponse : IMessage<TResponse> =>
         _executors[method] = (operation, async (bytes, caller) => (await run(parser.ParseFrom(bytes), caller).ConfigureAwait(false)).ToByteArray());
 
-    /// <summary>Registers an executor of a content-free captured reference. Null defers execution without claiming an outcome.</summary>
-    internal void RegisterReference(string method, string operation, Func<byte[], Caller, Task<byte[]?>> run) =>
-        _executors[method] = (operation, run);
-
-    /// <summary>Registers a retiring method whose approval can settle only from a validated retained result with a known effect.</summary>
-    internal void RegisterRetained<TRequest, TResponse>(string method, string operation, MessageParser<TRequest> parser,
-        Func<TRequest, Caller, (TResponse Response, bool Retained)> reconcile, Func<TResponse, ArcError?> error)
-        where TRequest : IMessage<TRequest>
-        where TResponse : IMessage<TResponse> => RegisterReference(method, operation, (bytes, caller) =>
-        {
-            try
-            {
-                var (response, retained) = reconcile(parser.ParseFrom(bytes), caller);
-                var failure = error(response);
-                var settled = retained && (failure is null || failure is { HasEffect: true, Effect: EffectCertainty.Happened or EffectCertainty.DidNotHappen });
-                return Task.FromResult<byte[]?>(settled ? response.ToByteArray() : null);
-            }
-            catch (Exception exception) when (exception is not OutOfMemoryException)
-            {
-                // A null response retains the original approval for reconciliation.
-                return Task.FromResult<byte[]?>(null);
-            }
-        });
-
     /// <summary>The executor of <paramref name="method"/>, or <see langword="null"/>.</summary>
-    public (string Operation, Func<byte[], Caller, Task<byte[]?>> Run)? Find(string method) => _executors.TryGetValue(method, out var found) ? found : null;
+    public (string Operation, Func<byte[], Caller, Task<byte[]>> Run)? Find(string method) => _executors.TryGetValue(method, out var found) ? found : null;
 }
 
 /// <summary>
@@ -178,14 +153,14 @@ public sealed class ApprovalServiceHandler : ApprovalService.ApprovalServiceBase
         var (result, replayed) = await _api.IdempotentAsync(request, request.Meta, caller, "DecideApproval", ApprovalServiceDecideApprovalResponse.Parser,
             failure => new ApprovalServiceDecideApprovalResponse { Meta = ApiCommands.Meta(request.Meta), Error = failure }, command =>
             {
-                Approvals.Expire(command);
-                PrivateStageTerminal.RecoverTerminalApprovals(command.Transaction);
+                Approvals.Expire(command, NodeServiceHandler.UpdateSettingsMethod);
                 var current = Approvals.Get(command.Transaction, id);
-                ArcError? error = current?.State switch
+                ArcError? error = current switch
                 {
                     null => NodeErrors.NotFound("approval", id),
-                    ApprovalState.Expired => ApiCommands.StateExpired(IdText.Format(id)),
-                    ApprovalState.Cancelled => NodeErrors.InvalidState("CANCELLED", "the approval was withdrawn"),
+                    { State: ApprovalState.Expired } => ApiCommands.StateExpired(IdText.Format(id)),
+                    { State: ApprovalState.Cancelled } => NodeErrors.InvalidState("CANCELLED", "the approval was withdrawn"),
+                    { State: ApprovalState.Pending } when _executors.Find(current.View.Operation) is null => RetiredApproval(),
                     _ => null,
                 };
                 if (error is not null)
@@ -197,9 +172,6 @@ public sealed class ApprovalServiceHandler : ApprovalService.ApprovalServiceBase
                 if (current!.State == ApprovalState.Pending)
                 {
                     current = Approvals.Decide(command, id, approve, caller.Actor, request.HasComment ? request.Comment : null);
-                    if (!approve && current.View.CommandId is { Value.Length: 16 } original)
-                        PrivateStageTerminal.RecoverTerminalApproval(command.Transaction, original.Value.Span);
-                    FileRemovalPlans.ReleaseTerminalApprovals(command.Transaction);
                     decided = current;
                 }
 
@@ -247,8 +219,7 @@ public sealed class ApprovalServiceHandler : ApprovalService.ApprovalServiceBase
         var (result, _) = await _api.IdempotentAsync(request, request.Meta, caller, "CancelApproval", ApprovalServiceCancelApprovalResponse.Parser,
             failure => new ApprovalServiceCancelApprovalResponse { Meta = ApiCommands.Meta(request.Meta), Error = failure }, command =>
             {
-                Approvals.Expire(command);
-                PrivateStageTerminal.RecoverTerminalApprovals(command.Transaction);
+                Approvals.Expire(command, NodeServiceHandler.UpdateSettingsMethod);
                 var current = Approvals.Get(command.Transaction, id);
                 ArcError? error = null;
                 if (current is null || !Visible(caller, current.View))
@@ -264,13 +235,14 @@ public sealed class ApprovalServiceHandler : ApprovalService.ApprovalServiceBase
                 {
                     error = NodeErrors.InvalidState(current.State.ToString().ToUpperInvariant(), "only a PENDING approval can be withdrawn");
                 }
+                else if (_executors.Find(current.View.Operation) is null)
+                {
+                    error = RetiredApproval();
+                }
 
                 if (error is not null)
                     return new ApprovalServiceCancelApprovalResponse { Meta = ApiCommands.Meta(request.Meta), Error = error };
                 var cancelled = Approvals.Cancel(command, id, caller.Actor);
-                if (cancelled.View.CommandId is { Value.Length: 16 } original)
-                    PrivateStageTerminal.RecoverTerminalApproval(command.Transaction, original.Value.Span);
-                FileRemovalPlans.ReleaseTerminalApprovals(command.Transaction);
                 return new ApprovalServiceCancelApprovalResponse
                 {
                     Meta = ApiCommands.Meta(request.Meta),
@@ -280,7 +252,7 @@ public sealed class ApprovalServiceHandler : ApprovalService.ApprovalServiceBase
         return result;
     }
 
-    /// <summary>Executes the approvals a node stop left APPROVED (called once the execution supervisor runs).</summary>
+    /// <summary>Executes the supported approvals left APPROVED by a node stop.</summary>
     public async Task ResumeAsync()
     {
         foreach (var approval in _node.Store.Read(Approvals.Unexecuted))
@@ -291,47 +263,33 @@ public sealed class ApprovalServiceHandler : ApprovalService.ApprovalServiceBase
 
     /// <summary>
     /// Runs an APPROVED approval's captured request under its original command ID as the requester, and records the outcome: EXECUTED, or
-    /// FAILED when the response carries an error (an executor that throws, or a method without one, is FAILED with an internal error).
+    /// FAILED when the response carries an error. Approvals for retired operations remain in the store.
     /// </summary>
     private async Task ExecuteAsync(StoredApproval approval)
     {
-        byte[]? outcome;
-        var operation = "approval.execute";
-        if (_executors.Find(approval.View.Operation) is { } executor)
+        if (_executors.Find(approval.View.Operation) is not { } executor ||
+            approval.View.Requester is not { CenterCaller: null, Origin: Origin.Human or Origin.Script or Origin.Agent } requester)
         {
-            operation = executor.Operation;
-            try
-            {
-                outcome = await executor.Run(approval.Request,
-                    Caller.OfApproval(approval.View.Requester, approval.Id, _node.NodeId.Span, approval.Request)).ConfigureAwait(false);
-            }
-            catch (Exception exception) when (exception is not OutOfMemoryException)
-            {
-                _node.Log.Error("api.approval.execute_failed", exception);
-                outcome = ErrorResponse(NodeErrors.Internal(_node.Clock.GetUtcNow()));
-            }
-        }
-        else
-        {
-            outcome = ErrorResponse(NodeErrors.InvalidState("UNSUPPORTED", approval.View.Operation + " cannot run from an approval on this node"));
+            return;
         }
 
-        if (outcome is null)
+        byte[] outcome;
+        try
         {
-            // A file effect may still be unresolved. Preserve APPROVED for a safe later recovery, not a fabricated failure.
-            _node.Log.Warning("api.approval.execution_deferred", new LogField("approval", IdText.Format(approval.Id)));
-            return;
+            outcome = await executor.Run(approval.Request,
+                Caller.OfApproval(requester, approval.Id)).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            _node.Log.Error("api.approval.execute_failed", exception);
+            outcome = ErrorResponse(NodeErrors.Internal(_node.Clock.GetUtcNow()));
         }
 
         try
         {
             await _node.Processor.ExecuteAsync(command =>
-            {
-                var completed = Approvals.Executed(command, approval.Id, outcome, Approvals.OutcomeError(outcome), operation);
-                FileRemovalPlans.ReleaseTerminalApprovals(command.Transaction);
-                return completed;
-            }, CommitDurability.Full)
-                .ConfigureAwait(false);
+                Approvals.Executed(command, approval.Id, outcome, Approvals.OutcomeError(outcome), executor.Operation),
+                CommitDurability.Full).ConfigureAwait(false);
         }
         catch (CommandQueueFullException)
         {
@@ -340,6 +298,9 @@ public sealed class ApprovalServiceHandler : ApprovalService.ApprovalServiceBase
     }
 
     private static byte[] Bytes(Id? id) => id?.Value.ToByteArray() ?? [];
+
+    private static ArcError RetiredApproval() =>
+        NodeErrors.InvalidState("RETIRED", "the approval's operation has been retired");
 
     /// <summary>A serialized response carrying only <paramref name="error"/> (field 3 of every node response, contracts README section 4).</summary>
     private static byte[] ErrorResponse(ArcError error)
@@ -357,8 +318,7 @@ public sealed class ApprovalServiceHandler : ApprovalService.ApprovalServiceBase
         try
         {
             await _node.Processor.ExecuteAsync(command =>
-                Approvals.Expire(command) + PrivateStageTerminal.RecoverTerminalApprovals(command.Transaction) +
-                    FileRemovalPlans.ReleaseTerminalApprovals(command.Transaction),
+                Approvals.Expire(command, NodeServiceHandler.UpdateSettingsMethod),
                 CommitDurability.Full).ConfigureAwait(false);
         }
         catch (CommandQueueFullException)

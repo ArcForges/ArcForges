@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Diagnostics;
 using System.Runtime.Versioning;
 using ArcForges.Node.Platform.Linux.Mxc;
 using ArcForges.Tests;
@@ -15,23 +16,12 @@ public sealed class ResourceRunCgroupTests
         Assert.SkipWhen(SystemdTestEnvironment.SkipReason is not null, SystemdTestEnvironment.SkipReason ?? string.Empty);
         var cancellationToken = TestContext.Current.CancellationToken;
         var unit = "arcforges-run-" + Guid.NewGuid().ToString("N") + ".service";
-        var bound = TimeSpan.FromSeconds(15);
-        using var manager = SystemdManager.Connect(SystemdManager.DefaultAddress()!, bound);
         try
         {
-            string[] command = ["/usr/bin/sleep", "60"];
-            var job = manager.StartTransientUnit(unit,
-            [
-                new("Description", "ArcForges V2 Run " + unit),
-                new("Type", "exec"), new("Restart", "no"), new("KillMode", "control-group"), new("Delegate", true),
-                new("CPUAccounting", true), new("MemoryAccounting", true), new("TasksAccounting", true),
-                new("CPUQuotaPerSecUSec", 500_000UL), new("CPUQuotaPeriodUSec", 100_000UL), new("CPUWeight", 100UL),
-                new("MemoryMax", 64UL << 20), new("MemorySwapMax", 0UL), new("TasksMax", 16UL),
-                new("ExecStartEx", new[] { new ExecCommand(command[0], command, false) }),
-            ]);
-            Assert.Equal("done", manager.WaitJob(job, bound));
-            var state = await LinuxRunSystemd.ReadAsync(unit, cancellationToken);
-            using var scope = LinuxRunSystemd.OpenOwnerScope(state);
+            await StartFixtureUnitAsync(unit, cancellationToken);
+            var (state, ownedScope) = await LinuxRunSystemd.WaitForReadyAsync(unit, cancellationToken);
+            using var scope = ownedScope;
+            var cgroup = ProcFs.CgroupRoot + scope.Path;
             const string boundary = "fixture-boundary";
 
             RunResourceLimitReading Read() => Assert.IsType<RunResourceLimitReading>(scope.ReadOwnedLimits(boundary, state.OwnerPid, state.OwnerStartTicks));
@@ -51,10 +41,10 @@ public sealed class ResourceRunCgroupTests
             Assert.Equal(initial, Read());
 
             Assert.Equal(new(RunResourceWriteStatus.Applied, 250), Apply(RunResourceDimension.Cpu, 250));
-            Assert.Equal("25000 100000", LinuxHarness.Read(ProcFs.CgroupRoot + scope.Path, "cpu.max"));
+            Assert.Equal("25000 100000", File.ReadAllText(Path.Combine(cgroup, "cpu.max")).TrimEnd('\n'));
             Assert.Equal(new(RunResourceWriteStatus.Applied, 200), Apply(RunResourceDimension.CpuWeight, 200));
             Assert.Equal(new(RunResourceWriteStatus.Applied, 72UL << 20), Apply(RunResourceDimension.Memory, (72UL << 20) + 1));
-            Assert.Equal("75497472", LinuxHarness.Read(ProcFs.CgroupRoot + scope.Path, "memory.max"));
+            Assert.Equal("75497472", File.ReadAllText(Path.Combine(cgroup, "memory.max")).TrimEnd('\n'));
 
             var refused = Apply(RunResourceDimension.Memory, 48UL << 20);
             Assert.Equal(RunResourceWriteStatus.Unsupported, refused.Status);
@@ -63,17 +53,50 @@ public sealed class ResourceRunCgroupTests
             Assert.Equal(RunResourceWriteStatus.Unsupported, Apply(RunResourceDimension.Swap, 4096).Status);
             Assert.Equal(new RunResourceLimitReading(boundary, 250, 72UL << 20, 16, 200, 0), Read());
 
-            Assert.Equal("done", manager.WaitJob(manager.StopUnit(unit), bound));
+            await LinuxRunSystemd.StopAsync(state, scope, cancellationToken);
             Assert.Null(scope.ReadOwnedLimits(boundary, state.OwnerPid, state.OwnerStartTicks));
             Assert.Equal(RunResourceWriteStatus.ScopeLost, Apply(RunResourceDimension.Cpu, 300).Status);
             Assert.True(scope.IsEmpty());
         }
         finally
         {
-            if (manager.State(unit) is { ActiveState: not ("inactive" or "failed") })
+            var (exitCode, diagnostic) = SystemdTestEnvironment.Systemctl("stop", "--", unit);
+            Assert.True(exitCode == 0 || SystemdTestEnvironment.Property(unit, "LoadState") == "not-found", diagnostic);
+        }
+    }
+
+    private static async Task StartFixtureUnitAsync(string unit, CancellationToken cancellationToken)
+    {
+        var start = new ProcessStartInfo("/usr/bin/systemd-run",
+        [
+            "--user", "--quiet", "--service-type=exec", "--unit=" + unit, "--description=ArcForges V2 Run " + unit,
+            "--property=Restart=no", "--property=KillMode=control-group", "--property=Delegate=yes",
+            "--property=CPUAccounting=yes", "--property=MemoryAccounting=yes", "--property=TasksAccounting=yes",
+            "--property=CPUQuota=50%", "--property=CPUQuotaPeriodSec=100ms", "--property=CPUWeight=100",
+            "--property=MemoryMax=67108864", "--property=MemorySwapMax=0", "--property=TasksMax=16",
+            "--", "/usr/bin/sleep", "60",
+        ])
+        {
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        using var process = Process.Start(start)!;
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(15));
+        var diagnostic = process.StandardError.ReadToEndAsync(deadline.Token);
+        try
+        {
+            await process.WaitForExitAsync(deadline.Token);
+            Assert.True(process.ExitCode == 0, await diagnostic);
+        }
+        catch (OperationCanceledException)
+        {
+            if (!process.HasExited)
             {
-                Assert.Equal("done", manager.WaitJob(manager.StopUnit(unit), bound));
+                process.Kill();
             }
+
+            throw;
         }
     }
 

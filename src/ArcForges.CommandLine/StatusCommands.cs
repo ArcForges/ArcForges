@@ -14,8 +14,7 @@ internal static class StatusCommands
 
     /// <summary>
     /// <c>status</c>: connects (starting the node when it is absent, except in CI jobs and sandboxes), then <c>Hello</c> and
-    /// <c>GetNodeInfo</c>; the human form adds the budget and pressure of <c>GetResourceSnapshot</c> (the JSON form, whose round trip
-    /// 15 section 1 measures, stays one call).
+    /// <c>GetNodeInfo</c>.
     /// </summary>
     public static Command Status(Func<ParseResult, Cli> factory)
     {
@@ -70,26 +69,7 @@ internal static class StatusCommands
                 return ExitCodes.Success;
             }
 
-            var rows = NodeRows(cli.Output, node, session.Hello.AssignedOrigin);
-            try
-            {
-                var resourceMeta = Cli.Meta();
-                var resources = await cli.CallAsync("GetResourceSnapshot", resourceMeta, () => session.Channel.Resources.GetResourceSnapshotAsync(
-                    new ResourceServiceGetResourceSnapshotRequest { Meta = resourceMeta }, deadline: cli.Deadline(Unary), cancellationToken: cancellationToken))
-                    .ConfigureAwait(false);
-                if (resources.Value?.Snapshot is { HasBudgetCpuMillicores: true } snapshot)
-                {
-                    rows.Add(("budget", string.Create(CultureInfo.InvariantCulture,
-                        $"{snapshot.BudgetCpuMillicores / 1000.0:0.0} cores, {Size(snapshot.BudgetMemBytes)}")));
-                    rows.Add(("pressure", Pressure(snapshot)));
-                }
-            }
-            catch (Grpc.Core.RpcException exception) when (exception.StatusCode == Grpc.Core.StatusCode.Unimplemented)
-            {
-                // A node from before the resource monitor: the status shows the node alone.
-            }
-
-            cli.Output.KeyValues(rows);
+            cli.Output.KeyValues(NodeRows(cli.Output, node, session.Hello.AssignedOrigin));
             foreach (var warning in session.Hello.Warnings)
             {
                 cli.Output.Note(warning);
@@ -176,15 +156,4 @@ internal static class StatusCommands
         < 1024UL * 1024 * 1024 => string.Create(CultureInfo.InvariantCulture, $"{bytes / (1024.0 * 1024):0.0} MiB"),
         _ => string.Create(CultureInfo.InvariantCulture, $"{bytes / (1024.0 * 1024 * 1024):0.0} GiB"),
     };
-
-    private static string Pressure(ResourceSnapshot snapshot)
-    {
-        var pressure = snapshot.HasPressure
-            ? string.Concat(snapshot.Pressure.ToString()
-                .Select((letter, index) => index > 0 && char.IsUpper(letter) ? "_" + letter : letter.ToString())).ToUpperInvariant()
-            : "unknown";
-        return snapshot.PressureDetail is { Available: true } detail
-            ? pressure + string.Create(CultureInfo.InvariantCulture, $" (memory some avg10 {detail.MemorySomeAvg10:0.##}, cpu some avg10 {detail.CpuSomeAvg10:0.##})")
-            : pressure;
-    }
 }

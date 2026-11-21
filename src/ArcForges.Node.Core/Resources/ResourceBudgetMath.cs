@@ -11,12 +11,6 @@ internal static class ResourceBudgetMath
     internal static long NormalizeReserve(long capacity, long reserve) =>
         Math.Clamp(reserve, 0, Math.Max(0, capacity));
 
-    // Legacy callers keep their original CPU floor even where it exceeds capacity minus reserve.
-    internal static (long Cpu, long Memory) LegacyBudgets(long capacityCpu, long capacityMemory,
-        long reserveCpu, long reserveMemory, long minimumManagedCpu, long unmanagedCpu, long unmanagedMemory) =>
-        (Math.Max(minimumManagedCpu, AfterUnmanaged(capacityCpu - reserveCpu, unmanagedCpu)),
-            Math.Max(0, AfterUnmanaged(capacityMemory - reserveMemory, unmanagedMemory)));
-
     internal static long? CpuBudget(long? capacity, long? reserve, long? unmanaged, long minimumManagedCpu)
     {
         if (ManagedShare(capacity, reserve) is not { } share || unmanaged is not >= 0)

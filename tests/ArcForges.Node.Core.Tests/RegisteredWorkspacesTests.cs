@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Diagnostics;
 using ArcForges.Contracts.Node.V1;
-using ArcForges.Node.Core.Execution;
 using ArcForges.Node.Core.Files;
 using ArcForges.Node.Store;
 
@@ -537,26 +536,6 @@ public sealed class RegisteredWorkspacesTests
         Assert.Equal("workspace_identity_invalid", Assert.Throws<RegisteredWorkspaceException>(() => manager.Get(registered.Id, Ct)).Reason);
         manager.UnregisterFromVerifiedHuman(registered.Id, Ct);
         Assert.True(Directory.Exists(path));
-    }
-
-    [Fact(Timeout = 30_000)]
-    public void WorkspaceSelectionMatchesNativeFilesystemRootAndLongestBoundedPrefix()
-    {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        using var fixture = new OwnedFixture();
-        var parent = fixture.Workspace("parent");
-        var child = Directory.CreateDirectory(Path.Combine(parent, "child")).FullName;
-        var sibling = fixture.Workspace("parent-other");
-        var root = Path.GetPathRoot(parent)!;
-        using var store = fixture.Open();
-        var rootId = InsertLegacy(store, root);
-        Assert.Equal(rootId, store.Read(reader => ExecutionSupervisor.WorkspaceOf(reader, root)));
-        Assert.Equal(rootId, store.Read(reader => ExecutionSupervisor.WorkspaceOf(reader, parent)));
-        var parentId = InsertLegacy(store, parent);
-        Assert.Equal(parentId, store.Read(reader => ExecutionSupervisor.WorkspaceOf(reader, child)));
-        Assert.Equal(rootId, store.Read(reader => ExecutionSupervisor.WorkspaceOf(reader, sibling)));
-        var childId = InsertLegacy(store, child);
-        Assert.Equal(childId, store.Read(reader => ExecutionSupervisor.WorkspaceOf(reader, child)));
     }
 
     [Fact(Timeout = 30_000)]

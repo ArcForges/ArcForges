@@ -19,7 +19,7 @@ public sealed class WorkspaceCommandTransactionTests
         await using var node = await InProcessNode.Create().StartAsync();
         var manager = new RegisteredWorkspaces(node.Runtime.Store);
         var path = Directory.CreateDirectory(Path.Combine(node.Root, "registered")).FullName;
-        var commandId = Tasks.Meta().CommandId.Value.ToByteArray();
+        var commandId = InProcessNode.Command().CommandId.Value.ToByteArray();
         var digest = SHA256.HashData("registration request"u8);
         using var prepared = manager.PrepareRegistration(path, cancellationToken: Ct);
 
@@ -62,7 +62,7 @@ public sealed class WorkspaceCommandTransactionTests
         var path = Directory.CreateDirectory(Path.Combine(node.Root, "duplicate")).FullName;
         var existing = manager.RegisterFromVerifiedHuman(path, cancellationToken: Ct);
         using var prepared = manager.PrepareRegistration(path, cancellationToken: Ct);
-        var id = Tasks.Meta().CommandId.Value.ToByteArray();
+        var id = InProcessNode.Command().CommandId.Value.ToByteArray();
         await Assert.ThrowsAsync<InvalidOperationException>(() => node.Runtime.Processor.ExecuteIdempotentAsync(id,
             "WorkspaceService/RegisterWorkspace", SHA256.HashData("duplicate"u8), Origin.Human, command =>
             {
@@ -87,7 +87,7 @@ public sealed class WorkspaceCommandTransactionTests
         var workspace = manager.RegisterFromVerifiedHuman(path, cancellationToken: Ct);
         using var held = manager.OpenForUse(workspace.Id, Ct);
         var open = Task.Run(() => manager.OpenForUse(workspace.Id, Ct), Ct);
-        var commandId = Tasks.Meta().CommandId.Value.ToByteArray();
+        var commandId = InProcessNode.Command().CommandId.Value.ToByteArray();
         var digest = SHA256.HashData("unregister while used"u8);
         var unregister = node.Runtime.Processor.ExecuteIdempotentAsync(commandId, "WorkspaceService/UnregisterWorkspace", digest, Origin.Human,
             command =>
@@ -110,7 +110,7 @@ public sealed class WorkspaceCommandTransactionTests
         held.Dispose();
         anotherUse.Dispose();
 
-        var removeId = Tasks.Meta().CommandId.Value.ToByteArray();
+        var removeId = InProcessNode.Command().CommandId.Value.ToByteArray();
         var removed = await node.Runtime.Processor.ExecuteIdempotentAsync(removeId, "WorkspaceService/UnregisterWorkspace",
             SHA256.HashData("remove"u8), Origin.Human, command =>
             {

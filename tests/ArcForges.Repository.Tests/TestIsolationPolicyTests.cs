@@ -4,17 +4,11 @@ using System.Text.RegularExpressions;
 namespace ArcForges.Repository.Tests;
 
 /// <summary>
-/// Test nodes are isolated from the machine's other load by default (<c>MachineIsolation</c>; 16 section 4). A test that opts into the live
-/// machine (<c>LiveMachine</c> set to anything but false, <c>WithLiveMachine()</c>, the isolation variable removed or the in-process option
-/// cleared) sees every other test's load, so it must run alone: <c>isolation=exclusive</c> with <c>DisableParallelization = true</c>. The
-/// scripted-machine seam (<c>MachineScript</c>, <c>WrapSampler</c>) is for the resource tests of <c>ResourceServiceTests</c> only (AGENTS.md
-/// section 4).
+/// Tests of installed V2 host resources, admission and pressure see the machine's other load. They run alone with
+/// <c>isolation=exclusive</c> and <c>DisableParallelization = true</c> (16 section 4).
 /// </summary>
 public sealed partial class TestIsolationPolicyTests
 {
-    /// <summary>The fixture that defines the scripted-machine seam and the one test class that may use it.</summary>
-    private static readonly string[] ScriptedMachineFiles = ["tests/ArcForges.Node.Core.Tests/InProcessNode.cs", "tests/ArcForges.Node.Core.Tests/ResourceServiceTests.cs"];
-
     [Fact]
     public void EveryTestOnTheLiveMachineIsExclusive()
     {
@@ -49,26 +43,22 @@ public sealed partial class TestIsolationPolicyTests
             }
         }
 
-        // The rule is not vacuous: the tests of the measured budgets and of pressure use the live machine.
-        Assert.True(checkedTests.Count >= 10, $"Only {checkedTests.Count} live-machine tests were found.");
+        const string PackageTests = "tests/ArcForges.ClosedLoop.Tests/";
+        Assert.Contains(PackageTests + "ResourceMxcRunServiceTests.cs:InstalledResourcesObserveOwnedNativeScopesAndKeepHostUsageSeparate", checkedTests);
+        Assert.Contains(PackageTests + "PressureMxcRunServiceTests.cs:InstalledPressurePersistsBeforeStoppingOneEligibleRunAndLeavesItsPeersRunning", checkedTests);
+        Assert.Contains(PackageTests + "AdmissionMxcRunServiceTests.cs:InstalledParallelStartsReserveOneSlotAndNeverQueueTheRefusedRun", checkedTests);
+        Assert.Contains(PackageTests + "AdmissionMxcRunServiceTests.cs:InstalledWeightedSandboxesShareReducedNativeCpuHeadroomAndRecover", checkedTests);
     }
 
     [Fact]
-    public void OnlyTheResourceServiceTestsScriptTheMachine()
+    public void TheRetiredScriptedMachineSeamIsAbsent()
     {
-        var uses = new List<string>();
-        foreach (var file in RepositoryFiles.Projects("tests").SelectMany(Sources))
+        foreach (var file in RepositoryFiles.Projects("tests").SelectMany(Sources)
+            .Where(file => file != "tests/ArcForges.Repository.Tests/TestIsolationPolicyTests.cs"))
         {
             var text = File.ReadAllText(RepositoryFiles.PathOf(file));
-            if (ScriptedMachine().IsMatch(text))
-            {
-                Assert.True(ScriptedMachineFiles.Contains(file, StringComparer.Ordinal) || file.EndsWith("/TestIsolationPolicyTests.cs", StringComparison.Ordinal),
-                    $"{file} uses the scripted-machine seam (MachineScript, WrapSampler); only ResourceServiceTests may (AGENTS.md section 4).");
-                uses.Add(file);
-            }
+            Assert.False(ScriptedMachine().IsMatch(text), $"{file} references the retired scripted-machine seam.");
         }
-
-        Assert.Contains(ScriptedMachineFiles[1], uses);
     }
 
     /// <summary>The C# sources of a test project, relative to the repository root.</summary>
@@ -81,9 +71,9 @@ public sealed partial class TestIsolationPolicyTests
     /// <summary>
     /// The members of a class file at four spaces of indentation: their attributes, their name and their body (comment lines left out).
     /// Every line at that indentation that starts with a letter starts a member: a method or constructor is named by the identifier before
-    /// its parameter list, a field, property or event by the identifier before <c>=</c>, <c>=&gt;</c>, <c>{</c> or <c>;</c>, and any other
-    /// by its line number (such a member is called by nothing, so a live use in it fails the check closed). A member ends where the next
-    /// one, its attributes or a type at the top level start.
+    /// its parameter list, a nested type by its declaration, a field, property or event by the identifier before <c>=</c>, <c>=&gt;</c>,
+    /// <c>{</c> or <c>;</c>, and any other by its line number (such a member is called by nothing, so a live use in it fails the check closed).
+    /// The next member, its attributes or a top-level type ends the previous member.
     /// </summary>
     private static List<Member> Members(string file, string[] lines)
     {
@@ -119,7 +109,8 @@ public sealed partial class TestIsolationPolicyTests
             else if (line.Length > 4 && line.StartsWith("    ", StringComparison.Ordinal) && char.IsLetter(line[4]))
             {
                 Close();
-                name = Method().Match(line) is { Success: true } method ? method.Groups["name"].Value
+                name = TypeDeclaration().Match(line) is { Success: true } type ? type.Groups["name"].Value
+                    : Method().Match(line) is { Success: true } method ? method.Groups["name"].Value
                     : Other().Match(line) is { Success: true } other ? other.Groups["name"].Value
                     : $"<{file}:{index + 1}>";
                 memberAttributes = string.Join('\n', attributes);
@@ -150,7 +141,7 @@ public sealed partial class TestIsolationPolicyTests
         return at < 0 ? member.Body : member.Body[(at + member.Name.Length)..];
     }
 
-    [GeneratedRegex(@"\bLiveMachine\s*=(?!=)(?!\s*false\b)|\.WithLiveMachine\(\)|MachineIsolation\.Variable\]\s*=\s*null|IsolatedFromMachineLoad\s*=\s*false",
+    [GeneratedRegex(@"\bReadFreshResourceHost\b|\bResourcePackage\.StartAsync\(|\bLiveMachine\s*=(?!=)(?!\s*false\b)|\.WithLiveMachine\(\)|MachineIsolation\.Variable\]\s*=\s*null|IsolatedFromMachineLoad\s*=\s*false",
         RegexOptions.None, matchTimeoutMilliseconds: 1000)]
     private static partial Regex LiveUse();
 
@@ -159,6 +150,9 @@ public sealed partial class TestIsolationPolicyTests
 
     [GeneratedRegex(@"^    [^=(]*?\b(?<name>\w+)\s*(?:<[^>()]*>)?\(", RegexOptions.None, matchTimeoutMilliseconds: 1000)]
     private static partial Regex Method();
+
+    [GeneratedRegex(@"^    (?:\w+\s+)*(?:class|struct|record|interface|enum)\s+(?<name>\w+)\b", RegexOptions.None, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex TypeDeclaration();
 
     [GeneratedRegex(@"^    [^=(]*?\b(?<name>\w+)\s*(?:=>|=|\{|;|$)", RegexOptions.None, matchTimeoutMilliseconds: 1000)]
     private static partial Regex Other();

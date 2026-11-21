@@ -112,24 +112,18 @@
         }
       },
       "arcforges.node.platform": {
-        "type": "Project",
-        "dependencies": {
-          "ArcForges.Contracts.Node": "[1.0.0-ci.450.1, )"
-        }
+        "type": "Project"
       },
       "arcforges.node.platform.linux": {
         "type": "Project",
         "dependencies": {
-          "ArcForges.Contracts.Node": "[1.0.0-ci.450.1, )",
           "ArcForges.Node.Platform": "[0.1.0-dev, )",
-          "ArcForges.RunSupervisor.Protocol": "[0.1.0-dev, )",
-          "Tmds.DBus.Protocol": "[0.95.2, )"
+          "ArcForges.RunSupervisor.Protocol": "[0.1.0-dev, )"
         }
       },
       "arcforges.node.platform.windows": {
         "type": "Project",
         "dependencies": {
-          "ArcForges.Contracts.Node": "[1.0.0-ci.450.1, )",
           "ArcForges.Node.Platform": "[0.1.0-dev, )",
           "ArcForges.RunSupervisor.Protocol": "[0.1.0-dev, )"
         }

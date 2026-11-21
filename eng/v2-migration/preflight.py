@@ -25,6 +25,10 @@ COUNTS = {
     "unsettled_approvals": "SELECT count(*) FROM approval WHERE state IN (1, 2)",
     "nonterminal_tasks": "SELECT count(*) FROM task WHERE state IN (1, 2, 3, 4, 5, 6)",
     "live_attempt_records": "SELECT count(*) FROM attempt WHERE state BETWEEN 1 AND 8 OR leftover_count > 0",
+    # Finished does not establish a known effect or confirmed cleanup. Preserve
+    # missing/unknown outcomes and Lost (8) or TerminationIncomplete (12) for reconciliation.
+    "uncertain_finished_attempts": """SELECT count(*) FROM attempt WHERE state = 9
+        AND (finished_at IS NULL OR effect IS NULL OR effect = 3 OR termination_reason IN (8, 12))""",
     "unsettled_file_journals": "SELECT count(*) FROM file_operation_journal WHERE phase <> 2 OR held = 1",
     "live_file_workers": "SELECT count(*) FROM file_effect_worker WHERE ended = 0",
     # A released active slot can still retain a named stage object and its terminal fence.

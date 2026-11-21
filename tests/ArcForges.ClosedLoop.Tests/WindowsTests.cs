@@ -208,6 +208,32 @@ public sealed partial class WindowsTests
         Assert.True(status.Json().GetProperty("autoStarted").GetBoolean());
     }
 
+    [Fact(Timeout = 240_000)]
+    [Trait("loop", "local")]
+    public async Task AStartupLongerThanTheStallIsNotMistakenForAHang()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows supervisor.");
+        await using var node = TestNode.Create();
+        node.Environment["ARCFORGES_TEST_FAULT"] = "slow-startup=35";
+        using var supervisor = node.Start(Supervisor, [NodeLocations.TestModeOption]);
+        var watch = Stopwatch.StartNew();
+        await TestNode.WaitAsync(async () => (await node.CliAsync("node", "wait-ready", "--timeout", "20s")).ExitCode == 0, TimeSpan.FromSeconds(90), "the slow node");
+        Assert.True(watch.Elapsed >= TimeSpan.FromSeconds(34), $"Ready after {watch.Elapsed}: the slow startup did not take effect.");
+        var pid = node.NodePid();
+
+        // A deliberate hold (the absence of a restart cannot be awaited): the supervisor keeps the node over the next 5 s of heartbeats.
+        await Task.Delay(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        Assert.Equal(pid, node.NodePid());
+        var log = File.ReadAllText(node.SupervisorLog);
+        Assert.DoesNotContain("node.hung", log, StringComparison.Ordinal);
+        Assert.DoesNotContain("node.crashed", log, StringComparison.Ordinal);
+        Assert.Contains("node.first_heartbeat", log, StringComparison.Ordinal);
+        await node.StopNodeAsync();
+        Assert.True(supervisor.WaitForExit(TimeSpan.FromSeconds(15)));
+        Assert.Equal(0, supervisor.ExitCode);
+    }
+
     private static int Subsystem(string path)
     {
         using var stream = File.OpenRead(path);

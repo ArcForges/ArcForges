@@ -8,7 +8,6 @@ using System.Text;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Sandbox.V2;
 using ArcForges.Node.Api;
-using ArcForges.Node.Core;
 using ArcForges.Node.Core.Security;
 using ArcForges.Node.Store;
 using Google.Protobuf;
@@ -24,7 +23,6 @@ public sealed partial class MxcRunServiceTests
         RequireExtractedPackage();
         await using var fixture = TestNode.Create();
         PrepareDataRoot(fixture.DataRoot);
-        fixture.Environment[LocalSubmission.Variable] = null;
         fixture.Environment["ARCFORGES_TEST_CLIENT_IMAGES"] = null;
         fixture.Environment["CORESEC01_NATIVE_SECRET"] = "unrelated-host-value";
         var process = await fixture.StartNodeAsync();

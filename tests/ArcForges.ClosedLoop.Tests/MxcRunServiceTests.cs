@@ -321,7 +321,7 @@ public sealed partial class MxcRunServiceTests
         Assert.True(File.Exists(Path.Combine(mxc, "mxc-manifest.json")), "The package must contain its own official MXC manifest.");
     }
 
-    private static void PrepareDataRoot(string path)
+    internal static void PrepareDataRoot(string path)
     {
         if (OperatingSystem.IsWindows())
         {

@@ -49,9 +49,8 @@ public sealed class HeartbeatMonitor
 /// <summary>
 /// The node heartbeat <c>run/node-heartbeat</c> (02 section 2; 06 section 5): renewed every second from the enforcement loop with the
 /// node instance's ID and an increasing sequence, but only once recovery is done, each monitor has completed a cycle (and none is
-/// hung), and while every registered probe answers (three misses in a row stop the renewals). Attempt guards take over when it goes
-/// stale; the Windows supervisor restarts a node whose heartbeat stalls for 30 s, and on Linux the systemd watchdog does (each renewal
-/// pings it through <see cref="Renewed"/>).
+/// hung), and while every registered probe answers (three misses in a row stop the renewals). The Windows supervisor restarts a
+/// node whose heartbeat stalls for 30 s. On Linux each renewal pings the systemd watchdog through <see cref="Renewed"/>.
 /// </summary>
 public sealed class NodeHeartbeatWriter : IDisposable
 {
@@ -82,7 +81,7 @@ public sealed class NodeHeartbeatWriter : IDisposable
     public NodeHeartbeatWriter(string dataRoot, NodeLog log, TimeProvider clock)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(dataRoot);
-        _path = AttemptFiles.HeartbeatPath(dataRoot);
+        _path = NodeHeartbeat.FilePath(dataRoot);
         _log = log ?? throw new ArgumentNullException(nameof(log));
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
         Instance = IdText.Format(Guid.CreateVersion7().ToByteArray(bigEndian: true));

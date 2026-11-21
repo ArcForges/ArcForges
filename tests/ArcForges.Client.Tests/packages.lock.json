@@ -43,12 +43,6 @@
           "System.CommandLine": "[3.0.0, )"
         }
       },
-      "arcforges.legacyclifixture": {
-        "type": "Project",
-        "dependencies": {
-          "ArcForges.CommandLine": "[0.1.0-dev, )"
-        }
-      },
       "ArcForges.Contracts.Fleet": {
         "type": "CentralTransitive",
         "requested": "[1.0.0-ci.450.1, )",

@@ -8,7 +8,6 @@
   <ItemGroup>
     <ProjectReference Include="../../src/ArcForges.Client/ArcForges.Client.csproj" />
     <ProjectReference Include="../../src/ArcForges.CommandLine/ArcForges.CommandLine.csproj" />
-    <ProjectReference Include="../Shared/LegacyCliFixture/ArcForges.LegacyCliFixture.csproj" />
     <!-- Property-based and model-based tests (16-testing-strategy; AD-0016). -->
     <PackageReference Include="CsCheck" />
     <Compile Include="../Shared/PropertyRuns.cs" Link="Shared/PropertyRuns.cs" />

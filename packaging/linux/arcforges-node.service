@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # The ArcForges node's systemd user unit (ArcForges-Design 13 section 3.4), installed by the Linux installers (AF-DIST-01) into
-# ~/.config/systemd/user with arcforges.slice and arcforges-guard.service.
-# Executions are not in this unit: they are transient units in arcforges.slice (AD-0005 Linux section 2), so stopping, restarting or
-# crashing the node never touches them; kill_with_node tasks are bound to this unit with BindsTo=.
+# ~/.config/systemd/user. Sandbox Runs use separate transient service units managed by the systemd user manager.
 # The OnFailure=arcforges-node-rollback.service line of 13 section 3.4 joins with the updater task that ships that unit and its
 # 'node update-rollback' role; until then this unit names no unit that does not exist.
 [Unit]

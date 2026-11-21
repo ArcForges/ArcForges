@@ -240,6 +240,19 @@ public sealed partial class DurableCommandStoreTests
         Assert.Equal(backupBytes, File.ReadAllBytes(backup.Database));
         Assert.Equal(backupBytes, File.ReadAllBytes(destination.Database));
 
+        foreach (string root in new[] { source.Path, destination.Path })
+        {
+            var originalFiles = Directory.GetFiles(root, "*", SearchOption.AllDirectories)
+                .ToDictionary(file => file, file => SHA256.HashData(File.ReadAllBytes(file)), StringComparer.Ordinal);
+            var refusal = Assert.Throws<StoreIncompatibleException>(() => NodeStore.OpenForV2Runtime(
+                new NodeStoreOptions { DataRoot = root, BootIdentity = "successor" }));
+            Assert.Contains("legacy_store_requires_offline_cutover", refusal.Message, StringComparison.Ordinal);
+            Assert.Equal(originalFiles.Keys.Order(StringComparer.Ordinal),
+                Directory.GetFiles(root, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal));
+            foreach (var (file, digest) in originalFiles)
+                Assert.Equal(digest, SHA256.HashData(File.ReadAllBytes(file)));
+        }
+
         using var restored = destination.Open(clock);
         using var restoredOwner = Commands(restored, destination.Path);
         Assert.Equal(known.OwnerEpoch, restoredOwner.OwnerEpoch.ToArray());

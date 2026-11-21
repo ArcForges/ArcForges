@@ -16,12 +16,12 @@ public sealed class FileRemovalPlanPrivateCountTests
     [InlineData(false)]
     [InlineData(true)]
     public Task HistoricalPrivateDenialAndPublicCountKeepDistinctReplayShapes(bool privateDenial) =>
-        LegacyPlannerHistoryFixture.WithStoreAsync((node, files) =>
+        LegacyPlannerHistoryFixture.WithStoreAsync(store =>
         {
-            var owner = LegacyPlannerHistoryFixture.Owner(node);
+            var owner = LegacyPlannerHistoryFixture.Owner(store);
             var request = new FileServicePlanRemovalRequest
             {
-                Meta = Tasks.Meta(),
+                Meta = InProcessNode.Command(),
                 WorkspacePath = new FilePath { WorkspaceId = CommandIds.New(), Path = "tree" },
             };
             var error = LegacyPlannerHistoryFixture.Refusal(privateDenial ? ErrorCategory.State : ErrorCategory.Resource,
@@ -39,33 +39,41 @@ public sealed class FileRemovalPlanPrivateCountTests
             }
 
             var raw = request.ToByteArray();
-            var recorded = LegacyPlannerHistoryFixture.RecordRefusal(node.Store, request, owner, error);
-            var replay = LegacyPlannerHistoryFixture.Read(node, files, request, owner);
-            Assert.Equal(recorded, replay.Retained!.Value.ToArray());
-            Assert.Equal(error, replay.Error);
-            Assert.Null(((FileServicePlanRemovalResponse)replay.Response).Value);
+            var recorded = LegacyPlannerHistoryFixture.RecordRefusal(store, request, owner, error);
+            var replay = LegacyPlannerHistoryFixture.ReadRetained(store, request.Meta.CommandId, raw);
+            Assert.Equal(DedupStatus.Replay, replay.Status);
+            var retained = replay.Outcome!.Value;
+            Assert.Equal(recorded, retained.ToArray());
+            var response = FileServicePlanRemovalResponse.Parser.ParseFrom(retained.Span);
+            Assert.Equal(request.Meta.CorrelationId, response.Meta.CorrelationId);
+            Assert.Equal(error, response.Error);
+            Assert.Null(response.Value);
+            Assert.Equal(owner.ToByteArray(), Assert.IsType<byte[]>(store.Read(reader => reader.Scalar(
+                "SELECT caller FROM file_removal_command_owner WHERE command_id = $id;",
+                ("$id", request.Meta.CommandId.Value.ToByteArray())))));
             if (privateDenial)
             {
-                Assert.Null(replay.Error!.Details.Limit);
+                Assert.Null(response.Error.Details.Limit);
             }
             else
             {
-                Assert.Equal("1000", replay.Error!.Details.Limit.Maximum.Value);
+                Assert.Equal("1000", response.Error.Details.Limit.Maximum.Value);
             }
 
-            var changed = LegacyPlannerHistoryFixture.Read(node, files, request, owner, [.. raw, 0x98, 0x06, 0x01]);
+            var changed = LegacyPlannerHistoryFixture.ReadRetained(store, request.Meta.CommandId, [.. raw, 0x98, 0x06, 0x01]);
+            Assert.Equal(DedupStatus.Conflict, changed.Status);
             Assert.Equal("command_id_reused", changed.Error!.Code);
-            Assert.Null(changed.Retained);
-            Assert.Equal(0L, node.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_removal_plan;")));
-            Assert.Equal(0L, node.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_operation_journal;")));
+            Assert.Null(changed.Outcome);
+            Assert.Equal(0L, store.Read(reader => reader.Scalar("SELECT count(*) FROM file_removal_plan;")));
+            Assert.Equal(0L, store.Read(reader => reader.Scalar("SELECT count(*) FROM file_operation_journal;")));
             return Task.CompletedTask;
         });
 
     [Fact]
     public Task RetainedPrivateIdentityMatchesTheObjectIndependentOfLinkCount() =>
-        LegacyPlannerHistoryFixture.WithStoreAsync((node, _) =>
+        LegacyPlannerHistoryFixture.WithStoreAsync(store =>
         {
-            var owner = LegacyPlannerHistoryFixture.Owner(node);
+            var owner = LegacyPlannerHistoryFixture.Owner(store);
             var body = "fixture"u8.ToArray();
             var native = OperatingSystem.IsWindows()
                 ? new WorkspaceObjectIdentity(17, 29, 37, 43, 0, 1, 0x8000)
@@ -79,13 +87,13 @@ public sealed class FileRemovalPlanPrivateCountTests
             };
             var identity = RegisteredWorkspaces.RootIdentity.Encode(native, directory: false);
             var parentIdentity = RegisteredWorkspaces.RootIdentity.Encode(parent);
-            var registered = node.Store.Write(transaction =>
+            var registered = store.Write(transaction =>
             {
-                var root = Path.Combine(node.DataRoot, "workspace");
+                var root = Path.Combine(store.DataRoot, "workspace");
                 var workspace = LegacyPlannerHistoryFixture.SeedWorkspace(transaction, root);
                 var request = new FileServiceWriteFileRequest
                 {
-                    Meta = Tasks.Meta(),
+                    Meta = InProcessNode.Command(),
                     ExpectedAbsent = true,
                     Data = ByteString.CopyFrom(body),
                     Path = new FilePath { WorkspaceId = workspace, Path = "unwritten" },
@@ -102,7 +110,7 @@ public sealed class FileRemovalPlanPrivateCountTests
                 return workspace;
             }, CommitDurability.Full);
 
-            node.Store.Read(reader =>
+            store.Read(reader =>
             {
                 Assert.Single(PrivateStageRegistry.LoadIdentities(reader));
                 Assert.True(PrivateStageRegistry.HasWorkspaceHold(reader, registered.Value.Span));

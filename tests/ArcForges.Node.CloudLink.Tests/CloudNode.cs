@@ -39,44 +39,25 @@ internal sealed class CloudNode : IAsyncDisposable
 
     public string ConfigPath { get; }
 
-    /// <summary>
-    /// Whether the node admits local SCRIPT submissions (AD-0021 section 5; CTR5-NODE-14: the node's own tests): true by default here, false
-    /// for the tests of the local bound itself (a node that is not test-mode-allowed).
-    /// </summary>
-    public bool AllowLocalScriptSubmit { get; set; } = true;
-
     /// <summary>Opt in to isolated test-mode image verification for a literal CLI PTY acceptance test.</summary>
     public bool TestMode { get; set; }
 
     /// <summary>The wall clock for this node (the real clock unless a test supplies a controllable one).</summary>
     public TimeProvider Clock { get; set; } = TimeProvider.System;
 
-    /// <summary>Wraps the real routed dispatcher for fault injection in an in-process test.</summary>
-    public Func<IRoutedDispatcher, IRoutedDispatcher>? WrapRoutedDispatcher { get; set; }
-
     public LocalRpcEndpoint Endpoint { get; }
 
-    /// <summary>The <c>arcforges</c> executable whose helper roles the node starts: <c>ARCFORGES_HOST_PATH</c> or the build next to the tests.</summary>
-    public static string HelperExecutable => Environment.GetEnvironmentVariable("ARCFORGES_HOST_PATH") is { Length: > 0 } configured
+    /// <summary>The current CLI image from <c>ARCFORGES_HOST_PATH</c> or the build next to the tests.</summary>
+    public static string CliExecutable => Environment.GetEnvironmentVariable("ARCFORGES_HOST_PATH") is { Length: > 0 } configured
         ? configured
         : Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "arcforges.exe" : "arcforges");
 
-    public static string LegacyCliExecutable => Path.Combine(AppContext.BaseDirectory,
-        OperatingSystem.IsWindows() ? "ArcForges.LegacyCliFixture.exe" : "ArcForges.LegacyCliFixture");
-
-    public void BindLegacyCli(ProcessStartInfo start, string? endpoint = null)
+    public void BindCli(ProcessStartInfo start)
     {
-        start.Environment[NodeLocations.EndpointVariable] = endpoint ?? Endpoint.Address;
+        start.Environment[NodeLocations.EndpointVariable] = Endpoint.Address;
         start.Environment[NodeLocations.ConfigDirectoryVariable] = Path.GetDirectoryName(ConfigPath)!;
         start.Environment.Remove("ARCFORGES_OS_SECRET_STORE_TESTS");
     }
-
-    /// <summary><c>arcforges-testload</c> next to the tests, or <c>ARCFORGES_TESTLOAD_PATH</c>.</summary>
-    public static string TestLoad => Environment.GetEnvironmentVariable("ARCFORGES_TESTLOAD_PATH") is { Length: > 0 } configured
-        ? configured
-        : Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "arcforges-testload.exe" : "arcforges-testload");
-
-    public string Slice { get; } = SystemdTestEnvironment.NewSlice();
 
     public IsolatedSecretStore Secrets { get; } = new();
 
@@ -111,22 +92,14 @@ internal sealed class CloudNode : IAsyncDisposable
             ConfigPath = ConfigPath,
             TestMode = TestMode,
             Clock = Clock,
-            WrapRoutedDispatcher = WrapRoutedDispatcher,
             Endpoint = Endpoint,
 
-            // AD-0021 section 5 (Plan decision Q8): the node's own tests submit through local SCRIPT connections (CTR5-NODE-14); never an AGENT.
-            AllowLocalScriptSubmit = AllowLocalScriptSubmit,
             Ready = runtime => _ready.TrySetResult(runtime),
             SecretStore = _ => Secrets.Selection,
             NodeKeys = NodeKeyStores.ForTestDataRoot,
             Opener = Browser,
             Output = TextWriter.Null,
             Error = TextWriter.Null,
-            LinuxSlice = Slice,
-            IsolatedFromMachineLoad = true,
-
-            // AF-CTR-05 N2b: routed runs execute (RoutedNodeTests), with the helper roles of the arcforges executable built next to the tests.
-            HelperExecutable = HelperExecutable,
         };
         var stop = _stop.Token;
         _run = Task.Run(() => NodeHost.RunAsync(options, stop));
@@ -181,11 +154,6 @@ internal sealed class CloudNode : IAsyncDisposable
         {
             _stop.Dispose();
             Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-            if (OperatingSystem.IsLinux() && _run is not null)
-            {
-                leftovers.AddRange(SystemdTestEnvironment.Cleanup(Slice, []));
-            }
-
             try
             {
                 Directory.Delete(Root, recursive: true);

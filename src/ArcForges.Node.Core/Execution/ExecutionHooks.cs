@@ -11,18 +11,7 @@ namespace ArcForges.Node.Core.Execution;
 /// <item><c>slow-startup=N</c>: startup waits N seconds before opening the store (a long store migration).</item>
 /// <item><c>slow-ready=N</c>: startup waits N seconds after the API listener started, before the node is READY (a slow recovery tail:
 /// the node answers hellos in RECOVERING meanwhile).</item>
-/// <item><c>hang-tailer-after=N</c>: the enforcement loop hangs N seconds after it started (a hung monitor).</item>
-/// <item><c>hang-probe-after=N</c>: a heartbeat probe stops answering N seconds after it started (a hung cache store).</item>
-/// <item><c>kill-before-ack=N</c>: the node kills itself N seconds after it recorded a finished attempt, before it acknowledges the exit
-/// record (a crash between the commit and the acknowledgement).</item>
-/// <item><c>hold-preempt-before-stop=N</c>: holds the first preemption before its platform stop for N seconds, so a test can kill the
-/// node after STOPPING committed while its command is still running (MR-100).</item>
-/// <item><c>hold-stop-before-stop=N</c>: holds a non-pressure stop after STOPPING commits, before platform action (MR-99).</item>
-/// <item><c>hold-finalizing=N</c>: holds finalization after FINALIZING commits, before final output/accounting/result work (MR-99).</item>
-/// <item><c>finalize-throw=0</c>: the first finalization throws an exception no handler expects (NotSupportedException) before it
-/// records.</item>
-/// <item><c>escaped-record-queue-full=0</c>: the first write of escaped-process records finds the command queue full, as
-/// <see cref="CommandProcessor.ExecuteAsync{T}"/> reports it (the scan keeps the processes and writes them again).</item>
+/// <item>Named Sandbox Run and data-transfer checkpoints hold the operation until released by the fixture or the delay elapses.</item>
 /// </list>
 /// </summary>
 public sealed class ExecutionFaults
@@ -93,15 +82,4 @@ public sealed class ExecutionFaults
         File.WriteAllText(marker, DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture));
         return value;
     }
-}
-
-/// <summary>The heartbeat probe of the <c>hang-probe-after</c> fault: it answers until its delay passed, then never.</summary>
-internal sealed class FaultProbe(TimeSpan hangAfter, TimeProvider clock) : IHeartbeatProbe
-{
-    private readonly long _started = clock.GetTimestamp();
-
-    public string Name => "fault-probe";
-
-    public Task ProbeAsync(CancellationToken cancellationToken) =>
-        clock.GetElapsedTime(_started) < hangAfter ? Task.CompletedTask : Task.Delay(Timeout.Infinite, cancellationToken);
 }

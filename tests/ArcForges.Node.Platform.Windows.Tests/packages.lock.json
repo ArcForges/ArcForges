@@ -8,15 +8,6 @@
         "resolved": "1.0.0-ci.151.1",
         "contentHash": "oQmW7DkVgs5J+k3cJv47OgrNSDT6Z15DqWb5+qMa3lAq3QbjvwqP9EOvudl4RmRhxErIHyk2LcCptzFzTq2f2w=="
       },
-      "ArcForges.Contracts.Foundation": {
-        "type": "Direct",
-        "requested": "[1.0.0-ci.486.1, )",
-        "resolved": "1.0.0-ci.486.1",
-        "contentHash": "wENqAu2EtZfQn9noM353Almep9+AIe9M7wIrpoC6l97qnkuiAEBcurmcSaVBder797NNnVJxeDQ+MTZyyrwQig==",
-        "dependencies": {
-          "Google.Protobuf": "3.36.2"
-        }
-      },
       "CsCheck": {
         "type": "Direct",
         "requested": "[5.0.1, )",
@@ -34,240 +25,21 @@
           "xunit.v3.core.mtp-v2": "[4.0.3]"
         }
       },
-      "ArcForges.Capabilities": {
-        "type": "Transitive",
-        "resolved": "1.0.0-ci.150.1",
-        "contentHash": "Y67fj3zoHLybjWiqL5M1NzxXjKorYD8Gf5A2zHpoMyR0rIdVYFv7IceqK6ZYt9WRmWLn4ZYyjyP1yaf0wyho6w==",
-        "dependencies": {
-          "ArcForges.Contracts.Foundation": "[1.0.0-ci.216.1]",
-          "ArcForges.Foundation": "[1.0.0-ci.150.1]",
-          "ArcForges.Sdk.Contracts": "[1.0.0-ci.216.1]",
-          "Google.Protobuf": "[3.36.2]",
-          "Grpc.Core.Api": "[2.85.0]"
-        }
-      },
-      "ArcForges.Contracts.PublicApi": {
-        "type": "Transitive",
-        "resolved": "1.0.0-ci.216.1",
-        "contentHash": "cj1wcu/v8bSGL0pGbKYMcJGFFs7SGF3jsG6GXm49cpj3Cal/tl2orj5jdoDBweOH0LeWZisNfFhfXkvnKR9wfQ==",
-        "dependencies": {
-          "ArcForges.Contracts.Foundation": "1.0.0-ci.216.1",
-          "Google.Protobuf": "3.36.1",
-          "Grpc.Core.Api": "2.84.0"
-        }
-      },
-      "ArcForges.Foundation": {
-        "type": "Transitive",
-        "resolved": "1.0.0-ci.150.1",
-        "contentHash": "B5P4RwwoD5TBtGYoepaqaTbe8anRyd8T8zTRZ0URp8N4NGAxwryORz284dTnyRpeii9oOPGXMn/QuFWP5hVvRg==",
-        "dependencies": {
-          "ArcForges.Contracts.Foundation": "[1.0.0-ci.216.1]",
-          "Google.Protobuf": "[3.36.2]"
-        }
-      },
-      "ArcForges.Sdk.Contracts": {
-        "type": "Transitive",
-        "resolved": "1.0.0-ci.216.1",
-        "contentHash": "aN/9J61hb7TTPnOBugNHD4Ic3aBc/3zTIsmseTdaCNO/RiaOTwFnsteg7UKg4pYAfuiL3AkTjjSrxmZ3rNIPMg==",
-        "dependencies": {
-          "ArcForges.Contracts.Foundation": "1.0.0-ci.216.1",
-          "ArcForges.Contracts.PublicApi": "1.0.0-ci.216.1",
-          "Google.Protobuf": "3.36.1",
-          "Grpc.Core.Api": "2.84.0"
-        }
-      },
-      "ArcForges.Security": {
-        "type": "Transitive",
-        "resolved": "1.0.0-ci.150.1",
-        "contentHash": "Q9wybXRAtQpne3NPP7MOMZgOEcjeeFj03g+F5gqlKHvE+rPv+cfhRVu6FcY1HrsnFUeTP79izWV3Ulw+DFfsJA==",
-        "dependencies": {
-          "ArcForges.Contracts.Foundation": "[1.0.0-ci.216.1]",
-          "ArcForges.Foundation": "[1.0.0-ci.150.1]",
-          "Google.Protobuf": "[3.36.2]"
-        }
-      },
-      "arcforges": {
-        "type": "Project",
-        "dependencies": {
-          "ArcForges.CommandLine": "[0.1.0-dev, )",
-          "ArcForges.Contracts.Foundation": "[1.0.0-ci.486.1, )",
-          "ArcForges.Node.Api": "[0.1.0-dev, )"
-        }
-      },
       "arcforges-testload": {
         "type": "Project"
       },
-      "arcforges.client": {
-        "type": "Project",
-        "dependencies": {
-          "ArcForges.Contracts.Foundation": "[1.0.0-ci.486.1, )",
-          "ArcForges.Contracts.Node": "[1.0.0-ci.450.1, )",
-          "ArcForges.LocalRpc": "[1.0.0-ci.150.1, )"
-        }
-      },
-      "arcforges.commandline": {
-        "type": "Project",
-        "dependencies": {
-          "ArcForges.Client": "[0.1.0-dev, )",
-          "ArcForges.Contracts.Fleet": "[1.0.0-ci.450.1, )",
-          "ArcForges.Contracts.Node": "[1.0.0-ci.450.1, )",
-          "ArcForges.Contracts.Sandbox.V2": "[1.0.0-ci.486.1, )",
-          "System.CommandLine": "[3.0.0, )"
-        }
-      },
-      "arcforges.node.api": {
-        "type": "Project",
-        "dependencies": {
-          "ArcForges.LocalRpc": "[1.0.0-ci.150.1, )",
-          "ArcForges.Node.CloudLink": "[0.1.0-dev, )",
-          "ArcForges.Node.Core": "[0.1.0-dev, )",
-          "ArcForges.Node.Platform.Linux": "[0.1.0-dev, )",
-          "ArcForges.Node.Platform.Windows": "[0.1.0-dev, )"
-        }
-      },
-      "arcforges.node.cloudlink": {
-        "type": "Project",
-        "dependencies": {
-          "ArcForges.Contracts.Fleet": "[1.0.0-ci.450.1, )",
-          "ArcForges.Contracts.Foundation": "[1.0.0-ci.486.1, )",
-          "ArcForges.Contracts.Node": "[1.0.0-ci.450.1, )",
-          "ArcForges.Contracts.Relay": "[1.0.0-ci.450.1, )",
-          "ArcForges.Node.Core": "[0.1.0-dev, )",
-          "Grpc.Net.Client": "[2.85.0, )",
-          "Grpc.Net.Client.Web": "[2.85.0, )"
-        }
-      },
-      "arcforges.node.core": {
-        "type": "Project",
-        "dependencies": {
-          "ArcForges.Client": "[0.1.0-dev, )",
-          "ArcForges.Contracts.Foundation": "[1.0.0-ci.486.1, )",
-          "ArcForges.Contracts.Node": "[1.0.0-ci.450.1, )",
-          "ArcForges.Contracts.Sandbox.V2": "[1.0.0-ci.486.1, )",
-          "ArcForges.Node.Platform": "[0.1.0-dev, )",
-          "ArcForges.Node.Store": "[0.1.0-dev, )",
-          "ArcForges.Observability": "[1.0.0-ci.150.1, )",
-          "ArcForges.RunSupervisor.Protocol": "[0.1.0-dev, )"
-        }
-      },
       "arcforges.node.platform": {
-        "type": "Project",
-        "dependencies": {
-          "ArcForges.Contracts.Node": "[1.0.0-ci.450.1, )"
-        }
-      },
-      "arcforges.node.platform.linux": {
-        "type": "Project",
-        "dependencies": {
-          "ArcForges.Contracts.Node": "[1.0.0-ci.450.1, )",
-          "ArcForges.Node.Platform": "[0.1.0-dev, )",
-          "ArcForges.RunSupervisor.Protocol": "[0.1.0-dev, )",
-          "Tmds.DBus.Protocol": "[0.95.2, )"
-        }
+        "type": "Project"
       },
       "arcforges.node.platform.windows": {
         "type": "Project",
         "dependencies": {
-          "ArcForges.Contracts.Node": "[1.0.0-ci.450.1, )",
           "ArcForges.Node.Platform": "[0.1.0-dev, )",
           "ArcForges.RunSupervisor.Protocol": "[0.1.0-dev, )"
         }
       },
-      "arcforges.node.store": {
-        "type": "Project",
-        "dependencies": {
-          "ArcForges.Contracts.Foundation": "[1.0.0-ci.486.1, )",
-          "ArcForges.Contracts.Node": "[1.0.0-ci.450.1, )",
-          "ArcForges.Security.Secrets": "[1.0.0-ci.150.1, )",
-          "Microsoft.Data.Sqlite": "[11.0.0, )"
-        }
-      },
       "arcforges.runsupervisor.protocol": {
         "type": "Project"
-      },
-      "ArcForges.Contracts.Fleet": {
-        "type": "CentralTransitive",
-        "requested": "[1.0.0-ci.450.1, )",
-        "resolved": "1.0.0-ci.450.1",
-        "contentHash": "uo598Fdk1tKN7Hel43LacLL4hMDSQopQyLUhkmypof2++AKRwAyYQBmMWiXLapIsq0EiC4k+t/dK4aUv3nk4Lg==",
-        "dependencies": {
-          "ArcForges.Contracts.Foundation": "1.0.0-ci.450.1",
-          "ArcForges.Contracts.Node": "1.0.0-ci.450.1",
-          "Google.Protobuf": "3.36.1",
-          "Grpc.Core.Api": "2.84.0"
-        }
-      },
-      "ArcForges.Contracts.Node": {
-        "type": "CentralTransitive",
-        "requested": "[1.0.0-ci.450.1, )",
-        "resolved": "1.0.0-ci.450.1",
-        "contentHash": "mfh4+fC7shcBYRq82rMWzNnUi3Ztj8f82imom+5+XVz4LfmXTjiIHCyfhbt9HlKZwl/Fnt143N+tN+Fpl7eFeQ==",
-        "dependencies": {
-          "ArcForges.Contracts.Foundation": "1.0.0-ci.450.1",
-          "Google.Protobuf": "3.36.1",
-          "Grpc.Core.Api": "2.84.0"
-        }
-      },
-      "ArcForges.Contracts.Relay": {
-        "type": "CentralTransitive",
-        "requested": "[1.0.0-ci.450.1, )",
-        "resolved": "1.0.0-ci.450.1",
-        "contentHash": "m382FYwDt0IC1HDx6Oc1Htp5QHyWItEqFoTg7itV/8vN0mGW/i8hHSRGbIlH4ypuP2u5FXz599pE6gGV1pMUvA==",
-        "dependencies": {
-          "ArcForges.Contracts.Fleet": "1.0.0-ci.450.1",
-          "ArcForges.Contracts.Foundation": "1.0.0-ci.450.1",
-          "ArcForges.Contracts.Node": "1.0.0-ci.450.1",
-          "Google.Protobuf": "3.36.1",
-          "Grpc.Core.Api": "2.84.0"
-        }
-      },
-      "ArcForges.Contracts.Sandbox.V2": {
-        "type": "CentralTransitive",
-        "requested": "[1.0.0-ci.486.1, )",
-        "resolved": "1.0.0-ci.486.1",
-        "contentHash": "9sz90w9RnNnW12FQA0wpEFRX5T3Svmt8GPuzEh8UUmd2jigI25ipD7LjDzC8e1+fkdrlRViAPagO+IPNvnf28Q==",
-        "dependencies": {
-          "ArcForges.Contracts.Foundation": "1.0.0-ci.486.1",
-          "Google.Protobuf": "3.36.2",
-          "Grpc.Core.Api": "2.85.0"
-        }
-      },
-      "ArcForges.LocalRpc": {
-        "type": "CentralTransitive",
-        "requested": "[1.0.0-ci.150.1, )",
-        "resolved": "1.0.0-ci.150.1",
-        "contentHash": "V+jwDvspCBPniEsil+nwla7jaxuiCgRDzEGGRA5uZ0itNyi7A2jBFw4S0IMo9U0cbkq2wNGBpC1Gs7joT84Rww==",
-        "dependencies": {
-          "Grpc.AspNetCore.Server": "[2.85.0]",
-          "Grpc.Core.Api": "[2.85.0]",
-          "Grpc.Net.Client": "[2.85.0]",
-          "Grpc.Net.Common": "[2.85.0]"
-        }
-      },
-      "ArcForges.Observability": {
-        "type": "CentralTransitive",
-        "requested": "[1.0.0-ci.150.1, )",
-        "resolved": "1.0.0-ci.150.1",
-        "contentHash": "WXvYTVSeTJE5XqEhx6/RdbMpUzoudOJiAq78vJugUwkZWWntN8KipwGzZygCYqUVsQMyRIZFOghg0GkmHijEOQ==",
-        "dependencies": {
-          "ArcForges.Capabilities": "[1.0.0-ci.150.1]",
-          "ArcForges.Contracts.Foundation": "[1.0.0-ci.216.1]",
-          "ArcForges.Foundation": "[1.0.0-ci.150.1]",
-          "Google.Protobuf": "[3.36.2]",
-          "Grpc.Core.Api": "[2.85.0]"
-        }
-      },
-      "ArcForges.Security.Secrets": {
-        "type": "CentralTransitive",
-        "requested": "[1.0.0-ci.150.1, )",
-        "resolved": "1.0.0-ci.150.1",
-        "contentHash": "SbEDbKUZRXPviVegJXk6kpbskI1+9F+BhchEHxQFL56A/tfsng2BValedo7Ac4BWuduXoEvrzY6ZTBYoNbtGHA==",
-        "dependencies": {
-          "ArcForges.Contracts.Foundation": "[1.0.0-ci.216.1]",
-          "ArcForges.Security": "[1.0.0-ci.150.1]",
-          "Google.Protobuf": "[3.36.2]",
-          "Tmds.DBus.Protocol": "[0.95.2]"
-        }
       },
       "Azure.Core": {
         "type": "CentralTransitive",
@@ -293,51 +65,6 @@
           "OpenTelemetry.PersistentStorage.FileSystem": "1.1.1"
         }
       },
-      "Google.Protobuf": {
-        "type": "CentralTransitive",
-        "requested": "[3.36.2, )",
-        "resolved": "3.36.2",
-        "contentHash": "Ci1q1iJg74qAE5riTA2FbMS0wPbpruPQI/JQ9DrAsRo2VsSxgt1e/pmxGxgrci+pXJEgrSYg2vPl8rrStZkclQ=="
-      },
-      "Grpc.AspNetCore.Server": {
-        "type": "CentralTransitive",
-        "requested": "[2.85.0, )",
-        "resolved": "2.85.0",
-        "contentHash": "0ECGrMKizFFYCqgHP7SMcOmC0z3eCIRekExrgp9rPj6Lner+0ZyCTjiArJ6h5vfBV7W13D1ypPY2uwyTkBbnMg==",
-        "dependencies": {
-          "Grpc.Net.Common": "2.85.0"
-        }
-      },
-      "Grpc.Core.Api": {
-        "type": "CentralTransitive",
-        "requested": "[2.85.0, )",
-        "resolved": "2.85.0",
-        "contentHash": "cpYu/nw/QhwHcRZMJbYD8lEllKrdwYMiDS4U3oH61nhYPUMNkcCcef4ulv11svHvTBThYV+ju332N9bCrfe7cQ=="
-      },
-      "Grpc.Net.Client": {
-        "type": "CentralTransitive",
-        "requested": "[2.85.0, )",
-        "resolved": "2.85.0",
-        "contentHash": "BPMA5mb96ihVQfXTuIUpC1aie2I0ODBD6QCc0UXYS5zQMK6sJW5yck8NZ2ffvGHfOanWyn2Yg0tJbYY3nV+zIw==",
-        "dependencies": {
-          "Grpc.Net.Common": "2.85.0"
-        }
-      },
-      "Grpc.Net.Client.Web": {
-        "type": "CentralTransitive",
-        "requested": "[2.85.0, )",
-        "resolved": "2.85.0",
-        "contentHash": "jHYy1eNACnFoZeyecg3e+GcCgwp/ce3uh35B10B+Ha9zKgzuzED160ONxdJXGWvU+R6Pv2vwmxYcQB6pLNSveQ=="
-      },
-      "Grpc.Net.Common": {
-        "type": "CentralTransitive",
-        "requested": "[2.85.0, )",
-        "resolved": "2.85.0",
-        "contentHash": "e+RczhQVHb5MacI1oMTLMK6InZLH22POZcE4gsy5SnolsElLaqhSwEhqm+cF0m4Q1JGmlhjf1nbnKh7sBbjJVg==",
-        "dependencies": {
-          "Grpc.Core.Api": "2.85.0"
-        }
-      },
       "Microsoft.ApplicationInsights": {
         "type": "CentralTransitive",
         "requested": "[3.2.0, )",
@@ -352,26 +79,6 @@
         "requested": "[11.0.0, )",
         "resolved": "11.0.0",
         "contentHash": "Uw3pD0oeX6kNS+pa8U9VaqUh3tcdQeY/cUILF89zDLeYgvfat0pzIi9kjK1nkA9u+3R7ZtAY9GsU1cgqVS+u4A=="
-      },
-      "Microsoft.Data.Sqlite": {
-        "type": "CentralTransitive",
-        "requested": "[11.0.0, )",
-        "resolved": "11.0.0",
-        "contentHash": "K3hceHG5pxWJ+mytesLiGxmJ988YFrKnMGml0xbq//UWsM79KD8nQ5sBwTSLKgWecT6Saict/jIB8O6lDL0M2g==",
-        "dependencies": {
-          "Microsoft.Data.Sqlite.Core": "[11.0.0, 12.0.0-a)",
-          "SQLitePCLRaw.bundle_e_sqlite3": "3.0.5",
-          "SQLitePCLRaw.core": "3.0.5"
-        }
-      },
-      "Microsoft.Data.Sqlite.Core": {
-        "type": "CentralTransitive",
-        "requested": "[11.0.0, )",
-        "resolved": "11.0.0",
-        "contentHash": "aWaF2LDjuFZwE9UsAGRYGNyS48xqaXoKPAjwpJI85fsaM/43s5NTRnl4xtqbTGKq8of2M/W8mo7DJk7v4zzHGQ==",
-        "dependencies": {
-          "SQLitePCLRaw.core": "3.0.5"
-        }
       },
       "Microsoft.Extensions.Configuration": {
         "type": "CentralTransitive",
@@ -548,46 +255,6 @@
           "OpenTelemetry.PersistentStorage.Abstractions": "1.2.0"
         }
       },
-      "SQLite": {
-        "type": "CentralTransitive",
-        "requested": "[3.54.1, )",
-        "resolved": "3.54.1",
-        "contentHash": "PVpXeQFwnsQ1vXFEiZR3JYYdzmsPLtxObig62uHVfeVOVX8hAemTpr3bRC1n+eVvrohV2BQ/fuQpXaj59uVnHw=="
-      },
-      "SQLitePCLRaw.bundle_e_sqlite3": {
-        "type": "CentralTransitive",
-        "requested": "[3.0.5, )",
-        "resolved": "3.0.5",
-        "contentHash": "SW8iASIyWMrLzqabUHYQRvALhvD4ylSBsj4PgEVGwc36kQjc9xT5kSV/XQ9rU7nIpBWD+LPyX3Hlw5FzyUzGeQ==",
-        "dependencies": {
-          "SQLite": "3.53.4",
-          "SQLitePCLRaw.config.e_sqlite3": "3.0.5"
-        }
-      },
-      "SQLitePCLRaw.config.e_sqlite3": {
-        "type": "CentralTransitive",
-        "requested": "[3.0.5, )",
-        "resolved": "3.0.5",
-        "contentHash": "aSk8WE5tF2MybESMgtZAEyMVCAWA0nBqOMc48HFoa9UoSdtm3goDXVzNRnefeKIwE6bV9NaNXptn1F9ReMQI0Q==",
-        "dependencies": {
-          "SQLitePCLRaw.provider.e_sqlite3": "3.0.5"
-        }
-      },
-      "SQLitePCLRaw.core": {
-        "type": "CentralTransitive",
-        "requested": "[3.0.5, )",
-        "resolved": "3.0.5",
-        "contentHash": "k81AYXXRCw3Zj8rOhyBoCsx/U97KYDFI2CSKr/ijl5BwpsW/hX/4kBiDmerFaoust8nxBwa0IHQFw8MmSHRtnQ=="
-      },
-      "SQLitePCLRaw.provider.e_sqlite3": {
-        "type": "CentralTransitive",
-        "requested": "[3.0.5, )",
-        "resolved": "3.0.5",
-        "contentHash": "um8YSWduhhuskTG2bHfZrBqMNQOydfU8pcseT+cu5RivOGyoUbCrGXxgoRNTmRYw2VbMWnEZVVFcneZT/5dsBg==",
-        "dependencies": {
-          "SQLitePCLRaw.core": "3.0.5"
-        }
-      },
       "System.ClientModel": {
         "type": "CentralTransitive",
         "requested": "[1.17.0, )",
@@ -596,12 +263,6 @@
         "dependencies": {
           "System.Memory.Data": "10.0.10"
         }
-      },
-      "System.CommandLine": {
-        "type": "CentralTransitive",
-        "requested": "[3.0.0, )",
-        "resolved": "3.0.0",
-        "contentHash": "swNpSTl0iYJeBuvYYfaY+VxzZ5YC8wklwkqDCNOq2aTQqJzjauJfh/O3Zw93nwxspWrxvZTjT45f8VPR0ParEA=="
       },
       "System.Memory.Data": {
         "type": "CentralTransitive",
@@ -620,12 +281,6 @@
         "requested": "[11.0.0, )",
         "resolved": "11.0.0",
         "contentHash": "iS9iyAMwLDPFBzTdcREDkzRBYmwy7aENYl7EXxAvnNJNCbl7+UVRgJfWaVLtVjSeDmT3JIItgGODmuAPljXFww=="
-      },
-      "Tmds.DBus.Protocol": {
-        "type": "CentralTransitive",
-        "requested": "[0.95.2, )",
-        "resolved": "0.95.2",
-        "contentHash": "4zlJSYYZGCKnF5xE1L5VEm5YsfjLTz5jlWBgvBxHA7yk8Lnys/6WWpeD+CWmNm4QmawR+x0xIbGGZNcMxcy8nQ=="
       },
       "xunit.analyzers": {
         "type": "CentralTransitive",

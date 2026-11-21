@@ -6,28 +6,14 @@ using ArcForges.Contracts.Node.V1;
 namespace ArcForges.Node.Core;
 
 /// <summary>
-/// The node's capability report (architecture 02 section 2 step 6; 03 section 8). The execution platform (Windows job objects, AF-EXEC-01;
-/// Linux transient units of the user manager, AF-EXEC-02, observe-only without a user manager) reports its capabilities after its probe
-/// (<see cref="FromPlatform"/>). Where no execution platform could be started, every enforcement capability is reported as OBSERVE_ONLY
-/// with that reason, and the node is DEGRADED
-/// (SM-NODE: RECOVERING -> DEGRADED when a capability is missing). The platform facts are read from the running system.
+/// Baseline Node capability diagnostics and platform facts. Sandbox Run profiles report their own MXC readiness.
 /// </summary>
 public static class NodeCapabilities
 {
-    /// <summary>The reason recorded for every enforcement capability where the build has no execution platform.</summary>
-    public const string NotInBuild = "the enforcement platform layer for this operating system is not part of this build";
+    /// <summary>The reason recorded for the retired Node-wide enforcement capability fields.</summary>
+    public const string NotInBuild = "legacy Node-wide enforcement has been retired; see Sandbox Run readiness";
 
-    /// <summary>The report of a started execution platform, stamped with the evaluation time.</summary>
-    public static CapabilityReport FromPlatform(ArcForges.Node.Platform.IExecutionPlatform platform, TimeProvider clock)
-    {
-        ArgumentNullException.ThrowIfNull(platform);
-        ArgumentNullException.ThrowIfNull(clock);
-        var report = platform.Evaluate();
-        report.EvaluatedAt = ProtoTime.ToInstant(clock.GetUtcNow());
-        return report;
-    }
-
-    /// <summary>The first missing capability's reason, or <see langword="null"/> when the node is READY (<see cref="FullyEnforced(CapabilityReport)"/>).</summary>
+    /// <summary>The first missing capability's reason in the Node-wide diagnostic report.</summary>
     public static string? MissingReason(CapabilityReport report) => MissingReason(report, OperatingSystem.IsWindows());
 
     /// <summary>The first missing capability's reason under the readiness rule of the Windows job platform or of the other platforms.</summary>
@@ -64,6 +50,8 @@ public static class NodeCapabilities
             PidsReason = NotInBuild,
             Io = IoControl.ObserveOnly,
             IoReason = NotInBuild,
+            Adopt = AdoptSupport.Unsupported,
+            AdoptReason = "legacy process adoption has been retired",
             EvaluatedAt = ProtoTime.ToInstant(clock.GetUtcNow()),
         };
         report.PlatformFacts.Add(Fact("os", RuntimeInformation.OSDescription));
@@ -78,7 +66,7 @@ public static class NodeCapabilities
         return report;
     }
 
-    /// <summary>True when the node is READY rather than DEGRADED on this operating system (<see cref="FullyEnforced(CapabilityReport, bool)"/>).</summary>
+    /// <summary>True when the Node-wide diagnostic report describes fully enforced resource control.</summary>
     public static bool FullyEnforced(CapabilityReport report) => FullyEnforced(report, OperatingSystem.IsWindows());
 
     /// <summary>

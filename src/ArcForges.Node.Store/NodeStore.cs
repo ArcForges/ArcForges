@@ -168,7 +168,12 @@ public sealed class NodeStore : IDisposable
     public static NodeStore Open(NodeStoreOptions options) => Open(options, StoreMigrations.Released);
 
     /// <summary>Opens or creates the store with an explicit migration plan (the released one, or a test's plan).</summary>
-    internal static NodeStore Open(NodeStoreOptions options, MigrationPlan plan)
+    internal static NodeStore Open(NodeStoreOptions options, MigrationPlan plan) => Open(options, plan, requireV2Runtime: false);
+
+    /// <summary>Opens a fresh store or an existing store without retired execution or file custody.</summary>
+    internal static NodeStore OpenForV2Runtime(NodeStoreOptions options) => Open(options, StoreMigrations.Released, requireV2Runtime: true);
+
+    private static NodeStore Open(NodeStoreOptions options, MigrationPlan plan, bool requireV2Runtime)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(plan);
@@ -186,13 +191,12 @@ public sealed class NodeStore : IDisposable
         SQLitePCL.Batteries_V2.Init();
         var dataRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(options.DataRoot));
         var path = StorePaths.Database(dataRoot);
-        if (!File.Exists(path) && Directory.Exists(Path.GetDirectoryName(path))
-            && Directory.EnumerateFiles(Path.GetDirectoryName(path)!, "v2-owner-*.fence").Any())
+        if (!File.Exists(path) && HasOwnerFence(path))
             throw new StoreIncompatibleException("An existing V2 owner authority has no database; restore/reconciliation is required.");
         StorePaths.CreatePrivateDirectory(dataRoot);
         StorePaths.CreatePrivateDirectory(Path.GetDirectoryName(path)!);
 
-        var (existing, writer, retries, lastCode) = OpenWriter(path, plan);
+        var (existing, writer, retries, lastCode) = OpenWriter(path, plan, requireV2Runtime);
         try
         {
             Pragma(writer, "PRAGMA foreign_keys=ON;");
@@ -201,8 +205,11 @@ public sealed class NodeStore : IDisposable
             // Deleted and overwritten content (purged task secrets) is zeroed in the database pages.
             Pragma(writer, "PRAGMA secure_delete=ON;");
 
-            // Retained snapshots must not extend the lifetime of a task's sealed input.
-            StoreBackups.SanitizeRetained(dataRoot, options.Clock);
+            if (!requireV2Runtime)
+            {
+                // The offline migration/store path retains its legacy sealed-input sanitation.
+                StoreBackups.SanitizeRetained(dataRoot, options.Clock);
+            }
 
             StoreOpening opening;
             if (existing is null)
@@ -441,7 +448,8 @@ public sealed class NodeStore : IDisposable
     /// A transient I/O error (<see cref="TransientOpenErrors"/>) is retried with backoff for up to <see cref="TransientOpenBound"/>; the
     /// retries and the last code are reported in <see cref="StoreOpening"/>. Every other error, corruption included, fails at once.
     /// </summary>
-    private static (ExistingStore? Existing, SqliteConnection Writer, int Retries, int? LastCode) OpenWriter(string path, MigrationPlan plan)
+    private static (ExistingStore? Existing, SqliteConnection Writer, int Retries, int? LastCode) OpenWriter(
+        string path, MigrationPlan plan, bool requireV2Runtime)
     {
         var started = TimeProvider.System.GetTimestamp();
         int? lastCode = null;
@@ -450,7 +458,19 @@ public sealed class NodeStore : IDisposable
             SqliteConnection? writer = null;
             try
             {
-                var existing = File.Exists(path) ? Inspect(path, plan) : null;
+                ExistingStore? existing = null;
+                if (requireV2Runtime ? HasFileEntry(path) : File.Exists(path))
+                {
+                    existing = requireV2Runtime
+                        ? InspectRuntimeStore(path, plan)
+                        : Inspect(path, path, plan, requireV2Runtime: false);
+                }
+                if (existing is null && requireV2Runtime &&
+                    (HasOwnerFence(path) || HasFileEntry(path + "-wal") || HasFileEntry(path + "-journal")))
+                {
+                    throw new StoreIncompatibleException("A V2 data root with existing owner or journal state requires its original database.");
+                }
+
                 if (existing is { MinReaderVersion: var minReader } && minReader > plan.LatestVersion)
                 {
                     throw new StoreIncompatibleException(string.Create(CultureInfo.InvariantCulture,
@@ -508,9 +528,76 @@ public sealed class NodeStore : IDisposable
         }
     }
 
-    private static ExistingStore? Inspect(string path, MigrationPlan plan)
+    private static ExistingStore? InspectRuntimeStore(string path, MigrationPlan plan)
     {
-        using var connection = new SqliteConnection(StorePaths.ConnectionString(path, SqliteOpenMode.ReadOnly));
+        if (HasFileEntry(path + "-journal"))
+            throw new StoreIncompatibleException("The node store has a rollback journal and requires offline recovery; it was not changed.");
+
+        // The host holds the node-instance guard. An immutable connection leaves a checkpointed store alone.
+        // It would skip pending WAL frames, so inspect those on a private copy with the normal SQLite reader.
+        using var original = File.OpenRead(path);
+        string wal = path + "-wal";
+        bool hasWal = HasFileEntry(wal);
+        if (!hasWal && ImmutableStoreUri(path) is { } uri)
+            return Inspect(path, uri, plan, requireV2Runtime: true);
+
+        using var originalWal = hasWal ? File.OpenRead(wal) : null;
+        string work = Path.Combine(Path.GetDirectoryName(path)!, $".inspect-{Guid.NewGuid():N}");
+        StorePaths.CreatePrivateDirectory(work);
+        try
+        {
+            string copy = Path.Combine(work, Path.GetFileName(path));
+            CopyInspectionFile(original, copy);
+            if (originalWal is not null)
+                CopyInspectionFile(originalWal, copy + "-wal");
+            return Inspect(path, copy, plan, requireV2Runtime: true);
+        }
+        finally
+        {
+            Directory.Delete(work, recursive: true);
+        }
+    }
+
+    private static string? ImmutableStoreUri(string path)
+    {
+        string prefix = "file://";
+        if (OperatingSystem.IsWindows())
+        {
+            if (path.Length < 3 || !char.IsAsciiLetter(path[0]) || path[1] != ':')
+                return null;
+
+            prefix += "/" + path[..2];
+            path = path[2..];
+        }
+
+        // Escape the physical path, including any percent characters that form part of a filename.
+        string escaped = string.Join('/', path.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            .Select(Uri.EscapeDataString));
+        return prefix + escaped + "?immutable=1";
+    }
+
+    private static bool HasFileEntry(string path)
+    {
+        try
+        {
+            _ = File.GetAttributes(path);
+            return true;
+        }
+        catch (FileNotFoundException)
+        {
+            return false;
+        }
+    }
+
+    private static void CopyInspectionFile(Stream source, string destination)
+    {
+        using var output = DurableEpochFence.OpenPrivate(destination, FileMode.CreateNew);
+        source.CopyTo(output);
+    }
+
+    private static ExistingStore? Inspect(string path, string source, MigrationPlan plan, bool requireV2Runtime)
+    {
+        using var connection = new SqliteConnection(StorePaths.ConnectionString(source, SqliteOpenMode.ReadOnly));
         connection.Open();
         Pragma(connection, string.Create(CultureInfo.InvariantCulture, $"PRAGMA busy_timeout={BusyTimeoutMilliseconds};"));
         var objects = Convert.ToInt64(Scalar(connection, "SELECT count(*) FROM sqlite_schema;"), CultureInfo.InvariantCulture);
@@ -537,6 +624,11 @@ public sealed class NodeStore : IDisposable
 
             version = checked((int)reader.GetInt64(0));
             minimum = checked((int)reader.GetInt64(1));
+        }
+
+        if (requireV2Runtime && minimum <= plan.LatestVersion)
+        {
+            VerifyV2RuntimeLayout(connection, version);
         }
 
         // Step 8 has never been released. A previous local author draft used the same version with different
@@ -597,6 +689,12 @@ public sealed class NodeStore : IDisposable
         }
 
         return new ExistingStore(version, minimum);
+    }
+
+    private static bool HasOwnerFence(string path)
+    {
+        string directory = Path.GetDirectoryName(path)!;
+        return Directory.Exists(directory) && Directory.EnumerateFiles(directory, "v2-owner-*.fence").Any();
     }
 
     private static bool IsDeliveredPreCtr06Store(ExistingStore? existing) =>
@@ -675,6 +773,29 @@ public sealed class NodeStore : IDisposable
             VALUES('AFV2-DATA-01/schema16',$source,16,$backup,'EXPANDED_LEGACY_RECONCILIATION_PRESERVED',$cohort,$unknown,$receipt,$now);
             """, ("$source", sourceSchema), ("$backup", backupIdentity), ("$cohort", options.Cohort),
             ("$unknown", unresolved), ("$receipt", receipt), ("$now", options.Clock.GetUtcNow().UtcDateTime.ToString("O", CultureInfo.InvariantCulture)));
+    }
+
+    private static void VerifyV2RuntimeLayout(SqliteConnection connection, int version)
+    {
+        // A finished legacy Attempt can still have an original holder awaiting acknowledgement.
+        // The new runtime cannot reconcile that ownership. Leave the original store for offline cutover.
+        if (version < 16 || Equals(Scalar(connection, """
+            SELECT EXISTS(SELECT 1 FROM task)
+                OR EXISTS(SELECT 1 FROM attempt)
+                OR EXISTS(SELECT 1 FROM workspace)
+                OR EXISTS(SELECT 1 FROM file_operation_journal)
+                OR EXISTS(SELECT 1 FROM file_effect_worker)
+                OR EXISTS(SELECT 1 FROM file_private_stage_reservation)
+                OR EXISTS(SELECT 1 FROM file_stage_production)
+                OR EXISTS(SELECT 1 FROM file_stage_worker)
+                OR EXISTS(SELECT 1 FROM file_removal_plan)
+                OR EXISTS(SELECT 1 FROM approval
+                    WHERE state IN (1, 2) AND operation <> 'NodeService.UpdateNodeSettings')
+                OR EXISTS(SELECT 1 FROM quarantine_entry WHERE restored_at IS NULL AND purged_at IS NULL);
+            """), 1L))
+        {
+            throw new StoreIncompatibleException("legacy_store_requires_offline_cutover: Use the previous release to drain and archive the old data, then start the V2 node with a V2 data root.");
+        }
     }
 
     private static StoreMetadata Start(SqliteConnection writer, NodeStoreOptions options)

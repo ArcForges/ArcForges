@@ -43,9 +43,7 @@ if ($RuntimeIdentifier.StartsWith('win-')) {
 } else {
   $units = Join-Path $stage 'packaging/linux'
   $null = New-Item -ItemType Directory -Path $units -Force
-  Copy-Item -LiteralPath (Join-Path $repository 'packaging/linux/arcforges-node.service'),
-    (Join-Path $repository 'packaging/linux/arcforges-guard.service'),
-    (Join-Path $repository 'packaging/linux/arcforges.slice') -Destination $units
+  Copy-Item -LiteralPath (Join-Path $repository 'packaging/linux/arcforges-node.service') -Destination $units
 }
 
 $projects = @('src/ArcForges.Host')

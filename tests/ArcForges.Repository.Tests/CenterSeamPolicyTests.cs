@@ -25,8 +25,6 @@ public sealed partial class CenterSeamPolicyTests
     {
         "src/ArcForges.Client/NodeConnector.cs",
         "src/ArcForges.Node.Core/Platform/Readiness.cs",
-        "src/ArcForges.Node.Core/Platform/LinuxFileEffectWorker.cs",
-        "src/ArcForges.Node.Core/Platform/LinuxWorkerBootstrapSelfTest.cs",
         RunControllerSocket,
         RunWorkerSocket,
         NodeEndpointSocket,
@@ -94,10 +92,9 @@ public sealed partial class CenterSeamPolicyTests
         UnixSocketSites.Contains(path) && LocalUnixSocket().IsMatch(construction);
 
     [Theory]
-    [InlineData("src/ArcForges.Node.Core/Platform/LinuxFileEffectWorker.cs", "new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified)", true)]
     [InlineData("src/ArcForges.Node.Core/Platform/Readiness.cs", "new Socket(AddressFamily.Unix, SocketType.Dgram, ProtocolType.Unspecified)", true)]
-    [InlineData("src/ArcForges.Node.Core/Platform/LinuxFileEffectWorker.cs", "new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Unspecified)", false)]
-    [InlineData("src/ArcForges.Node.Core/Platform/LinuxFileEffectWorker.cs", "new Socket(AddressFamily.InterNetwork, /* AddressFamily.Unix */ SocketType.Stream, ProtocolType.Unspecified)", false)]
+    [InlineData("src/ArcForges.Node.Core/Platform/LinuxFileEffectWorker.cs", "new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified)", false)]
+    [InlineData(RunControllerSocket, "new Socket(AddressFamily.InterNetwork, /* AddressFamily.Unix */ SocketType.Stream, ProtocolType.Unspecified)", false)]
     [InlineData("src/other.cs", "new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified)", false)]
     [InlineData(RunControllerSocket, "new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified)", true)]
     [InlineData(RunWorkerSocket, "new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified)", true)]
@@ -121,26 +118,6 @@ public sealed partial class CenterSeamPolicyTests
         Assert.Contains("probe.Connect(new UnixDomainSocketEndPoint(endpoint));", source, StringComparison.Ordinal);
         Assert.Contains("LinuxPeerCredentialReader.Read(probe)", source, StringComparison.Ordinal);
         Assert.Contains("peer.ProcessId != Environment.ProcessId || peer.UserId != GetEffectiveUser()", source, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void TheFileEffectSocketsUseAuthenticatedLocalPeers()
-    {
-        var worker = File.ReadAllText(Path.Combine(RepositoryFiles.Root, "src/ArcForges.Node.Core/Platform/LinuxFileEffectWorker.cs"));
-        var selfTest = File.ReadAllText(Path.Combine(RepositoryFiles.Root, "src/ArcForges.Node.Core/Platform/LinuxWorkerBootstrapSelfTest.cs"));
-        foreach (var source in new[] { worker, selfTest })
-        {
-            Assert.DoesNotContain("IPEndPoint", source, StringComparison.Ordinal);
-            Assert.DoesNotContain("DnsEndPoint", source, StringComparison.Ordinal);
-            Assert.All(SocketConstruction().Matches(source).Cast<Match>(),
-                socket => Assert.Matches(LocalUnixSocket(), socket.Value));
-        }
-        Assert.Contains("listener.Bind(new UnixDomainSocketEndPoint(", selfTest, StringComparison.Ordinal);
-        Assert.Contains("LinuxOwnedPidfd.OpenPending(peer, child)", selfTest, StringComparison.Ordinal);
-        Assert.Contains("pidfd.AuthenticateAndSeal(peer, challenge)", selfTest, StringComparison.Ordinal);
-        Assert.Contains("new UnixDomainSocketEndPoint(", worker, StringComparison.Ordinal);
-        Assert.Contains("LinuxPeerCredentialReader.Read(socket)", worker, StringComparison.Ordinal);
-        Assert.Contains("peer.ProcessId != parent || peer.UserId != GetEffectiveUserId()", worker, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -220,19 +197,9 @@ public sealed partial class CenterSeamPolicyTests
         Assert.Equal([FakeCenterDirectory + "FakeCenter/FakeCenter.cs"], defining);
         var using_ = Files("src", "tools", "tests").Where(path => path.EndsWith(".cs", StringComparison.Ordinal) && !path.StartsWith(FakeCenterDirectory, StringComparison.Ordinal)
             && path != "tests/ArcForges.Repository.Tests/CenterSeamPolicyTests.cs" && path != "tests/ArcForges.ClosedLoop.Tests/CloudLinkHostTests.cs"
-            && path != "tests/ArcForges.ClosedLoop.Tests/CloudSignInHostTests.cs" && path != "tests/ArcForges.ClosedLoop.Tests/CloudSignInTests.cs"
+            && path != "tests/ArcForges.ClosedLoop.Tests/CloudSignInHostTests.cs"
             && path != "tests/ArcForges.ClosedLoop.Tests/SignInSecretsTests.cs"
             && path != "tests/ArcForges.ClosedLoop.Tests/CloudChannelTests.cs"
-            && path != "tests/ArcForges.ClosedLoop.Tests/LinuxFileMutationHostTests.cs"
-            && path != "tests/ArcForges.ClosedLoop.Tests/LinuxWorkerInterruptionHostTests.cs"
-            && path != "tests/ArcForges.ClosedLoop.Tests/WindowsFileMutationHostTests.cs"
-            // AF-CTR-06: exact real-Host consumers of the same isolated peer; no production or new project use.
-            && path != "tests/ArcForges.ClosedLoop.Tests/AttemptRemovalPlanHostTests.cs"
-            && path != "tests/ArcForges.ClosedLoop.Tests/OptionalAvailableFleetHostTests.cs"
-            && path != "tests/ArcForges.ClosedLoop.Tests/PlanRemovalHostTests.cs"
-            && path != "tests/ArcForges.ClosedLoop.Tests/PlanRemovalInputAuditHostTests.cs"
-            && path != "tests/ArcForges.ClosedLoop.Tests/FileCreationOwnershipHostTests.cs"
-            && path != "tests/ArcForges.ClosedLoop.Tests/FileStageProducerHostTests.cs"
             && Regex.IsMatch(File.ReadAllText(Path.Combine(RepositoryFiles.Root, path)), @"\bFakeCenter\b")).ToList();
         Assert.Empty(using_);
 
