@@ -25,7 +25,6 @@ public sealed partial class CenterSeamPolicyTests
     {
         "src/ArcForges.Client/NodeConnector.cs",
         "src/ArcForges.Node.Core/Platform/Readiness.cs",
-        "src/ArcForges.Node.Core/Platform/LinuxFileEffectController.cs",
         "src/ArcForges.Node.Core/Platform/LinuxFileEffectWorker.cs",
         "src/ArcForges.Node.Core/Platform/LinuxWorkerBootstrapSelfTest.cs",
         RunControllerSocket,
@@ -95,7 +94,7 @@ public sealed partial class CenterSeamPolicyTests
         UnixSocketSites.Contains(path) && LocalUnixSocket().IsMatch(construction);
 
     [Theory]
-    [InlineData("src/ArcForges.Node.Core/Platform/LinuxFileEffectController.cs", "new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified)", true)]
+    [InlineData("src/ArcForges.Node.Core/Platform/LinuxFileEffectWorker.cs", "new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified)", true)]
     [InlineData("src/ArcForges.Node.Core/Platform/Readiness.cs", "new Socket(AddressFamily.Unix, SocketType.Dgram, ProtocolType.Unspecified)", true)]
     [InlineData("src/ArcForges.Node.Core/Platform/LinuxFileEffectWorker.cs", "new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Unspecified)", false)]
     [InlineData("src/ArcForges.Node.Core/Platform/LinuxFileEffectWorker.cs", "new Socket(AddressFamily.InterNetwork, /* AddressFamily.Unix */ SocketType.Stream, ProtocolType.Unspecified)", false)]
@@ -127,22 +126,21 @@ public sealed partial class CenterSeamPolicyTests
     [Fact]
     public void TheFileEffectSocketsUseAuthenticatedLocalPeers()
     {
-        var controller = File.ReadAllText(Path.Combine(RepositoryFiles.Root, "src/ArcForges.Node.Core/Platform/LinuxFileEffectController.cs"));
         var worker = File.ReadAllText(Path.Combine(RepositoryFiles.Root, "src/ArcForges.Node.Core/Platform/LinuxFileEffectWorker.cs"));
         var selfTest = File.ReadAllText(Path.Combine(RepositoryFiles.Root, "src/ArcForges.Node.Core/Platform/LinuxWorkerBootstrapSelfTest.cs"));
-        foreach (var source in new[] { controller, worker, selfTest })
+        foreach (var source in new[] { worker, selfTest })
         {
             Assert.DoesNotContain("IPEndPoint", source, StringComparison.Ordinal);
             Assert.DoesNotContain("DnsEndPoint", source, StringComparison.Ordinal);
             Assert.All(SocketConstruction().Matches(source).Cast<Match>(),
                 socket => Assert.Matches(LocalUnixSocket(), socket.Value));
         }
-        Assert.Contains("new UnixDomainSocketEndPoint(", controller, StringComparison.Ordinal);
-        Assert.Contains("LinuxOwnedPidfd.OpenPending(", controller, StringComparison.Ordinal);
-        Assert.Contains("AuthenticateAndSeal(", controller, StringComparison.Ordinal);
+        Assert.Contains("listener.Bind(new UnixDomainSocketEndPoint(", selfTest, StringComparison.Ordinal);
+        Assert.Contains("LinuxOwnedPidfd.OpenPending(peer, child)", selfTest, StringComparison.Ordinal);
+        Assert.Contains("pidfd.AuthenticateAndSeal(peer, challenge)", selfTest, StringComparison.Ordinal);
         Assert.Contains("new UnixDomainSocketEndPoint(", worker, StringComparison.Ordinal);
         Assert.Contains("LinuxPeerCredentialReader.Read(socket)", worker, StringComparison.Ordinal);
-        Assert.Contains("peer.ProcessId != parent", worker, StringComparison.Ordinal);
+        Assert.Contains("peer.ProcessId != parent || peer.UserId != GetEffectiveUserId()", worker, StringComparison.Ordinal);
     }
 
     [Fact]
