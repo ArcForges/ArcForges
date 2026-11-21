@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-using System.ComponentModel;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Text;
 using ArcForges.Contracts.Node.V1;
-using Microsoft.Win32.SafeHandles;
 using Tmds.DBus.Protocol;
 
 namespace ArcForges.Node.Platform.Linux;
@@ -260,8 +258,6 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
             report.PauseReason = why;
             report.KillTree = KillTreeGuarantee.Unspecified;
             report.KillTreeReason = "legacy attempt tree control requires the systemd user manager: " + why;
-            report.Adopt = AdoptSupport.Unsupported;
-            report.AdoptReason = "adoption needs a transient scope of the systemd user manager: " + why;
             report.RestartSurvival = false;
             report.RestartSurvivalReason = "native legacy attempt recovery requires the systemd user manager: " + why;
         }
@@ -291,13 +287,12 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
             report.KillTree = failed is null ? KillTreeGuarantee.Guaranteed : KillTreeGuarantee.BestEffort;
             report.KillTreeReason = (failed
                 ?? "every process of an attempt is in its unit's cgroup, which the node freezes and kills; no process can leave it without the user manager") + SameUserQualifier;
-            report.Adopt = failed is null ? AdoptSupport.Limited : AdoptSupport.Unsupported;
-            report.AdoptReason = failed ?? "a same-user process and its children move into a transient scope in the node's slice through the user manager, which "
-                + "moves any same-user process there, outside its own subtree too, through the system manager's AttachProcessesToUnit (systemd 257, L-29); "
-                + "a process of another user is refused before systemd is asked; the moved process's earlier memory charges stay behind";
             report.RestartSurvival = failed is null;
             report.RestartSurvivalReason = failed ?? "attempts are transient units of the user manager, never children of the node, with a durable exit record from ExecStopPost (L-13)";
         }
+
+        report.Adopt = AdoptSupport.Unsupported;
+        report.AdoptReason = "New legacy process adoption has been retired. Cleanup of recorded adoptions requires confirmed custody.";
 
         report.PlatformFacts.Add(Fact("unit_hardening", HardeningReport));
         report.PlatformFacts.Add(Fact("os", RuntimeInformation.OSDescription));
@@ -523,217 +518,6 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
         }
     }
 
-    /// <summary>Adopts an existing process for the legacy Linux platform fixtures.</summary>
-    public AdoptionResult Adopt(AdoptionRequest request)
-    {
-        ArgumentNullException.ThrowIfNull(request);
-        if (_manager is null || _selfTest is not null)
-        {
-            throw new AdoptionRefusedException(_managerReason ?? _selfTest ?? "no systemd user manager is connected");
-        }
-
-        var pid = request.Pid;
-
-        // Review round 1 (TOCTOU): the process is named by a pidfd from here on. Its identity is checked after the descriptor was opened, so
-        // the checked process is the one the descriptor names, and the user manager is given the descriptor (PIDFDs), never the reusable ID.
-        using var identity = OpenPidfd(pid);
-        if (identity is null || ProcFs.StartOf(pid) is not { } start || (start.Start - request.Start).Duration() > IdentityTolerance)
-        {
-            throw new AdoptionRefusedException($"no process {pid.ToString(CultureInfo.InvariantCulture)} started at that time") { NotFound = true };
-        }
-
-        if (ProcFs.OwnerOf(pid) != ProcFs.UserId)
-        {
-            throw new AdoptionRefusedException("the process runs as another user (adoption is same-user only, R-RES-013)");
-        }
-
-        if (_sliceCgroup is { } slice && ProcFs.CgroupOf(pid) is { } cgroup && cgroup.StartsWith(slice + "/", StringComparison.Ordinal))
-        {
-            throw new AdoptionRefusedException("the process is already in a container of this node") { AlreadyManaged = true };
-        }
-
-        // The children that exist now (descendants by parent ID, each created no earlier than its parent), adopted one by one afterwards.
-        var table = ProcFs.AllProcesses().Select(candidate => (Pid: candidate, Stat: ProcFs.Stat(candidate))).Where(entry => entry.Stat is { State: not ('Z' or 'X') })
-            .ToDictionary(entry => entry.Pid, entry => (Parent: entry.Stat!.Value.ParentPid, Start: entry.Stat.Value.StartTicks));
-        var children = new List<(int Pid, long Start)>();
-        var frontier = new Queue<(int Pid, long Start)>([(pid, start.Ticks)]);
-        while (frontier.TryDequeue(out var parent) && children.Count < 4096)
-        {
-            foreach (var (child, (owner, created)) in table.Where(entry => entry.Value.Parent == parent.Pid && entry.Value.Start >= parent.Start && entry.Key != pid))
-            {
-                if (!children.Exists(known => known.Pid == child))
-                {
-                    children.Add((child, created));
-                    frontier.Enqueue((child, created));
-                }
-            }
-        }
-
-        var name = AdoptionPrefix + request.AttemptName + ".scope";
-        var manager = Manager;
-        try
-        {
-            var job = StartScope(manager, name, "ArcForges adopted process " + pid.ToString(CultureInfo.InvariantCulture), Slice, pid, identity, delegated: true);
-            if (manager.WaitJob(job, TimeSpan.FromSeconds(10)) is not "done" || manager.ScopeControlGroup(name) is not { Length: > 0 } controlGroup)
-            {
-                throw new AdoptionRefusedException("the user manager did not start the adoption scope with the process");
-            }
-
-            if (!Alive(identity))
-            {
-                // The process ended while it was being adopted. Where only its ID could be passed, another process may have taken the ID and been
-                // moved: it is released into a scope of its own that the user manager abandons (never terminated), and the adoption is refused.
-                var released = ProcFs.CgroupOf(pid) == controlGroup ? "; " + ReleaseStranger(manager, pid) : string.Empty;
-                StopQuietly(manager, name);
-                throw new AdoptionRefusedException($"process {pid.ToString(CultureInfo.InvariantCulture)} ended while it was being adopted{released}") { NotFound = true };
-            }
-
-            if (ProcFs.CgroupOf(pid) != controlGroup)
-            {
-                // A refusal is reported, never forced (R-RES-013): the scope started without the process.
-                StopQuietly(manager, name);
-                throw new AdoptionRefusedException("the user manager did not move the process into the adoption scope");
-            }
-
-            var directory = ProcFs.CgroupDirectory(controlGroup);
-            var results = new List<string>();
-            var adopted = 0;
-            foreach (var (child, created) in children)
-            {
-                var image = ProcFs.Image(child);
-                var label = child.ToString(CultureInfo.InvariantCulture);
-
-                // AttachProcessesToUnit takes IDs only: the child is held by a pidfd, its start checked through it, and after the move a child that
-                // ended in between (its ID possibly taken by another process, which is released again) is reported as not adopted.
-                using var held = OpenPidfd(child);
-                if (held is null || ProcFs.Stat(child) is not { } stat || stat.StartTicks != created)
-                {
-                    results.Add($"{image} ({label}): not adopted (it ended before the move)");
-                    continue;
-                }
-
-                try
-                {
-                    if (ProcFs.CgroupOf(child) != controlGroup)
-                    {
-                        manager.AttachProcessesToUnit(name, [(uint)child]);
-                    }
-
-                    if (!Alive(held))
-                    {
-                        var released = ProcFs.CgroupOf(child) == controlGroup ? "; " + ReleaseStranger(manager, child) : string.Empty;
-                        results.Add($"{image} ({label}): not adopted (it ended during the move{released})");
-                        continue;
-                    }
-
-                    adopted++;
-                    results.Add($"{image} ({label}): adopted");
-                }
-                catch (DBusErrorReplyException exception)
-                {
-                    results.Add($"{image} ({label}): not adopted ({OneLine(exception.Message)})");
-                }
-            }
-
-            return new AdoptionResult(new LinuxAdoptedScope(this, name, directory), ResolveImage(pid), adopted, children.Count - adopted, results);
-        }
-        catch (DBusErrorReplyException exception)
-        {
-            // L-29: the user manager moves any same-user process (through the system manager when it lies outside its subtree); what it still
-            // refuses is reported as it answered.
-            throw new AdoptionRefusedException($"the user manager refused to move the process ({exception.ErrorName}: {OneLine(exception.Message)})", exception);
-        }
-    }
-
-    /// <summary>How the last adoption scope named its process: by pidfd (<c>PIDFDs</c>), by ID (<c>PIDs</c>, then checked), or not yet.</summary>
-    internal bool? ScopesByPidfd { get; private set; }
-
-    /// <summary>A pidfd for <paramref name="pid"/> (closed on dispose), or <see langword="null"/> when the process does not exist.</summary>
-    private static SafeFileHandle? OpenPidfd(int pid)
-    {
-        var descriptor = Libc.PidfdOpen(pid);
-        return descriptor < 0 ? null : new SafeFileHandle((IntPtr)descriptor, ownsHandle: true);
-    }
-
-    /// <summary>True while the process a pidfd names has not ended (signal 0 through the descriptor).</summary>
-    private static bool Alive(SafeFileHandle pidfd) => Libc.PidfdSendSignal((int)pidfd.DangerousGetHandle(), 0) == 0;
-
-    /// <summary>
-    /// Starts a scope with the process named by <paramref name="pidfd"/> (<c>PIDFDs</c>, systemd 253 and later); a user manager that does not
-    /// know the property gets the ID (<c>PIDs</c>), and the caller checks the pidfd afterwards.
-    /// </summary>
-    private string StartScope(SystemdManager manager, string name, string description, string? slice, int pid, SafeFileHandle pidfd, bool delegated)
-    {
-        List<UnitProperty> properties = [new("Description", description)];
-        if (slice is not null)
-        {
-            properties.Add(new("Slice", slice));
-        }
-
-        if (delegated)
-        {
-            // AttachProcessesToUnit (the children, one by one) is available only on delegated units.
-            properties.Add(new("Delegate", true));
-            properties.Add(new("CPUAccounting", true));
-            properties.Add(new("MemoryAccounting", true));
-            properties.Add(new("TasksAccounting", true));
-        }
-
-        // The message carries its own duplicate of the descriptor.
-        using var passed = OpenPidfdDuplicate(pidfd);
-        try
-        {
-            if (passed is not null)
-            {
-                var job = manager.StartTransientUnit(name, [.. properties, new("PIDFDs", (SafeHandle[])[passed])]);
-                ScopesByPidfd = true;
-                return job;
-            }
-        }
-        catch (DBusErrorReplyException exception) when (exception.ErrorName is "org.freedesktop.DBus.Error.InvalidArgs" or "org.freedesktop.DBus.Error.PropertyReadOnly"
-            && exception.Message.Contains("PIDFDs", StringComparison.Ordinal))
-        {
-            // A user manager before systemd 253: the ID is passed, and the caller checks the pidfd afterwards.
-        }
-
-        ScopesByPidfd = false;
-        return manager.StartTransientUnit(name, [.. properties, new("PIDs", (uint[])[(uint)pid])]);
-    }
-
-    private static SafeFileHandle? OpenPidfdDuplicate(SafeFileHandle pidfd)
-    {
-        var duplicate = Libc.Dup((int)pidfd.DangerousGetHandle());
-        return duplicate < 0 ? null : new SafeFileHandle((IntPtr)duplicate, ownsHandle: true);
-    }
-
-    /// <summary>
-    /// A process that took the ID of one being adopted and was moved instead (only possible where the ID had to be passed): it is moved into a
-    /// scope of its own, which the user manager then abandons, so it keeps running and is never part of the adoption or its termination.
-    /// </summary>
-    private string ReleaseStranger(SystemdManager manager, int pid)
-    {
-        using var stranger = OpenPidfd(pid);
-        if (stranger is null)
-        {
-            return "no other process took its ID";
-        }
-
-        var name = "arcforges-released-" + Guid.NewGuid().ToString("N")[..12] + ".scope";
-        try
-        {
-            if (manager.WaitJob(StartScope(manager, name, "A process released from an ArcForges adoption", slice: null, pid, stranger, delegated: false), TimeSpan.FromSeconds(10)) is "done")
-            {
-                manager.AbandonScope(name);
-            }
-
-            return $"the process that took its ID was released into {name}";
-        }
-        catch (Exception exception) when (exception is DBusExceptionBase or TimeoutException or InvalidOperationException)
-        {
-            return $"the process that took its ID could not be released ({OneLine(exception.Message)})";
-        }
-    }
-
     /// <inheritdoc />
     public IAdoptedContainer? ReopenAdopted(string containerName)
     {
@@ -787,29 +571,6 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
             {
                 Libc.Close(descriptor);
             }
-        }
-    }
-
-    private static void StopQuietly(SystemdManager manager, string unit)
-    {
-        try
-        {
-            manager.StopUnit(unit);
-        }
-        catch (Exception exception) when (exception is DBusExceptionBase or TimeoutException)
-        {
-        }
-    }
-
-    private static string ResolveImage(int pid)
-    {
-        try
-        {
-            return File.ResolveLinkTarget(Path.Combine("/proc", pid.ToString(CultureInfo.InvariantCulture), "exe"), returnFinalTarget: false)?.FullName ?? ProcFs.Image(pid);
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            return ProcFs.Image(pid);
         }
     }
 

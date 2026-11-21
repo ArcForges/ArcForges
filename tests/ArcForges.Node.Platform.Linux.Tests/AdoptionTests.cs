@@ -8,10 +8,8 @@ using ArcForges.Tests;
 namespace ArcForges.Node.Platform.Linux.Tests;
 
 /// <summary>
-/// AF-SEC-01 on the real systemd user manager (env=linux-real): adoption into a transient scope (04 section 10; R-RES-013) of a process inside
-/// the user manager's subtree with its children, and the refusal of another user's process; termination by process ID and start time only;
-/// the optional unit hardening read back after start and reported as applied or not applied, never as workload isolation (AD-0007 section 8;
-/// F-L04); and the same-user qualifier at the end of the kill_tree reason (03 section 8).
+/// Existing Linux scope recovery, process termination by owner and start identity, and hardening read-back.
+/// The original tests of fresh adoption at the native boundary remain executable at eaaccb8380a2bd265aaad0a67d62c8fab2a8a29a.
 /// </summary>
 [Trait("env", "linux-real")]
 [SupportedOSPlatform("linux")]
@@ -24,92 +22,87 @@ public sealed class AdoptionTests
     private static void RequireUnits() => Assert.SkipWhen(SystemdTestEnvironment.SkipReason is { } reason, SystemdTestEnvironment.SkipReason ?? string.Empty);
 
     [Fact(Timeout = 120_000)]
-    public void AProcessUnderTheUserManagerIsAdoptedWithItsChildrenAndTerminated()
+    public void AnExistingManagedScopeReopensWithItsChildrenAndCanBeTerminated()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         RequireUnits();
         using var harness = LinuxHarness.Start();
         var platform = harness.Platform;
-        Assert.Equal(AdoptSupport.Limited, platform.Evaluate().Adopt);
+        Assert.Equal(AdoptSupport.Unsupported, platform.Evaluate().Adopt);
 
-        // A service of the user manager outside the node's slice (as the user's own desktop and session processes are): a two-level tree
-        // that holds.
-        var source = "arcforges-test-src-" + Guid.NewGuid().ToString("N")[..12] + ".service";
+        // The existing test workload starts in its fixture-owned scope without a new product adoption.
+        var scope = LinuxExecutionPlatform.AdoptionPrefix + Guid.NewGuid().ToString("N")[..12] + ".scope";
         var sourceSlice = SystemdTestEnvironment.NewSlice();
-        List<string> arguments = ["--user", "--unit", source, "--slice", sourceSlice, "-p", "Type=exec", "--quiet"];
+        List<string> arguments = ["--user", "--scope", "--unit", scope, "--slice", sourceSlice, "--quiet"];
         if (Environment.GetEnvironmentVariable("DOTNET_ROOT") is { Length: > 0 } dotnet)
         {
-            // A framework-dependent (JIT) test load needs its runtime, which the user manager's environment does not name.
             arguments.AddRange(["-E", "DOTNET_ROOT=" + dotnet]);
         }
 
-        var run = Process.Start(new ProcessStartInfo("systemd-run", [.. arguments, TestPrograms.TestLoad, "fork", "--width", "1", "--depth", "1", "--hold-ms", "60000"])
+        using var run = Process.Start(new ProcessStartInfo("systemd-run", [.. arguments, TestPrograms.TestLoad, "fork", "--width", "1", "--depth", "1", "--hold-ms", "60000"])
         {
             RedirectStandardError = true,
             RedirectStandardOutput = true,
         })!;
-        run.WaitForExit();
-        Assert.True(run.ExitCode == 0, "systemd-run failed: " + run.StandardError.ReadToEnd());
-        IAdoptedContainer? container = null;
         try
         {
             var pid = 0;
-            LinuxHarness.WaitFor(() => int.TryParse(SystemdTestEnvironment.Property(source, "MainPID"), NumberStyles.None, CultureInfo.InvariantCulture, out pid) && pid > 0
-                && ProcFs.AllProcesses().Any(candidate => ProcFs.Stat(candidate)?.ParentPid == pid), Bound, "the source tree to run");
-            var child = ProcFs.AllProcesses().First(candidate => ProcFs.Stat(candidate)?.ParentPid == pid);
-            var start = ProcFs.StartOf(pid)!.Value.Start;
-
-            // A process named with another start time (a reused ID) is not found; the right one is adopted with its child.
-            var stale = Assert.Throws<AdoptionRefusedException>(() => platform.Adopt(new AdoptionRequest(harness.NodeName, "x1", pid, start.AddSeconds(-30))));
-            Assert.True(stale.NotFound);
-            var result = platform.Adopt(new AdoptionRequest(harness.NodeName, "x" + Guid.NewGuid().ToString("N")[..12], pid, start));
-            container = result.Container;
-
-            // Review round 1 (TOCTOU): systemd 253 and later get the process as a pidfd (PIDFDs), never as a reusable ID.
-            var version = SystemdTestEnvironment.ManagerVersion();
-            Assert.True(version < 253 || platform.ScopesByPidfd == true, $"systemd {version}: the adoption scope was started by ID");
-            Assert.StartsWith(LinuxExecutionPlatform.AdoptionPrefix, container.ContainerName, StringComparison.Ordinal);
-            Assert.EndsWith(".scope", container.ContainerName, StringComparison.Ordinal);
-            Assert.True((result.AdoptedChildren, result.FailedChildren) == (1, 0), string.Join("; ", result.ChildResults));
-            Assert.Contains(container.Processes(), member => member == pid);
-            Assert.Contains(container.Processes(), member => member == child);
-            Assert.EndsWith("/" + harness.Slice + "/" + container.ContainerName, ProcFs.CgroupOf(pid)!, StringComparison.Ordinal);
-            Assert.EndsWith("arcforges-testload", result.Image, StringComparison.Ordinal);
-
-            // Adopting it again is refused as already managed; the scope re-opens by name (a restarted node).
-            Assert.True(Assert.Throws<AdoptionRefusedException>(() => platform.Adopt(new AdoptionRequest(harness.NodeName, "x2", pid, start))).AlreadyManaged);
-            using (var reopened = platform.ReopenAdopted(container.ContainerName))
+            var child = 0;
+            LinuxHarness.WaitFor(() =>
             {
-                Assert.NotNull(reopened);
-                Assert.Contains(reopened!.Processes(), member => member == pid);
-            }
+                var exited = run.HasExited;
+                Assert.False(exited, exited ? run.StandardError.ReadToEnd() : null);
+                var directory = SystemdTestEnvironment.CgroupDirectory(scope);
+                if (directory is null || !File.Exists(Path.Combine(directory, "cgroup.procs")))
+                {
+                    return false;
+                }
 
-            container.Terminate();
-            LinuxHarness.WaitFor(() => container.Processes().Count == 0, Bound, "the adopted tree to end");
+                var members = File.ReadLines(Path.Combine(directory, "cgroup.procs"))
+                    .Select(line => int.Parse(line, CultureInfo.InvariantCulture)).ToHashSet();
+                foreach (var member in members)
+                {
+                    if (ProcFs.Stat(member) is { } stat && members.Contains(stat.ParentPid))
+                    {
+                        pid = stat.ParentPid;
+                        child = member;
+                        return true;
+                    }
+                }
+
+                return false;
+            }, Bound, "the fixture tree to run in its scope");
+
+            using var reopened = platform.ReopenAdopted(scope);
+            Assert.NotNull(reopened);
+            Assert.Equal(scope, reopened.ContainerName);
+            Assert.Contains(pid, reopened.Processes());
+            Assert.Contains(child, reopened.Processes());
+            Assert.EndsWith("/" + sourceSlice + "/" + scope, ProcFs.CgroupOf(pid)!, StringComparison.Ordinal);
+
+            reopened.Terminate();
+            LinuxHarness.WaitFor(() => reopened.Processes().Count == 0, Bound, "the reopened scope to end");
+            Assert.True(run.WaitForExit(Bound));
             Assert.Null(ProcFs.StartOf(pid));
             Assert.Null(ProcFs.StartOf(child));
         }
         finally
         {
-            container?.Dispose();
-            Leftovers.Report(SystemdTestEnvironment.Cleanup(sourceSlice, [], [source]));
+            Leftovers.Report(SystemdTestEnvironment.Cleanup(sourceSlice, [], [scope]));
         }
     }
 
     [Fact(Timeout = 120_000)]
-    public void AnotherUsersProcessIsRefusedAndTerminationNeedsItsIdentity()
+    public void TerminationRefusesAnotherUserAndRequiresTheExactProcessStart()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         RequireUnits();
         using var harness = LinuxHarness.Start();
         var platform = harness.Platform;
 
-        // R-RES-013: adoption is same-user only; a refusal is reported, never forced (process 1 runs as root).
+        // Process 1 belongs to the other user. A stale start time also grants no authority over the test process below.
         Assert.SkipWhen(ProcFs.UserId == 0, "The test runs as root.");
         var init = ProcFs.StartOf(1)!.Value.Start;
-        var refused = Assert.Throws<AdoptionRefusedException>(() => platform.Adopt(new AdoptionRequest(harness.NodeName, "x" + Guid.NewGuid().ToString("N")[..12], 1, init)));
-        Assert.False(refused.NotFound || refused.AlreadyManaged, refused.Message);
-        Assert.Contains("another user", refused.Message, StringComparison.Ordinal);
         Assert.Equal(ProcessTermination.OtherUser, platform.TerminateProcess(1, init));
 
         using var process = Process.Start(new ProcessStartInfo(TestPrograms.TestLoad, ["hold", "--hold-ms", "60000"]) { RedirectStandardOutput = true })!;
@@ -220,40 +213,6 @@ public sealed class AdoptionTests
         Assert.Equal(string.Empty, SystemdTestEnvironment.Property(handle.Unit, "ReadOnlyPaths"));
         handle.Terminate();
         LinuxHarness.WaitExit(handle, Bound);
-    }
-
-    /// <summary>
-    /// Review round 2: an adoption the node could not record is abandoned, never terminated: the user manager stops managing the scope
-    /// (<c>AbandonScope</c>), and the process keeps running.
-    /// </summary>
-    [Fact(Timeout = 120_000)]
-    public void AnAdoptionThatWasNotRecordedIsAbandonedWithoutTerminatingTheProcess()
-    {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        RequireUnits();
-        using var harness = LinuxHarness.Start();
-        using var process = Process.Start(new ProcessStartInfo(TestPrograms.TestLoad, ["hold", "--hold-ms", "60000"]) { RedirectStandardOutput = true })!;
-        IAdoptedContainer? container = null;
-        try
-        {
-            LinuxHarness.WaitFor(() => ProcFs.StartOf(process.Id) is not null, Bound, "the process to run");
-            var start = ProcFs.StartOf(process.Id)!.Value.Start;
-            container = harness.Platform.Adopt(new AdoptionRequest(harness.NodeName, "x" + Guid.NewGuid().ToString("N")[..12], process.Id, start)).Container;
-            var scope = container.ContainerName;
-            var outcome = container.Abandon();
-            Assert.Equal($"the adoption scope {scope} was abandoned: the user manager no longer manages it, and its processes keep running, not adopted", outcome);
-            Assert.Equal("abandoned", SystemdTestEnvironment.Property(scope, "SubState"));
-            Assert.False(process.HasExited, "Nothing is terminated.");
-        }
-        finally
-        {
-            container?.Dispose();
-            if (!process.HasExited)
-            {
-                process.Kill();
-                process.WaitForExit(30_000);
-            }
-        }
     }
 }
 
