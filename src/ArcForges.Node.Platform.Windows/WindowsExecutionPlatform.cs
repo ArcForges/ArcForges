@@ -208,10 +208,10 @@ public sealed class WindowsExecutionPlatform : IExecutionPlatform
         return (inJob, total);
     }
 
-    /// <inheritdoc />
+    /// <summary>Prepares a command for the legacy Windows platform fixtures.</summary>
     public PreparedCommand Prepare(CommandRequest request) => WindowsCommands.Prepare(request);
 
-    /// <inheritdoc />
+    /// <summary>Adopts an existing process for the legacy Windows platform fixtures.</summary>
     public AdoptionResult Adopt(AdoptionRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -385,7 +385,7 @@ public sealed class WindowsExecutionPlatform : IExecutionPlatform
     /// <inheritdoc />
     public bool Listens(int port, IReadOnlyCollection<int> processIds) => ListeningSockets.Listens(port, processIds);
 
-    /// <inheritdoc />
+    /// <summary>Starts a new legacy attempt for the Windows platform fixtures.</summary>
     public IAttemptHandle Launch(AttemptLaunch launch)
     {
         ArgumentNullException.ThrowIfNull(launch);

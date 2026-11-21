@@ -256,8 +256,6 @@ public sealed class RecoveredLegacyTaskControlsTests
         public void Dispose() { }
 
         public void Start(string node, RootLimits limits, string helperExecutable) => throw new NotSupportedException();
-        public PreparedCommand Prepare(CommandRequest request) => throw new NotSupportedException();
-        public IAttemptHandle Launch(AttemptLaunch launch) => throw new NotSupportedException();
         public void Terminate() => throw new NotSupportedException();
         public GracefulOutcome RequestGracefulStop() => throw new NotSupportedException();
     }

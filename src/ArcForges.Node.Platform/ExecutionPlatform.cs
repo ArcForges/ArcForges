@@ -358,8 +358,7 @@ public interface IAttemptHandle : IDisposable
 public sealed record MachineCapacity(int LogicalProcessors, long PhysicalMemoryBytes);
 
 /// <summary>
-/// An execution platform (architecture 02 section 1 "Platform layer"; AD-0005): the root container, attempt containers with their
-/// holders, command preparation and recovery by name. The Windows platform is <c>WindowsExecutionPlatform</c>.
+/// The legacy root container and the controls needed to recover existing attempt containers and holders by name.
 /// </summary>
 public interface IExecutionPlatform : IDisposable
 {
@@ -380,13 +379,6 @@ public interface IExecutionPlatform : IDisposable
 
     /// <summary>Applies new root limits.</summary>
     void UpdateRootLimits(RootLimits limits);
-
-    /// <summary>Resolves and builds the command (04 section 2).</summary>
-    /// <exception cref="CommandRefusedException">The program, shell or an argument is refused.</exception>
-    PreparedCommand Prepare(CommandRequest request);
-
-    /// <summary>Creates the attempt's container and starts it (through its holder, or directly for <c>kill_with_node</c>).</summary>
-    IAttemptHandle Launch(AttemptLaunch launch);
 
     /// <summary>
     /// Re-opens a recovered attempt's container by name, or returns <see langword="null"/> when it is gone. With <paramref name="stopping"/>
@@ -409,13 +401,6 @@ public interface IExecutionPlatform : IDisposable
     bool Listens(int port, IReadOnlyCollection<int> processIds) => false;
     /// <summary>The container name of an attempt (the Windows job name; the Linux unit name), recorded with the attempt.</summary>
     string ContainerName(string nodeName, string attemptName) => @"Local\ArcForges." + nodeName + "." + attemptName;
-
-    /// <summary>
-    /// Places an existing same-user process, and its children that exist now, under management in a new adoption container (04 section 10;
-    /// R-RES-013): on Windows the root job and then a new adoption job nested under it; on Linux a transient scope in the node's slice.
-    /// </summary>
-    /// <exception cref="AdoptionRefusedException">The process is not the one named, not the node's user's, or the OS refused to place it.</exception>
-    AdoptionResult Adopt(AdoptionRequest request) => throw new AdoptionRefusedException("process adoption is not supported on this platform");
 
     /// <summary>Re-opens a recorded adoption container by name after a node restart, or returns <see langword="null"/> when it is gone.</summary>
     IAdoptedContainer? ReopenAdopted(string containerName) => null;

@@ -342,9 +342,6 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
         return report;
     }
 
-    /// <inheritdoc />
-    public PreparedCommand Prepare(CommandRequest request) => LinuxCommands.Prepare(request);
-
     /// <summary>
     /// The unit hardening as read back (AD-0007 section 8; F-L04): applied only when the probe unit and every attempt unit read back so far
     /// carried it; otherwise not applied, with the reason. GUARDRAIL hardening of ArcForges' own files, never workload isolation.
@@ -531,7 +528,7 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
         }
     }
 
-    /// <inheritdoc />
+    /// <summary>Adopts an existing process for the legacy Linux platform fixtures.</summary>
     public AdoptionResult Adopt(AdoptionRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -824,7 +821,7 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
     /// <inheritdoc />
     public string ContainerName(string nodeName, string attemptName) => _manager is null ? "pgid:" + attemptName : UnitName(attemptName);
 
-    /// <inheritdoc />
+    /// <summary>Starts a new legacy attempt for the Linux platform fixtures.</summary>
     public IAttemptHandle Launch(AttemptLaunch launch)
     {
         ArgumentNullException.ThrowIfNull(launch);
