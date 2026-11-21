@@ -347,7 +347,32 @@ public sealed partial class MxcRunServiceTests
             await load.WaitForExitAsync(CancellationToken.None).WaitAsync(NativeBound, CancellationToken.None);
         }
 
-        await WaitForResourceBudgetAsync(package.Resources, "node", null, sample => sample.BudgetCpuMillicores >= combined);
+        output?.WriteLine(FormattableString.Invariant($"CPU producer exited. Waiting for the Node budget to recover to {combined}m."));
+        var recoveryFrames = new HashSet<(string Epoch, ulong? Sequence, bool? Stale)>();
+        ResourceSnapshot? recoveredBudget = null;
+        await TestNode.WaitAsync(async () =>
+        {
+            var reply = await package.Resources.GetBudgetAsync(
+                new ResourceServiceGetBudgetRequest { Meta = Query(), ScopeKind = "node", ScopeId = null },
+                deadline: Deadline, cancellationToken: Ct);
+            var sample = Value(reply.Value, reply.Error).Snapshot;
+            ulong? sequence = sample.HasSampleSequence ? sample.SampleSequence : null;
+            bool? stale = sample.HasStale ? sample.Stale : null;
+            if (recoveryFrames.Add((sample.SampleEpoch, sequence, stale)))
+            {
+                var epoch = string.IsNullOrEmpty(sample.SampleEpoch) ? "missing" : sample.SampleEpoch;
+                var freshness = stale switch { true => "stale", false => "fresh", null => "missing" };
+                var budget = FormatRecoveryCpu(sample.HasBudgetCpuMillicores ? sample.BudgetCpuMillicores : null);
+                var unmanaged = FormatRecoveryCpu(sample.HasUnmanagedCpuMillicores ? sample.UnmanagedCpuMillicores : null);
+                output?.WriteLine(FormattableString.Invariant(
+                    $"Recovery host sample epoch {epoch}, sequence {sequence?.ToString(CultureInfo.InvariantCulture) ?? "missing"}, freshness {freshness}, budget {budget}, unmanaged {unmanaged}, pressure {sample.Pressure}."));
+            }
+
+            if (!sample.HasStale || sample.Stale || sample.BudgetCpuMillicores < combined) return false;
+            recoveredBudget = sample;
+            return true;
+        }, NativeBound, "a fresh native node resource budget");
+        Assert.IsType<ResourceSnapshot>(recoveredBudget);
         var restoredLight = await WaitForResourceBudgetAsync(package.Resources, "run", lighter.RunId,
             sample => CpuReadbackMatches(sample, initialLightLimit));
         var restoredHeavy = await WaitForResourceBudgetAsync(package.Resources, "run", heavier.RunId,
@@ -361,6 +386,10 @@ public sealed partial class MxcRunServiceTests
 
         static bool CpuReadbackMatches(ResourceSnapshot snapshot, LimitState original) => snapshot.Limits.Any(limit =>
             limit.Dimension == "cpu" && limit.Status == LimitStatus.Effective && limit.ReadbackValue == original.ReadbackValue);
+
+        static string FormatRecoveryCpu(uint? millicores) => millicores is uint value
+            ? FormattableString.Invariant($"{value}m")
+            : "missing";
     }
 
     private static async Task<WeightedRunFrame> AwaitWeightedReadbackAsync(ResourcePackage package,
