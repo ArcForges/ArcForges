@@ -9,13 +9,22 @@ internal sealed class VerifiedNodeContractionArchive
 {
     private readonly NodeContractionScope _source;
     private readonly string _backupRoot;
+    private readonly string _stagingRoot;
+    private readonly ContractionPaths.NativeIdentity _originalIdentity;
+    private readonly ContractionPaths.NativeIdentity _historyIdentity;
+    private readonly ContractionPaths.NativeIdentity _stagingIdentity;
 
-    private VerifiedNodeContractionArchive(NodeContractionScope source, string backupRoot, string stagedDatabase,
-        string original, string manifest, string history, string restore)
+    private VerifiedNodeContractionArchive(NodeContractionScope source, string backupRoot, string stagingRoot,
+        ContractionPaths.NativeIdentity originalIdentity, ContractionPaths.NativeIdentity historyIdentity,
+        ContractionPaths.NativeIdentity stagingIdentity, string original, string manifest, string history, string restore)
     {
         _source = source;
         _backupRoot = backupRoot;
-        StagedDatabasePath = stagedDatabase;
+        _stagingRoot = stagingRoot;
+        _originalIdentity = originalIdentity;
+        _historyIdentity = historyIdentity;
+        _stagingIdentity = stagingIdentity;
+        StagedDatabasePath = StorePaths.Database(stagingRoot);
         SourceDatabaseSha256 = original;
         BackupManifestSha256 = manifest;
         HistoryArchiveSha256 = history;
@@ -34,14 +43,16 @@ internal sealed class VerifiedNodeContractionArchive
         string backupRoot, NodeSecretStore backupSecrets, string stagingRoot, NodeSecretStore stagingSecrets)
     {
         source.VerifyHeld();
-        RequireSeparateRoots(source.DataRoot, backupRoot);
-        RequireSeparateRoots(source.DataRoot, stagingRoot);
-        RequireSeparateRoots(backupRoot, stagingRoot);
+        ContractionPaths.RequireSeparateRoots(source.DataRoot, backupRoot, stagingRoot);
         string original = StorePaths.Database(source.DataRoot);
         string history = StorePaths.Database(backupRoot);
         string staging = StorePaths.Database(stagingRoot);
         RequireCheckpointed(original);
         RequireCheckpointed(history);
+        var originalIdentity = ContractionPaths.NamedRegularIdentity(original);
+        var historyIdentity = ContractionPaths.NamedRegularIdentity(history);
+        if (originalIdentity == historyIdentity)
+            throw new StoreIncompatibleException("The historical archive shares the original database file.");
         string originalDigest = Digest(original);
         string historyDigest = Digest(history);
         string manifestDigest = Digest(Manifest(backupRoot));
@@ -49,33 +60,57 @@ internal sealed class VerifiedNodeContractionArchive
         // Authenticate the archive against the latest owner and prove it can be restored into a distinct root.
         DurableCommandStore.RestoreBackup(backupRoot, backupSecrets, source.DataRoot, sourceSecrets, stagingRoot, stagingSecrets, source);
         RequireCheckpointed(staging);
+        var stagingIdentity = ContractionPaths.NamedRegularIdentity(staging);
         string stagingDigest = Digest(staging);
-        if (!string.Equals(historyDigest, stagingDigest, StringComparison.Ordinal))
+        if (stagingIdentity == originalIdentity || stagingIdentity == historyIdentity
+            || !string.Equals(historyDigest, stagingDigest, StringComparison.Ordinal))
             throw new StoreIncompatibleException("The restored database does not match its historical archive.");
 
         // The durable manifest fences command receipts. Compare shared settings, legacy history and the other live
         // rows as well, since they can change without advancing the durable command sequence.
         VerifyArchiveRows(original, staging);
-        var archive = new VerifiedNodeContractionArchive(source, backupRoot, staging, originalDigest, manifestDigest,
-            historyDigest, stagingDigest);
+        var archive = new VerifiedNodeContractionArchive(source, backupRoot, stagingRoot, originalIdentity, historyIdentity,
+            stagingIdentity, originalDigest, manifestDigest, historyDigest, stagingDigest);
         archive.VerifyHeld();
         return archive;
     }
 
     internal void VerifyHeld()
     {
+        VerifyRetainedInputs();
+        RequireCheckpointed(StagedDatabasePath);
+        VerifyStagedIdentity();
+        if (!string.Equals(RestoreDatabaseSha256, Digest(StagedDatabasePath), StringComparison.Ordinal))
+            throw new StoreIncompatibleException("The verified staging database changed while held.");
+    }
+
+    internal void VerifyStagedIdentity()
+    {
+        if (_stagingIdentity != ContractionPaths.NamedRegularIdentity(StagedDatabasePath))
+            throw new StoreIncompatibleException("The staged database file identity changed during contraction.");
+    }
+
+    internal void VerifyCommit()
+    {
+        VerifyRetainedInputs();
+        VerifyStagedIdentity();
+    }
+
+    private void VerifyRetainedInputs()
+    {
         _source.VerifyHeld();
+        ContractionPaths.RequireSeparateRoots(_source.DataRoot, _backupRoot, _stagingRoot);
         string original = StorePaths.Database(_source.DataRoot);
         string history = StorePaths.Database(_backupRoot);
         RequireCheckpointed(original);
         RequireCheckpointed(history);
-        RequireCheckpointed(StagedDatabasePath);
-        if (!string.Equals(ScopeReceiptSha256, _source.ReceiptSha256, StringComparison.Ordinal)
+        if (_originalIdentity != ContractionPaths.NamedRegularIdentity(original)
+            || _historyIdentity != ContractionPaths.NamedRegularIdentity(history)
+            || !string.Equals(ScopeReceiptSha256, _source.ReceiptSha256, StringComparison.Ordinal)
             || !string.Equals(SourceDatabaseSha256, Digest(original), StringComparison.Ordinal)
             || !string.Equals(BackupManifestSha256, Digest(Manifest(_backupRoot)), StringComparison.Ordinal)
-            || !string.Equals(HistoryArchiveSha256, Digest(history), StringComparison.Ordinal)
-            || !string.Equals(RestoreDatabaseSha256, Digest(StagedDatabasePath), StringComparison.Ordinal))
-            throw new StoreIncompatibleException("The verified contraction input changed while held.");
+            || !string.Equals(HistoryArchiveSha256, Digest(history), StringComparison.Ordinal))
+            throw new StoreIncompatibleException("The verified original or historical archive changed while held.");
     }
 
     private static void VerifyArchiveRows(string source, string restore)
@@ -211,24 +246,11 @@ internal sealed class VerifiedNodeContractionArchive
         }
     }
 
-    internal static void RequireSeparateRoots(string left, string right)
-    {
-        if (!Path.IsPathFullyQualified(left) || !Path.IsPathFullyQualified(right) || IsWithin(left, right) || IsWithin(right, left))
-            throw new StoreIncompatibleException("Contraction requires separate original, backup and staging roots.");
-    }
-
-    private static bool IsWithin(string parent, string candidate)
-    {
-        string relative = Path.GetRelativePath(parent, candidate);
-        return !Path.IsPathRooted(relative) && relative != ".."
-            && !relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal);
-    }
-
     private static string Manifest(string backupRoot) => Path.Combine(backupRoot, "v2-backup.manifest");
 
     private static string Digest(string path)
     {
-        using var bytes = File.OpenRead(path);
+        using var bytes = ContractionPaths.OpenRegularRead(path);
         return Convert.ToHexStringLower(SHA256.HashData(bytes));
     }
 }

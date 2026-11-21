@@ -8,6 +8,7 @@ using Google.Protobuf;
 
 namespace ArcForges.Node.Store.Tests;
 
+[Collection(nameof(MigrationOwnershipFixture))]
 public sealed class MigrationContractionTests
 {
     private const string Owner = "migration-fixture-owner";
@@ -96,6 +97,20 @@ public sealed class MigrationContractionTests
                 Assert.Equal(["task"], StoreCreationTests.Query(rolledBack, "SELECT name FROM sqlite_schema WHERE name='task';"));
                 Assert.Empty(StoreCreationTests.Query(rolledBack, "SELECT migration_id FROM migration_checkpoint WHERE target_schema=20;"));
                 Assert.Equal(["ok"], StoreCreationTests.Query(rolledBack, "PRAGMA integrity_check;"));
+            }
+
+            string verifiedFile = staged.Database + ".verified";
+            File.Move(staged.Database, verifiedFile);
+            try
+            {
+                File.Copy(verifiedFile, staged.Database);
+                Assert.Equal(historyDigest, HashFile(staged.Database));
+                var replacement = Assert.Throws<StoreIncompatibleException>(() => NodeStore.ContractVerifiedCopy(archive, clock));
+                Assert.Contains("staged database file identity changed", replacement.Message, StringComparison.Ordinal);
+            }
+            finally
+            {
+                File.Move(verifiedFile, staged.Database, overwrite: true);
             }
 
             NodeStore.ContractVerifiedCopy(archive, clock);
@@ -437,3 +452,6 @@ public sealed class MigrationContractionTests
     private sealed record CurrentRecords(byte[] Node, StoredSandbox Sandbox, DurableIntent Known, DurableIntent Unknown,
         DurableReceipt Succeeded, DurableReceipt Uncertain, byte[] Policy);
 }
+
+[CollectionDefinition(nameof(MigrationOwnershipFixture))]
+public sealed class MigrationOwnershipFixture;

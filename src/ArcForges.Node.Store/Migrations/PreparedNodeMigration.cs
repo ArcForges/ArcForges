@@ -9,7 +9,7 @@ internal static class PreparedNodeMigration
     {
         source.ValidatePreparationRoot(expandedRoot);
         source.ValidatePreparationRoot(backupRoot);
-        VerifiedNodeContractionArchive.RequireSeparateRoots(expandedRoot, backupRoot);
+        ContractionPaths.RequireSeparateRoots(source.DataRoot, backupRoot, expandedRoot, allowMissingBackup: true);
         string owner = NodeContractionScope.CurrentPreparationOwner();
         source.CopySchema15To(expandedRoot);
 

@@ -7,6 +7,7 @@ using ArcForges.Node.Store.Migrations;
 
 namespace ArcForges.Node.Store.Tests;
 
+[Collection(nameof(MigrationOwnershipFixture))]
 public sealed class MigrationPrepareTests
 {
     [Fact(DisableParallelization = true)]
@@ -42,7 +43,7 @@ public sealed class MigrationPrepareTests
         {
             var overlapping = Assert.Throws<StoreIncompatibleException>(
                 () => PreparedNodeMigration.Prepare(first, Path.Combine(source.Path, "inside"), backup.Path, testMode: true));
-            Assert.Contains("separate", overlapping.Message, StringComparison.Ordinal);
+            Assert.Contains("contraction_roots_overlap", overlapping.Message, StringComparison.Ordinal);
             Assert.False(Directory.Exists(backup.Path));
 
             Directory.CreateDirectory(occupied.Path);

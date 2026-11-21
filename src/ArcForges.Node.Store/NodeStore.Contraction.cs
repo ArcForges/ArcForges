@@ -33,6 +33,7 @@ public sealed partial class NodeStore
         SQLitePCL.Batteries_V2.Init();
         using var writer = new SqliteConnection(StorePaths.ConnectionString(archive.StagedDatabasePath, SqliteOpenMode.ReadWrite));
         writer.Open();
+        archive.VerifyStagedIdentity();
         writer.CreateFunction<long>("arcforges_store_reader_version", () => StoreMigrations.SupportedSchemaVersion);
         Pragma(writer, "PRAGMA foreign_keys=ON;");
         Pragma(writer, "PRAGMA secure_delete=ON;");
@@ -40,6 +41,7 @@ public sealed partial class NodeStore
         {
             ApplyContraction(new StoreTransaction(writer, transaction, clock, CommitDurability.Full), archive);
             beforeCommit?.Invoke();
+            archive.VerifyCommit();
         });
     }
 

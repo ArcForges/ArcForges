@@ -13,6 +13,7 @@ using ProcessIdentity = ArcForges.Tests.ProcessIdentity;
 
 namespace ArcForges.Node.Store.Tests;
 
+[Collection(nameof(MigrationOwnershipFixture))]
 public sealed class MigrationContractionNativeScopeTests
 {
     private const string NativeRefusal = "node_contraction_native_scope_refused: ";

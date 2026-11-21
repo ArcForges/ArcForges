@@ -463,7 +463,9 @@ internal sealed partial class NodeContractionScope : IDisposable
     private static (string Output, int Exit) QueryLinuxManager(string[] arguments)
     {
         var start = new ProcessStartInfo("/usr/bin/systemctl") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
-        foreach (string argument in new[] { "--user", "--no-pager" }.Concat(arguments))
+        start.ArgumentList.Add("--user");
+        start.ArgumentList.Add("--no-pager");
+        foreach (string argument in arguments)
             start.ArgumentList.Add(argument);
         string runtime = "/run/user/" + GetEffectiveUid().ToString(CultureInfo.InvariantCulture);
         start.Environment["XDG_RUNTIME_DIR"] = runtime;

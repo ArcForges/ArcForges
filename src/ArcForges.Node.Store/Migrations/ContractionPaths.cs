@@ -82,7 +82,7 @@ internal static partial class ContractionPaths
         using var held = WalkDirectories(Normalize(path), allowMissing: false);
     }
 
-    internal static void RequireSeparateRoots(string original, string backup, string staging)
+    internal static void RequireSeparateRoots(string original, string backup, string staging, bool allowMissingBackup = false)
     {
         original = Normalize(original);
         backup = Normalize(backup);
@@ -91,7 +91,7 @@ internal static partial class ContractionPaths
             throw Refused("contraction_roots_overlap");
 
         using var source = WalkDirectories(original, allowMissing: false);
-        using var archive = WalkDirectories(backup, allowMissing: false);
+        using var archive = WalkDirectories(backup, allowMissing: allowMissingBackup);
         using var restore = WalkDirectories(staging, allowMissing: true);
         if (source.Overlaps(archive) || source.Overlaps(restore) || archive.Overlaps(restore))
             throw Refused("contraction_root_identity_overlap");
@@ -262,8 +262,8 @@ internal static partial class ContractionPaths
     private static NativeIdentity ReadWindows(SafeFileHandle handle, bool directory)
     {
         if (GetFileType(handle) != 1 || !GetWindowsAttributes(handle, 9, out var attributes, 8) ||
-            (attributes.Flags & (FileAttributes.ReparsePoint | FileAttributes.Device)) != 0 ||
-            attributes.Flags.HasFlag(FileAttributes.Directory) != directory || !GetWindowsIdentity(handle, 18, out var id, 24))
+            ((FileAttributes)attributes.Flags & (FileAttributes.ReparsePoint | FileAttributes.Device)) != 0 ||
+            ((FileAttributes)attributes.Flags).HasFlag(FileAttributes.Directory) != directory || !GetWindowsIdentity(handle, 18, out var id, 24))
             throw Refused(directory ? "source_directory_alias_or_type" : "source_file_alias_or_type");
 
         return new(id.Volume, id.High, id.Low);
@@ -336,7 +336,7 @@ internal static partial class ContractionPaths
     [StructLayout(LayoutKind.Sequential)]
     private struct WindowsAttributes
     {
-        internal FileAttributes Flags;
+        internal uint Flags;
         internal uint ReparseTag;
     }
 

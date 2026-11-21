@@ -5,7 +5,6 @@ using System.Runtime.Versioning;
 using System.Security.AccessControl;
 using System.Security.Cryptography;
 using System.Security.Principal;
-using Microsoft.Win32.SafeHandles;
 
 namespace ArcForges.Node.Store.Migrations;
 
@@ -30,13 +29,7 @@ internal sealed partial class NodeContractionScope
         if (!_prepareSchema15)
             throw Refused("original_schema15_required");
 
-        VerifiedNodeContractionArchive.RequireSeparateRoots(DataRoot, path);
-        string parent = RequirePreparationParent(path);
-        var original = DirectoryIdentity(DataRoot);
-        for (DirectoryInfo? ancestor = new(parent); ancestor is not null; ancestor = ancestor.Parent)
-            if (DirectoryIdentity(ancestor.FullName) == original)
-                throw Refused("preparation_output_aliases_source");
-
+        _ = RequirePreparationParent(path);
         if (TryAttributes(path) is not null)
             throw Refused("preparation_output_already_exists");
     }
@@ -74,7 +67,7 @@ internal sealed partial class NodeContractionScope
         if (!created)
             throw Refused("preparation_output_create_failed");
 
-        RequireDirectoryChain(path);
+        ContractionPaths.RequireDirectoryChain(path);
     }
 
     private static string RequirePreparationParent(string path)
@@ -84,26 +77,8 @@ internal sealed partial class NodeContractionScope
             throw Refused("local_absolute_preparation_output_required");
 
         string parent = Path.GetDirectoryName(path) ?? throw Refused("preparation_parent_required");
-        RequireDirectoryChain(parent);
+        ContractionPaths.RequireDirectoryChain(parent);
         return parent;
-    }
-
-    private static FileIdentity DirectoryIdentity(string path)
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            using var directory = OpenDirectory(path, 0x80, 7, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
-            if (directory.IsInvalid)
-                throw Refused("preparation_directory_identity_unavailable");
-
-            return Identity(directory);
-        }
-
-        if (!OperatingSystem.IsLinux() || Statx(-100, path, 0x100, 0x10b, out var status) != 0 ||
-            (status.Mask & 0x10b) != 0x10b || (status.Mode & 0xf000) != 0x4000)
-            throw Refused("preparation_directory_identity_unavailable");
-
-        return new FileIdentity(status.DeviceMajor, status.DeviceMinor, status.Inode);
     }
 
     [SupportedOSPlatform("windows")]
@@ -140,7 +115,4 @@ internal sealed partial class NodeContractionScope
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool CreateDirectory(string path, in DirectorySecurityAttributes attributes);
 
-    [LibraryImport("kernel32.dll", EntryPoint = "CreateFileW", StringMarshalling = StringMarshalling.Utf16)]
-    private static partial SafeFileHandle OpenDirectory(string path, uint access, uint share, IntPtr securityAttributes,
-        uint creation, uint flags, IntPtr template);
 }

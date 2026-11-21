@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.ComponentModel;
 using ArcForges.Node.Store;
 using ArcForges.Node.Store.Migrations;
 using Microsoft.Data.Sqlite;
@@ -42,7 +43,7 @@ try
 
     NodeSecretStore Secrets(string root) => NodeSecretStores.ForNode(root, testMode, optIn: null);
 }
-catch (Exception failure) when (failure is StoreIncompatibleException or DurableStoreMaintenanceException
+catch (Exception failure) when (failure is StoreIncompatibleException or DurableStoreMaintenanceException or Win32Exception
     or IOException or UnauthorizedAccessException or SqliteException or ArgumentException)
 {
     Console.Error.WriteLine("Node migration refused.");
