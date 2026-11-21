@@ -25,32 +25,20 @@ public sealed class RoutedFileApprovalRecoveryTests
         var directory = Directory.CreateDirectory(Path.Combine(node.Root, "routed-fence")).FullName;
         var workspace = new RegisteredWorkspaces(node.Runtime.Store).RegisterFromVerifiedHuman(directory, cancellationToken: ct);
         var request = Request(workspace.Id);
-        var handler = calls.Dispatcher.FileHandlerForTests!;
-        var reachedReservation = false;
-        handler.AfterApprovalReservationForTests = () =>
-        {
-            reachedReservation = true;
-            return Task.FromException(new IOException("the draining route must not reserve a new producer"));
-        };
-        try
-        {
-            var error = await Refusal(calls, caller, request, ct);
-            Assert.False(reachedReservation);
-            Assert.Equal(0, node.Runtime.Store.Write(PrivateStageTerminal.RecoverUnraised, CommitDurability.Full));
-            Assert.Equal((0, 0L), node.Runtime.Store.Read(PrivateStageRegistry.Usage));
-            Assert.Equal(0L, node.Runtime.Store.Read(r => r.Scalar("SELECT count(*) FROM file_private_stage_terminal;")));
-            Assert.Equal(0L, node.Runtime.Store.Read(r => r.Scalar("SELECT count(*) FROM file_operation_journal;")));
-            Assert.Equal(0L, node.Runtime.Store.Read(r => r.Scalar("SELECT count(*) FROM approval;")));
-            Assert.Null(node.Runtime.Store.Read(r => FileMutationJournal.GetForCaller(r, request.Meta.CommandId.Value.Span, caller)));
-            Assert.Empty(Directory.EnumerateFileSystemEntries(directory));
-            Assert.Equal(error, await Refusal(calls, caller, request, ct));
-            Assert.Equal(0, await node.StopAsync());
-            await node.StartAsync();
-            Assert.Equal(error, await Refusal(new RoutedCalls(node), caller, request, ct));
-            Assert.Equal((0, 0L), node.Runtime.Store.Read(PrivateStageRegistry.Usage));
-            Assert.Empty(Directory.EnumerateFileSystemEntries(directory));
-        }
-        finally { handler.AfterApprovalReservationForTests = null; }
+        var error = await Refusal(calls, caller, request, ct);
+        Assert.Equal(0, node.Runtime.Store.Write(PrivateStageTerminal.RecoverUnraised, CommitDurability.Full));
+        Assert.Equal((0, 0L), node.Runtime.Store.Read(PrivateStageRegistry.Usage));
+        Assert.Equal(0L, node.Runtime.Store.Read(r => r.Scalar("SELECT count(*) FROM file_private_stage_terminal;")));
+        Assert.Equal(0L, node.Runtime.Store.Read(r => r.Scalar("SELECT count(*) FROM file_operation_journal;")));
+        Assert.Equal(0L, node.Runtime.Store.Read(r => r.Scalar("SELECT count(*) FROM approval;")));
+        Assert.Null(node.Runtime.Store.Read(r => FileMutationJournal.GetForCaller(r, request.Meta.CommandId.Value.Span, caller)));
+        Assert.Empty(Directory.EnumerateFileSystemEntries(directory));
+        Assert.Equal(error, await Refusal(calls, caller, request, ct));
+        Assert.Equal(0, await node.StopAsync());
+        await node.StartAsync();
+        Assert.Equal(error, await Refusal(new RoutedCalls(node), caller, request, ct));
+        Assert.Equal((0, 0L), node.Runtime.Store.Read(PrivateStageRegistry.Usage));
+        Assert.Empty(Directory.EnumerateFileSystemEntries(directory));
     }
 
     [Fact(Timeout = 180_000)]

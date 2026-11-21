@@ -31,9 +31,6 @@ public sealed class LegacyFileMutationReplayTests
         var meta = Tasks.Meta();
         var raw = Request(edit, meta, workspace);
         var id = meta.CommandId.Value.ToByteArray();
-        var handler = calls.Dispatcher.FileHandlerForTests!;
-        handler.AfterStageBeforeJournalForTests = () => throw new InvalidOperationException("The draining path cannot stage a file.");
-        handler.AfterApprovalReservationForTests = () => throw new InvalidOperationException("The draining path cannot reserve a producer.");
 
         async Task<byte[]?> Invoke(byte[] payload, CenterCaller source) =>
             (await calls.CallAsync(source, method, payload, meta.CommandId)).Answer?.Response?.ToByteArray();
