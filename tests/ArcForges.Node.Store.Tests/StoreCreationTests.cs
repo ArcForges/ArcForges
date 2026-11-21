@@ -154,6 +154,81 @@ public sealed partial class StoreCreationTests
     }
 
     [Fact]
+    public void V2RuntimeRefusesRetiredTaskCommittedOnlyInWalWithoutChangingOriginalFiles()
+    {
+        using var crashed = new TemporaryDataRoot();
+        CopyCommittedWal(crashed, transaction => { _ = Rows.InsertTask(transaction); });
+        var files = Directory.GetFiles(crashed.Path, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal).ToArray();
+        Assert.Equal([crashed.Database, crashed.Database + "-wal"], files);
+        var before = files.ToDictionary(path => path, File.ReadAllBytes, StringComparer.Ordinal);
+
+        var refusal = Assert.Throws<StoreIncompatibleException>(() =>
+        {
+            using var opened = NodeStore.OpenForV2Runtime(new NodeStoreOptions { DataRoot = crashed.Path, BootIdentity = "v2-restart" });
+        });
+
+        Assert.Contains("legacy_store_requires_offline_cutover", refusal.Message, StringComparison.Ordinal);
+        Assert.Equal(files, Directory.GetFiles(crashed.Path, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal));
+        foreach (var (path, original) in before)
+            Assert.Equal(original, File.ReadAllBytes(path));
+    }
+
+    [Fact]
+    public void V2RuntimeRecoversASharedSettingCommittedOnlyInWal()
+    {
+        const string displayNameJson = "\"wal-only display name\"";
+        using var crashed = new TemporaryDataRoot();
+        CopyCommittedWal(crashed, transaction =>
+        {
+            Assert.Equal(1, transaction.Execute("""
+                INSERT INTO node_setting(name, value_json, updated_at, rev) VALUES ('node.name', $name, 17, 0);
+                """, ("$name", displayNameJson)));
+        });
+
+        using var opened = NodeStore.OpenForV2Runtime(new NodeStoreOptions { DataRoot = crashed.Path, BootIdentity = "v2-restart" });
+
+        Assert.False(opened.Opening.Created);
+        Assert.Equal("wal-writer", opened.Metadata.PreviousBootIdentity);
+        Assert.False(opened.Metadata.PreviousShutdownClean);
+        Assert.Equal(displayNameJson, opened.Read(reader => reader.Scalar("SELECT value_json FROM node_setting WHERE name='node.name';")));
+        Assert.Equal(17L, opened.Read(reader => reader.Scalar("SELECT updated_at FROM node_setting WHERE name='node.name';")));
+    }
+
+    private static void CopyCommittedWal(TemporaryDataRoot crashed, Action<StoreTransaction> write)
+    {
+        using var seed = new TemporaryDataRoot();
+        var clock = new ManualClock();
+        using (var initialized = seed.Open(clock))
+        {
+            Assert.Equal(0L, initialized.Read(reader => reader.Scalar("SELECT count(*) FROM task;")));
+            Assert.Null(initialized.Read(reader => reader.Scalar("SELECT value_json FROM node_setting WHERE name='node.name';")));
+        }
+
+        var checkpointed = File.ReadAllBytes(seed.Database);
+        using var writer = seed.Open(clock, boot: "wal-writer");
+        writer.Write(transaction => Assert.Equal(0L, transaction.Scalar("PRAGMA wal_autocheckpoint=0;")));
+        writer.Write(write, CommitDurability.Full);
+
+        // Copy the main file and its committed WAL before the last connection can checkpoint them.
+        var main = ReadSharedBytes(seed.Database);
+        var wal = ReadSharedBytes(seed.Database + "-wal");
+        Assert.Equal(checkpointed, main);
+        Assert.True(wal.Length > 32);
+        StorePaths.CreatePrivateDirectory(Path.GetDirectoryName(crashed.Database)!);
+        File.WriteAllBytes(crashed.Database, main);
+        File.WriteAllBytes(crashed.Database + "-wal", wal);
+        Assert.False(File.Exists(crashed.Database + "-shm"));
+    }
+
+    private static byte[] ReadSharedBytes(string path)
+    {
+        using var source = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var bytes = new MemoryStream();
+        source.CopyTo(bytes);
+        return bytes.ToArray();
+    }
+
+    [Fact]
     public void V2RuntimeDoesNotInitializeAnEmptyDatabaseBesideExistingAuthority()
     {
         using var root = new TemporaryDataRoot();
