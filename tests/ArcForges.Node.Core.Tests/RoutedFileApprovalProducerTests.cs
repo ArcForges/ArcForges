@@ -12,14 +12,13 @@ using NodeFilePath = ArcForges.Contracts.Node.V1.FilePath;
 
 namespace ArcForges.Node.Core.Tests;
 
-/// <summary>Real in-process route refuses stage production without the actual Host worker.
-/// FileStageProducerHostTests covers successful native pending/restart/approval/write/edit.</summary>
+/// <summary>Retired routed writes and edits preserve existing bytes and audit refusal without staging content.</summary>
 public sealed class RoutedFileApprovalProducerTests
 {
     [Theory(Timeout = 120_000)]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task InProcessScriptCannotStageAnExistingFileWithoutTheRealHostWorker(bool edit)
+    public async Task RetiredRouteCannotStageAnExistingFileForWriteOrEdit(bool edit)
     {
         var ct = TestContext.Current.CancellationToken;
         await using var node = await InProcessNode.Create().StartAsync();
@@ -53,28 +52,31 @@ public sealed class RoutedFileApprovalProducerTests
         };
         var raw = edit ? change.ToByteArray() : write.ToByteArray();
         var method = edit ? RoutedMethod.EditNodeFile : RoutedMethod.WriteNodeFile;
-        var result = await calls.CallAsync(actor, method, raw, meta.CommandId);
+        var result = await calls.CallAsync(actor, method, raw, meta.CommandId, cancellationToken: ct);
         Assert.NotNull(result.Answer);
         Assert.Equal(RoutedOutcome.Executed, result.Answer.Outcome);
         var error = edit ? FileServiceEditFileResponse.Parser.ParseFrom(result.Answer.Response).Error :
             FileServiceWriteFileResponse.Parser.ParseFrom(result.Answer.Response).Error;
-        Assert.Equal("enforcement_unavailable", error.Code);
-        Assert.Equal("file_guard_unavailable", error.Details.State.Reason);
-        Assert.Equal(EffectCertainty.DidNotHappen, error.Effect);
+        Assert.Equal((ErrorCategory.Execution, "operation_failed", "file", "file_outcome_unknown", EffectCertainty.Unknown, RetryMode.Never),
+            (error.Category, error.Code, error.Details.State.State, error.Details.State.Reason, error.Effect, error.Retry.Mode));
         Assert.Equal(meta.CorrelationId, error.CorrelationId);
         Assert.Equal(before, File.ReadAllBytes(target));
         Assert.Equal(["target.txt"], Directory.GetFileSystemEntries(root).Select(Path.GetFileName).ToArray());
         Assert.Equal(0L, node.Runtime.Store.Read(r => r.Scalar("SELECT count(*) FROM file_private_stage_reservation;")));
         Assert.Equal(0L, node.Runtime.Store.Read(r => r.Scalar("SELECT count(*) FROM approval;")));
+        Assert.Equal(0L, node.Runtime.Store.Read(r => r.Scalar("SELECT count(*) FROM file_stage_worker;")));
+        Assert.Equal(0L, node.Runtime.Store.Read(r => r.Scalar("SELECT count(*) FROM file_effect_worker;")));
+        Assert.Equal(0L, node.Runtime.Store.Read(r => r.Scalar("SELECT count(*) FROM command_dedup WHERE command_id = $id;",
+            ("$id", meta.CommandId.Value.ToByteArray()))));
         Assert.Null(node.Runtime.Store.Read(r => FileMutationJournal.GetForCaller(r, meta.CommandId.Value.Span, actor)));
-        var duplicate = await calls.CallAsync(actor, method, raw, meta.CommandId);
+        var duplicate = await calls.CallAsync(actor, method, raw, meta.CommandId, cancellationToken: ct);
         Assert.Equal(RoutedOutcome.Executed, duplicate.Answer!.Outcome);
         var repeated = edit ? FileServiceEditFileResponse.Parser.ParseFrom(duplicate.Answer.Response).Error :
             FileServiceWriteFileResponse.Parser.ParseFrom(duplicate.Answer.Response).Error;
         Assert.Equal(error, repeated);
         Assert.Equal(2L, node.Runtime.Store.Read(r => r.Scalar("""
             SELECT count(*) FROM audit_log WHERE remote_command_id = $id AND decision = $deny
-              AND outcome_summary = 'refused: enforcement_unavailable';
+              AND outcome_summary = 'refused: operation_failed';
             """, ("$id", meta.CommandId.Value.ToByteArray()), ("$deny", (int)PermissionDecision.Deny))));
         foreach (var db in new[] { node.Runtime.Store.DatabasePath, node.Runtime.Store.DatabasePath + "-wal" })
         {
