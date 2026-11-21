@@ -141,7 +141,7 @@ public sealed class AdoptionLifecycleTests
     [InlineData("windows:unknown:100")]
     public async Task UnknownOriginalBootCannotOpenOrControlASameNamedAdoption(string recordedBoot)
     {
-        Ct.ThrowIfCancellationRequested();
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         await WithRecoveredAdoptionAsync(containerAvailable: true, async fixture =>
         {
             var before = await fixture.ReadAsync();
