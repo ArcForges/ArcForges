@@ -919,51 +919,58 @@ public sealed class UnitPlatformTests
     }
 }
 
-/// <summary>The observe-only platform without a user manager (AD-0005 Linux section 4): attempts are plain child processes.</summary>
-[Trait("env", "linux-real")]
+/// <summary>Exercises the missing manager path without connecting to a manager or launching a workload.</summary>
 [SupportedOSPlatform("linux")]
-public sealed class DirectPlatformTests
+public sealed class LegacyLinuxLaunchRefusalTests
 {
-    [Fact(Timeout = 120_000)]
-    public void WithoutAUserManagerAttemptsRunAsChildProcessesAndEverythingIsObserveOnly()
+    [Fact]
+    public void APlatformWithoutAManagerRefusesBeforeCreatingAttemptFiles()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsLinux(), "Linux child processes.");
-        using var harness = LinuxHarness.Start(options: slice => new LinuxPlatformOptions { Slice = slice, ManagerAddress = "unix:path=/nonexistent/arcforges-test-bus" });
-        var platform = harness.Platform;
+        // The platform has no manager connection. This branch uses managed observation and no Linux system calls.
+        using var platform = new LinuxExecutionPlatform();
         Assert.False(platform.UnitMode);
-        Assert.Equal("linux-direct", platform.Name);
+        Assert.Equal("linux-unavailable", platform.Name);
         var report = platform.Evaluate();
         Assert.Equal(CpuControl.ObserveOnly, report.Cpu);
         Assert.Equal(MemoryControl.ObserveOnly, report.Memory);
         Assert.Equal(ProcessCountControl.ObserveOnly, report.Pids);
-        Assert.Contains("cannot be reached", report.CpuReason, StringComparison.Ordinal);
-        Assert.Equal(KillTreeGuarantee.BestEffort, report.KillTree);
-        Assert.EndsWith(LinuxExecutionPlatform.SameUserQualifier, report.KillTreeReason, StringComparison.Ordinal);
+        Assert.Equal(KillTreeGuarantee.Unspecified, report.KillTree);
         Assert.Equal(AdoptSupport.Unsupported, report.Adopt);
-        Assert.StartsWith("adoption needs a transient scope of the systemd user manager: ", report.AdoptReason, StringComparison.Ordinal);
         Assert.False(report.RestartSurvival);
+        Assert.Contains(report.PlatformFacts, fact => fact.Name == "execution" && fact.Value == "unavailable (requires a systemd user manager)");
 
-        var handle = harness.Launch(["/bin/sh", "-c", "printf hi; exit 2"]);
-        var exit = LinuxHarness.WaitExit(handle, TimeSpan.FromSeconds(60));
-        Assert.Equal(("exited", 2, "node"), (exit.ExitCodeKind, exit.ExitStatus, exit.RecordedBy));
-        var attempt = Directory.EnumerateDirectories(Path.Combine(harness.DataRoot, "logs")).Single();
-        Assert.Equal("hi", File.ReadAllText(Path.Combine(attempt, AttemptFiles.Stdout)));
-        Assert.Null(platform.Reopen(harness.NodeName, new AttemptFiles(harness.DataRoot, Path.GetFileName(attempt)), null));
+        var root = Directory.CreateTempSubdirectory("arcforges-refused-attempt-").FullName;
+        try
+        {
+            var files = new AttemptFiles(root, "fixture");
+            var program = Path.Combine(root, "missing-fixture-program");
+            var launch = new AttemptLaunch
+            {
+                NodeName = "fixture-node",
+                Files = files,
+                Command = new PreparedCommand
+                {
+                    Application = program,
+                    CommandLine = string.Empty,
+                    Argv = [program],
+                    Program = program,
+                    ScriptFile = Path.Combine(files.TempDirectory, "fixture.sh"),
+                    ScriptContent = "exit 0",
+                },
+                Environment = [],
+                WorkingDirectory = root,
+                Limits = new ContainerLimits(),
+            };
 
-        // The exact environment here too, a caller's own variable named like the carrier included.
-        List<string> environment = ["A=1", "PATH=/usr/bin:/bin", "my-var=x", ExecLaunchRole.CarrierVariable + "=the caller's own value"];
-        var printed = harness.Launch(["/usr/bin/env", "-0"], environment: environment);
-        Assert.Equal(0, LinuxHarness.WaitExit(printed, TimeSpan.FromSeconds(60)).ExitStatus);
-        var printedDirectory = Directory.EnumerateDirectories(Path.Combine(harness.DataRoot, "logs")).Single(directory => directory != attempt);
-        var received = File.ReadAllText(Path.Combine(printedDirectory, AttemptFiles.Stdout)).Split('\0', StringSplitOptions.RemoveEmptyEntries);
-        Assert.Equal(environment.Order(StringComparer.Ordinal), received.Order(StringComparer.Ordinal));
-
-        var tree = harness.Launch(["/bin/sh", "-c", "sleep 60 & sleep 60"]);
-        LinuxHarness.WaitFor(() => tree.Processes().Count >= 2, TimeSpan.FromSeconds(30), "the tree");
-        tree.Terminate();
-        var treeExit = LinuxHarness.WaitExit(tree, TimeSpan.FromSeconds(60));
-        Assert.Equal(("killed", 9), (treeExit.ExitCodeKind, treeExit.ExitStatus));
-        Assert.Empty(tree.Processes());
+            var error = Assert.Throws<InvalidOperationException>(() => platform.Launch(launch));
+            Assert.Equal("Cannot start a legacy Linux attempt: no systemd user manager is connected.", error.Message);
+            Assert.Null(platform.Reopen(launch.NodeName, files, null));
+            Assert.Empty(Directory.EnumerateFileSystemEntries(root));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
     }
 }
