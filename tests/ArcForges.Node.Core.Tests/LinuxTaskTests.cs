@@ -6,19 +6,11 @@ using System.Text.Json;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
-using ArcForges.Node.Platform;
 using ArcForges.Tests;
 
 namespace ArcForges.Node.Core.Tests;
 
-/// <summary>
-/// Linux execution through the node with real transient units of the user manager (env=linux-real; AD-0005 Linux; 04 sections 3, 6, 7
-/// and 9): timeouts and CPU-time limits (R-EXE-007), the cancellation sequence with the task's stop signal (R-EXE-006), the output limit
-/// under TERMINATE (the unit frozen before it is killed) and NOTIFY (R-STOR-009), memory bounds in the mem-ramp scenario (R-RES-014),
-/// launch steps inside the unit before the command and end steps as ExecStop with SPAWN_FAILED for a failing launch step (L-13),
-/// <c>kill_with_node</c>, recovery after a node restart (R-EXE-008, R-EXE-018), STREAM stdin, and observe-only capability reporting
-/// while legacy Task admission is closed. Each node has its own slice.
-/// </summary>
+/// <summary>Linux host capability and data root checks, and retained legacy Attempt control scenarios.</summary>
 [Trait("env", "linux-real")]
 [SupportedOSPlatform("linux")]
 public sealed class LinuxTaskTests
@@ -145,143 +137,6 @@ public sealed class LinuxTaskTests
         Assert.Equal(FindingKind.QuotaExceeded, finding.Kind);
     }
 
-    [Fact(Timeout = 240_000)]
-    public async Task NoAttemptOrTheSliceExceedsItsMemoryMaxAndNothingSwapsInTheMemRampScenario()
-    {
-        // R-RES-014, 15 section 4: attempts are stopped at their own MemoryMax, the slice's MemoryMax = C_mem - R_mem bounds managed work,
-        // and MemorySwapMax = swap_allowance (0) keeps managed work out of swap, in the mem-ramp scenario. The managed share C_mem - R_mem
-        // (the slice's MemoryMax) is set to 2 GiB above the machine's current use, so above the three attempts' ceilings together
-        // (3 x 512 MiB). The test node is isolated from machine load (MachineIsolation: U = 0), so
-        // B_mem = C - R and admission (AF-SCHED-01: the accounted memory never exceeds B_mem) admits the three attempts (3 x 400 MiB
-        // expected) at once; that the slice's MemoryMax bounds attempts together is proven at the platform level
-        // (UnitPlatformTests.TheSliceMemoryMaxBoundsAllAttemptsTogether), since admission keeps the declared demand within B_mem.
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        RequireUnits();
-        var physical = ArcForges.Node.Platform.Linux.ProcFs.PhysicalMemory();
-        var available = File.ReadAllLines("/proc/meminfo").Where(line => line.StartsWith("MemAvailable:", StringComparison.Ordinal))
-            .Select(line => long.Parse(line.Split(' ', StringSplitOptions.RemoveEmptyEntries)[1], CultureInfo.InvariantCulture) * 1024).Single();
-        var managed = physical - available + (2L << 30);
-        await using var node = await InProcessNode.Create(seed: transaction => Tasks.SeedPolicy(transaction, policy =>
-        {
-            policy.Resources.ReserveMemFixedBytes = (ulong)(physical - managed);
-            policy.Resources.ReserveMemFraction = 0;
-        })).StartAsync();
-        await using var channel = await node.ChannelAsync();
-        var slice = "/sys/fs/cgroup" + SystemdTestEnvironment.RequiredProperty(node.Slice, "ControlGroup");
-        var sliceMax = long.Parse(File.ReadAllText(Path.Combine(slice, "memory.max")), CultureInfo.InvariantCulture);
-        Assert.Equal(managed - (managed % Environment.SystemPageSize), sliceMax);
-        Assert.Equal("0", File.ReadAllText(Path.Combine(slice, "memory.swap.max")).Trim());
-
-        // Three attempts expecting 400 MiB (MemoryHigh 500 MiB) with 512 MiB ceilings, ramping to 600 MiB each: each is stopped at its own
-        // bound. The .NET workload's own heap limit (75% of its cgroup's) is lifted to 3 GiB (hex without 0x, the form both the JIT runtime
-        // and Native AOT accept), so the kernel bounds stop it.
-        var ids = new List<Id>();
-        for (var index = 0; index < 3; index++)
-        {
-            var spec = Tasks.Argv(node.Root, Tasks.TestLoad, "mem-ramp", "--target-mb", "600", "--step-mb", "16", "--step-ms", "20", "--hold-ms", "3000");
-            spec.Environment.Set["DOTNET_GCHeapHardLimit"] = "C0000000";
-            spec.Resources = new ResourceSpec { Hint = new ResourceDemand { MemExpectedBytes = 400L << 20, MemCeilingBytes = 512L << 20 } };
-            ids.Add(await Tasks.SubmitAsync(channel, spec));
-        }
-
-        long sliceCurrent = 0, sliceSwap = 0;
-        using var sampling = new CancellationTokenSource();
-        var sampler = Task.Run(async () =>
-        {
-            while (!sampling.IsCancellationRequested)
-            {
-                sliceCurrent = Math.Max(sliceCurrent, Number(Path.Combine(slice, "memory.current")));
-                sliceSwap = Math.Max(sliceSwap, Number(Path.Combine(slice, "memory.swap.current")));
-                await Task.Delay(20, CancellationToken.None);
-            }
-        }, CancellationToken.None);
-        var results = new List<ManagedTask>();
-        foreach (var id in ids)
-        {
-            results.Add(await Tasks.WaitAsync(channel, id, bound: TimeSpan.FromSeconds(120)));
-        }
-
-        await sampling.CancelAsync();
-        await sampler;
-        var peak = Number(Path.Combine(slice, "memory.peak"));
-        var swapPeak = Number(Path.Combine(slice, "memory.swap.peak"));
-        var events = File.ReadAllText(Path.Combine(slice, "memory.events"));
-        TestContext.Current.TestOutputHelper?.WriteLine($"slice max {sliceMax}, peak {peak}, sampled {sliceCurrent}, swap peak {swapPeak}; {events.ReplaceLineEndings(" ")}; "
-            + string.Join("; ", results.Select(task => $"{task.CurrentAttempt.Result.TerminationReason} peak {task.CurrentAttempt.Usage.MemPeakBytes}")));
-        Assert.True(peak <= sliceMax, $"The slice peaked at {peak} above its MemoryMax {sliceMax}.");
-        Assert.Equal(0, swapPeak);
-        Assert.Equal(0, sliceSwap);
-        Assert.All(results, task => Assert.True((long)task.CurrentAttempt.Usage.MemPeakBytes <= 512L << 20, $"An attempt peaked at {task.CurrentAttempt.Usage.MemPeakBytes}."));
-        Assert.Contains(results, task => task.CurrentAttempt.Result.TerminationReason == TerminationReason.OomKilled);
-        Assert.False(node.Exit.IsCompleted, "The node (unmanaged) was not affected.");
-
-        // The node unloads the failed (OOM-killed) units once it recorded them; none stays loaded as failed.
-        foreach (var task in results)
-        {
-            var unit = SystemdTestEnvironment.AttemptUnit(Tasks.Files(node, task.CurrentAttempt.AttemptId).AttemptName);
-            await Tasks.WaitForAsync(() => SystemdTestEnvironment.Property(unit, "ActiveState") != "failed", Tasks.Bound, $"{unit} to be unloaded");
-        }
-    }
-
-    [Fact(Timeout = 180_000)]
-    public async Task LaunchStepsRunInTheUnitBeforeTheCommandEndStepsBeforeLeftoversAndAFailingStepIsSpawnFailed()
-    {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        RequireUnits();
-        var steps = new LabelledSteps(
-            files => [Step("synthetic-launch", 30_000, "/bin/sh", "-c", "cat /proc/self/cgroup > \"$1\"; date +%s%N >> \"$1\"; sleep 0.3", "sh", files.Directory + "-launch.txt")],
-            files =>
-            [
-                Step("failing-end", 10_000, "/bin/sh", "-c", "exit 3"),
-                Step("synthetic-end", 10_000, "/bin/sh", "-c", "cat /sys/fs/cgroup$(cut -d: -f3 /proc/self/cgroup)/cgroup.procs > \"$1\"; date +%s%N >> \"$1\"", "sh", files.Directory + "-end.txt"),
-                Step("slow-end", 30_000, "/bin/sleep", "60"),
-            ]);
-        await using var node = await InProcessNode.Create(steps: steps).StartAsync();
-        await using var channel = await node.ChannelAsync();
-        var command = Path.Combine(node.Root, "command.txt");
-        var watch = Stopwatch.StartNew();
-        var task = await Tasks.WaitAsync(channel, await Tasks.SubmitAsync(channel,
-            Tasks.Argv(node.Root, "/bin/sh", "-c", "echo $$ > \"$1\"; cat /proc/self/cgroup >> \"$1\"; date +%s%N >> \"$1\"; sleep 60 & echo $! >> \"$1\"; exit 0", "sh", command)));
-
-        // The failing and the slow end step never change the result; the command's exit code is recorded unchanged.
-        Assert.Equal(TaskState.Succeeded, task.State);
-        Assert.Equal(TerminationReason.Exited, task.CurrentAttempt.Result.TerminationReason);
-        Assert.Equal(0, task.CurrentAttempt.Result.ExitCode);
-        Assert.Equal(["sleep"], task.CurrentAttempt.Result.LeftoverImages);
-        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(40), $"The attempt took {watch.Elapsed}.");
-        var files = Tasks.Files(node, task.CurrentAttempt.AttemptId);
-        var launch = File.ReadAllLines(files.Directory + "-launch.txt");
-        var root = File.ReadAllLines(command);
-        var end = File.ReadAllLines(files.Directory + "-end.txt");
-
-        // The launch step ran in the unit's cgroup, before the command; the command kept the unit's main PID (the recorded root).
-        Assert.Equal(root[1], launch[0]);
-        Assert.EndsWith("/" + ArcForges.Node.Platform.Linux.LinuxExecutionPlatform.UnitName(files.AttemptName), root[1], StringComparison.Ordinal);
-        Assert.True(long.Parse(launch[1], CultureInfo.InvariantCulture) < long.Parse(root[2], CultureInfo.InvariantCulture));
-        var recordedRoot = node.Runtime.Store.Read(reader =>
-        {
-            using var query = reader.CreateCommand("SELECT root_pid FROM attempt WHERE attempt_id = $id;");
-            query.Parameters.AddWithValue("$id", task.CurrentAttempt.AttemptId.Value.ToByteArray());
-            return Convert.ToInt32(query.ExecuteScalar(), CultureInfo.InvariantCulture);
-        });
-        Assert.Equal(recordedRoot.ToString(CultureInfo.InvariantCulture), root[0]);
-
-        // The end step ran after the command exited and saw the leftover still running (ExecStop before the remaining processes stop).
-        Assert.Contains(root[3], end);
-        Assert.True(long.Parse(end[^1], CultureInfo.InvariantCulture) > long.Parse(root[2], CultureInfo.InvariantCulture));
-
-        // A failing launch step: SPAWN_FAILED (effect DID_NOT_HAPPEN) with the step's error; the command never ran.
-        File.Delete(command);
-        var spec = Tasks.Argv(node.Root, "/bin/sh", "-c", "echo ran > \"$1\"", "sh", command);
-        spec.Labels["test-launch"] = "fail";
-        var flagged = await Tasks.WaitAsync(channel, await Tasks.SubmitAsync(channel, spec));
-        Assert.Equal(TaskState.Failed, flagged.State);
-        Assert.Equal(TerminationReason.SpawnFailed, flagged.CurrentAttempt.Result.TerminationReason);
-        Assert.Equal(EffectCertainty.DidNotHappen, flagged.CurrentAttempt.Result.Effect);
-        Assert.Contains("failing-launch", flagged.CurrentAttempt.Result.Detail, StringComparison.Ordinal);
-        Assert.False(File.Exists(command));
-    }
-
     [Fact(Timeout = 120_000)]
     public async Task AnInMemoryDataRootIsReportedAndADiskOneIsNot()
     {
@@ -378,21 +233,6 @@ public sealed class LinuxTaskTests
     }
 
     [Fact(Timeout = 120_000)]
-    public async Task StreamStdinReachesTheCommandThroughThePipe()
-    {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        RequireUnits();
-        await using var node = await InProcessNode.Create().StartAsync();
-        await using var channel = await node.ChannelAsync();
-        var bytes = Tasks.Argv(node.Root, "/bin/cat");
-        bytes.Stdin = new StdinSpec { Mode = StdinMode.Bytes, Data = Tasks.Bytes("from bytes") };
-        var task = await Tasks.WaitAsync(channel, await Tasks.SubmitAsync(channel, bytes));
-        Assert.Equal("from bytes", System.Text.Encoding.UTF8.GetString(await Tasks.ReadAllAsync(channel, task.CurrentAttempt.AttemptId, OutputStream.Stdout)));
-        var none = await Tasks.WaitAsync(channel, await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, "/bin/cat")));
-        Assert.Equal(TaskState.Succeeded, none.State);
-    }
-
-    [Fact(Timeout = 120_000)]
     public async Task WithoutAUserManagerTheNodeIsDegradedAndRefusesFreshLegacyTasks()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
@@ -468,25 +308,6 @@ public sealed class LinuxTaskTests
             return 0;
         });
     }
-
-    /// <summary>Synthetic steps; a task labelled <c>test-launch=fail</c> gets a failing launch step instead.</summary>
-    private sealed class LabelledSteps(Func<AttemptFiles, IReadOnlyList<StepSpec>> launch, Func<AttemptFiles, IReadOnlyList<StepSpec>> end) : Execution.ILaunchStepProvider
-    {
-        public (IReadOnlyList<StepSpec> Launch, IReadOnlyList<StepSpec> End) StepsFor(TaskSpec spec, AttemptFiles files) =>
-            spec.Labels.TryGetValue("test-launch", out var mode) && mode == "fail"
-                ? ([Step("failing-launch", 30_000, "/bin/sh", "-c", "exit 9")], [])
-                : (launch(files), end(files));
-    }
-
-    private static StepSpec Step(string name, int timeoutMs, params string[] argv) => new()
-    {
-        Name = name,
-        Application = argv[0],
-        Argv = [.. argv],
-        TimeoutMs = timeoutMs,
-    };
-
-    private static long Number(string path) => File.Exists(path) && long.TryParse(File.ReadAllText(path).Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var value) ? value : 0;
 
     private static List<JsonElement> LogEvents(InProcessNode node, string name)
     {
