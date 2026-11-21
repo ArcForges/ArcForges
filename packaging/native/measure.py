@@ -21,6 +21,7 @@ import uuid
 
 sys.dont_write_bytecode = True
 from sbom import ROOT, digest, json_input, require
+from measure_workloads import cadence, paired_cpu_workload, slow_output
 
 sys.path.insert(0, str(ROOT / "packaging" / "mxc"))
 from verify_install import protect_install_root, verify
@@ -173,11 +174,13 @@ def read_output(raw):
     return seen, gaps, lost
 
 
-def capture_runs(cli, root, data, owned_tool, original_tool, seconds):
+def capture_runs(cli, root, data, owned_tool, original_tool, seconds, client, direct, extended):
     config = root / "sandbox.json"
     policy = {"profileId": PROFILE, "profileVersion": REVISION,
               "network": {"egress": "NETWORK_MODE_DENY", "ingress": "NETWORK_MODE_DENY", "hostLoopback": False},
               "resources": {"pressureAction": "PRESSURE_ACTION_THROTTLE"}}
+    if extended:
+        policy["outputRetentionBytes"] = str(1024 * 1024)  # Existing installed slow-consumer fixture retention.
     config.write_text(json.dumps(policy), encoding="utf-8")
     sandbox = json.loads(cli("sandbox", "create", "Native performance fixture", "--file", str(config)))["sandbox"]
     private = Path(sandbox["dataLocation"]).resolve(strict=True)
@@ -196,6 +199,9 @@ def capture_runs(cli, root, data, owned_tool, original_tool, seconds):
 
     def inspect(run):
         return json.loads(cli("run", "inspect", run))["run"]
+
+    def follow(run, stream):
+        return cli("run", "logs", run, "--follow", "--stream", stream)
 
     started = time.monotonic()
     hold = start("off", "hold", "--hold-ms", str((seconds + 30) * 1000))
@@ -217,19 +223,23 @@ def capture_runs(cli, root, data, owned_tool, original_tool, seconds):
 
     output_start = time.monotonic()
     output_run = start("on", "output", "--bytes", str(OUTPUT_BYTES), "--line-bytes", str(OUTPUT_BYTES))
-    output = cli("run", "logs", output_run, "--follow", "--stream", "terminal")
+    output = follow(output_run, "terminal")
     seen, gaps, lost = read_output(output)
     terminal_seconds = time.monotonic() - output_start
     require(seen and inspect(output_run).get("exit", {}).get("groupEmptyVerified") is True,
             "Terminal throughput fixture did not capture output and a verified exit")
-    return {"profile": policy, "startToRunningSeconds": run_ready, "supervisorIdle": supervisor_idle,
-            "stopToVerifiedEmptySeconds": stop, "terminal": {"windowSeconds": terminal_seconds,
-            "receivedBytes": seen, "bytesPerSecond": seen / terminal_seconds, "gapFrames": gaps, "gapBytes": lost,
-            "sourceBytes": OUTPUT_BYTES,
-            "method": "Start through CLI output completion. Includes process/transport startup and native terminal rendering bytes."}}
+    report = {"profile": policy, "startToRunningSeconds": run_ready, "supervisorIdle": supervisor_idle,
+              "stopToVerifiedEmptySeconds": stop, "terminal": {"windowSeconds": terminal_seconds,
+              "receivedBytes": seen, "bytesPerSecond": seen / terminal_seconds, "gapFrames": gaps, "gapBytes": lost,
+              "sourceBytes": OUTPUT_BYTES,
+              "method": "Start through CLI output completion. Includes process/transport startup and native terminal rendering bytes."}}
+    if extended:
+        report["pairedCpuWorkload"] = paired_cpu_workload(root, work, start, inspect, follow, direct)
+        report["slowOutputConsumer"] = slow_output(work, start, inspect, client)
+    return report
 
 
-def capture(install, bench, testload, runs, seconds):
+def capture(install, bench, testload, runs, seconds, extended):
     info = json_input(install / "build-info.json")
     install_receipt = verify(install, RID, info["commit"], distribution="signed-mxc-cohort")
     host = install / ("arcforges" + SUFFIX)
@@ -263,6 +273,14 @@ def capture(install, bench, testload, runs, seconds):
         def cli(*arguments, timeout=40):
             return checked([str(host), "--test-mode", "--json", *arguments], scratch, env, timeout)
 
+        def client(json_mode, *arguments, stdout, stderr=subprocess.DEVNULL):
+            json_args = ["--json"] if json_mode else []
+            return subprocess.Popen([str(host), "--test-mode", *json_args, *arguments], cwd=scratch, env=env,
+                                    stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr)
+
+        def direct(*arguments):
+            return checked([str(testload), *arguments], scratch, env)
+
         launch = launch_times(bench, host, scratch, env, runs)
         node_start = time.monotonic()
         with (scratch / "node-stdout.log").open("wb") as log:
@@ -290,7 +308,8 @@ def capture(install, bench, testload, runs, seconds):
         require(initial["sampleEpoch"] == later["sampleEpoch"], "Node sampler epoch changed during the idle window")
         idle["sampleProgress"] = int(later["sampleSequence"]) - int(initial["sampleSequence"])
         require(idle["sampleProgress"] >= 0, "Node sample sequence went backwards")
-        workloads = capture_runs(cli, scratch, data, "arcforges-testload" + SUFFIX, testload, seconds)
+        cadence_report = cadence(scratch, node.pid, seconds, client, observed_window, idle) if extended else None
+        workloads = capture_runs(cli, scratch, data, "arcforges-testload" + SUFFIX, testload, seconds, client, direct, extended)
         cli("node", "stop", "--stop-runs")
         require(node.wait(timeout=30) == 0, "The owned Node did not stop cleanly")
         cleaned = True
@@ -300,9 +319,12 @@ def capture(install, bench, testload, runs, seconds):
                 "os": platform.platform(), "cpuCount": os.cpu_count(), "physicalMemoryBytes": host_memory_bytes(),
                 "identity": {"hostSha256": host_hash, "benchSha256": bench_hash, "testloadSha256": testload_hash},
                 "cliStartup": launch, "nodeToReadySeconds": node_ready, "nodeIdle": idle, "run": workloads,
-                "isolatedReference": reference,
-                "missing": ["deliberately stalled consumer backpressure observation", "paired physical resource overhead for the same workload",
-                            "isolated CPU cost attributable to sampler cadence; window includes ordinary Node idle work"]}
+                "isolatedReference": reference, "resourceStreamCadence": cadence_report,
+                "missing": (["native PTY slow-consumer observation; backpressure exercised with pipes",
+                             "aggregate process-tree overhead; measured paired payload peaks and supervisor separately",
+                             "internal sampler-only cost; measured Node stream cadence"] if extended else
+                            ["deliberately stalled consumer backpressure observation", "paired physical resource overhead for the same workload",
+                             "resource stream cadence cost"])}
     finally:
         if node is None or cleaned:
             shutil.rmtree(scratch)
@@ -327,11 +349,12 @@ def main():
         parser.add_argument("--" + field, required=True, type=Path)
     parser.add_argument("--runs", type=int, default=50, choices=range(1, 101), metavar="1..100")
     parser.add_argument("--idle-seconds", type=int, default=15, choices=range(6, 101), metavar="6..100")
+    parser.add_argument("--extended-workloads", action="store_true", help="Collect the native workload pair, resource stream cadences and slow reader")
     args = parser.parse_args()
     try:
         require(sys.platform == "linux" or WIN, "Use the native Windows or Linux release venue")
         report = capture(args.install.resolve(strict=True), args.bench.resolve(strict=True), args.testload.resolve(strict=True),
-                         args.runs, args.idle_seconds)
+                         args.runs, args.idle_seconds, args.extended_workloads)
         with args.output.open("x", encoding="utf-8", newline="\n") as stream:
             json.dump(report, stream, indent=2)
             stream.write("\n")
