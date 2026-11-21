@@ -12,147 +12,37 @@ namespace ArcForges.Node.Api;
 
 internal sealed partial class FileServiceHandler
 {
-    // A bounded set of lanes prevents two local decisions/resume attempts from executing the same approval at once.
-    private readonly SemaphoreSlim[] _approvalLanes = Enumerable.Range(0, 64).Select(_ => new SemaphoreSlim(1, 1)).ToArray();
-
-    /// <summary>
-    /// Executes only a content-free reference created by the file approval producer. The local approval service
-    /// supplies the approved original caller; this method never treats the old routed signature as a live channel.
-    /// </summary>
-    internal async Task<byte[]?> ExecuteApprovedReferenceAsync(byte[] reference, Caller caller)
+    /// <summary>Replays only a settled, bound legacy approval result. An unfinished approval stays deferred.</summary>
+    internal Task<byte[]?> ExecuteApprovedReferenceAsync(byte[] reference, Caller caller)
     {
         ArgumentNullException.ThrowIfNull(reference);
         ArgumentNullException.ThrowIfNull(caller);
         if (reference.Length != 17 || reference[0] != 1 || caller.ApprovalId is not { Length: 16 } approvalId ||
             caller.CenterCaller is null || caller.RemoteCommandId?.Value.Span.SequenceEqual(reference.AsSpan(1)) != true ||
-            !caller.Approved || caller.Routed is not null)
-            return null;
+            !caller.Approved || caller.Routed is not null || node.Stopping.IsCancellationRequested)
+            return Task.FromResult<byte[]?>(null);
 
-        var nativeDeadline = OperatingSystem.IsLinux() ? checked(LinuxFatalDeadline.MonotonicNanoseconds() + 10_000_000_000) : 0;
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10), node.Clock);
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token, node.Stopping);
-        var token = linked.Token;
-        var lane = _approvalLanes[reference[1] % _approvalLanes.Length];
-        try { await lane.WaitAsync(token).ConfigureAwait(false); }
-        catch (OperationCanceledException) { return null; }
-        using var lease = new ApprovedMutationLease();
         try
         {
-            var start = await node.Processor.ExecuteAsync(command =>
-                BeginApproved(command.Transaction, approvalId, reference, caller, lease, token), CommitDurability.Full).ConfigureAwait(false);
-            if (!start.Ready) return start.Outcome;
-            if (OperatingSystem.IsLinux())
+            return Task.FromResult(node.Store.Read<byte[]?>(reader =>
             {
-                try { lease.Worker = await LinuxFileEffectController.StartAsync(node.Settings.TestMode, token).ConfigureAwait(false); }
-                catch (Exception failure) when (failure is not OutOfMemoryException and not StackOverflowException)
-                {
-                    // This child has received no binding or target descriptor, so no target effect was possible.
-                    return await node.Processor.ExecuteAsync(command => FileMutationJournal.CompleteApprovedPreparedRefusal(
-                        command.Transaction, approvalId, ApprovedFileRefusal.EnforcementUnavailable), CommitDurability.Full).ConfigureAwait(false);
-                }
-                var registered = await node.Processor.ExecuteAsync(command => RegisterApprovedLinuxWorker(command.Transaction,
-                    approvalId, reference.AsSpan(1).ToArray(), caller, lease, nativeDeadline, token), CommitDurability.Full).ConfigureAwait(false);
-                if (registered is not null) return registered;
-            }
-            // Never dispose a held target or stage while this callback may still be doing native I/O.
-            return await node.Processor.ExecuteAsync(command =>
-                ApplyApproved(command.Transaction, approvalId, caller, lease, token), CommitDurability.Full).ConfigureAwait(false);
+                if (node.Stopping.IsCancellationRequested)
+                    return null;
+                var plan = PrivateStageApprovedPlans.Read(reader, approvalId);
+                if (plan is null || !plan.Intent.CommandId.AsSpan().SequenceEqual(reference.AsSpan(1)) ||
+                    !CenterRouting.SameFileCaller(plan.Intent.Caller, caller.CenterCaller))
+                    return null;
+
+                return FileMutationJournal.GetForCaller(reader, plan.Intent.CommandId, plan.Intent.Caller)
+                    is { State: FileOperationState.Completed }
+                    ? FileMutationJournal.ReplayApproved(reader, approvalId)
+                    : null;
+            }));
         }
-        catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)
+        catch (Exception failure) when (failure is not OutOfMemoryException and not StackOverflowException)
         {
-            // PREPARED, if committed, stays held and recovery resolves it as UNKNOWN. A failed transaction is not proof
-            // that its target effect did or did not happen. The approval remains APPROVED for a later safe recovery.
             node.Log.Error("api.file.approval.execution_deferred");
-            return null;
-        }
-        finally
-        {
-            lane.Release();
-        }
-    }
-
-    private ApprovedMutationStart BeginApproved(StoreTransaction transaction, byte[] approvalId, byte[] reference,
-        Caller caller, ApprovedMutationLease lease, CancellationToken token)
-    {
-        token.ThrowIfCancellationRequested();
-        var plan = PrivateStageApprovedPlans.Read(transaction, approvalId);
-        if (plan is null || !plan.Intent.CommandId.AsSpan().SequenceEqual(reference.AsSpan(1)) ||
-            !CenterRouting.SameFileCaller(plan.Intent.Caller, caller.CenterCaller))
-            return new ApprovedMutationStart(false);
-
-        // A previously PREPARED effect is never repeated, even if its reply or approval settlement was lost.
-        if (FileMutationJournal.GetForCaller(transaction, plan.Intent.CommandId, plan.Intent.Caller) is not null)
-            return new ApprovedMutationStart(false, FileMutationJournal.ReplayApproved(transaction, approvalId));
-
-        var sample = RoutedFileValidationTime.Advance(transaction);
-        if (!sample.Healthy) return new ApprovedMutationStart(false);
-        if (sample.BoundaryMicroseconds >= plan.ApprovalExpiresAt)
-            return new ApprovedMutationStart(false, FileMutationJournal.RecordApprovedPreEffectRefusal(transaction,
-                approvalId, ApprovedFileRefusal.ApprovalExpired));
-        if (!ApprovedWriteAllowed(transaction, caller, plan))
-            return new ApprovedMutationStart(false, FileMutationJournal.RecordApprovedPreEffectRefusal(transaction,
-                approvalId, ApprovedFileRefusal.PolicyDenied));
-        if (!OperatingSystem.IsWindows() && !(OperatingSystem.IsLinux() && LinuxFileEffectController.IsHostProcess()))
-            return new ApprovedMutationStart(false, FileMutationJournal.RecordApprovedPreEffectRefusal(transaction,
-                approvalId, ApprovedFileRefusal.EnforcementUnavailable));
-        try
-        {
-            lease.Use = _workspaces.OpenForUse(transaction, plan.Intent.WorkspaceId,
-                beforeUse: tx =>
-                {
-                    if (!ApprovedWriteAllowed(tx, caller, plan)) throw new FilePolicyException("denied");
-                }, token);
-            if (plan.Intent.TargetIdentity is not null)
-            {
-                if (OperatingSystem.IsLinux())
-                {
-                    var selection = lease.Use.Root.OpenExistingWriteGuardWithNames(plan.Intent.RelativePath, token);
-                    lease.Target = selection.Guard;
-                    lease.ParentIdentity = selection.ParentIdentity;
-                    lease.CheckNames = selection.CheckNames;
-                    lease.Target.CheckLinuxWritePreservation();
-                }
-                else lease.Target = lease.Use.Root.OpenExistingWriteGuard(plan.Intent.RelativePath);
-                lease.Original = PrivateStageRegistry.ReopenReadyStage(transaction, plan.Intent.CommandId, 1,
-                    plan.Intent.Caller, plan.RequestSha256, token);
-            }
-            else
-            {
-                var slash = plan.Intent.RelativePath.LastIndexOf('/', StringComparison.Ordinal);
-                if (OperatingSystem.IsLinux()) lease.CreationSelection = lease.Use.Root.PrepareLinuxCreation(plan.Intent.RelativePath, token);
-                lease.ParentIdentity = WorkspacePath.Identity(lease.CreationSelection?.Parent ?? lease.Use.Root.OpenDirectory(
-                    slash < 0 ? "" : plan.Intent.RelativePath[..slash]));
-            }
-            lease.Intended = PrivateStageRegistry.ReopenReadyStage(transaction, plan.Intent.CommandId, 2,
-                plan.Intent.Caller, plan.RequestSha256, token);
-            lease.CheckNames?.Invoke();
-            lease.CreationSelection?.CheckNames(null);
-            var prepared = FileMutationJournal.PrepareApproved(transaction, approvalId, lease.Use.Root, lease.Target,
-                lease.Original, lease.Intended, token);
-            return prepared.Status switch
-            {
-                ApprovedFilePreparation.Prepared => new ApprovedMutationStart(true),
-                ApprovedFilePreparation.Existing => new ApprovedMutationStart(false, FileMutationJournal.ReplayApproved(transaction, approvalId)),
-                ApprovedFilePreparation.Expired => new ApprovedMutationStart(false, FileMutationJournal.RecordApprovedPreEffectRefusal(
-                    transaction, approvalId, ApprovedFileRefusal.ApprovalExpired)),
-                _ => new ApprovedMutationStart(false),
-            };
-        }
-        catch (FilePolicyException)
-        {
-            return new ApprovedMutationStart(false, FileMutationJournal.RecordApprovedPreEffectRefusal(transaction,
-                approvalId, ApprovedFileRefusal.PolicyDenied));
-        }
-        catch (WorkspacePathException exception) when (exception.Reason is "file_identity_changed" or "directory_identity_changed" or
-            "root_changed" or "hash_mismatch")
-        {
-            return new ApprovedMutationStart(false, FileMutationJournal.RecordApprovedPreEffectRefusal(transaction,
-                approvalId, ApprovedFileRefusal.TargetChanged));
-        }
-        catch (RegisteredWorkspaceException exception) when (exception.Reason == "workspace_root_changed")
-        {
-            return new ApprovedMutationStart(false, FileMutationJournal.RecordApprovedPreEffectRefusal(transaction,
-                approvalId, ApprovedFileRefusal.TargetChanged));
+            return Task.FromResult<byte[]?>(null);
         }
     }
 
@@ -278,8 +168,6 @@ internal sealed partial class FileServiceHandler
             return false;
         }
     }
-
-    private sealed record ApprovedMutationStart(bool Ready, byte[]? Outcome = null);
 
     private sealed class ApprovedFileExpiredException : Exception;
 
