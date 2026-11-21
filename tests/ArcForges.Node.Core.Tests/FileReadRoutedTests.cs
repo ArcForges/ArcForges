@@ -9,6 +9,7 @@ using ArcForges.Node.Api;
 using ArcForges.Node.Core;
 using ArcForges.Node.Core.Files;
 using ArcForges.Node.Core.Security;
+using ArcForges.Node.Store;
 using Google.Protobuf;
 using NodeFilePath = ArcForges.Contracts.Node.V1.FilePath;
 using NodeShapes = ArcForges.Contracts.Node.Shapes.ContractShapeValidation;
@@ -253,8 +254,22 @@ public sealed class FileReadRoutedTests
             Name = "missing",
         };
         var caller = calls.Relay(Origin.Human);
+        var error = NodeErrors.Validation("path_not_found", "workspace_root");
+        RoutedFileErrors.Complete(error, meta, correlation, node.Runtime.Clock);
+        var historical = new WorkspaceServiceRegisterWorkspaceResponse
+        {
+            Meta = new() { CorrelationId = correlation },
+            Error = error,
+        };
+        node.Runtime.Store.Write(transaction =>
+        {
+            WorkspaceRoutedServiceTests.SeedRegistration(transaction, caller, request, historical.ToByteArray());
+            return 0;
+        }, CommitDurability.Full);
+
         var first = await calls.CallAsync(caller, RoutedMethod.RegisterNodeWorkspace, request.ToByteArray(), meta.CommandId);
         Assert.Equal(RoutedOutcome.Executed, first.Answer!.Outcome);
+        Assert.Equal(historical.ToByteString(), first.Answer.Response);
         var refusal = WorkspaceServiceRegisterWorkspaceResponse.Parser.ParseFrom(first.Answer.Response);
         Assert.Equal("path_not_found", refusal.Error.Code);
         Assert.Equal(correlation, refusal.Meta.CorrelationId);

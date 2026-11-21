@@ -302,7 +302,7 @@ public sealed class WorkspaceRoutedServiceTests
         Assert.Equal(1L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM command_dedup WHERE outcome IS NULL;")));
     }
 
-    private static void SeedRegistration(StoreTransaction transaction, CenterCaller caller, WorkspaceServiceRegisterWorkspaceRequest request,
+    internal static void SeedRegistration(StoreTransaction transaction, CenterCaller caller, WorkspaceServiceRegisterWorkspaceRequest request,
         byte[]? outcome, bool wallExpired = false)
     {
         var id = request.Meta.CommandId.Value.Span;
