@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
@@ -10,11 +11,12 @@ using Google.Protobuf;
 
 namespace ArcForges.Node.Core.Execution;
 
+[JsonSerializable(typeof(Dictionary<string, string>))]
+internal sealed partial class ExecutionJsonContext : JsonSerializerContext;
+
 /// <summary>
-/// The findings execution raises (node-store.md <c>finding</c>; SM-FINDING): a finding is deduplicated by its open subject (a repeat
-/// raises its occurrence count and last-seen time) and journaled on topic FINDINGS. The finding catalogue, remedies and their service
-/// belong to AF-DIAG-01; execution raises <c>QUOTA_EXCEEDED</c> for an output limit under <c>NOTIFY</c> (06 section 5),
-/// <c>TERMINATION_INCOMPLETE</c> (04 section 6 step 5) and <c>LEFTOVER_PROCESSES</c> (04 section 3).
+/// Records findings in the Node store and event journal. Repeating a finding for an open subject updates
+/// its occurrence count and last-seen time.
 /// </summary>
 public static class ExecutionFindings
 {
