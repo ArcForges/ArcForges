@@ -1,12 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- SPDX-License-Identifier: AGPL-3.0-only -->
   <!--
-    The Windows execution platform (AD-0005 Windows; architecture 04 sections 2, 3, 6 and 9): the per-node root job and nested attempt
-    jobs (root-then-child assignment, V-W01), command resolution with PATH/PATHEXT, quoting inverse to CommandLineToArgvW and the batch
-    refusal (T-03), windowless process creation with an explicit handle list, the attempt holder `arcforges node exec-wrap` (exit record,
-    launch and end steps, leftovers, disk guard), the `arcforges node signal` console helper (L-18) with the WM_CLOSE and forced
-    fallbacks, completion ports with clear-then-attach on restart (L-15) and job accounting. Source-generated P/Invoke (LibraryImport);
-    library of the AOT executable arcforges (AD-0003), so it is AOT- and trim-compatible. Every type that calls Windows is marked
+    Windows Job custody and shared Windows process primitives (AD-0005). Node reopens recorded named Jobs, reattaches their
+    completion port, and reads their accounting. Existing holders retain exit records and acknowledgements. The signal helper
+    sends console and window signals during graceful stop. The library supplies process creation with explicit inherited handles
+    and command-line encoding. Source-generated P/Invoke supports Native AOT and trimming (AD-0003). Windows entry points use
     SupportedOSPlatform("windows"); the pure command-line code is used and tested on every OS.
   -->
   <PropertyGroup>
