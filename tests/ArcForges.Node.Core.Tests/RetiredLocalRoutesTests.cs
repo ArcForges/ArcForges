@@ -44,13 +44,15 @@ public sealed class RetiredLocalRoutesTests
             var v2 = new V2.NodeService.NodeServiceClient(invoker);
             var handshake = await v2.HandshakeAsync(new() { Meta = new RequestMeta { CorrelationId = CommandIds.New() } },
                 deadline: deadline, cancellationToken: ct);
-            if (handshake.Value?.OwnerEpoch is { Value.Length: 16 } epoch)
+            var epoch = handshake.Value?.OwnerEpoch;
+            if (epoch is { Value.Length: 16 })
             {
                 ownerKey = NodeDataKeyRing.TargetName(node.Runtime.NodeId.Span, "v2-owner-" + Convert.ToHexStringLower(epoch.Value.Span));
             }
 
             Assert.Null(handshake.Error);
-            Assert.Equal(16, handshake.Value.OwnerEpoch.Value.Length);
+            Assert.NotNull(epoch);
+            Assert.Equal(16, epoch.Value.Length);
 
             await Unimplemented(new TaskService.TaskServiceClient(invoker)
                 .GetTaskAsync(new(), deadline: deadline, cancellationToken: ct));
