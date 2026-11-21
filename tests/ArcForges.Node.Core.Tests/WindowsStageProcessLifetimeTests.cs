@@ -26,6 +26,9 @@ public sealed class WindowsStageBootEvidenceTests
             ("windows:" + machine + ":0", boot, unknown),
             ("windows:" + machine + ":9223372036854775807", boot, unknown),
             ("windows:" + machine + ":+100", boot, unknown),
+            (boot + "\0", boot, unknown),
+            (boot, "windows:" + machine + ":200\0", unknown),
+            (boot + "\0", boot + "\0", unknown),
             ("linux:" + machine, boot, unknown),
             (boot, null, unknown),
         };

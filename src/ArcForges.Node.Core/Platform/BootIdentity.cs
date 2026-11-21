@@ -51,8 +51,14 @@ public static partial class BootIdentity
 
         var identity = value.AsSpan(8);
         var separator = identity.IndexOf(':');
-        return separator == 36 && Guid.TryParseExact(identity[..separator], "D", out machine) && machine != Guid.Empty
-            && long.TryParse(identity[(separator + 1)..], NumberStyles.None, CultureInfo.InvariantCulture, out time)
+        if (separator != 36 || !Guid.TryParseExact(identity[..separator], "D", out machine) || machine == Guid.Empty)
+        {
+            return false;
+        }
+
+        var timestamp = identity[(separator + 1)..];
+        return !timestamp.IsEmpty && timestamp.IndexOfAnyExceptInRange('0', '9') < 0
+            && long.TryParse(timestamp, NumberStyles.None, CultureInfo.InvariantCulture, out time)
             && time > 0 && time <= DateTimeOffset.MaxValue.ToFileTime() / TimeSpan.TicksPerSecond;
     }
 
