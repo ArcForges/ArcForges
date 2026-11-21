@@ -16,8 +16,8 @@ namespace ArcForges.Node.Core.Tests;
 /// and 9): timeouts and CPU-time limits (R-EXE-007), the cancellation sequence with the task's stop signal (R-EXE-006), the output limit
 /// under TERMINATE (the unit frozen before it is killed) and NOTIFY (R-STOR-009), memory bounds in the mem-ramp scenario (R-RES-014),
 /// launch steps inside the unit before the command and end steps as ExecStop with SPAWN_FAILED for a failing launch step (L-13),
-/// <c>kill_with_node</c>, recovery after a node restart (R-EXE-008, R-EXE-018), STREAM stdin, and the observe-only and partial modes that
-/// refuse tasks requiring enforcement and label the others (R-RES-008). Each node has its own slice.
+/// <c>kill_with_node</c>, recovery after a node restart (R-EXE-008, R-EXE-018), STREAM stdin, and observe-only capability reporting
+/// while legacy Task admission is closed. Each node has its own slice.
 /// </summary>
 [Trait("env", "linux-real")]
 [SupportedOSPlatform("linux")]
@@ -393,10 +393,8 @@ public sealed class LinuxTaskTests
     }
 
     [Fact(Timeout = 120_000)]
-    public async Task WithoutAUserManagerTasksRequiringEnforcementAreRefusedAndOthersRunLabelledUnenforced()
+    public async Task WithoutAUserManagerTheNodeIsDegradedAndRefusesFreshLegacyTasks()
     {
-        // R-RES-008, AD-0005 Linux section 4, simulated as the design allows: the node is configured with a user manager address where
-        // nothing listens, so it runs as on a host without a user manager.
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         Assert.SkipUnless(OperatingSystem.IsLinux(), "Linux.");
         var node = InProcessNode.Create();
@@ -404,46 +402,28 @@ public sealed class LinuxTaskTests
         await using (node)
         {
             await node.StartAsync();
-            await using var channel = await node.ChannelAsync();
+            await using var channel = await node.ChannelAsync(helloAsHuman: true);
             Assert.Equal(NodeLifecycleState.Degraded, node.Runtime.Lifecycle.State);
             Assert.Equal(CpuControl.ObserveOnly, node.Runtime.Capabilities.Cpu);
             Assert.Contains("cannot be reached", node.Runtime.Capabilities.MemoryReason, StringComparison.Ordinal);
             Assert.False(node.Runtime.Capabilities.RestartSurvival);
 
-            var required = Tasks.Argv(node.Root, "/bin/true");
-            required.Resources = new ResourceSpec();
-            required.Resources.RequireEnforcement.Add(EnforcedResource.Memory);
-            var refused = await Tasks.SubmitRawAsync(channel, required);
-            Assert.Equal(ErrorCategory.Resource, refused.Error.Category);
-            Assert.Equal("enforcement_unavailable", refused.Error.Code);
-
-            var plain = await Tasks.SubmitRawAsync(channel, Tasks.Argv(node.Root, "/bin/sh", "-c", "echo plain; exit 4"));
-            Assert.Null(plain.Error);
-            Assert.Contains(plain.Value.Warnings, warning => warning.Contains("unenforced", StringComparison.Ordinal));
-            var task = await Tasks.WaitAsync(channel, plain.Value.TaskId);
-            Assert.Equal(4, task.CurrentAttempt.Result.ExitCode);
-            Assert.True(task.CurrentAttempt.Unenforced);
-            Assert.StartsWith("pgid:", node.Runtime.Store.Read(reader =>
-            {
-                using var query = reader.CreateCommand("SELECT container_name FROM attempt;");
-                return (string)query.ExecuteScalar()!;
-            }), StringComparison.Ordinal);
+            await AssertFreshLegacyTaskRefusedAsync(node, channel, EnforcedResource.Memory);
+            await AssertFreshLegacyTaskRefusedAsync(node, channel);
         }
 
-        // allow_unenforced = false refuses every task while enforcement is missing.
         var strict = InProcessNode.Create(seed: transaction => Tasks.SeedPolicy(transaction, policy => policy.Resources.AllowUnenforced = false));
         strict.SystemdAddress = "unix:path=" + Path.Combine(strict.Root, "no-user-manager");
         await using (strict)
         {
             await strict.StartAsync();
-            await using var channel = await strict.ChannelAsync();
-            var refused = await Tasks.SubmitRawAsync(channel, Tasks.Argv(strict.Root, "/bin/true"));
-            Assert.Equal("enforcement_unavailable", refused.Error.Code);
+            await using var channel = await strict.ChannelAsync(helloAsHuman: true);
+            await AssertFreshLegacyTaskRefusedAsync(strict, channel);
         }
     }
 
     [Fact(Timeout = 120_000)]
-    public async Task WithoutMemoryDelegationMemoryIsObserveOnlyAndRequiringItIsRefused()
+    public async Task WithoutMemoryDelegationMemoryIsObserveOnlyAndFreshLegacyTasksAreRefused()
     {
         // A user manager whose delegation lacks the memory controller (simulated: the node treats only cpu and pids as delegated).
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
@@ -453,27 +433,40 @@ public sealed class LinuxTaskTests
         await using (node)
         {
             await node.StartAsync();
-            await using var channel = await node.ChannelAsync();
+            await using var channel = await node.ChannelAsync(helloAsHuman: true);
             var capabilities = node.Runtime.Capabilities;
             Assert.Equal(NodeLifecycleState.Degraded, node.Runtime.Lifecycle.State);
             Assert.Equal(CpuControl.EnforcedShareAndCap, capabilities.Cpu);
             Assert.Equal(MemoryControl.ObserveOnly, capabilities.Memory);
             Assert.Contains("no memory delegation", capabilities.MemoryReason, StringComparison.Ordinal);
 
-            var memory = Tasks.Argv(node.Root, "/bin/true");
-            memory.Resources = new ResourceSpec();
-            memory.Resources.RequireEnforcement.Add(EnforcedResource.Memory);
-            Assert.Equal("enforcement_unavailable", (await Tasks.SubmitRawAsync(channel, memory)).Error.Code);
-
-            var cpu = Tasks.Argv(node.Root, "/bin/true");
-            cpu.Resources = new ResourceSpec();
-            cpu.Resources.RequireEnforcement.Add(EnforcedResource.Cpu);
-            var accepted = await Tasks.SubmitRawAsync(channel, cpu);
-            Assert.Null(accepted.Error);
-            var task = await Tasks.WaitAsync(channel, accepted.Value.TaskId);
-            Assert.Equal(TaskState.Succeeded, task.State);
-            Assert.True(task.CurrentAttempt.Unenforced);
+            await AssertFreshLegacyTaskRefusedAsync(node, channel, EnforcedResource.Memory);
+            await AssertFreshLegacyTaskRefusedAsync(node, channel, EnforcedResource.Cpu);
         }
+    }
+
+    private static async Task AssertFreshLegacyTaskRefusedAsync(InProcessNode node, NodeChannel channel, EnforcedResource? required = null)
+    {
+        var spec = Tasks.Argv(node.Root, Path.Combine(node.Root, "missing-legacy-fixture-program"));
+        if (required is { } resource)
+        {
+            spec.Resources = new ResourceSpec();
+            spec.Resources.RequireEnforcement.Add(resource);
+        }
+
+        var response = await Tasks.SubmitRawAsync(channel, spec);
+        Assert.Null(response.Value);
+        Assert.Equal("operation_failed", response.Error.Code);
+        Assert.Equal("LEGACY_DRAIN", response.Error.Details.State.State);
+        Assert.Equal("legacy_task_outcome_unavailable", response.Error.Details.State.Reason);
+        Assert.Equal(EffectCertainty.Unknown, response.Error.Effect);
+        Assert.Equal(RetryMode.Never, response.Error.Retry.Mode);
+        node.Runtime.Store.Read(reader =>
+        {
+            Assert.Equal(0L, reader.Scalar("SELECT count(*) FROM task;"));
+            Assert.Equal(0L, reader.Scalar("SELECT count(*) FROM attempt;"));
+            return 0;
+        });
     }
 
     /// <summary>Synthetic steps; a task labelled <c>test-launch=fail</c> gets a failing launch step instead.</summary>
