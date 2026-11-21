@@ -70,8 +70,13 @@ public sealed class FileRemovalPlanPrivateCountTests
             var native = OperatingSystem.IsWindows()
                 ? new WorkspaceObjectIdentity(17, 29, 37, 43, 0, 1, 0x8000)
                 : new WorkspaceObjectIdentity(17, 29, 37, 43, 7, 1, 0x8000, SHA256.HashData("stage"u8));
-            var parent = native with { Low = 39, Mode = 0x4000, InstanceToken = OperatingSystem.IsWindows()
-                ? default : SHA256.HashData("stage parent"u8) };
+            var parent = native with
+            {
+                Low = 39,
+                Mode = 0x4000,
+                InstanceToken = OperatingSystem.IsWindows()
+                ? default : SHA256.HashData("stage parent"u8)
+            };
             var identity = RegisteredWorkspaces.RootIdentity.Encode(native, directory: false);
             var parentIdentity = RegisteredWorkspaces.RootIdentity.Encode(parent);
             var registered = node.Store.Write(transaction =>
@@ -80,7 +85,9 @@ public sealed class FileRemovalPlanPrivateCountTests
                 var workspace = LegacyPlannerHistoryFixture.SeedWorkspace(transaction, root);
                 var request = new FileServiceWriteFileRequest
                 {
-                    Meta = Tasks.Meta(), ExpectedAbsent = true, Data = ByteString.CopyFrom(body),
+                    Meta = Tasks.Meta(),
+                    ExpectedAbsent = true,
+                    Data = ByteString.CopyFrom(body),
                     Path = new FilePath { WorkspaceId = workspace, Path = "unwritten" },
                 };
                 var id = request.Meta.CommandId.Value.ToByteArray();
@@ -102,8 +109,12 @@ public sealed class FileRemovalPlanPrivateCountTests
                 Assert.False(PrivateStageRegistry.HasWorkspaceHold(reader, CommandIds.New().Value.Span));
                 Assert.True(PrivateStageRegistry.ContainsIdentity(reader, native));
                 Assert.True(PrivateStageRegistry.ContainsIdentity(reader, native with { Links = 2 }));
-                var foreign = native with { Low = 41, InstanceToken = OperatingSystem.IsWindows()
-                    ? default : SHA256.HashData("foreign"u8) };
+                var foreign = native with
+                {
+                    Low = 41,
+                    InstanceToken = OperatingSystem.IsWindows()
+                    ? default : SHA256.HashData("foreign"u8)
+                };
                 Assert.False(PrivateStageRegistry.ContainsIdentity(reader, foreign));
                 return 0;
             });

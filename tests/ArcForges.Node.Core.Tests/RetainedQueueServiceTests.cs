@@ -30,12 +30,18 @@ public sealed class RetainedQueueServiceTests
         await using var processor = new CommandProcessor(store, journal, hub);
         await using var execution = new ExecutionSupervisor(new ExecutionOptions
         {
-            Store = store, Processor = processor, Log = log, Clock = fixture.Clock, DataRoot = fixture.DataRoot,
-            Secrets = new TaskSecrets(store, keys), Heartbeat = heartbeat,
+            Store = store,
+            Processor = processor,
+            Log = log,
+            Clock = fixture.Clock,
+            DataRoot = fixture.DataRoot,
+            Secrets = new TaskSecrets(store, keys),
+            Heartbeat = heartbeat,
         });
         using var runtime = new NodeRuntime(store, journal, hub, processor, log,
             new NodeSettingsManager(fixture.ConfigPath, fixture.DataRoot, log), fixture.DataRoot, "offline-queue-fixture", fixture.Clock,
-            new RecoveryReport(false, false, null, store.Opening), new CapabilityReport()) { Execution = execution };
+            new RecoveryReport(false, false, null, store.Opening), new CapabilityReport())
+        { Execution = execution };
         var sessions = new ClientSessions();
         var service = new QueueServiceHandler(runtime, sessions);
         var tasks = new TaskServiceHandler(runtime, sessions);
@@ -82,7 +88,7 @@ public sealed class RetainedQueueServiceTests
         Assert.Equal(2u, pools.Value.Pools.Single(pool => pool.Name == "default").Queued);
         Assert.Equal(1u, pools.Value.Pools.Single(pool => pool.Name == "interactive").Queued);
 
-        foreach (var (id, state) in (ValueTuple<Id, TaskState>[]) [(queued, TaskState.Queued), (dependency, TaskState.WaitingDependency), (retry, TaskState.RetryWait)])
+        foreach (var (id, state) in (ValueTuple<Id, TaskState>[])[(queued, TaskState.Queued), (dependency, TaskState.WaitingDependency), (retry, TaskState.RetryWait)])
         {
             var response = await service.ExplainTask(new QueueServiceExplainTaskRequest { Meta = Tasks.Meta(), TaskId = id }, null!);
             Assert.True(NodeShapes.IsValid(response));

@@ -192,7 +192,8 @@ public sealed class RoutedWaitTailReviewTests
         });
         using var runtime = new NodeRuntime(store, journal, hub, processor, log,
             new NodeSettingsManager(files.ConfigPath, files.DataRoot, log), files.DataRoot, "offline-fixture", clock,
-            new RecoveryReport(false, false, null, store.Opening), new CapabilityReport()) { Execution = execution };
+            new RecoveryReport(false, false, null, store.Opening), new CapabilityReport())
+        { Execution = execution };
         using var dispatcher = new RoutedDispatcher(runtime);
         dispatcher.Bind(new TaskServiceHandler(runtime, new ClientSessions()), new WorkspaceServiceHandler(runtime), new FileServiceHandler(runtime));
         await verify(new WaitFixture(store, runtime, dispatcher));

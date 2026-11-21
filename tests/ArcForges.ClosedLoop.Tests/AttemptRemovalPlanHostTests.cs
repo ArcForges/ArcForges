@@ -97,8 +97,11 @@ public sealed class AttemptRemovalPlanHostTests
             Meta = new ResponseMeta { CorrelationId = request.Meta.CorrelationId },
             Error = new ArcError
             {
-                Category = ErrorCategory.State, Code = "file_access_denied", MessageKey = "error.state.file_access_denied",
-                Effect = EffectCertainty.DidNotHappen, Retry = new RetryAdvice { Mode = RetryMode.Never },
+                Category = ErrorCategory.State,
+                Code = "file_access_denied",
+                MessageKey = "error.state.file_access_denied",
+                Effect = EffectCertainty.DidNotHappen,
+                Retry = new RetryAdvice { Mode = RetryMode.Never },
                 CorrelationId = request.Meta.CorrelationId,
                 Details = new ErrorDetails { State = new StateFailure { State = "file", Reason = "identity_unavailable" } },
             },
@@ -141,7 +144,8 @@ public sealed class AttemptRemovalPlanHostTests
         var attempt = StoreIds.NewUuid7(tx.Clock);
         var spec = new TaskSpec
         {
-            Kind = TaskKind.Command, Command = new CommandSpec { Argv = new ArgvCommand { Argv = { "fixture-never-starts" } } },
+            Kind = TaskKind.Command,
+            Command = new CommandSpec { Argv = new ArgvCommand { Argv = { "fixture-never-starts" } } },
         }.ToByteArray();
         var digest = SHA256.HashData(spec);
         var actor = new ActorRef { Origin = Origin.Remote, CenterCaller = owner };

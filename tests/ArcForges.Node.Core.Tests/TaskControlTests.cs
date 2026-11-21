@@ -130,7 +130,10 @@ public sealed class TaskControlTests
                 transaction.Execute("UPDATE attempt SET started_at = NULL WHERE task_id = $id;", ("$id", taskId.Value.ToByteArray()));
                 HelperFiles.WriteAtomically(holder.Files.LaunchPath, new LaunchRecord
                 {
-                    AttemptId = holder.Files.AttemptName, Step = "retained-setup", Error = "fixture failure", ExitCode = 9,
+                    AttemptId = holder.Files.AttemptName,
+                    Step = "retained-setup",
+                    Error = "fixture failure",
+                    ExitCode = 9,
                 }.ToJson());
             }
 
@@ -236,7 +239,11 @@ public sealed class TaskControlTests
 
             var output = await fixture.Tasks.ReadTaskOutput(Human, new TaskServiceReadTaskOutputRequest
             {
-                Meta = Tasks.Meta(), AttemptId = fixture.AttemptId, Stream = OutputStream.Stdout, FromOffset = 0, MaxBytes = outputLength,
+                Meta = Tasks.Meta(),
+                AttemptId = fixture.AttemptId,
+                Stream = OutputStream.Stdout,
+                FromOffset = 0,
+                MaxBytes = outputLength,
             }, Ct);
             Assert.Null(output.Error);
             Assert.Equal(outputLength, output.Value.Data.Length);
@@ -283,13 +290,20 @@ public sealed class TaskControlTests
         await using var processor = new CommandProcessor(store, journal, hub);
         await using var execution = new ExecutionSupervisor(new ExecutionOptions
         {
-            Store = store, Processor = processor, Log = log, Clock = clock, DataRoot = fixture.DataRoot,
-            Platform = holder, Secrets = new TaskSecrets(store, keys), Heartbeat = heartbeat,
+            Store = store,
+            Processor = processor,
+            Log = log,
+            Clock = clock,
+            DataRoot = fixture.DataRoot,
+            Platform = holder,
+            Secrets = new TaskSecrets(store, keys),
+            Heartbeat = heartbeat,
         });
         var recovery = new RecoveryReport(true, earlierBoot, null, store.Opening);
         using var runtime = new NodeRuntime(store, journal, hub, processor, log,
             new NodeSettingsManager(fixture.ConfigPath, fixture.DataRoot, log), fixture.DataRoot, "offline-fixture", clock,
-            recovery, new CapabilityReport()) { Execution = execution };
+            recovery, new CapabilityReport())
+        { Execution = execution };
         await runtime.TransitionAsync(NodeLifecycleState.Recovering, "fixture").WaitAsync(Ct);
         await execution.RecoverAsync(recovery, processor, Ct);
         await runtime.TransitionAsync(NodeLifecycleState.Ready, "fixture").WaitAsync(Ct);
@@ -371,7 +385,8 @@ public sealed class TaskControlTests
         {
             HelperFiles.WriteAtomically(files.ExitPath, new ExitRecord
             {
-                AttemptId = files.AttemptName, ExitStatus = exitCode,
+                AttemptId = files.AttemptName,
+                ExitStatus = exitCode,
                 RecordedAt = clock.GetUtcNow().ToString("O", CultureInfo.InvariantCulture),
                 MemPeakBytes = PeakMemory,
             }.ToJson());

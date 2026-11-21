@@ -159,7 +159,8 @@ public sealed class CallerTests
                         Meta = new ResponseMeta { CorrelationId = previous.Meta.CorrelationId },
                         Value = new TaskServiceSubmitTaskValue
                         {
-                            TaskId = taskId, State = TaskState.Queued,
+                            TaskId = taskId,
+                            State = TaskState.Queued,
                             Receipt = new Receipt { CommandId = previous.Meta.CommandId, Effect = EffectCertainty.Happened },
                         },
                     };

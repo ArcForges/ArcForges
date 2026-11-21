@@ -29,8 +29,10 @@ public sealed class LinuxWorkerInterruptionHostTests
         File.WriteAllBytes(file, partial);
         var request = new FileServiceWriteFileRequest
         {
-            Meta = LegacyFileHostHistory.Command(), Path = LegacyFileHostHistory.FilePath(workspace, "target"),
-            ExpectedSha256 = ByteString.CopyFrom(SHA256.HashData(original)), Data = ByteString.CopyFrom(intended),
+            Meta = LegacyFileHostHistory.Command(),
+            Path = LegacyFileHostHistory.FilePath(workspace, "target"),
+            ExpectedSha256 = ByteString.CopyFrom(SHA256.HashData(original)),
+            Data = ByteString.CopyFrom(intended),
         };
         var raw = request.ToByteArray();
         var digest = SHA256.HashData(raw);

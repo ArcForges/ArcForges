@@ -64,9 +64,14 @@ public sealed class FileStageProducerHostTests
                 ("$platform", stage.Platform), ("$native", stage.Bytes), ("$parent", root.Bytes));
             var (approval, created, error) = Approvals.Raise(command, new ApprovalCapture
             {
-                Operation = "FileService.WriteFile", MatrixOperation = PermissionMatrix.FileWrite, Summary = "retained private fixture",
-                Risk = RiskClass.High, Requester = new ActorRef { Origin = Origin.Remote, CenterCaller = caller, RemoteCommandId = request.Meta.CommandId },
-                CommandId = id, RequestDigest = digest, Request = [1, .. id],
+                Operation = "FileService.WriteFile",
+                MatrixOperation = PermissionMatrix.FileWrite,
+                Summary = "retained private fixture",
+                Risk = RiskClass.High,
+                Requester = new ActorRef { Origin = Origin.Remote, CenterCaller = caller, RemoteCommandId = request.Meta.CommandId },
+                CommandId = id,
+                RequestDigest = digest,
+                Request = [1, .. id],
             }, Approvals.DefaultTtl);
             Assert.True(created);
             Assert.Null(error);
@@ -96,7 +101,9 @@ public sealed class FileStageProducerHostTests
             human.LocalSessionId = CommandIds.New();
             var read = await history.RouteAsync(RoutedMethod.ReadNodeFile, human, new FileServiceReadFileRequest
             {
-                Meta = new RequestMeta { CorrelationId = CommandIds.New() }, Offset = 0, Length = 128,
+                Meta = new RequestMeta { CorrelationId = CommandIds.New() },
+                Offset = 0,
+                Length = 128,
                 Path = LegacyFileHostHistory.FilePath(workspace, stageName),
             }, null, ct);
             var protectedRead = FileServiceReadFileResponse.Parser.ParseFrom(read!.Response);
@@ -197,11 +204,19 @@ internal sealed class LegacyFileHostHistory : IAsyncDisposable
         var now = Store.Clock.GetUtcNow();
         var header = new CallHeader
         {
-            CallId = CommandIds.New(), Kid = "offline-file-history", Caller = caller.Clone(), AccountId = caller.AccountId.Clone(),
+            CallId = CommandIds.New(),
+            Kid = "offline-file-history",
+            Caller = caller.Clone(),
+            AccountId = caller.AccountId.Clone(),
             TargetNodeId = new Id { Value = ByteString.CopyFrom(_runtime.NodeId.Span) },
-            CenterUrlSha256 = ByteString.CopyFrom(new byte[32]), Method = method, CommandId = command?.Clone(),
-            RequestSha256 = ByteString.CopyFrom(SHA256.HashData(raw.Span)), RequestSize = (uint)raw.Length,
-            IssuedAt = ProtoTime.ToInstant(now), ExpiresAt = ProtoTime.ToInstant(now.AddMinutes(1)), Deadline = ProtoTime.ToInstant(now.AddSeconds(10)),
+            CenterUrlSha256 = ByteString.CopyFrom(new byte[32]),
+            Method = method,
+            CommandId = command?.Clone(),
+            RequestSha256 = ByteString.CopyFrom(SHA256.HashData(raw.Span)),
+            RequestSize = (uint)raw.Length,
+            IssuedAt = ProtoTime.ToInstant(now),
+            ExpiresAt = ProtoTime.ToInstant(now.AddMinutes(1)),
+            Deadline = ProtoTime.ToInstant(now.AddSeconds(10)),
         };
         return _dispatcher.DispatchAsync(new VerifiedCall(header, raw, 0), new OfflineLink(), token);
     }

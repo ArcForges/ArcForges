@@ -227,7 +227,8 @@ public sealed class AdoptionLifecycleTests
         });
         using var runtime = new NodeRuntime(store, journal, hub, processor, log,
             new NodeSettingsManager(node.ConfigPath, node.DataRoot, log), node.DataRoot, "offline-adoption-fixture", node.Clock,
-            recovery, new CapabilityReport()) { Execution = execution };
+            recovery, new CapabilityReport())
+        { Execution = execution };
         var sessions = new ClientSessions();
         var executors = new ApprovalExecutors();
         var tasks = new TaskServiceHandler(runtime, sessions, executors);
@@ -333,7 +334,10 @@ public sealed class AdoptionLifecycleTests
             Execution.Adoptions.Wake();
             var waited = await Tasks.WaitTask(Human, new TaskServiceWaitTaskRequest
             {
-                Meta = AdoptionLifecycleTests.Meta(), TaskId = TaskId, Target = WaitTarget.Terminal, WaitMs = 10_000,
+                Meta = AdoptionLifecycleTests.Meta(),
+                TaskId = TaskId,
+                Target = WaitTarget.Terminal,
+                WaitMs = 10_000,
             }, Ct);
             Assert.Null(waited.Error);
             Assert.True(waited.Value.Reached);
@@ -357,10 +361,17 @@ public sealed class AdoptionLifecycleTests
             var now = Runtime.Clock.GetUtcNow();
             var header = new CallHeader
             {
-                CallId = CommandIds.New(), Caller = caller, Method = RoutedMethod.CancelNodeTask, CommandId = request.Meta.CommandId,
-                AccountId = caller.AccountId, TargetNodeId = new Id { Value = ByteString.CopyFrom(Runtime.NodeId.Span) },
-                IssuedAt = ProtoTime.ToInstant(now.AddSeconds(-1)), ExpiresAt = ProtoTime.ToInstant(now.AddSeconds(35)),
-                Deadline = ProtoTime.ToInstant(now.AddSeconds(10)), RequestSha256 = ByteString.CopyFrom(SHA256.HashData(raw.Span)), RequestSize = (uint)raw.Length,
+                CallId = CommandIds.New(),
+                Caller = caller,
+                Method = RoutedMethod.CancelNodeTask,
+                CommandId = request.Meta.CommandId,
+                AccountId = caller.AccountId,
+                TargetNodeId = new Id { Value = ByteString.CopyFrom(Runtime.NodeId.Span) },
+                IssuedAt = ProtoTime.ToInstant(now.AddSeconds(-1)),
+                ExpiresAt = ProtoTime.ToInstant(now.AddSeconds(35)),
+                Deadline = ProtoTime.ToInstant(now.AddSeconds(10)),
+                RequestSha256 = ByteString.CopyFrom(SHA256.HashData(raw.Span)),
+                RequestSize = (uint)raw.Length,
             };
             var answer = await Dispatcher.DispatchAsync(new VerifiedCall(header, raw, 0), new RoutedCalls.TestLink(), Ct);
             return Assert.IsType<RoutedAnswer>(answer);

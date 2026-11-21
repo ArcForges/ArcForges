@@ -115,7 +115,9 @@ public sealed class FileRemovalExecutionRoutedTests
             {
                 policy.Permissions.Add(new PermissionOverride
                 {
-                    Operation = PermissionMatrix.FileRemove, Origin = origin, Decision = PermissionDecision.Allow,
+                    Operation = PermissionMatrix.FileRemove,
+                    Origin = origin,
+                    Decision = PermissionDecision.Allow,
                 });
                 policy.Permissions.Add(new PermissionOverride { Operation = operation, Origin = origin, Decision = PermissionDecision.Deny });
             })).Error);
@@ -146,7 +148,9 @@ public sealed class FileRemovalExecutionRoutedTests
                 policy.Permissions.Add(new PermissionOverride { Operation = operation, Origin = origin, Decision = PermissionDecision.Allow });
                 policy.Permissions.Add(new PermissionOverride
                 {
-                    Operation = PermissionMatrix.CleanupExecute, Origin = origin, Decision = PermissionDecision.Allow,
+                    Operation = PermissionMatrix.CleanupExecute,
+                    Origin = origin,
+                    Decision = PermissionDecision.Allow,
                 });
             }
         })).Error);

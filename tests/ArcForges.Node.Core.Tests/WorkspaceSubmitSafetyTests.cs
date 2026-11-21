@@ -31,7 +31,8 @@ public sealed class WorkspaceSubmitSafetyTests
                     Meta = new() { CorrelationId = request.Meta.CorrelationId },
                     Value = new()
                     {
-                        TaskId = task, State = TaskState.Queued,
+                        TaskId = task,
+                        State = TaskState.Queued,
                         Receipt = new() { CommandId = request.Meta.CommandId, Effect = EffectCertainty.Happened },
                     },
                 };

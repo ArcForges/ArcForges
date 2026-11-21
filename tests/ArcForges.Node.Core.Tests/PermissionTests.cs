@@ -405,7 +405,8 @@ public sealed class PermissionTests
                     Meta = new ResponseMeta { CorrelationId = request.Meta.CorrelationId },
                     Value = new TaskServiceSubmitTaskValue
                     {
-                        TaskId = task, State = TaskState.Queued,
+                        TaskId = task,
+                        State = TaskState.Queued,
                         Receipt = new Receipt { CommandId = request.Meta.CommandId, Effect = EffectCertainty.Happened },
                     },
                 };
@@ -504,7 +505,9 @@ public sealed class PermissionTests
             adoptionOperation, "process", [], D, [], "denied: adopt process 2147483647"), CommitDurability.Full);
         var explained = await script.Policy.ExplainPermissionAsync(new PolicyServiceExplainPermissionRequest
         {
-            Meta = Tasks.Meta(), Operation = PermissionMatrix.ProcessAdopt, Origin = Origin.Script,
+            Meta = Tasks.Meta(),
+            Operation = PermissionMatrix.ProcessAdopt,
+            Origin = Origin.Script,
         }, cancellationToken: Ct);
         Assert.Null(explained.Error);
         Assert.Equal((D, PermissionMatrix.DefaultSource), (explained.Value.Decision, explained.Value.Source));

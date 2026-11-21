@@ -24,8 +24,10 @@ public sealed class FileCreationOwnershipHostTests
         var owner = history.Caller(Origin.Agent);
         var request = new FileServiceWriteFileRequest
         {
-            Meta = LegacyFileHostHistory.Command(), Path = LegacyFileHostHistory.FilePath(workspace, "owned"),
-            ExpectedAbsent = true, Data = ByteString.CopyFromUtf8("history private body"),
+            Meta = LegacyFileHostHistory.Command(),
+            Path = LegacyFileHostHistory.FilePath(workspace, "owned"),
+            ExpectedAbsent = true,
+            Data = ByteString.CopyFromUtf8("history private body"),
         };
         var raw = request.ToByteArray();
         var digest = SHA256.HashData(raw);

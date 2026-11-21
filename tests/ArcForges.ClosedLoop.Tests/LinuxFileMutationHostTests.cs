@@ -31,13 +31,19 @@ public sealed class LinuxFileMutationHostTests
         var identity = LegacyFileHostHistory.FileIdentity(file);
         var write = new FileServiceWriteFileRequest
         {
-            Meta = LegacyFileHostHistory.Command(), Path = LegacyFileHostHistory.FilePath(workspace, "target"),
-            ExpectedSha256 = ByteString.CopyFrom(SHA256.HashData(before)), Data = ByteString.CopyFrom(written),
+            Meta = LegacyFileHostHistory.Command(),
+            Path = LegacyFileHostHistory.FilePath(workspace, "target"),
+            ExpectedSha256 = ByteString.CopyFrom(SHA256.HashData(before)),
+            Data = ByteString.CopyFrom(written),
         };
         var edit = new FileServiceEditFileRequest
         {
-            Meta = LegacyFileHostHistory.Command(), Path = write.Path.Clone(), ExpectedSha256 = ByteString.CopyFrom(SHA256.HashData(written)),
-            OldText = "write", NewText = "edit", ExpectedOccurrences = 1,
+            Meta = LegacyFileHostHistory.Command(),
+            Path = write.Path.Clone(),
+            ExpectedSha256 = ByteString.CopyFrom(SHA256.HashData(written)),
+            OldText = "write",
+            NewText = "edit",
+            ExpectedOccurrences = 1,
         };
         var rawWrite = write.ToByteArray();
         var rawEdit = edit.ToByteArray();

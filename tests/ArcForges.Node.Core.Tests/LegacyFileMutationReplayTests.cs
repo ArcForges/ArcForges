@@ -293,12 +293,19 @@ public sealed class LegacyFileMutationReplayTests
         return edit
             ? new FileServiceEditFileRequest
             {
-                Meta = meta.Clone(), Path = path, ExpectedSha256 = ByteString.CopyFrom(SHA256.HashData("original"u8)),
-                OldText = "a", NewText = "b", ExpectedOccurrences = 1,
+                Meta = meta.Clone(),
+                Path = path,
+                ExpectedSha256 = ByteString.CopyFrom(SHA256.HashData("original"u8)),
+                OldText = "a",
+                NewText = "b",
+                ExpectedOccurrences = 1,
             }.ToByteArray()
             : new FileServiceWriteFileRequest
             {
-                Meta = meta.Clone(), Path = path, ExpectedAbsent = true, Data = ByteString.CopyFromUtf8("x"),
+                Meta = meta.Clone(),
+                Path = path,
+                ExpectedAbsent = true,
+                Data = ByteString.CopyFromUtf8("x"),
             }.ToByteArray();
     }
 

@@ -99,7 +99,10 @@ public sealed class FileStageWriterConcurrencyTests
     {
         var settings = new SqliteConnectionStringBuilder
         {
-            DataSource = database, Mode = SqliteOpenMode.ReadWrite, Pooling = false, DefaultTimeout = defaultTimeout,
+            DataSource = database,
+            Mode = SqliteOpenMode.ReadWrite,
+            Pooling = false,
+            DefaultTimeout = defaultTimeout,
         };
         var connection = new SqliteConnection(settings.ToString());
         connection.Open();

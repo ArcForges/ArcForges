@@ -1027,7 +1027,9 @@ public sealed class RoutedDispatchTests
                 Meta = new() { CorrelationId = request.Meta.CorrelationId },
                 Value = new()
                 {
-                    TaskId = queued.TaskId, State = queued.State, Queue = queued.Queue,
+                    TaskId = queued.TaskId,
+                    State = queued.State,
+                    Queue = queued.Queue,
                     Receipt = new Receipt { CommandId = id, Effect = EffectCertainty.Happened },
                 },
             };

@@ -537,8 +537,13 @@ public sealed class QueueServiceHandler : QueueService.QueueServiceBase
         }
 
         var (cpu, expected, ceiling, source) = settings.Request(row.Spec.Resources?.Hint, light: false);
-        explanation.Request = new ResourceDemand { CpuMillicores = (uint)Math.Min(cpu, uint.MaxValue), MemExpectedBytes = (ulong)expected,
-            MemCeilingBytes = (ulong)ceiling, Source = source };
+        explanation.Request = new ResourceDemand
+        {
+            CpuMillicores = (uint)Math.Min(cpu, uint.MaxValue),
+            MemExpectedBytes = (ulong)expected,
+            MemCeilingBytes = (ulong)ceiling,
+            Source = source
+        };
         explanation.BlockingKeys.Add(task.ExclusiveKeys);
         var running = Execution.RunningAttempts.ToList();
         var availableMemory = snapshot.BudgetMemory - running.Sum(attempt => attempt.AccountedMemory);

@@ -115,12 +115,18 @@ public sealed class FileApprovedExecutionTests
         var raw = edit
             ? new FileServiceEditFileRequest
             {
-                Meta = meta, Path = path, ExpectedSha256 = ByteString.CopyFrom(preimageHash),
-                OldText = "alpha", NewText = "beta", ExpectedOccurrences = 2,
+                Meta = meta,
+                Path = path,
+                ExpectedSha256 = ByteString.CopyFrom(preimageHash),
+                OldText = "alpha",
+                NewText = "beta",
+                ExpectedOccurrences = 2,
             }.ToByteArray()
             : new FileServiceWriteFileRequest
             {
-                Meta = meta, Path = path, ExpectedSha256 = ByteString.CopyFrom(preimageHash),
+                Meta = meta,
+                Path = path,
+                ExpectedSha256 = ByteString.CopyFrom(preimageHash),
                 Data = ByteString.CopyFrom(intended),
             }.ToByteArray();
         var kind = edit ? FileOperationKind.Edit : FileOperationKind.Write;

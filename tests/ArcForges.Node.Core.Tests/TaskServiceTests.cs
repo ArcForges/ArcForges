@@ -356,7 +356,8 @@ public sealed class TaskServiceTests
         });
         using var runtime = new NodeRuntime(store, journal, hub, processor, log,
             new NodeSettingsManager(files.ConfigPath, files.DataRoot, log), files.DataRoot, "offline-fixture", files.Clock,
-            new RecoveryReport(false, false, null, store.Opening), new CapabilityReport()) { Execution = execution };
+            new RecoveryReport(false, false, null, store.Opening), new CapabilityReport())
+        { Execution = execution };
         if (!OperatingSystem.IsWindows())
         {
             Directory.CreateDirectory(Path.GetDirectoryName(files.Endpoint.Address)!,
