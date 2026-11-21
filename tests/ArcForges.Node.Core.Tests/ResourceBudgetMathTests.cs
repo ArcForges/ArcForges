@@ -29,9 +29,6 @@ public sealed class ResourceBudgetMathTests
         Assert.Equal(0L, ResourceBudgetMath.CpuBudget(900, 1_000, 0, 1_000));
         Assert.Equal(100L, ResourceBudgetMath.CpuBudget(900, 800, 300, 1_000));
         Assert.Equal(0L, ResourceBudgetMath.MemoryBudget(900, 800, long.MaxValue));
-
-        var legacy = ResourceBudgetMath.LegacyBudgets(900, 900, 1_000, 1_000, 1_000, 0, 0);
-        Assert.Equal((1_000L, 0L), legacy);
     }
 
     [Fact]

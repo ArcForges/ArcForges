@@ -6,7 +6,6 @@ using ArcForges.Contracts.Node.V1;
 using ArcForges.LocalRpc;
 using ArcForges.Node.Api;
 using ArcForges.Node.Core;
-using ArcForges.Node.Platform;
 using ArcForges.Node.Store;
 using Google.Protobuf;
 using Microsoft.Data.Sqlite;
@@ -16,10 +15,8 @@ namespace ArcForges.Node.Core.Tests;
 /// <summary>
 /// A real node in the test process: <see cref="NodeHost.RunAsync"/> with its own <c>node.json</c>, data root and endpoint (a unique
 /// named pipe, or a socket in a fresh owner-only directory), served by the real LocalRpc service mode and reached through the real
-/// client library. Its node data key lives in an isolated in-memory secret store (16-testing-strategy section 2), one per node, so
-/// restarts keep it and the real OS secret store is never reached. Disposing stops it through the host's shutdown, deletes its node
-/// data key, verifies that every recorded key is absent from the isolated store and that nothing else is left there (a leak is reported
-/// by name, as a leftover), and removes its files.
+/// client library. Its isolated in-memory secret store survives fixture restarts. Disposing stops the node, checks the
+/// fixture's secret cleanup and removes its files.
 /// </summary>
 internal sealed class InProcessNode : IAsyncDisposable
 {
@@ -50,19 +47,8 @@ internal sealed class InProcessNode : IAsyncDisposable
     /// <summary>Test-only clock for coordinated expiry observations; default is the real system clock.</summary>
     public TimeProvider Clock { get; set; } = TimeProvider.System;
 
-    /// <summary>
-    /// The lifecycle state a started node reaches: READY with the Windows job platform, and on Linux with a user manager that delegates
-    /// cpu, memory and pids; DEGRADED (observe only) otherwise (a hosted runner without a user manager).
-    /// </summary>
-    public static NodeLifecycleState ExpectedState => OperatingSystem.IsWindows() || ArcForges.Tests.SystemdTestEnvironment.FullyEnforced
-        ? NodeLifecycleState.Ready
-        : NodeLifecycleState.Degraded;
-
-    /// <summary>Linux: the user manager's address (an absent one runs the node observe-only).</summary>
-    public string? SystemdAddress { get; set; }
-
-    /// <summary>Linux: the controllers treated as delegated (simulated missing delegation).</summary>
-    public IReadOnlyCollection<string>? LinuxControllers { get; set; }
+    /// <summary>A fixture with a usable Sandbox authority reaches READY. Run profile qualification is separate.</summary>
+    public const NodeLifecycleState ExpectedState = NodeLifecycleState.Ready;
 
     /// <summary>The version directory whose digests the node verifies after startup (default: the directory of the helper executable).</summary>
     public string? VersionDirectory { get; set; }
@@ -70,72 +56,11 @@ internal sealed class InProcessNode : IAsyncDisposable
     /// <summary>Optional native MXC stage for the test node’s V2 Sandbox service.</summary>
     public string? SandboxMxcInstallationRoot { get; set; }
 
-    /// <summary>
-    /// The node evaluates its budgets and pressure from the live machine (03 sections 2 and 7), with every other test's load counted as
-    /// unmanaged. False (the default): it sees only itself and its attempts on the machine (<c>MachineIsolation</c>), so what runs beside the
-    /// test cannot change its budgets, root limits, AUTO parallelism or pressure level. Only a test of the measured budgets or of pressure
-    /// sets it, and such a test is <c>isolation=exclusive</c>.
-    /// </summary>
-    public bool LiveMachine { get; set; }
-
-    /// <summary>
-    /// Whether the node admits local SCRIPT submissions (AD-0021 section 5; CTR5-NODE-14: the node's own tests): true by default here, false
-    /// for the tests of the local bound itself (a node that is not test-mode-allowed).
-    /// </summary>
-    public bool AllowLocalScriptSubmit { get; set; } = true;
-
-    /// <summary>Sets <see cref="LiveMachine"/>.</summary>
-    public InProcessNode WithLiveMachine()
-    {
-        LiveMachine = true;
-        return this;
-    }
-
-    /// <summary>
-    /// A script over the real sampler's machine samples (<c>NodeHostOptions.WrapSampler</c>): the node reads the machine-wide figures it
-    /// returns, while processes, attempt containers and the node's own figures stay real. A test seam for a machine state (a saturated
-    /// machine) that the test then need not create; null reads the machine as it is.
-    /// </summary>
-    public Func<MachineSample, MachineSample>? MachineScript { get; set; }
-
-    /// <summary>Sets <see cref="MachineScript"/>.</summary>
-    public InProcessNode WithMachineScript(Func<MachineSample, MachineSample> script)
-    {
-        MachineScript = script;
-        return this;
-    }
-
     /// <summary>Awaited before the version check's mismatch finding is committed (the node's test seam; a test holds or fails the commit).</summary>
     public Func<Task>? VersionFindingCommitting { get; set; }
 
     /// <summary>Holds startup while the real API listens in RECOVERING; the callback respects the runtime's stop token.</summary>
     public Func<NodeRuntime, Task>? BeforeReady { get; set; }
-
-    /// <summary>
-    /// The supervisor's forced-phase seam (<c>NodeHostOptions.ForcedBeforeStart</c>), from the next start: called right after a stop's forced
-    /// phase terminated an attempt whose start had not completed, so a fault-injection test completes the start exactly there.
-    /// </summary>
-    public Action<IAttemptHandle>? ForcedBeforeStart { get; set; }
-
-    /// <summary>
-    /// The supervisor's seam around the termination that follows a forced phase's pending start (<c>NodeHostOptions.StartObserved</c>), from
-    /// the next start: called before it (<see langword="false"/>) and after it (<see langword="true"/>).
-    /// </summary>
-    public Action<IAttemptHandle, bool>? StartObserved { get; set; }
-
-    /// <summary>
-    /// The supervisor's seam around the termination of the forced phase after the grace period (<c>NodeHostOptions.ForcedPhase</c>), from the
-    /// next start: called before the phase reads the start (<see langword="false"/>) and right after the termination (<see langword="true"/>).
-    /// </summary>
-    public Action<IAttemptHandle, bool>? ForcedPhase { get; set; }
-
-    /// <summary>The node's own slice on Linux (16 section 4).</summary>
-    public string Slice { get; } = ArcForges.Tests.SystemdTestEnvironment.NewSlice();
-
-    /// <summary>The <c>arcforges</c> executable whose helper roles the node starts: <c>ARCFORGES_HOST_PATH</c> or the build next to the tests.</summary>
-    public static string HelperExecutable => Environment.GetEnvironmentVariable("ARCFORGES_HOST_PATH") is { Length: > 0 } configured
-        ? configured
-        : Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "arcforges.exe" : "arcforges");
 
     public LocalRpcEndpoint Endpoint { get; }
 
@@ -186,27 +111,16 @@ internal sealed class InProcessNode : IAsyncDisposable
             StreamBuffer = StreamBuffer,
             Clock = Clock,
 
-            // AD-0021 section 5 (Plan decision Q8): the node's own tests submit through local SCRIPT connections (CTR5-NODE-14); never an AGENT.
-            AllowLocalScriptSubmit = AllowLocalScriptSubmit,
             Ready = runtime => _ready.TrySetResult(runtime),
             SecretStore = _ => Secrets.Selection,
             NodeKeys = ArcForges.Node.CloudLink.NodeKeyStores.ForTestDataRoot,
             Output = TextWriter.Null,
             Error = TextWriter.Null,
-            HelperExecutable = HelperExecutable,
-            LinuxSlice = Slice,
-            SystemdAddress = SystemdAddress,
-            LinuxControllers = LinuxControllers,
             VersionDirectory = VersionDirectory,
             SandboxMxcInstallationRoot = SandboxMxcInstallationRoot,
             TestMode = SandboxMxcInstallationRoot is not null,
             VersionFindingCommitting = VersionFindingCommitting,
             BeforeReady = BeforeReady,
-            IsolatedFromMachineLoad = !LiveMachine,
-            WrapSampler = MachineScript is { } script ? sampler => new ScriptedMachineSampler(sampler, script) : null,
-            ForcedBeforeStart = ForcedBeforeStart,
-            StartObserved = StartObserved,
-            ForcedPhase = ForcedPhase,
         };
         var stop = _stop.Token;
         var firstStart = _run is null;
@@ -283,32 +197,7 @@ internal sealed class InProcessNode : IAsyncDisposable
         finally
         {
             _stop.Dispose();
-            List<string> remaining = [];
-            SqliteConnection.ClearAllPools();
-            if (File.Exists(StorePaths.Database(DataRoot)))
-            {
-                using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = DataRoot, BootIdentity = "cleanup" });
-                if (OperatingSystem.IsWindows())
-                {
-                    // Attempts outlive a stopped node under their holders; the fixture ends them and fails on anything left (16 section 4).
-                    leftovers = ExecutionCleanup.Run(store);
-                }
-                else
-                {
-                    // Attempts outlive a stopped node as transient units: the fixture stops the node's units and slice and fails on anything left.
-                    leftovers = ArcForges.Tests.SystemdTestEnvironment.Cleanup(Slice, AttemptNames(store));
-                }
-
-                using var keys = new NodeDataKeyRing(store, Secrets.Selection);
-                var names = keys.Keys().Select(key => NodeDataKeyRing.TargetName(store.Metadata.NodeId.Span, key.KeyId)).ToList();
-                keys.DeleteKeys();
-
-                // Test verification of the cleanup (never a production read-back): every recorded key is absent, nothing else is left.
-                remaining = Secrets.Remaining(names);
-                leftovers.AddRange(remaining.Select(name => "node data key " + name + " still in the isolated secret store after its delete"));
-            }
-
-            leftovers.AddRange(Secrets.TakeLeaks(remaining));
+            leftovers.AddRange(Secrets.TakeLeaks());
             SqliteConnection.ClearAllPools();
             for (var tries = 0; ; tries++)
             {
@@ -319,7 +208,7 @@ internal sealed class InProcessNode : IAsyncDisposable
                 }
                 catch (Exception exception) when ((exception is IOException or UnauthorizedAccessException) && tries < 50)
                 {
-                    // Holders that just exited may still close their files.
+                    // The stopped test node or a fixture handle may still be closing.
                     await Task.Delay(100);
                 }
                 catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
@@ -350,20 +239,6 @@ internal sealed class InProcessNode : IAsyncDisposable
             }
         }).OfType<string>()];
 
-    /// <summary>The attempts of the store (their unit names on Linux).</summary>
-    public static List<string> AttemptNames(NodeStore store) => store.Read(reader =>
-    {
-        var names = new List<string>();
-        using var command = reader.CreateCommand("SELECT attempt_id FROM attempt;");
-        using var rows = command.ExecuteReader();
-        while (rows.Read())
-        {
-            names.Add(IdText.Format((byte[])rows.GetValue(0)));
-        }
-
-        return names;
-    });
-
     /// <summary>Inserts a job row (jobs have no producers in this build; their runners arrive with later tasks).</summary>
     public static byte[] SeedJob(StoreTransaction transaction, JobKind kind, JobState state, long createdAt)
     {
@@ -393,22 +268,4 @@ internal sealed class InProcessNode : IAsyncDisposable
             ("$created", createdAt));
         return id;
     }
-}
-
-/// <summary>The real sampler with its machine samples passed through a test's script (<see cref="InProcessNode.MachineScript"/>).</summary>
-internal sealed class ScriptedMachineSampler(IResourceSampler inner, Func<MachineSample, MachineSample> script) : IResourceSampler
-{
-    public string Name => inner.Name + " (scripted machine)";
-
-    public bool MachineIoFromProcesses => inner.MachineIoFromProcesses;
-
-    public MachineSample Machine() => script(inner.Machine());
-
-    public IReadOnlyList<ProcessSample> Processes() => inner.Processes();
-
-    public ProcessSample Detail(ProcessSample process) => inner.Detail(process);
-
-    public bool IsVmWorker(string image) => inner.IsVmWorker(image);
-
-    public bool IsVmLauncher(string image) => inner.IsVmLauncher(image);
 }

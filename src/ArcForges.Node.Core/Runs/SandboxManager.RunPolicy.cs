@@ -8,9 +8,9 @@ using System.Text;
 using System.Text.Json;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Sandbox.V2;
-using ArcForges.Node.Core.Execution;
 using ArcForges.Node.Core.Files;
 using ArcForges.Node.Core.Platform;
+using ArcForges.Node.Core.Resources;
 using ArcForges.Node.Core.Security;
 using ArcForges.Node.Platform.Capabilities;
 using ArcForges.Node.Store;
@@ -319,10 +319,16 @@ internal sealed partial class SandboxManager
             throw new InvalidDataException("The committed Node resource policy digest did not match.");
         }
 
-        // Preserve the configured Node reserve without the legacy Task scheduling floors.
-        var settings = new ExecutionSettings(nodePolicy.Document, Environment.ProcessorCount, hostMemory);
-        var availableCpu = settings.CapacityCpu - Math.Clamp(settings.ReserveCpu, 0, settings.CapacityCpu);
-        var availableMemory = hostMemory - Math.Clamp(settings.ReserveMemory, 0, hostMemory);
+        var policy = nodePolicy.Document.Resources;
+        var hostCpu = Math.Max(1, Environment.ProcessorCount) * 1_000L;
+        var reserveCpu = ResourceBudgetMath.ResolveReserve(hostCpu,
+            policy is { HasReserveCpuFixedMillicores: true } ? policy.ReserveCpuFixedMillicores : 1_000,
+            policy is { HasReserveCpuFraction: true } ? policy.ReserveCpuFraction : 0.10);
+        var reserveMemory = ResourceBudgetMath.ResolveReserve(hostMemory,
+            policy is { HasReserveMemFixedBytes: true } ? (long)policy.ReserveMemFixedBytes : 2L * 1024 * 1024 * 1024,
+            policy is { HasReserveMemFraction: true } ? policy.ReserveMemFraction : 0.10);
+        var availableCpu = hostCpu - ResourceBudgetMath.NormalizeReserve(hostCpu, reserveCpu);
+        var availableMemory = hostMemory - ResourceBudgetMath.NormalizeReserve(hostMemory, reserveMemory);
         return ((uint)Math.Min(availableCpu, uint.MaxValue), (ulong)availableMemory);
     }
 

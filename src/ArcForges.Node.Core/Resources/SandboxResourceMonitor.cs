@@ -259,10 +259,7 @@ internal sealed class SandboxResourceMonitor : IAsyncDisposable
         if (capacityCpu is > 0 && capacityMem is > 0 && usedMem.HasValue && smoothedCpu.HasValue
             && host is not null && (OperatingSystem.IsWindows() || host.OomKills.HasValue))
         {
-            var pressure = policy.Pressure ?? new V1.PressureThresholds();
-            var limits = new PressureLimits(Fraction(pressure.TightAvailableFraction, 0.10),
-                Fraction(pressure.PressureAvailableFraction, 0.05), Fraction(pressure.CriticalAvailableFraction, 0.02),
-                pressure.HasMemoryPsiSomeAvg10 ? pressure.MemoryPsiSomeAvg10 : 20, false, false);
+            var limits = PressureLimits.FromPolicy(policy.Pressure);
             _pressure ??= new PressureEvaluator();
             var level = _pressure.Evaluate(Stopwatch.GetElapsedTime(0, timestamp),
                 new(availableMem!.Value, capacityMem.Value, capacityCpu.Value, smoothedCpu.Value,
@@ -315,8 +312,6 @@ internal sealed class SandboxResourceMonitor : IAsyncDisposable
 
     private static bool IsObservationFailure(Exception failure) =>
         failure is IOException or UnauthorizedAccessException or InvalidOperationException or Win32Exception;
-
-    private static double Fraction(double value, double fallback) => value is > 0 and <= 1 ? value : fallback;
 
     private static long HostReserve(long capacity, long fixedAmount, double fraction)
     {

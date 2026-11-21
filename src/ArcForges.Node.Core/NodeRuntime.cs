@@ -91,29 +91,14 @@ public sealed class NodeRuntime : IDisposable
     // All file handlers of this runtime share the actual in-process stage leases.
     internal FileStageBudget FileStages { get; } = new();
 
-    /// <summary>The execution supervisor (set by the host before the API listens).</summary>
-    public Execution.ExecutionSupervisor? Execution { get; set; }
-
     /// <summary>A snapshot of the API server's counters (set by the API layer).</summary>
     public Func<IReadOnlyList<HealthMetric>>? ServerMetrics { get; set; }
 
     /// <summary>The cloud link (AF-CTR-04; set by the host at startup step 8, else a node without one).</summary>
     public ICloudLinkView CloudLink { get; set; } = NoCloudLink.Instance;
 
-    /// <summary>Executes the approvals a node stop left APPROVED (set by the API layer; run once the execution supervisor runs).</summary>
+    /// <summary>Executes the approvals a node stop left APPROVED after startup recovery.</summary>
     public Func<Task>? ResumeApprovals { get; set; }
-
-    /// <summary>
-    /// The node's center-routed dispatcher (AF-CTR-05 N2b; <c>ArcForges.Node.Api.RoutedDispatcher</c>, set by the host before the cloud link
-    /// starts). Typed as <see cref="object"/> because the dispatch seam lives in the cloud link; tests use it to hand a call to the dispatcher.
-    /// </summary>
-    public object? RoutedDispatcher { get; set; }
-
-    /// <summary>
-    /// True when a local SCRIPT caller may submit a task (AD-0021 section 5, Plan decision Q8): only a <c>--test-mode</c> node with
-    /// the test allowance (<see cref="LocalSubmission.Variable"/> and <see cref="LocalSubmission.ScriptAllowed"/>), and in-process test nodes; never an AGENT.
-    /// </summary>
-    public bool LocalScriptSubmit { get; init; }
 
     /// <summary>Counts one API call.</summary>
     public void CountCall() => Interlocked.Increment(ref _rpcCalls);
@@ -133,8 +118,6 @@ public sealed class NodeRuntime : IDisposable
 
     internal SandboxRunReadiness RunReadiness => Sandboxes?.RunReadiness ?? SandboxRunReadiness.NoAuthority;
 
-    internal Func<CapabilityReport>? ReadLegacyCapabilities { get; init; }
-
     /// <summary>Releases the Sandbox authority and stop token.</summary>
     public void Dispose()
     {
@@ -147,7 +130,7 @@ public sealed class NodeRuntime : IDisposable
     /// <summary>Re-runs the capability evaluation (<c>GetCapabilities</c> with <c>reevaluate</c>).</summary>
     public CapabilityReport Reevaluate()
     {
-        var report = ReadLegacyCapabilities?.Invoke() ?? NodeCapabilities.Evaluate(Clock);
+        var report = NodeCapabilities.Evaluate(Clock);
         if (OperatingSystem.IsLinux())
         {
             NodeCapabilities.AddDataRootFact(report, DataRoot);
