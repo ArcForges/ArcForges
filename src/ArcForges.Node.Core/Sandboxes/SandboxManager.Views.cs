@@ -82,7 +82,9 @@ internal sealed partial class SandboxManager
                 var snapshot = _store.Read(reader =>
                 {
                     var row = SandboxRecords.Get(reader, OwnerId, id);
-                    return (Row: row, Active: row is null ? [] : SandboxRecords.ListNonterminalRunIds(reader, id));
+                    bool deleting = row?.State is StoredSandboxState.Deleting or StoredSandboxState.Deleted ||
+                        row?.State == StoredSandboxState.RecoveryRequired && SandboxDeletionRecords.HasPendingForSandbox(reader, OwnerId, id);
+                    return (Row: row, Active: row is null ? [] : SandboxRecords.ListNonterminalRunIds(reader, id), Deleting: deleting);
                 });
                 if (snapshot.Row is not { } row)
                 {
@@ -94,8 +96,7 @@ internal sealed partial class SandboxManager
                     using var root = _roots.Inspect(id, row.RootIdentity);
                 }
 
-                var policy = EvaluatePolicy(FromStored(row.Config));
-                var value = View(row, policy.Admission);
+                var value = snapshot.Deleting ? View(row) : View(row, EvaluatePolicy(FromStored(row.Config)).Admission);
                 value.ActiveRunIds.AddRange(snapshot.Active.Select(FromHex));
                 return new() { Meta = Response(request.Meta, row.Revision), Value = new() { Sandbox = value } };
             }

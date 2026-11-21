@@ -36,8 +36,9 @@ public static class NodeApiServer
     /// <param name="images">The executables that verify each client kind (default: the node's own, <see cref="ClientImages.ForNode"/>).</param>
     /// <param name="cloud">The cloud link (AF-CTR-04): <c>AccountService</c> is served when it is given.</param>
     /// <param name="centerControl">The recovered owner-local V2 Center controller.</param>
+    /// <param name="protectedStorage">The dedicated local Linux profile serves the Sandbox API without legacy effect services.</param>
     internal static LocalRpcServer Build(LocalRpcEndpoint endpoint, NodeRuntime node, ClientSessions sessions, int streamBuffer = 2048, ClientImages? images = null,
-        ArcForges.Node.CloudLink.CloudLinkService? cloud = null, CenterControlServiceHandler? centerControl = null)
+        ArcForges.Node.CloudLink.CloudLinkService? cloud = null, CenterControlServiceHandler? centerControl = null, bool protectedStorage = false)
     {
         ArgumentNullException.ThrowIfNull(endpoint);
         ArgumentNullException.ThrowIfNull(node);
@@ -47,7 +48,6 @@ public static class NodeApiServer
 
         // Each approval-gated service registers how its captured requests execute once a HUMAN approved them (11 section 1).
         var executors = new ApprovalExecutors();
-        var approvals = new ApprovalServiceHandler(node, sessions, executors);
         builder.AddService(new NodeServiceHandler(node, sessions, executors, images ?? ClientImages.ForNode(testMode: false)));
         builder.AddService(new NodeEventServiceHandler(node, streamBuffer));
         builder.AddService(new SandboxNodeServiceHandler(node));
@@ -68,7 +68,7 @@ public static class NodeApiServer
             builder.RegisterMethod(SandboxNode, method, sandboxDeadline);
         }
 
-        foreach (var method in (ReadOnlySpan<string>)["Create", "Configure", "List", "Inspect"])
+        foreach (var method in (ReadOnlySpan<string>)["Create", "Configure", "List", "Inspect", "PlanDelete", "Delete"])
         {
             builder.RegisterMethod(Sandbox, method, sandboxDeadline);
         }
@@ -100,53 +100,24 @@ public static class NodeApiServer
         }
         builder.RegisterMethod(SandboxData, "InspectTransfer", sandboxDeadline);
 
-        var tasks = new TaskServiceHandler(node, sessions, executors);
-        var files = new FileServiceHandler(node);
-        executors.RegisterReference("FileService.WriteFile", ArcForges.Node.Core.Security.PermissionMatrix.FileWrite, files.ExecuteApprovedReferenceAsync);
-        executors.RegisterReference("FileService.EditFile", ArcForges.Node.Core.Security.PermissionMatrix.FileWrite, files.ExecuteApprovedReferenceAsync);
-        executors.RegisterReference("FileService.ExecuteRemoval", ArcForges.Node.Core.Security.PermissionMatrix.FileRemove, files.ExecuteApprovedRemovalReferenceAsync);
-        (node.RoutedDispatcher as RoutedDispatcher)?.Bind(tasks, new WorkspaceServiceHandler(node), files);
-        builder.AddService(tasks);
-        builder.AddService(new ResourceServiceHandler(node, sessions, executors));
-        builder.AddService(new QueueServiceHandler(node, sessions, executors));
-        builder.AddService(new PolicyServiceHandler(node, sessions, executors));
-        builder.AddService(approvals);
-        builder.AddService(new LocalFileOperationHandler(node, sessions));
-        foreach (var method in (ReadOnlySpan<string>)["GetFileOperation", "AcknowledgeFileOperation"])
+        if (!protectedStorage)
         {
-            builder.RegisterMethod(Files, method, new LocalRpcCallProfile(TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(30)));
+            RegisterLegacyEffects(builder, node, sessions, executors, streamBuffer);
         }
-        if (centerControl is not null)
+        if (!protectedStorage && centerControl is not null)
         {
             builder.AddService(centerControl);
             foreach (var method in (ReadOnlySpan<string>)["GetStatus", "BeginConnect", "GetConnectFlow", "CancelConnect", "Disconnect", "SignOut"])
             {
                 builder.RegisterMethod(CenterControl, method, sandboxDeadline);
             }
-
         }
 
-        if (cloud is not null)
+        if (!protectedStorage && cloud is not null)
         {
-            // account.proto deadlines: GetAccountStatus 5 s, SignOut 15 s, BeginSignIn 15 s, GetSignInFlow 5 s, CancelSignIn 5 s; the methods of later
-            // tasks answer UNIMPLEMENTED.
-            builder.AddService(new AccountServiceHandler(node, sessions, cloud));
-            builder.AddService(new FleetServiceHandler(node, sessions, cloud));
-            foreach (var method in (ReadOnlySpan<string>)["ListNodes", "GetNode", "SubmitNodeTask", "GetNodeTask", "ListNodeTasks", "ReadNodeTaskOutput", "CancelNodeTask",
-                "ReadNodeFile", "WriteNodeFile", "EditNodeFile", "SearchNodeFiles", "ListNodeDirectory", "PlanNodeRemoval", "ExecuteNodeRemoval", "GetNodeFileOperation", "RegisterNodeWorkspace", "UnregisterNodeWorkspace", "ListNodeWorkspaces", "GetNodeWorkspace"])
-            {
-                builder.RegisterMethod(Fleet, method, new LocalRpcCallProfile(TimeSpan.FromSeconds(40), TimeSpan.FromSeconds(40)));
-            }
-
-            builder.RegisterMethod(Fleet, "WaitNodeTask", new LocalRpcCallProfile(TimeSpan.FromSeconds(65), TimeSpan.FromSeconds(65)));
-            builder.RegisterMethod(AccountServiceHandler.ServiceName, "GetAccountStatus", new LocalRpcCallProfile(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(30)));
-            builder.RegisterMethod(AccountServiceHandler.ServiceName, "SignOut", new LocalRpcCallProfile(TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(30)));
-            builder.RegisterMethod(AccountServiceHandler.ServiceName, "BeginSignIn", new LocalRpcCallProfile(TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(30)));
-            builder.RegisterMethod(AccountServiceHandler.ServiceName, "GetSignInFlow", new LocalRpcCallProfile(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(30)));
-            builder.RegisterMethod(AccountServiceHandler.ServiceName, "CancelSignIn", new LocalRpcCallProfile(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(30)));
+            RegisterCloudServices(builder, node, sessions, cloud);
         }
 
-        node.ResumeApprovals = approvals.ResumeAsync;
         builder.AuthorizeConnections(connection =>
         {
             // Reached only by same-user peers that LocalRpc identified (other users, exited and unresolvable peers are dropped
@@ -168,6 +139,61 @@ public static class NodeApiServer
         Profile(builder, "ListNotifications", 5);
         Profile(builder, "MarkNotificationsRead", 5);
         builder.RegisterMethod(Events, "ListEvents", new LocalRpcCallProfile(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(30)));
+        builder.RegisterStream(Events, "Subscribe", new LocalRpcStreamProfile
+        {
+            HeartbeatInterval = NodeEventServiceHandler.HeartbeatInterval,
+            MaxBufferedMessages = streamBuffer,
+        });
+        var server = builder.Build();
+        node.ServerMetrics = () =>
+        {
+            var service = server.GetServiceSnapshot();
+            var metrics = new List<HealthMetric>
+            {
+                new() { Name = "rpc.streams_active", Kind = MetricKind.Gauge, Value = service.StreamsActive },
+                new() { Name = "rpc.peers_admitted", Kind = MetricKind.Counter, Value = service.PeersAdmitted },
+            };
+            foreach (var (reason, count) in service.PeersDenied)
+            {
+                var metric = new HealthMetric { Name = "rpc.peers_denied", Kind = MetricKind.Counter, Value = count };
+                metric.Labels["reason"] = reason.ToString();
+                metrics.Add(metric);
+            }
+
+            foreach (var (reason, count) in service.StreamsEnded)
+            {
+                var metric = new HealthMetric { Name = "rpc.streams_ended", Kind = MetricKind.Counter, Value = count };
+                metric.Labels["reason"] = reason.ToString();
+                metrics.Add(metric);
+            }
+
+            return metrics;
+        };
+        return server;
+    }
+
+    private static void RegisterLegacyEffects(LocalRpcServerBuilder builder, NodeRuntime node, ClientSessions sessions, ApprovalExecutors executors,
+        int streamBuffer)
+    {
+        var approvals = new ApprovalServiceHandler(node, sessions, executors);
+        var tasks = new TaskServiceHandler(node, sessions, executors);
+        var files = new FileServiceHandler(node);
+        executors.RegisterReference("FileService.WriteFile", ArcForges.Node.Core.Security.PermissionMatrix.FileWrite, files.ExecuteApprovedReferenceAsync);
+        executors.RegisterReference("FileService.EditFile", ArcForges.Node.Core.Security.PermissionMatrix.FileWrite, files.ExecuteApprovedReferenceAsync);
+        executors.RegisterReference("FileService.ExecuteRemoval", ArcForges.Node.Core.Security.PermissionMatrix.FileRemove, files.ExecuteApprovedRemovalReferenceAsync);
+        (node.RoutedDispatcher as RoutedDispatcher)?.Bind(tasks, new WorkspaceServiceHandler(node), files);
+        builder.AddService(tasks);
+        builder.AddService(new ResourceServiceHandler(node, sessions, executors));
+        builder.AddService(new QueueServiceHandler(node, sessions, executors));
+        builder.AddService(new PolicyServiceHandler(node, sessions, executors));
+        builder.AddService(approvals);
+        builder.AddService(new LocalFileOperationHandler(node, sessions));
+        foreach (var method in (ReadOnlySpan<string>)["GetFileOperation", "AcknowledgeFileOperation"])
+        {
+            builder.RegisterMethod(Files, method, new LocalRpcCallProfile(TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(30)));
+        }
+
+        node.ResumeApprovals = approvals.ResumeAsync;
 
         // TaskService deadlines (tasks.proto): WaitTask holds up to wait_ms (55 s) + 5 s.
         foreach (var (method, seconds) in (ReadOnlySpan<(string, int)>)[("SubmitTask", 10), ("GetTask", 5), ("ListTasks", 5), ("WriteTaskInput", 5),
@@ -206,37 +232,26 @@ public static class NodeApiServer
             HeartbeatInterval = NodeEventServiceHandler.HeartbeatInterval,
             MaxBufferedMessages = streamBuffer,
         });
-        builder.RegisterStream(Events, "Subscribe", new LocalRpcStreamProfile
-        {
-            HeartbeatInterval = NodeEventServiceHandler.HeartbeatInterval,
-            MaxBufferedMessages = streamBuffer,
-        });
-        var server = builder.Build();
-        node.ServerMetrics = () =>
-        {
-            var service = server.GetServiceSnapshot();
-            var metrics = new List<HealthMetric>
-            {
-                new() { Name = "rpc.streams_active", Kind = MetricKind.Gauge, Value = service.StreamsActive },
-                new() { Name = "rpc.peers_admitted", Kind = MetricKind.Counter, Value = service.PeersAdmitted },
-            };
-            foreach (var (reason, count) in service.PeersDenied)
-            {
-                var metric = new HealthMetric { Name = "rpc.peers_denied", Kind = MetricKind.Counter, Value = count };
-                metric.Labels["reason"] = reason.ToString();
-                metrics.Add(metric);
-            }
+    }
 
-            foreach (var (reason, count) in service.StreamsEnded)
-            {
-                var metric = new HealthMetric { Name = "rpc.streams_ended", Kind = MetricKind.Counter, Value = count };
-                metric.Labels["reason"] = reason.ToString();
-                metrics.Add(metric);
-            }
+    private static void RegisterCloudServices(LocalRpcServerBuilder builder, NodeRuntime node, ClientSessions sessions,
+        ArcForges.Node.CloudLink.CloudLinkService cloud)
+    {
+        // account.proto deadlines: GetAccountStatus 5 s, SignOut 15 s, BeginSignIn 15 s, GetSignInFlow 5 s, CancelSignIn 5 s.
+        builder.AddService(new AccountServiceHandler(node, sessions, cloud));
+        builder.AddService(new FleetServiceHandler(node, sessions, cloud));
+        foreach (var method in (ReadOnlySpan<string>)["ListNodes", "GetNode", "SubmitNodeTask", "GetNodeTask", "ListNodeTasks", "ReadNodeTaskOutput", "CancelNodeTask",
+            "ReadNodeFile", "WriteNodeFile", "EditNodeFile", "SearchNodeFiles", "ListNodeDirectory", "PlanNodeRemoval", "ExecuteNodeRemoval", "GetNodeFileOperation", "RegisterNodeWorkspace", "UnregisterNodeWorkspace", "ListNodeWorkspaces", "GetNodeWorkspace"])
+        {
+            builder.RegisterMethod(Fleet, method, new LocalRpcCallProfile(TimeSpan.FromSeconds(40), TimeSpan.FromSeconds(40)));
+        }
 
-            return metrics;
-        };
-        return server;
+        builder.RegisterMethod(Fleet, "WaitNodeTask", new LocalRpcCallProfile(TimeSpan.FromSeconds(65), TimeSpan.FromSeconds(65)));
+        builder.RegisterMethod(AccountServiceHandler.ServiceName, "GetAccountStatus", new LocalRpcCallProfile(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(30)));
+        builder.RegisterMethod(AccountServiceHandler.ServiceName, "SignOut", new LocalRpcCallProfile(TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(30)));
+        builder.RegisterMethod(AccountServiceHandler.ServiceName, "BeginSignIn", new LocalRpcCallProfile(TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(30)));
+        builder.RegisterMethod(AccountServiceHandler.ServiceName, "GetSignInFlow", new LocalRpcCallProfile(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(30)));
+        builder.RegisterMethod(AccountServiceHandler.ServiceName, "CancelSignIn", new LocalRpcCallProfile(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(30)));
     }
 
     private static void Profile(LocalRpcServerBuilder builder, string method, int seconds) =>

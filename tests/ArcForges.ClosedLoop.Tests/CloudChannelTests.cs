@@ -172,7 +172,7 @@ public sealed class CloudChannelTests
         node.Environment[CloudLinkTestHooks.ConnectLog] = connectLog;
         node.Environment[CloudLinkTestHooks.RefreshSeconds] = "15";
 
-        await node.StartNodeAsync();
+        var initialNode = await node.StartNodeAsync();
         byte[] nodeId;
         await using (var human = await node.HumanChannelAsync())
         {
@@ -180,6 +180,8 @@ public sealed class CloudChannelTests
         }
 
         await node.StopNodeAsync();
+        // The stop command observes the endpoint. The original process still owns the instance guard until its shutdown finishes.
+        await initialNode.WaitForExitAsync(ct).WaitAsync(TimeSpan.FromSeconds(30), ct);
         var issued = center.Issue(nodeId, "Closed Loop");
         CloudLinkHostTests.Seed(node.DataRoot, nodeId, center, issued);
         using (var key = NodeKeyStores.ForTestDataRoot(node.DataRoot).Create(nodeId, center.Endpoint.Origin, TimeProvider.System))

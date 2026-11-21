@@ -210,24 +210,43 @@ public static class NodeHost
         string configPath;
         NodeConfigurationFile configuration;
         string dataRoot;
+        LinuxSandboxDeletionAuthority? linuxDeletionAuthority;
+        SingleInstance? protectedInstance = null;
+        string instanceKey;
+        LocalRpcEndpoint endpoint;
         try
         {
             configPath = options.ConfigPath ?? NodeLocations.ConfigFile(options.TestMode);
             configuration = NodeConfiguration.Read(configPath);
             dataRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(configuration.DataRoot ?? NodeLocations.DefaultDataRoot()));
-            StorePaths.CreatePrivateDirectory(dataRoot);
-            StorePaths.CreatePrivateDirectory(NodeLocations.RunDirectory(dataRoot));
-            StorePaths.CreatePrivateDirectory(Path.Combine(dataRoot, "logs", "node"));
+            linuxDeletionAuthority = OperatingSystem.IsLinux() ? LinuxSandboxDeletionAuthority.OpenIfProvisioned(dataRoot) : null;
+            instanceKey = options.Endpoint is { } explicitEndpoint
+                ? NodeLocations.InstanceKeyFor(explicitEndpoint.Address) : NodeLocations.InstanceKey(options.TestMode);
+            endpoint = options.Endpoint ?? NodeLocations.Endpoint(options.TestMode, dataRoot);
+            if (OperatingSystem.IsLinux() && linuxDeletionAuthority is not null)
+            {
+                protectedInstance = SingleInstance.TryAcquire(linuxDeletionAuthority);
+                if (protectedInstance is not null)
+                {
+                    linuxDeletionAuthority.InitializeOrVerifyStore();
+                }
+            }
+
+            if (linuxDeletionAuthority is null || protectedInstance is not null)
+            {
+                StorePaths.CreatePrivateDirectory(dataRoot);
+                StorePaths.CreatePrivateDirectory(NodeLocations.RunDirectory(dataRoot));
+                StorePaths.CreatePrivateDirectory(Path.Combine(dataRoot, "logs", "node"));
+            }
         }
         catch (Exception exception) when (exception is NodeConfigurationException or IOException or UnauthorizedAccessException or InvalidOperationException)
         {
+            protectedInstance?.Dispose();
             await options.Error.WriteLineAsync($"arcforges: the node cannot start: {exception.Message}".AsMemory(), cancellationToken).ConfigureAwait(false);
             return NodeExitCodes.Failure;
         }
 
-        var instanceKey = options.Endpoint is { } explicitEndpoint ? NodeLocations.InstanceKeyFor(explicitEndpoint.Address) : NodeLocations.InstanceKey(options.TestMode);
-        var endpoint = options.Endpoint ?? NodeLocations.Endpoint(options.TestMode, dataRoot);
-        using var instance = SingleInstance.TryAcquire(instanceKey, dataRoot);
+        using var instance = linuxDeletionAuthority is null ? SingleInstance.TryAcquire(instanceKey, dataRoot) : protectedInstance;
         if (instance is null)
         {
             var running = EndpointDescriptor.TryRead(NodeLocations.EndpointDescriptorFile(dataRoot));
@@ -271,7 +290,8 @@ public static class NodeHost
 
         try
         {
-            return await ServeAsync(options, store, log, notifier, ready, configPath, dataRoot, endpoint, faults, cancellationToken).ConfigureAwait(false);
+            return await ServeAsync(options, store, log, notifier, ready, configPath, dataRoot, endpoint, faults, linuxDeletionAuthority,
+                cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -290,8 +310,10 @@ public static class NodeHost
     }
 
     private static async Task<int> ServeAsync(NodeHostOptions options, NodeStore store, NodeLog log, SystemdNotifier notifier, WindowsReadyEvent? ready,
-        string configPath, string dataRoot, LocalRpcEndpoint endpoint, ExecutionFaults faults, CancellationToken cancellationToken)
+        string configPath, string dataRoot, LocalRpcEndpoint endpoint, ExecutionFaults faults, LinuxSandboxDeletionAuthority? linuxDeletionAuthority,
+        CancellationToken cancellationToken)
     {
+        var protectedStorage = linuxDeletionAuthority is not null;
         using var protectedEndpoint = OperatingSystem.IsLinux() && endpoint.Transport == LocalRpcTransport.UnixDomainSocket
             ? new SandboxProtectedEndpoint(endpoint.Address) : null;
         var clock = options.Clock;
@@ -316,7 +338,7 @@ public static class NodeHost
         // The node data key loads at startup, outside the writer (secret-store I/O must never run under the writer lock).
         var secretStore = options.SecretStore?.Invoke(dataRoot) ?? NodeSecretStores.ForNode(dataRoot, options.TestMode);
         var sandboxes = CreateSandboxManager(store, dataRoot, secretStore, clock, log, journal.Generation,
-            options.TestMode ? options.SandboxMxcInstallationRoot : null, protectedEndpoint, faults);
+            options.TestMode ? options.SandboxMxcInstallationRoot : null, protectedEndpoint, faults, linuxDeletionAuthority);
         try
         {
             if (sandboxes is not null)
@@ -353,7 +375,7 @@ public static class NodeHost
         }, CancellationToken.None);
 
         // 02 section 2 step 6: the platform layer creates or re-opens the root container and verifies enforcement with a probe.
-        var platform = StartPlatform(options, store, log);
+        var platform = protectedStorage ? null : StartPlatform(options, store, log);
         var capabilities = platform is null ? NodeCapabilities.Evaluate(clock) : NodeCapabilities.FromPlatform(platform, clock);
         if (OperatingSystem.IsLinux())
         {
@@ -383,7 +405,7 @@ public static class NodeHost
         {
             sampler = wrap(sampler);
         }
-        var execution = new ExecutionSupervisor(new ExecutionOptions
+        var execution = protectedStorage ? null : new ExecutionSupervisor(new ExecutionOptions
         {
             Store = store,
             Processor = processor,
@@ -410,12 +432,12 @@ public static class NodeHost
             Sandboxes = sandboxes,
 
             // AD-0021 section 5 (Plan decision Q8): a local SCRIPT submission only on a --test-mode node with the allowance; never in production.
-            LocalScriptSubmit = options.AllowLocalScriptSubmit
-                ?? LocalSubmission.ScriptAllowed(options.TestMode, Environment.GetEnvironmentVariable(LocalSubmission.Variable)),
+            LocalScriptSubmit = !protectedStorage && (options.AllowLocalScriptSubmit
+                ?? LocalSubmission.ScriptAllowed(options.TestMode, Environment.GetEnvironmentVariable(LocalSubmission.Variable))),
         };
 
         // AF-CTR-05 N2b: the center-routed dispatcher, bound to the TaskService once the local server builds it.
-        using var routed = new RoutedDispatcher(node);
+        using var routed = protectedStorage ? null : new RoutedDispatcher(node);
         node.RoutedDispatcher = routed;
         var versionDirectory = options.VersionDirectory
             ?? (options.HelperExecutable is { } helperPath ? Path.GetDirectoryName(Path.GetFullPath(helperPath)) : null)
@@ -424,7 +446,7 @@ public static class NodeHost
 
         // 02 section 2 step 8, the cloud link (AF-CTR-04): the node credential in the same secret store as the data key, the node key from
         // its composition root; state changes are journaled on topic ACCOUNT.
-        var cloud = new CloudLinkService(new CloudLinkOptions
+        var cloud = routed is null ? null : new CloudLinkService(new CloudLinkOptions
         {
             DataRoot = dataRoot,
             NodeId = node.NodeId,
@@ -459,16 +481,22 @@ public static class NodeHost
             Dispatcher = options.WrapRoutedDispatcher?.Invoke(routed) ?? routed,
             Version = NodeContract.ProductVersion,
         });
-        await using var cloudScope = cloud.ConfigureAwait(false);
-        using var centerControl = new CenterControlServiceHandler(node, cloud);
-        node.CloudLink = cloud;
-        if (testCenter is not null)
+        await using var cloudScope = cloud;
+        using var centerControl = cloud is null ? null : new CenterControlServiceHandler(node, cloud);
+        if (cloud is not null)
         {
-            log.Info("node.test_center", new LogField("center", testCenter.Url));
+            node.CloudLink = cloud;
+            if (testCenter is not null)
+            {
+                log.Info("node.test_center", new LogField("center", testCenter.Url));
+            }
         }
 
         // The capability report's root_* facts follow the root limits the scheduler applies from the measured budgets (03 section 5.1).
-        execution.RootLimitsApplied = _ => node.Reevaluate();
+        if (execution is not null)
+        {
+            execution.RootLimitsApplied = _ => node.Reevaluate();
+        }
         using var stopSignals = RegisterSignals(node);
         using var external = cancellationToken.Register(() => node.RequestStop("cancelled"));
         LocalRpcServer? server = null;
@@ -494,44 +522,28 @@ public static class NodeHost
             log.Info("node.recovering", new LogField("uncleanShutdown", unclean), new LogField("bootChanged", bootChanged),
                 new LogField("storeCreated", store.Opening.Created), new LogField("migratedFrom", store.Opening.MigratedFrom ?? 0),
                 new LogField("generation", journal.Generation));
-            // No endpoint or cloud link is serving yet. A previous PREPARED file effect may have happened;
-            // persist UNKNOWN before any new call can observe or mutate its target.
-            var interruptedFiles = await processor.ExecuteAsync(context =>
-                FileMutationJournal.RecoverInterrupted(context.Transaction), CommitDurability.Full).ConfigureAwait(false);
-            if (interruptedFiles > 0)
+            if (execution is not null)
             {
-                log.Warning("node.file_recovery.pending", new LogField("count", interruptedFiles));
-            }
-
-            // The FULL writer fences only unraised reservations without a target journal; active approvals remain.
-            var recoveredStages = await processor.ExecuteAsync(context =>
-                PrivateStageTerminal.RecoverUnraised(context.Transaction) +
-                PrivateStageTerminal.RecoverTerminalApprovals(context.Transaction), CommitDurability.Full).ConfigureAwait(false);
-            if (recoveredStages > 0)
-                log.Warning("node.file_recovery.stages_terminal", new LogField("count", recoveredStages));
-
-            foreach (var participant in options.Recovery.Prepend(execution))
-            {
-                await participant.RecoverAsync(recovery, processor, node.Stopping).ConfigureAwait(false);
-                log.Info("node.recovery.done", new LogField("participant", participant.Name));
+                await RecoverLegacyAsync(options, node, execution, recovery).ConfigureAwait(false);
             }
 
             if (node.Sandboxes is { } recoveredSandboxes)
             {
                 await recoveredSandboxes.RecoverRunsAsync(recovery, node.Stopping).ConfigureAwait(false);
                 log.Info("node.recovery.done", new LogField("participant", "sandbox_runs"));
-                centerControl.RecoverAccepted(store, recoveredSandboxes);
+                centerControl?.RecoverAccepted(store, recoveredSandboxes);
+                recoveredSandboxes.ReconcileDeletionReceipts();
                 recoveredSandboxes.StartDataRecovery();
                 sandboxResources = recoveredSandboxes.StartResourceSampling(sampler as IHostResourceSource, log);
             }
 
             var sessions = new ClientSessions
             {
-                Opened = session => execution.CallerConnected(new CallerKey(session.Peer.ProcessId, session.Peer.ProcessStartTime.UtcTicks)),
-                Closed = session => execution.CallerDisconnected(new CallerKey(session.Peer.ProcessId, session.Peer.ProcessStartTime.UtcTicks)),
+                Opened = session => execution?.CallerConnected(new CallerKey(session.Peer.ProcessId, session.Peer.ProcessStartTime.UtcTicks)),
+                Closed = session => execution?.CallerDisconnected(new CallerKey(session.Peer.ProcessId, session.Peer.ProcessStartTime.UtcTicks)),
             };
             server = NodeApiServer.Build(endpoint, node, sessions, options.StreamBuffer, ClientImages.ForNode(ClientImages.TestHookApplies(options.TestMode, endpoint.Address, configPath, dataRoot)),
-                cloud, centerControl);
+                cloud, centerControl, protectedStorage);
             try
             {
                 await server.StartAsync(node.Stopping).ConfigureAwait(false);
@@ -573,8 +585,11 @@ public static class NodeHost
             }
 
             housekeepingLoop = HousekeepAsync(node, keys, housekeeping, loops.Token);
-            await cloud.StartAsync().ConfigureAwait(false);
-            centerControl.MarkLinkLoaded();
+            if (cloud is not null)
+            {
+                await cloud.StartAsync().ConfigureAwait(false);
+                centerControl!.MarkLinkLoaded();
+            }
             if (OperatingSystem.IsLinux() && platform is ArcForges.Node.Platform.Linux.LinuxExecutionPlatform { UnitMode: true } linux)
             {
                 // 06 section 5: arcforges-guard.service guards the attempt units while the node is down; started when installed.
@@ -585,7 +600,14 @@ public static class NodeHost
             var enforced = NodeCapabilities.FullyEnforced(node.Capabilities);
             await node.TransitionAsync(enforced ? NodeLifecycleState.Ready : NodeLifecycleState.Degraded,
                 enforced ? "ready" : NodeCapabilities.DegradedReason).ConfigureAwait(false);
-            execution.Start();
+            if (execution is null)
+            {
+                heartbeat.Start();
+            }
+            else
+            {
+                execution.Start();
+            }
             if (node.ResumeApprovals is { } resume)
             {
                 // 11 section 1: an approval the previous run approved but did not execute runs now, under its original command ID.
@@ -634,15 +656,44 @@ public static class NodeHost
                 await sandboxResources.DisposeAsync().ConfigureAwait(false);
             }
 
-            await execution.DisposeAsync().ConfigureAwait(false);
+            if (execution is not null)
+            {
+                await execution.DisposeAsync().ConfigureAwait(false);
+            }
             platform?.Dispose();
             keys.Dispose();
             await processor.DisposeAsync().ConfigureAwait(false);
         }
     }
 
+    private static async Task RecoverLegacyAsync(NodeHostOptions options, NodeRuntime node, ExecutionSupervisor execution, RecoveryReport recovery)
+    {
+        // Persist uncertainty before enabling any legacy API that can observe or mutate its target.
+        var interruptedFiles = await node.Processor.ExecuteAsync(context =>
+            FileMutationJournal.RecoverInterrupted(context.Transaction), CommitDurability.Full).ConfigureAwait(false);
+        if (interruptedFiles > 0)
+        {
+            node.Log.Warning("node.file_recovery.pending", new LogField("count", interruptedFiles));
+        }
+
+        // The FULL writer fences only unraised reservations without a target journal; active approvals remain.
+        var recoveredStages = await node.Processor.ExecuteAsync(context =>
+            PrivateStageTerminal.RecoverUnraised(context.Transaction) +
+            PrivateStageTerminal.RecoverTerminalApprovals(context.Transaction), CommitDurability.Full).ConfigureAwait(false);
+        if (recoveredStages > 0)
+        {
+            node.Log.Warning("node.file_recovery.stages_terminal", new LogField("count", recoveredStages));
+        }
+
+        foreach (var participant in options.Recovery.Prepend(execution))
+        {
+            await participant.RecoverAsync(recovery, node.Processor, node.Stopping).ConfigureAwait(false);
+            node.Log.Info("node.recovery.done", new LogField("participant", participant.Name));
+        }
+    }
+
     private static async Task<int> ShutdownAsync(NodeRuntime node, LocalRpcServer server, WindowsReadyEvent? ready, SystemdNotifier notifier,
-        CommandProcessor processor, string dataRoot, CancellationTokenSource loops, Task[] background, CloudLinkService cloud)
+        CommandProcessor processor, string dataRoot, CancellationTokenSource loops, Task[] background, CloudLinkService? cloud)
     {
         var started = node.Clock.GetTimestamp();
 
@@ -650,7 +701,11 @@ public static class NodeHost
         // starts from now on; a center call in flight runs to its answer or its own 10 s deadline and its rotation is stored; at the budget
         // a call still running is cancelled (it fails closed). The link's DisposeAsync below then flushes (CTR4-NODE-05) within one more
         // second, so it has ended by budget + 1 s (CloudLinkService.FlushReserve), before the force exit at budget + 2 s (OverrunGrace).
-        cloud.BeginStop(ShutdownBudget);
+        if (cloud is not null)
+        {
+            cloud.BeginStop(ShutdownBudget);
+        }
+
         using var overrun = new Timer(_ =>
         {
             node.Log.Error("node.shutdown.overrun", new LogField("budgetMs", (long)ShutdownBudget.TotalMilliseconds));
@@ -687,7 +742,10 @@ public static class NodeHost
         await backgroundWait.CancelAsync().ConfigureAwait(false);
 
         // The cloud link stops within the bound begun above and flushes a rotated credential whose write failed (AF-CTR-04 CTR4-NODE-05).
-        await cloud.DisposeAsync().ConfigureAwait(false);
+        if (cloud is not null)
+        {
+            await cloud.DisposeAsync().ConfigureAwait(false);
+        }
 
         // Running attempts stay with their holders (their guards take over the disk limits); kill_with_node attempts end here.
         if (node.Execution is { } execution)
@@ -695,6 +753,7 @@ public static class NodeHost
             await execution.StopAsync().ConfigureAwait(false);
         }
 
+        node.Sandboxes?.StopDeletionWorkers();
         await processor.DisposeAsync().ConfigureAwait(false);
         node.Store.Checkpoint();
         var descriptorPath = NodeLocations.EndpointDescriptorFile(dataRoot);
@@ -925,20 +984,22 @@ public static class NodeHost
     }
 
     private static SandboxManager? CreateSandboxManager(NodeStore store, string dataRoot, NodeSecretStore secrets, TimeProvider clock, NodeLog log,
-        ulong journalGeneration, string? installationRoot, SandboxProtectedEndpoint? protectedEndpoint, ExecutionFaults faults)
+        ulong journalGeneration, string? installationRoot, SandboxProtectedEndpoint? protectedEndpoint, ExecutionFaults faults,
+        LinuxSandboxDeletionAuthority? linuxDeletionAuthority)
     {
         try
         {
             if (SandboxLocalOwner.Current() is { } owner)
             {
                 return new SandboxManager(store, dataRoot, owner, secrets, clock,
-                    journalGeneration.ToString(CultureInfo.InvariantCulture), installationRoot, protectedEndpoint)
+                    journalGeneration.ToString(CultureInfo.InvariantCulture), installationRoot, protectedEndpoint, linuxDeletionAuthority)
                 {
                     RunLauncher = OperatingSystem.IsWindows() ? new WindowsRunLauncher()
                         : OperatingSystem.IsLinux() ? new LinuxRunLauncher() : null,
                     RunFaults = faults,
                     RunDiagnostic = (id, phase, native) => log.Info("run.owner", new LogField("run", id),
                         new LogField("phase", phase), new LogField("native", native)),
+                    DeletionLog = log,
                 };
             }
 

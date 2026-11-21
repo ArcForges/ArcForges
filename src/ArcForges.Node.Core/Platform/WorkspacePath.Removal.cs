@@ -77,8 +77,11 @@ internal sealed partial class WorkspacePath
     internal bool InspectRemovalAbsent(string name)
     {
         try { _ = InspectEntry(name); return false; }
-        catch (WorkspacePathException failure) when (failure.Reason is "native_2" or "native_3") { return true; }
+        catch (WorkspacePathException failure) when (IsMissingRemovalEntry(failure)) { return true; }
     }
+
+    internal static bool IsMissingRemovalEntry(WorkspacePathException failure) =>
+        failure.Reason == "native_2" || (OperatingSystem.IsWindows() && failure.Reason == "native_3");
 
     /// <summary>Creates or validates one private managed quarantine directory relative to this checked parent.</summary>
     internal unsafe WorkspacePath EnsureRemovalDirectory(string name)

@@ -77,14 +77,22 @@ public sealed class PrivateStageApprovalTerminalTests
         }
         if (scenario == 4)
         {
-            // Synthetic decision holds APPROVED without invoking its worker, to test its recovery exclusion.
-            await node.Runtime.Processor.ExecuteAsync(command => Approvals.Decide(command, approvalId, approve: true,
-                new ActorRef { Origin = Origin.Human, ClientKind = ClientKind.Cli }, comment: null), CommitDurability.Full);
-            Assert.Equal(0, node.Runtime.Store.Write(PrivateStageTerminal.RecoverUnraised, CommitDurability.Full));
-            Assert.Equal(0, node.Runtime.Store.Write(PrivateStageTerminal.RecoverTerminalApprovals, CommitDurability.Full));
-            Assert.Equal((1, (long)body.Length), node.Runtime.Store.Read(PrivateStageRegistry.Usage));
-            Assert.Null(node.Runtime.Store.Read(r => FileMutationJournal.GetForCaller(r, id, caller)));
-            Assert.False(File.Exists(Path.Combine(directory, "target")));
+            // Keep the synthetic APPROVED state private to recovery so the startup approval worker can't execute it.
+            await Assert.ThrowsAsync<RollbackApprovedFixtureException>(() => node.Runtime.Processor.ExecuteAsync<bool>(command =>
+            {
+                var transaction = command.Transaction;
+                var approved = Approvals.Decide(command, approvalId, approve: true,
+                    new ActorRef { Origin = Origin.Human, ClientKind = ClientKind.Cli }, comment: null);
+                Assert.Equal(ApprovalState.Approved, approved.State);
+                Assert.Equal(0, PrivateStageTerminal.RecoverUnraised(transaction));
+                Assert.Equal(0, PrivateStageTerminal.RecoverTerminalApprovals(transaction));
+                Assert.Equal(ApprovalState.Approved, Approvals.Get(transaction, approvalId)!.State);
+                Assert.Equal((1, (long)body.Length), PrivateStageRegistry.Usage(transaction));
+                Assert.Null(FileMutationJournal.GetForCaller(transaction, id, caller));
+                Assert.False(File.Exists(Path.Combine(directory, "target")));
+                throw new RollbackApprovedFixtureException();
+            }, CommitDurability.Full));
+            Assert.Equal(ApprovalState.Pending, node.Runtime.Store.Read(r => Approvals.Get(r, approvalId))!.State);
             return;
         }
 
@@ -135,4 +143,6 @@ public sealed class PrivateStageApprovalTerminalTests
         Assert.NotNull(node.Runtime.Store.Read(r => FileMutationJournal.Replay(r, FileOperationKind.Write, id, caller, raw)));
         Assert.Equal(0L, node.Runtime.Store.Read(r => r.Scalar("SELECT count(*) FROM file_operation_journal;")));
     }
+
+    private sealed class RollbackApprovedFixtureException : Exception;
 }

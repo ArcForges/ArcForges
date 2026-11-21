@@ -37,6 +37,10 @@ internal sealed record StoredSandbox(
 internal static class SandboxRecords
 {
     internal const string PendingRootIdentity = "pending";
+    private const string TransferManagedUse = """
+        (t.state IN (1,2,5) OR t.effect_certainty=3
+         OR (t.closed_utc IS NULL AND (t.state=3 OR (t.state=4 AND t.staging_identity<>$unbound))))
+        """;
 
     private const string Current = """
         SELECT s.sandbox_id, s.owner_id, s.display_name, s.normalized_name, s.revision, s.state,
@@ -118,10 +122,48 @@ internal static class SandboxRecords
         return result;
     }
 
-    /// <summary>Checks persisted managed use before admitting ERROR repair while the Sandbox lock is held.</summary>
+    internal static IReadOnlyList<string> ListDeletionBlockingRuns(StoreReader reader, string ownerId, string sandboxId, int limit) =>
+        ReadBlockingIds(reader, """
+            SELECT r.run_id FROM run AS r JOIN sandbox AS s ON s.sandbox_id=r.sandbox_id
+            WHERE s.owner_id=$owner AND s.sandbox_id=$id AND (r.state IN (1,2,3,4,7) OR EXISTS(
+                SELECT 1 FROM command_receipt AS c WHERE c.owner_id=s.owner_id
+                AND c.aggregate_kind='run' AND c.aggregate_id=r.run_id
+                AND (c.state IN ('ACCEPTED','UNKNOWN') OR c.effect_certainty=3)))
+            ORDER BY r.run_id LIMIT $limit;
+            """, ownerId, sandboxId, limit, transfer: false);
+
+    internal static IReadOnlyList<string> ListDeletionBlockingTransfers(StoreReader reader, string ownerId, string sandboxId, int limit) =>
+        ReadBlockingIds(reader, $"""
+            SELECT t.transfer_id FROM transfer AS t JOIN sandbox AS s ON s.sandbox_id=t.sandbox_id AND s.owner_id=t.owner_id
+            WHERE s.owner_id=$owner AND s.sandbox_id=$id AND ({TransferManagedUse} OR EXISTS(
+                SELECT 1 FROM command_receipt AS c WHERE c.owner_id=s.owner_id
+                  AND (c.state IN ('ACCEPTED','UNKNOWN') OR c.effect_certainty=3)
+                  AND ((c.aggregate_kind='transfer' AND c.aggregate_id=t.transfer_id)
+                       OR (c.owner_epoch=t.owner_epoch AND c.command_id=t.command_id))))
+            ORDER BY t.transfer_id LIMIT $limit;
+            """, ownerId, sandboxId, limit, transfer: true);
+
+    private static List<string> ReadBlockingIds(StoreReader reader, string sql, string ownerId, string sandboxId,
+        int limit, bool transfer)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(limit);
+        using var command = reader.CreateCommand(sql);
+        StoreReader.Bind(command, [("$owner", ownerId), ("$id", sandboxId), ("$limit", limit)]);
+        if (transfer) StoreReader.Bind(command, [("$unbound", TransferRecords.UnboundStage)]);
+        using var rows = command.ExecuteReader();
+        var result = new List<string>();
+        while (rows.Read())
+        {
+            result.Add(rows.GetString(0));
+        }
+
+        return result;
+    }
+
+    /// <summary>Checks persisted managed use before ERROR repair or deletion while the Sandbox lock is held.</summary>
     internal static bool HasUnresolvedUse(StoreReader reader, string ownerId, string sandboxId,
         byte[]? currentEpoch = null, string? admittedCommandId = null, StoredSandboxDeletion? continuation = null) =>
-        Equals(reader.Scalar("""
+        Equals(reader.Scalar($"""
             SELECT EXISTS(
                 SELECT 1 FROM sandbox AS s
                 WHERE s.owner_id=$owner AND s.sandbox_id=$id AND (
@@ -131,7 +173,11 @@ internal static class SandboxRecords
                         WHERE r.owner_id=s.owner_id
                           AND (r.state IN ('ACCEPTED','UNKNOWN') OR r.effect_certainty=3)
                           AND NOT (r.owner_epoch IS $epoch AND (
-                            r.command_id IS $admitted OR r.command_id IS $original OR r.command_id IS $previous))
+                            r.command_id IS $admitted OR r.command_id IS $original OR r.command_id IS $previous
+                            OR ($deletion IS NOT NULL AND r.method IS $method AND r.aggregate_kind IS 'sandbox'
+                                AND r.aggregate_id IS s.sandbox_id
+                                AND json_extract(r.response_json,'$._deletionBinding.originalCommandId') IS $original
+                                AND json_extract(r.response_json,'$._deletionBinding.deletionId') IS $deletion)))
                           AND (
                             (r.aggregate_kind='sandbox' AND r.aggregate_id=s.sandbox_id)
                             OR (r.aggregate_kind='run' AND EXISTS(SELECT 1 FROM run AS u
@@ -144,7 +190,7 @@ internal static class SandboxRecords
                     )
                     OR EXISTS(
                         SELECT 1 FROM transfer AS t WHERE t.sandbox_id=s.sandbox_id
-                          AND (t.state IN (1,2,5) OR t.effect_certainty=3 OR (t.state=3 AND t.closed_utc IS NULL))
+                            AND {TransferManagedUse}
                     )
                     OR EXISTS(
                         SELECT 1 FROM deletion_journal AS d WHERE d.sandbox_id=s.sandbox_id
@@ -154,7 +200,9 @@ internal static class SandboxRecords
                 )
             );
             """, ("$owner", ownerId), ("$id", sandboxId), ("$epoch", currentEpoch), ("$admitted", admittedCommandId),
-            ("$original", continuation?.OriginalCommandId), ("$previous", continuation?.LatestSuccessorId)), 1L);
+            ("$original", continuation?.OriginalCommandId), ("$previous", continuation?.LatestSuccessorId),
+            ("$deletion", continuation?.DeletionId), ("$method", SandboxDeletionRecords.Method),
+            ("$unbound", TransferRecords.UnboundStage)), 1L);
 
     /// <summary>Reserves the identity and first configuration in the durable Create admission transaction.</summary>
     internal static void Reserve(StoreTransaction transaction, StoredSandbox reservation)

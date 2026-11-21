@@ -7,9 +7,9 @@ account, enrollment or network connection. Remote grants are the exception.
 They manage access for an existing enrollment.
 
 This guide covers the offline CLI. See [Owned Sandbox data](data.md) for
-usage, file listings, imports and exports. The filesystem delivery tasks
-cover Sandbox deletion. See [Center connection](center.md) for enrollment and
-link commands from this Node. The Plan records native
+usage, file listings, imports, exports and Sandbox deletion. See
+[Center connection](center.md) for enrollment and link commands from this Node.
+The Plan records native
 verification, merge and release status. [Design and command map](https://github.com/ArcForges/ArcForges-Design/blob/main/docs/architecture/06-local-node-cli.md) ·
 [Delivery plan](https://github.com/ArcForges/Plan).
 
