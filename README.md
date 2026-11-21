@@ -4,8 +4,8 @@
 
 ArcForges is migrating to a general CLI Sandbox/Run platform with a local Node
 and CLI and optional remote management. C# and Native AOT provide the local
-runtime. The existing Windows supervisor and Linux systemd infrastructure remain
-during the cutover. The package contains the Node and CLI.
+runtime. The Windows supervisor and Linux systemd start the Node. The package
+contains the Node and CLI.
 
 The `arcforges` executable hosts the Node and the CLI. This development candidate
 includes the V2 offline Core and administration commands described in the
@@ -13,10 +13,9 @@ includes the V2 offline Core and administration commands described in the
 migration and release status. [ArcForges-Design](https://github.com/ArcForges/ArcForges-Design) ·
 [Plan](https://github.com/ArcForges/Plan).
 
-The repository has no separate product MCP adapter, hook-handler, cache-platform
-or toolchain-registry project to delete. Legacy client kinds, roles and dormant
-schema are handled by their later cutover tasks; this removal creates no replacement
-modules. Shared DesktopPlatform/Contracts and independent applications stay intact.
+Sandbox Runs use the official MXC profiles. A data root with a pre-V2 store or
+retired execution records requires offline cutover. Drain and archive it with
+the previous release, then start the Node with a V2 data root.
 
 ## Layout
 
@@ -25,7 +24,7 @@ modules. Shared DesktopPlatform/Contracts and independent applications stay inta
 | `src/ArcForges.Host` | `arcforges`, the multi-role node/CLI executable |
 | `src/ArcForges.Node.Core` | The node's core: configuration and data root, single instance, logging with redaction, command processor, event journal and stream hub, lifecycle, settings, notifications, jobs |
 | `src/ArcForges.Node.Api` | The node's API on the LocalRpc service endpoint (NodeService, NodeEventService) and the node host (startup and shutdown) |
-| `src/ArcForges.Node.Platform` | The execution platform contract and the helper file formats (exit, launch, guard, heartbeat, output index) |
+| `src/ArcForges.Node.Platform` | Shared MXC profile admission, host and Run resource control, and Node heartbeat |
 | `src/ArcForges.Node.Platform.Windows` | Windows Job, process and resource primitives for the Run supervisor and official MXC executor |
 | `src/ArcForges.Node.Platform.Linux` | Linux Sandbox Runs through the official MXC SDK, transient user units, cgroup v2 resource limits and observation |
 | `src/ArcForges.Client` | The client library of the CLI: endpoint resolution, auto-start, hello, NodeStreamCache, command IDs, connection state |

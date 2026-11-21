@@ -5,6 +5,7 @@ using System.Net.Sockets;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
+using ArcForges.Node.Platform;
 
 namespace ArcForges.ClosedLoop.Tests;
 
@@ -34,6 +35,8 @@ public sealed class NodeLifecycleTests
         // so the log is not read here (it may trail the state by a moment).
         Assert.Contains(ready.Json().GetProperty("state").GetString(), (string[])["READY", "DEGRADED"]);
         Assert.True(node.Descriptor() is { } descriptor && descriptor.ProcessIsAlive(), "No endpoint descriptor after wait-ready.");
+        await TestNode.WaitAsync(() => NodeHeartbeat.TryRead(NodeHeartbeat.FilePath(node.DataRoot)) is { Seq: >= 2 } pulse
+            && pulse.Pid == process.Id, TimeSpan.FromSeconds(10), "the ready V2 node to renew its heartbeat");
         await node.StopNodeAsync();
         Assert.True(process.WaitForExit(TimeSpan.FromSeconds(15)));
     }
@@ -64,8 +67,7 @@ public sealed class NodeLifecycleTests
         Assert.True(first.ExitCode == 0, first.ToString());
         var json = first.Json();
         Assert.True(json.GetProperty("autoStarted").GetBoolean());
-        Assert.Equal(OperatingSystem.IsWindows() || ArcForges.Tests.SystemdTestEnvironment.FullyEnforced ? "NODE_LIFECYCLE_STATE_READY" : "NODE_LIFECYCLE_STATE_DEGRADED",
-            json.GetProperty("node").GetProperty("state").GetString());
+        Assert.Equal("NODE_LIFECYCLE_STATE_READY", json.GetProperty("node").GetProperty("state").GetString());
         Assert.Equal(node.Endpoint, json.GetProperty("node").GetProperty("endpoint").GetString());
         Assert.True(elapsed < TimeSpan.FromSeconds(15), $"status took {elapsed}");
 

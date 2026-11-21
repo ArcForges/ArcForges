@@ -716,6 +716,8 @@ public sealed class NodeStore : IDisposable
                 OR EXISTS(SELECT 1 FROM file_stage_production)
                 OR EXISTS(SELECT 1 FROM file_stage_worker)
                 OR EXISTS(SELECT 1 FROM file_removal_plan)
+                OR EXISTS(SELECT 1 FROM approval
+                    WHERE state IN (1, 2) AND operation <> 'NodeService.UpdateNodeSettings')
                 OR EXISTS(SELECT 1 FROM quarantine_entry WHERE restored_at IS NULL AND purged_at IS NULL);
             """), 1L))
         {

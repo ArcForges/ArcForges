@@ -305,6 +305,7 @@ public static class NodeHost
         }
 
         using var heartbeat = new NodeHeartbeatWriter(dataRoot, log, clock);
+        heartbeat.AddProbe(processor);
         if (notifier.WatchdogInterval is { } watchdogInterval)
         {
             // Systemd receives watchdog notifications from the Node heartbeat.
@@ -372,6 +373,7 @@ public static class NodeHost
         LocalRpcServer? server = null;
         IAsyncDisposable? sandboxResources = null;
         using var housekeeping = new PeriodicTimer(HousekeepingInterval);
+        Task heartbeatLoop = Task.CompletedTask;
         Task housekeepingLoop = Task.CompletedTask;
         Task versionCheck = Task.CompletedTask;
         using var loops = new CancellationTokenSource();
@@ -460,7 +462,9 @@ public static class NodeHost
             var available = node.Sandboxes is not null;
             await node.TransitionAsync(available ? NodeLifecycleState.Ready : NodeLifecycleState.Degraded,
                 available ? "ready" : "sandbox_store_unavailable").ConfigureAwait(false);
+            heartbeat.RecoveryDone = true;
             heartbeat.Start();
+            heartbeatLoop = WriteHeartbeatsAsync(heartbeat, loops.Token);
             if (node.ResumeApprovals is { } resume)
             {
                 // 11 section 1: an approval the previous run approved but did not execute runs now, under its original command ID.
@@ -495,10 +499,13 @@ public static class NodeHost
             {
             }
 
-            return await ShutdownAsync(node, server, ready, notifier, processor, dataRoot, loops, [housekeepingLoop, versionCheck], cloud).ConfigureAwait(false);
+            return await ShutdownAsync(node, server, ready, notifier, processor, dataRoot, loops,
+                [heartbeatLoop, housekeepingLoop, versionCheck], cloud).ConfigureAwait(false);
         }
         finally
         {
+            await loops.CancelAsync().ConfigureAwait(false);
+            await heartbeatLoop.ConfigureAwait(false);
             if (server is not null)
             {
                 await server.DisposeAsync().ConfigureAwait(false);
@@ -510,6 +517,22 @@ public static class NodeHost
             }
 
             await processor.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
+    private static async Task WriteHeartbeatsAsync(NodeHeartbeatWriter heartbeat, CancellationToken stopping)
+    {
+        using var timer = new PeriodicTimer(NodeHeartbeatWriter.Interval);
+        try
+        {
+            do
+            {
+                heartbeat.Tick();
+            }
+            while (await timer.WaitForNextTickAsync(stopping).ConfigureAwait(false));
+        }
+        catch (OperationCanceledException) when (stopping.IsCancellationRequested)
+        {
         }
     }
 

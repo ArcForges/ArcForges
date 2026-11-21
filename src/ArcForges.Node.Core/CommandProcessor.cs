@@ -72,7 +72,7 @@ public sealed record IdempotentOutcome(bool Replayed, byte[]? Outcome, ArcError?
 /// published to the stream hub after the commit, in sequence order. Idempotent commands record their outcome in
 /// <c>command_dedup</c> in the same transaction (<c>synchronous=FULL</c>).
 /// </summary>
-public sealed class CommandProcessor : IAsyncDisposable
+public sealed class CommandProcessor : IAsyncDisposable, Execution.IHeartbeatProbe
 {
     /// <summary>The queue bound.</summary>
     public const int Capacity = 4096;
@@ -103,6 +103,16 @@ public sealed class CommandProcessor : IAsyncDisposable
 
     /// <summary>Commands waiting in the queue.</summary>
     public int Queued => _queue.Reader.Count;
+
+    string Execution.IHeartbeatProbe.Name => "command_processor";
+
+    Task Execution.IHeartbeatProbe.ProbeAsync(CancellationToken cancellationToken)
+    {
+        var probe = new ProbeItem();
+        return _queue.Writer.TryWrite(probe)
+            ? probe.Completion.Task.WaitAsync(cancellationToken)
+            : Task.FromException(new CommandQueueFullException());
+    }
 
     /// <summary>Runs <paramref name="command"/> in the writer loop and returns its result after the commit.</summary>
     /// <exception cref="CommandQueueFullException">The queue is full.</exception>
@@ -178,6 +188,12 @@ public sealed class CommandProcessor : IAsyncDisposable
     {
         await foreach (var item in _queue.Reader.ReadAllAsync().ConfigureAwait(false))
         {
+            if (item is ProbeItem probe)
+            {
+                probe.Succeed();
+                continue;
+            }
+
             var next = _journal.NextSequence;
             IReadOnlyList<NodeEvent> events = [];
             try
@@ -227,6 +243,19 @@ public sealed class CommandProcessor : IAsyncDisposable
         public abstract void Succeed();
 
         public abstract void Fail(Exception exception);
+    }
+
+    private sealed class ProbeItem : WorkItem
+    {
+        public TaskCompletionSource Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override IReadOnlyList<NodeEvent> Run(NodeStore store, EventJournal journal) => [];
+
+        public override void ApplyCommittedState() { }
+
+        public override void Succeed() => Completion.TrySetResult();
+
+        public override void Fail(Exception exception) => Completion.TrySetException(exception);
     }
 
     private sealed class WorkItem<T>(Func<CommandContext, T> command, CommitDurability durability) : WorkItem

@@ -133,6 +133,27 @@ public sealed partial class StoreCreationTests
     }
 
     [Fact]
+    public void V2RuntimeRefusesUnsettledLegacyApprovalWithoutCreatingAnOutcome()
+    {
+        using var root = new TemporaryDataRoot();
+        using (var original = root.Open(new ManualClock()))
+        {
+            original.Write(transaction => transaction.Execute("""
+                INSERT INTO approval(approval_id,state,operation,summary,details_json,risk,requester,command_id,request,
+                    request_digest,created_at,expires_at,rev)
+                VALUES(randomblob(16),2,'TaskService.RetryTask','original','{}',1,x'01',randomblob(16),x'01',
+                    zeroblob(32),0,1,0);
+                """));
+        }
+
+        byte[] before = File.ReadAllBytes(root.Database);
+        var refusal = Assert.Throws<StoreIncompatibleException>(() => NodeStore.OpenForV2Runtime(
+            new NodeStoreOptions { DataRoot = root.Path, BootIdentity = "after" }));
+        Assert.Contains("legacy_store_requires_offline_cutover", refusal.Message, StringComparison.Ordinal);
+        Assert.Equal(before, File.ReadAllBytes(root.Database));
+    }
+
+    [Fact]
     public void V2RuntimeDoesNotInitializeAnEmptyDatabaseBesideExistingAuthority()
     {
         using var root = new TemporaryDataRoot();
