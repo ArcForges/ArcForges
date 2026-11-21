@@ -101,7 +101,7 @@ internal sealed class LinuxHarness : IDisposable
         return new AttemptFiles(DataRoot, name);
     }
 
-    /// <summary>Launches <paramref name="argv"/> (resolved like the node does) in a new attempt unit.</summary>
+    /// <summary>Launches the explicit fixture command in a new attempt unit.</summary>
     public IAttemptHandle Launch(IReadOnlyList<string> argv, ContainerLimits? limits = null, IReadOnlyList<StepSpec>? launchSteps = null,
         IReadOnlyList<StepSpec>? endSteps = null, string? workingDirectory = null, int leftoverGraceMs = 5_000, IReadOnlyList<string>? environment = null,
         LinuxExecutionPlatform? platform = null, bool discardOutput = false, AttemptFiles? files = null)
@@ -109,13 +109,17 @@ internal sealed class LinuxHarness : IDisposable
         files ??= Files(out _);
         var env = environment ?? DefaultEnvironment();
         var cwd = workingDirectory ?? Root;
-        var dictionary = env.Select(entry => entry.Split('=', 2)).ToDictionary(parts => parts[0], parts => parts.Length > 1 ? parts[1] : string.Empty, StringComparer.Ordinal);
-        var prepared = LinuxCommands.Prepare(new CommandRequest { Argv = argv, WorkingDirectory = cwd, Environment = dictionary, TempDirectory = files.TempDirectory });
         return Track((platform ?? Platform).Launch(new AttemptLaunch
         {
             NodeName = NodeName,
             Files = files,
-            Command = prepared,
+            Command = new PreparedCommand
+            {
+                Application = FixtureApplication(argv[0]),
+                CommandLine = string.Empty,
+                Argv = argv,
+                Program = argv[0],
+            },
             Environment = env,
             WorkingDirectory = cwd,
             Limits = limits ?? new ContainerLimits(),
@@ -136,13 +140,21 @@ internal sealed class LinuxHarness : IDisposable
     public static List<string> DefaultEnvironment() =>
         [.. Environment.GetEnvironmentVariables().Cast<System.Collections.DictionaryEntry>().Select(entry => (string)entry.Key + "=" + (string?)entry.Value)];
 
-    /// <summary>A step that runs <paramref name="argv"/> (<c>argv[0]</c> resolved on <c>PATH</c>).</summary>
+    /// <summary>A step that runs the explicit fixture command.</summary>
     public static StepSpec Step(string name, int timeoutMs, params string[] argv) => new()
     {
         Name = name,
-        Application = LinuxCommands.Resolve(argv[0], "/", new Dictionary<string, string> { ["PATH"] = "/usr/bin:/bin" }) ?? argv[0],
+        Application = FixtureApplication(argv[0]),
         Argv = [.. argv],
         TimeoutMs = timeoutMs,
+    };
+
+    private static string FixtureApplication(string program) => program switch
+    {
+        "sh" => "/bin/sh",
+        "sleep" => "/bin/sleep",
+        _ when Path.IsPathFullyQualified(program) => program,
+        _ => throw new ArgumentException("A fixture command requires an absolute executable path.", nameof(program)),
     };
 
     /// <summary>Waits for the attempt's exit record (bounded), refreshing the handle as the node's enforcement loop does.</summary>

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Runtime.Versioning;
-using ArcForges.Contracts.Node.V1;
 
 namespace ArcForges.Node.Platform.Linux.Tests;
 
 /// <summary>Pure units of the Linux platform: they run on every OS.</summary>
+/// <remarks>The original legacy argv and shell resolution tests remain at eaaccb8380a2bd265aaad0a67d62c8fab2a8a29a.</remarks>
 public sealed class UnitTests
 {
     private static readonly int[] PriorityWeights = [9, 7, 5, 3, 1];
@@ -194,80 +194,6 @@ public sealed class UnitTests
         Assert.Null(old.SwapPeakBytes);
         Assert.Null(old.RecordedBy);
         Assert.DoesNotContain("swap_peak_bytes", old.ToJson(), StringComparison.Ordinal);
-    }
-
-    [Fact]
-    [SupportedOSPlatform("linux")]
-    public void ArgvResolutionFollowsExecvp()
-    {
-        Assert.SkipUnless(OperatingSystem.IsLinux(), "PATH with colons and execute bits.");
-        var root = Directory.CreateTempSubdirectory("arcforges-resolve-").FullName;
-        try
-        {
-            var bin = Directory.CreateDirectory(Path.Combine(root, "bin")).FullName;
-            var tool = Path.Combine(bin, "tool");
-            File.WriteAllText(tool, "#!/bin/sh\n");
-            var local = Path.Combine(root, "local");
-            File.WriteAllText(local, "#!/bin/sh\n");
-            File.SetUnixFileMode(tool, UnixFileMode.UserRead | UnixFileMode.UserExecute);
-            File.SetUnixFileMode(local, UnixFileMode.UserRead | UnixFileMode.UserExecute);
-
-            var environment = new Dictionary<string, string> { ["PATH"] = bin };
-            Assert.Equal(tool, LinuxCommands.Resolve("tool", root, environment));
-            Assert.Null(LinuxCommands.Resolve("local", root, environment));
-
-            // A program with a slash is taken as it is, relative to the working directory; an empty PATH entry is the working directory.
-            Assert.Equal(local, LinuxCommands.Resolve("./local", root, environment));
-            Assert.Equal(local, LinuxCommands.Resolve("local", root, new Dictionary<string, string> { ["PATH"] = ":" + bin }));
-            Assert.Null(LinuxCommands.Resolve("missing", root, environment));
-
-            var refused = Assert.Throws<CommandRefusedException>(() => LinuxCommands.Prepare(new CommandRequest
-            {
-                Argv = ["missing"],
-                WorkingDirectory = root,
-                Environment = environment,
-            }));
-            Assert.Equal("program_not_found", refused.Code);
-            var prepared = LinuxCommands.Prepare(new CommandRequest { Argv = ["tool", "a b", "$$"], WorkingDirectory = root, Environment = environment });
-            Assert.Equal(tool, prepared.Application);
-            Assert.Equal(["tool", "a b", "$$"], prepared.Argv);
-        }
-        finally
-        {
-            Directory.Delete(root, recursive: true);
-        }
-    }
-
-    [Theory]
-    [InlineData(ShellKind.Cmd)]
-    [InlineData(ShellKind.Powershell)]
-    public void WindowsShellsAreRefused(ShellKind kind)
-    {
-        var refused = Assert.Throws<CommandRefusedException>(() => LinuxCommands.Prepare(new CommandRequest
-        {
-            Shell = kind,
-            Script = "echo",
-            WorkingDirectory = Path.GetTempPath(),
-            Environment = new Dictionary<string, string>(),
-        }));
-        Assert.Equal("unsupported_shell", refused.Code);
-    }
-
-    [Fact]
-    [SupportedOSPlatform("linux")]
-    public void ShellScriptsRunThroughShAndLongOnesFromAFile()
-    {
-        Assert.SkipUnless(OperatingSystem.IsLinux(), "/bin/sh.");
-        var environment = new Dictionary<string, string> { ["PATH"] = "/usr/bin:/bin" };
-        var inline = LinuxCommands.Prepare(new CommandRequest { Shell = ShellKind.SystemDefault, Script = "echo $HOME", WorkingDirectory = "/", Environment = environment });
-        Assert.Equal("/bin/sh", inline.Application);
-        Assert.Equal(["sh", "-c", "echo $HOME"], inline.Argv);
-        var script = new string('x', LinuxCommands.ScriptInlineLimit + 1);
-        var temp = Path.GetTempPath();
-        var file = LinuxCommands.Prepare(new CommandRequest { Shell = ShellKind.Sh, Script = script, WorkingDirectory = "/", Environment = environment, TempDirectory = temp });
-        Assert.Equal(Path.Combine(temp, "command.sh"), file.ScriptFile);
-        Assert.Equal(script, file.ScriptContent);
-        Assert.Equal(["sh", Path.Combine(temp, "command.sh")], file.Argv);
     }
 
     [Fact]
