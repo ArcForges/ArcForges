@@ -9,6 +9,7 @@ using ArcForges.Contracts.Node.V1;
 using ArcForges.Node.Store.Migrations;
 using ArcForges.Tests;
 using Microsoft.Win32.SafeHandles;
+using ProcessIdentity = ArcForges.Tests.ProcessIdentity;
 
 namespace ArcForges.Node.Store.Tests;
 
@@ -22,6 +23,7 @@ public sealed class MigrationContractionNativeScopeTests
     [Trait("env", "windows-real")]
     public async Task AFinishedAttemptWithALiveWindowsJobCannotBeContracted()
     {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         if (!OperatingSystem.IsWindows()) { Assert.Skip("Requires the Windows Job API."); return; }
         using var root = new TemporaryDataRoot();
         string name = SeedFinishedAttempt(root, windows: true);
