@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Runtime.Versioning;
+using ArcForges.Contracts.Node.V1;
 
 namespace ArcForges.Node.Platform.Windows.Tests;
 
@@ -74,8 +75,11 @@ public sealed class AdoptionTests
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows job objects.");
         using var harness = PlatformHarness.Start();
+        var report = harness.Platform.Evaluate();
+        Assert.Equal(AdoptSupport.Unsupported, report.Adopt);
+        Assert.Equal("New legacy process adoption has been retired. Cleanup of recorded adoptions requires confirmed custody.", report.AdoptReason);
         Assert.EndsWith("; same-user code can change or end ArcForges' containers (T-22), and work launched outside the recorded ancestry never joins them (T-23)",
-            harness.Platform.Evaluate().KillTreeReason, StringComparison.Ordinal);
+            report.KillTreeReason, StringComparison.Ordinal);
         using var job = JobObject.Create(null);
         LaunchedProcess? process = null;
         try
