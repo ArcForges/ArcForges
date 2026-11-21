@@ -953,13 +953,15 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
     private static RecordedCommand? Recorded(StoreReader reader, ReadOnlySpan<byte> commandId, string service, string method, byte[] digest, CenterCaller caller)
     {
         var id = commandId.ToArray();
-        if (!RoutedCommandOwnership.MayUse(reader, id, caller))
+        var operation = service[(service.LastIndexOf('.') + 1)..] + "." + method;
+        var retained = CommandDeduplication.ReadRetained(reader, id, service + "/" + method, digest, reader.NowMicroseconds);
+        if (retained is { Status: DedupStatus.Conflict }
+            || !RoutedCommandOwnership.MayExecute(reader, id, caller, operation, digest, retained is not null))
         {
             return null;
         }
 
-        if (Approvals.ByCommand(reader, id) is { } approval && CenterRouting.SameClass(approval.View.Requester?.CenterCaller, caller)
-            && approval.RequestDigest.AsSpan().SequenceEqual(digest) && approval.View.Operation.EndsWith("." + method, StringComparison.Ordinal))
+        if (Approvals.ByCommand(reader, id) is { } approval)
         {
             if (approval.State == ApprovalState.Approved)
             {
@@ -972,19 +974,9 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
             }
         }
 
-        byte[]? outcome = null;
-        using (var command = reader.CreateCommand("SELECT method, payload_digest, outcome, expires_at FROM command_dedup WHERE command_id = $id;"))
-        {
-            command.Parameters.AddWithValue("$id", id);
-            using var row = command.ExecuteReader();
-            if (row.Read() && (row.GetInt64(3) > reader.NowMicroseconds || RoutedFileRetention.IsHeld(reader, id)) && !row.IsDBNull(2) && row.GetString(0) == service + "/" + method
-                && ((byte[])row.GetValue(1)).AsSpan().SequenceEqual(digest))
-            {
-                outcome = (byte[])row.GetValue(2);
-            }
-        }
-
-        return outcome is not null ? new RecordedCommand(outcome, false) : null;
+        return retained is { Status: DedupStatus.Replay, Outcome: { } outcome }
+            ? new RecordedCommand(outcome.ToArray(), false)
+            : null;
     }
 
     private static (IMessage Request, RequestMeta? Meta) Parse(RoutedMethod method, ByteString payload) => method switch
