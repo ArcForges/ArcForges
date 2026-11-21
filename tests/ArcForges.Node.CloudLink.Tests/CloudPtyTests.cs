@@ -121,7 +121,7 @@ public sealed class CloudPtyTests
             var previous = Environment.GetEnvironmentVariable(ClientImages.TestVariable);
             try
             {
-                Environment.SetEnvironmentVariable(ClientImages.TestVariable, CloudNode.HelperExecutable);
+                Environment.SetEnvironmentVariable(ClientImages.TestVariable, CloudNode.CliExecutable);
                 await node.StartAsync();
                 return new Fixture(center, node);
             }
@@ -152,7 +152,7 @@ public sealed class CloudPtyTests
             static string Quote(string value) => "'" + value.Replace("'", "'\\''", StringComparison.Ordinal) + "'";
             start.ArgumentList.Add("-qefc");
             start.ArgumentList.Add("exec env --default-signal=INT " + string.Join(" ",
-                new[] { CloudNode.HelperExecutable, NodeLocations.TestModeOption }.Concat(args).Select(Quote)));
+                new[] { CloudNode.CliExecutable, NodeLocations.TestModeOption }.Concat(args).Select(Quote)));
             start.ArgumentList.Add("/dev/null");
 
             start.Environment.Clear();
