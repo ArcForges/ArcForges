@@ -23,6 +23,10 @@ namespace ArcForges.Node.Core.Tests;
 /// </summary>
 public sealed class TaskControlTests
 {
+    private const string FixtureMachine = "801e2fb2-c519-4c7b-af53-5690f55262da";
+    private const string EarlierFixtureBoot = "windows:" + FixtureMachine + ":100";
+    private const string CurrentFixtureBoot = "windows:" + FixtureMachine + ":200";
+
     private static readonly Caller Human = new(Origin.Human, ClientKind.Cli, null);
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -137,7 +141,7 @@ public sealed class TaskControlTests
     [Theory(Timeout = 30_000)]
     [InlineData(true, "boot_changed")]
     [InlineData(false, "container_missing")]
-    public async Task AnUnconfirmedRecoveredAttemptIsLostAndFreshRetryDoesNotStartWork(bool earlierBoot, string reason)
+    public async Task AProvenEndedOrAbsentAttemptIsLostWithoutStartingFreshRetry(bool earlierBoot, string reason)
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         await WithRetainedAttemptAsync(async fixture =>
@@ -148,7 +152,7 @@ public sealed class TaskControlTests
                 (lost.State, lost.StateReason, result.TerminationReason, result.Effect));
             Assert.StartsWith(reason + ":", result.Detail, StringComparison.Ordinal);
             if (earlierBoot)
-                Assert.Contains("boot_id_old=previous-boot", result.Detail, StringComparison.Ordinal);
+                Assert.Contains("boot_id_old=" + EarlierFixtureBoot, result.Detail, StringComparison.Ordinal);
 
             Assert.Equal(earlierBoot ? 0 : 1, fixture.Holder.Reopens);
             var retry = await fixture.Tasks.RetryTask(Human,
@@ -255,7 +259,8 @@ public sealed class TaskControlTests
         fixture.Clock = clock;
         var root = phase == AttemptState.Starting ? null : new RootProcess(int.MaxValue, clock.GetUtcNow());
         var (taskId, attemptId) = LegacyTaskHistoryFixture.Seed(fixture, phase, root: root);
-        using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = fixture.DataRoot, BootIdentity = BootIdentity.Read(), Clock = clock });
+        var boot = earlierBoot ? CurrentFixtureBoot : BootIdentity.Read();
+        using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = fixture.DataRoot, BootIdentity = boot, Clock = clock });
         var files = Tasks.Files(fixture, attemptId);
         Directory.CreateDirectory(files.Directory);
         using var holder = new RetainedHolder(IdText.Format(store.Metadata.NodeId.Span), files, clock, root, holderAvailable);
@@ -263,8 +268,8 @@ public sealed class TaskControlTests
         {
             if (earlierBoot)
             {
-                transaction.Execute("UPDATE attempt SET boot_identity = 'previous-boot' WHERE attempt_id = $id;",
-                    ("$id", attemptId.Value.ToByteArray()));
+                transaction.Execute("UPDATE attempt SET boot_identity = $boot WHERE attempt_id = $id;",
+                    ("$boot", EarlierFixtureBoot), ("$id", attemptId.Value.ToByteArray()));
             }
 
             prepare?.Invoke(transaction, taskId, holder);
