@@ -1,10 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- SPDX-License-Identifier: AGPL-3.0-only -->
   <!--
-    Linux custody recovery for recorded transient systemd user units in arcforges.slice (AD-0005). The user manager supplies
-    unit observation, freeze and stop. Exit records are read from disk and resource usage comes from the cgroup. Existing
-    units can still call exec-launch, exec-stop and exit-record. The guard supervises recorded units while the node is down.
-    Native access uses source-generated libc P/Invoke.
+    Official MXC Sandbox Runs use transient systemd user units and cgroup v2 for resource limits and ownership.
+    This project combines the Run launcher and recovery with Linux host resource observations.
     The library is part of the Native AOT arcforges executable (AD-0003), so it is AOT-
     and trim-compatible. Every type that calls Linux is marked SupportedOSPlatform("linux"); the pure parts are tested on every OS.
   -->
