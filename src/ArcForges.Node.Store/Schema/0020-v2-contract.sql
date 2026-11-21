@@ -121,4 +121,8 @@ DROP TABLE session;
 DROP TABLE storage_analysis;
 DROP TABLE workspace;
 
+ALTER TABLE migration_checkpoint ADD COLUMN source_database_sha256 TEXT;
+ALTER TABLE migration_checkpoint ADD COLUMN history_archive_sha256 TEXT;
+ALTER TABLE migration_checkpoint ADD COLUMN restore_database_sha256 TEXT;
+ALTER TABLE migration_checkpoint ADD COLUMN scope_receipt_sha256 TEXT;
 UPDATE schema_version SET version = 20, min_reader = 20 WHERE singleton = 1;

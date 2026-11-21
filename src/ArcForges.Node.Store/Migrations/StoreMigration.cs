@@ -83,11 +83,17 @@ public sealed class MigrationPlan
 /// <summary>The released migrations of this binary.</summary>
 public static class StoreMigrations
 {
-    /// <summary>The schema version this binary writes; it reads stores whose <c>min_reader_version</c> is at most this.</summary>
-    public const int SupportedSchemaVersion = 19;
+    /// <summary>The last expanded layout, retained for offline inspection and archived fixtures.</summary>
+    internal const int ExpandedSchemaVersion = 19;
 
-    /// <summary>The released steps, loaded from the embedded <c>Schema/*.sql</c> resources.</summary>
-    public static MigrationPlan Released { get; } = new([
+    /// <summary>The schema version this binary writes; it reads stores whose <c>min_reader_version</c> is at most this.</summary>
+    public const int SupportedSchemaVersion = ContractedSchemaVersion;
+
+    internal const int ContractedSchemaVersion = 20;
+    internal const string ContractionStepName = "0020-v2-contract.sql";
+
+    /// <summary>The immutable released expansion steps, for the offline schema workflow.</summary>
+    internal static MigrationPlan Expanded { get; } = new([
         // Version 1 is ArcForges-Design docs/data/node-store.sql verbatim (all tables of schema version 1).
         Load(1, 1, "0001-schema-v1.sql"),
 
@@ -148,6 +154,15 @@ public static class StoreMigrations
         // Bind committed V2 event metadata and retention evidence to its owner and Sandbox.
         Load(19, 19, "0019-v2-scoped-events.sql"),
     ]);
+
+    /// <summary>The full released plan, including the guarded forward contraction.</summary>
+    public static MigrationPlan Released { get; } = new([
+        .. Expanded.Steps,
+        Load(ContractedSchemaVersion, ContractedSchemaVersion, ContractionStepName),
+    ]);
+
+    internal static bool IncludesContraction(MigrationPlan plan) => plan.LatestVersion > ExpandedSchemaVersion &&
+        plan.Steps[ExpandedSchemaVersion].Name == ContractionStepName;
 
     private static StoreMigration Load(int version, int minReaderVersion, string name)
     {

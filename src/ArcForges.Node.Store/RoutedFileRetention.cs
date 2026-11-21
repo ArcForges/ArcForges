@@ -7,12 +7,14 @@ namespace ArcForges.Node.Store;
 /// <summary>Per-open evidence based on the host monotonic counter, independent of the node wall clock.</summary>
 internal sealed class RoutedFileRetentionProcess
 {
-    internal RoutedFileRetentionProcess(TimeProvider clock)
+    internal RoutedFileRetentionProcess(TimeProvider clock, bool contracted)
     {
+        Contracted = contracted;
         StartedAt = Stopwatch.GetTimestamp();
         StartedWall = StoreTime.NowMicroseconds(clock);
     }
 
+    internal bool Contracted { get; }
     internal byte[] Epoch { get; } = RandomNumberGenerator.GetBytes(16);
 
     internal long StartedAt { get; }
@@ -30,13 +32,14 @@ public static class RoutedFileRetention
     public static bool IsHeld(StoreReader reader, ReadOnlySpan<byte> commandId)
     {
         ArgumentNullException.ThrowIfNull(reader);
-        return reader.FileRetention is not null &&
-            reader.Scalar("SELECT 1 FROM routed_file_command_retention WHERE command_id = $id;", ("$id", commandId.ToArray())) is not null;
+        return reader.FileRetention is { } process &&
+            reader.Scalar(process.Contracted ? "SELECT 1 FROM contracted_command_hold WHERE command_id = $id;"
+                : "SELECT 1 FROM routed_file_command_retention WHERE command_id = $id;", ("$id", commandId.ToArray())) is not null;
     }
 
     internal static void MarkCommand(StoreTransaction transaction, ReadOnlySpan<byte> commandId)
     {
-        if (transaction.FileRetention is not { } process || !IsHeld(transaction, commandId))
+        if (transaction.FileRetention is not { Contracted: false } process || !IsHeld(transaction, commandId))
         {
             return;
         }
@@ -54,7 +57,7 @@ public static class RoutedFileRetention
     public static void MarkAudit(StoreTransaction transaction, long auditSequence)
     {
         ArgumentNullException.ThrowIfNull(transaction);
-        if (transaction.FileRetention is not { } process)
+        if (transaction.FileRetention is not { Contracted: false } process)
         {
             return;
         }
@@ -75,7 +78,7 @@ public static class RoutedFileRetention
     public static int Prune(StoreTransaction transaction)
     {
         ArgumentNullException.ThrowIfNull(transaction);
-        if (transaction.FileRetention is not { } process)
+        if (transaction.FileRetention is not { Contracted: false } process)
         {
             return 0;
         }
@@ -177,7 +180,7 @@ public static class RoutedFileRetention
     public static void MarkCall(StoreTransaction transaction, long logId)
     {
         ArgumentNullException.ThrowIfNull(transaction);
-        if (transaction.FileRetention is not { } process)
+        if (transaction.FileRetention is not { Contracted: false } process)
         {
             return;
         }
