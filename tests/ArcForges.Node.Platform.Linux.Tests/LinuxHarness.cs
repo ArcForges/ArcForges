@@ -144,19 +144,13 @@ internal sealed class LinuxHarness : IDisposable
     /// <summary>Creates a fixture unit already ordered after the caller's separate native test gate.</summary>
     public void Queue(IReadOnlyList<string> argv, AttemptFiles files) => StartFixtureUnit(FixtureLaunch(argv, files));
 
-    private AttemptLaunch FixtureLaunch(IReadOnlyList<string> argv, AttemptFiles files, ContainerLimits? limits = null,
+    private FixtureAttempt FixtureLaunch(IReadOnlyList<string> argv, AttemptFiles files, ContainerLimits? limits = null,
         IReadOnlyList<StepSpec>? launchSteps = null, IReadOnlyList<StepSpec>? endSteps = null, string? workingDirectory = null,
         int leftoverGraceMs = 5_000, IReadOnlyList<string>? environment = null, bool discardOutput = false) => new()
         {
-            NodeName = NodeName,
             Files = files,
-            Command = new PreparedCommand
-            {
-                Application = FixtureApplication(argv[0]),
-                CommandLine = string.Empty,
-                Argv = argv,
-                Program = argv[0],
-            },
+            Application = FixtureApplication(argv[0]),
+            Argv = argv,
             Environment = environment ?? DefaultEnvironment(),
             WorkingDirectory = workingDirectory ?? Root,
             Limits = limits ?? new ContainerLimits(),
@@ -166,7 +160,7 @@ internal sealed class LinuxHarness : IDisposable
             DiscardOutput = discardOutput,
         };
 
-    private void StartFixtureUnit(AttemptLaunch launch, string? after = null)
+    private void StartFixtureUnit(FixtureAttempt launch, string? after = null)
     {
         var manager = Platform.Manager;
         var files = launch.Files;
@@ -193,7 +187,7 @@ internal sealed class LinuxHarness : IDisposable
         manager.StartTransientUnit(LinuxExecutionPlatform.UnitName(files.AttemptName), properties);
     }
 
-    private List<UnitProperty> FixtureUnitProperties(AttemptLaunch launch, string[] managerEnvironment, SafeHandle stdin, SafeHandle stdout, SafeHandle stderr)
+    private List<UnitProperty> FixtureUnitProperties(FixtureAttempt launch, string[] managerEnvironment, SafeHandle stdin, SafeHandle stdout, SafeHandle stderr)
     {
         var files = launch.Files;
         var limits = launch.Limits;
@@ -203,7 +197,7 @@ internal sealed class LinuxHarness : IDisposable
         List<string> start =
         [
             Platform.Helper, "node", "exec-launch", "--attempt", files.AttemptName, "--dir", files.Directory, "--cwd", launch.WorkingDirectory,
-            "--program", launch.Command.Application, "--nofile", nofileSoft.ToString(CultureInfo.InvariantCulture),
+            "--program", launch.Application, "--nofile", nofileSoft.ToString(CultureInfo.InvariantCulture),
         ];
         foreach (var name in ExecLaunchRole.ManagerAddedVariables.Where(name => !resolved.Contains(name)))
         {
@@ -226,7 +220,7 @@ internal sealed class LinuxHarness : IDisposable
         }
 
         start.Add("--");
-        start.AddRange(launch.Command.Argv);
+        start.AddRange(launch.Argv);
         var properties = new List<UnitProperty>
         {
             new("Description", "ArcForges attempt " + files.AttemptName),
@@ -409,5 +403,19 @@ internal sealed class LinuxHarness : IDisposable
         }
 
         return leftovers;
+    }
+
+    private sealed class FixtureAttempt
+    {
+        public required AttemptFiles Files { get; init; }
+        public required string Application { get; init; }
+        public required IReadOnlyList<string> Argv { get; init; }
+        public required IReadOnlyList<string> Environment { get; init; }
+        public required string WorkingDirectory { get; init; }
+        public required ContainerLimits Limits { get; init; }
+        public required IReadOnlyList<StepSpec> LaunchSteps { get; init; }
+        public required IReadOnlyList<StepSpec> EndSteps { get; init; }
+        public required int LeftoverGraceMs { get; init; }
+        public required bool DiscardOutput { get; init; }
     }
 }

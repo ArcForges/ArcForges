@@ -28,31 +28,6 @@ public sealed class CommandRequest
     public string? TempDirectory { get; init; }
 }
 
-/// <summary>A prepared command: what the platform starts.</summary>
-public sealed class PreparedCommand
-{
-    /// <summary>The resolved executable (absolute path).</summary>
-    public required string Application { get; init; }
-
-    /// <summary>The complete command line (Windows), built with the quoting inverse to <c>CommandLineToArgvW</c>.</summary>
-    public required string CommandLine { get; init; }
-
-    /// <summary>The argument vector as the program receives it (Linux; informational on Windows).</summary>
-    public required IReadOnlyList<string> Argv { get; init; }
-
-    /// <summary>The program as the user named it, for summaries.</summary>
-    public required string Program { get; init; }
-
-    /// <summary>A script file the launch writes into the temporary directory first (long shell scripts, 04 section 2).</summary>
-    public string? ScriptFile { get; init; }
-
-    /// <summary>The script file's content.</summary>
-    public string? ScriptContent { get; init; }
-
-    /// <summary>The command runs a batch file through <c>cmd.exe /d /s /c</c>.</summary>
-    public bool ViaBatch { get; init; }
-}
-
 /// <summary>The stdin of an attempt (04 section 3: NUL, a temporary file, a file, or a pipe).</summary>
 public enum StdinKind
 {
@@ -115,49 +90,6 @@ public sealed record RootLimits(int CpuRate, long CommitLimitBytes, long Notific
 
     /// <summary>Linux <c>TasksMax</c> of the slice (03 section 5.1: 32768).</summary>
     public int TasksMax { get; init; } = 32_768;
-}
-
-/// <summary>How to start one attempt.</summary>
-public sealed class AttemptLaunch
-{
-    /// <summary>The node ID's text (job names).</summary>
-    public required string NodeName { get; init; }
-
-    /// <summary>The attempt's files.</summary>
-    public required AttemptFiles Files { get; init; }
-
-    /// <summary>The prepared command.</summary>
-    public required PreparedCommand Command { get; init; }
-
-    /// <summary>The exact environment as <c>NAME=value</c> entries.</summary>
-    public required IReadOnlyList<string> Environment { get; init; }
-
-    /// <summary>The working directory.</summary>
-    public required string WorkingDirectory { get; init; }
-
-    /// <summary>The stdin kind.</summary>
-    public StdinKind Stdin { get; init; }
-
-    /// <summary>The stdin file (FILE, or the BYTES file).</summary>
-    public string? StdinPath { get; init; }
-
-    /// <summary>The container limits.</summary>
-    public required ContainerLimits Limits { get; init; }
-
-    /// <summary>Launched by the node itself without a holder, in a container that dies with the node (AD-0005 Windows section 5).</summary>
-    public bool KillWithNode { get; init; }
-
-    /// <summary>Output capture <c>DISCARD</c>: stdout and stderr go to the null device.</summary>
-    public bool DiscardOutput { get; init; }
-
-    /// <summary>Launch steps (04 section 3).</summary>
-    public IReadOnlyList<StepSpec> LaunchSteps { get; init; } = [];
-
-    /// <summary>End steps (04 section 3).</summary>
-    public IReadOnlyList<StepSpec> EndSteps { get; init; } = [];
-
-    /// <summary><c>leftover_grace</c>.</summary>
-    public int LeftoverGraceMs { get; init; } = 5_000;
 }
 
 /// <summary>The root process of an attempt.</summary>
