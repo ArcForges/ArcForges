@@ -18,7 +18,7 @@ from xml.etree import ElementTree
 ROOT = Path(__file__).resolve().parents[2]
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(ROOT / "eng" / "mxc"))
-from stage import LICENSE, NATIVE, PACKAGE, RELEASE, SBOM, SCHEMA, SOURCE, VERSION
+from stage import LICENSE, NATIVE, PACKAGE, RELEASE, RELEASE_URL, SBOM, SCHEMA, SOURCE, VERSION
 
 OUTPUT = "sbom.spdx.json"
 FRAMEWORK = "net11.0"
@@ -217,7 +217,8 @@ def generate(stage, rid, repo=ROOT):
                          + ("The source workspace had local changes." if info["dirty"] else "The source workspace was clean."))
     app["comment"] = "Staged notice/evidence SHA-256: " + "; ".join(f"{name} {digest(stage / name)}" for name in notices)
 
-    mx_pkg = package(MXC, f"Microsoft MXC official runtime ({rid})", VERSION, "MIT", SOURCE)
+    mx_pkg = package(MXC, f"Microsoft MXC official runtime ({rid})", VERSION, "MIT", RELEASE_URL)
+    mx_pkg["sourceInfo"] = f"Official Microsoft MXC source commit {SOURCE}, release archive SHA-256 {RELEASE}."
     mx_pkg["comment"] = ("The official archive inventory is preserved unchanged. Upstream NOASSERTION values remain unattributed. "
                          f"The exact selected subset is bound by mxc/mxc-manifest.json: {digest(manifest_path)}.")
     packages = {COHORT: app, MXC: mx_pkg}

@@ -231,7 +231,7 @@ def capture_runs(cli, root, data, owned_tool, original_tool, seconds):
 
 def capture(install, bench, testload, runs, seconds):
     info = json_input(install / "build-info.json")
-    install_receipt = verify(install, RID, info["commit"])
+    install_receipt = verify(install, RID, info["commit"], distribution=True)
     host = install / ("arcforges" + SUFFIX)
     host_hash, bench_hash, testload_hash = (digest(path) for path in (host, bench, testload))
     scratch_parent = Path(os.environ["LOCALAPPDATA"]) / "Temp" if WIN else Path.home()
