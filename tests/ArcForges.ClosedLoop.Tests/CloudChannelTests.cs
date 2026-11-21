@@ -56,15 +56,13 @@ public sealed class CloudChannelTests
         var marker = "XFORGED" + Convert.ToHexString(RandomNumberGenerator.GetBytes(8));
         TaskServiceSubmitTaskRequest Submit(string title)
         {
-            var argv = new ArgvCommand();
-            argv.Argv.Add([TestNode.TestLoad, "hold", "--hold-ms", "100"]);
             return new TaskServiceSubmitTaskRequest
             {
                 Meta = new RequestMeta { CommandId = CommandIds.New(), CorrelationId = CommandIds.New() },
                 Spec = new TaskSpec
                 {
                     Title = title,
-                    Command = new CommandSpec { Argv = argv },
+                    Command = new CommandSpec { Argv = new ArgvCommand { Argv = { "fixture-never-starts" } } },
                     WorkingDirectory = node.Root,
                     Environment = new EnvironmentSpec { Inherit = EnvironmentInherit.Node },
                 },
@@ -113,31 +111,27 @@ public sealed class CloudChannelTests
         Assert.Null(beforeControl.Error);
         Assert.Empty(beforeControl.Value.Tasks);
 
-        // A valid call with the same process command and caller really reaches the independent node and runs.
+        // The same caller and command shape pass verification, then the receiver reports the missing legacy receipt.
         var valid = Submit("valid-control");
-        var (acceptedCall, _) = center.Channel.BuildCall(connection, new FakeCallSpec
+        var (verifiedCall, _) = center.Channel.BuildCall(connection, new FakeCallSpec
         {
             Method = RoutedMethod.SubmitNodeTask,
             Caller = caller,
             CommandId = valid.Meta.CommandId,
             Payload = valid.ToByteArray(),
         });
-        await connection.SendCallAsync(acceptedCall);
-        var acceptedFrame = await connection.ResultOfAsync(acceptedCall.CallId);
-        await TestNode.WaitAsync(() => connection.VerifiedResults.Any(result => result.Header.CallId.Equals(acceptedCall.CallId)), TimeSpan.FromSeconds(15), "the accepted result signature verified");
-        Assert.Equal(RoutedOutcome.Executed, connection.VerifiedResults.Single(result => result.Header.CallId.Equals(acceptedCall.CallId)).Header.Outcome);
-        var accepted = TaskServiceSubmitTaskResponse.Parser.ParseFrom(acceptedFrame.Payload);
-        Assert.Null(accepted.Error);
-        var waited = await human.Tasks.WaitTaskAsync(new TaskServiceWaitTaskRequest
-        {
-            Meta = new RequestMeta { CommandId = CommandIds.New() },
-            TaskId = accepted.Value.TaskId,
-            Target = WaitTarget.Terminal,
-            WaitMs = 50_000,
-        }, deadline: DateTime.UtcNow.AddSeconds(58), cancellationToken: ct);
-        Assert.Null(waited.Error);
-        Assert.True(waited.Value.Reached);
-        Assert.Equal(TaskState.Succeeded, waited.Value.Task.State);
+        await connection.SendCallAsync(verifiedCall);
+        var verifiedFrame = await connection.ResultOfAsync(verifiedCall.CallId);
+        await TestNode.WaitAsync(() => connection.VerifiedResults.Any(result => result.Header.CallId.Equals(verifiedCall.CallId)), TimeSpan.FromSeconds(15), "the result signature verified");
+        Assert.Empty(connection.UnverifiedResults);
+        Assert.Equal(RoutedOutcome.Executed, connection.VerifiedResults.Single(result => result.Header.CallId.Equals(verifiedCall.CallId)).Header.Outcome);
+        var refused = TaskServiceSubmitTaskResponse.Parser.ParseFrom(verifiedFrame.Payload);
+        Assert.Null(refused.Value);
+        Assert.Equal((ErrorCategory.Execution, "operation_failed", "legacy_task_outcome_unavailable", EffectCertainty.Unknown, RetryMode.Never),
+            (refused.Error.Category, refused.Error.Code, refused.Error.Details.State.Reason, refused.Error.Effect, refused.Error.Retry.Mode));
+        var afterControl = await human.Tasks.ListTasksAsync(new TaskServiceListTasksRequest { Meta = new RequestMeta { CommandId = CommandIds.New() } }, cancellationToken: ct);
+        Assert.Null(afterControl.Error);
+        Assert.Empty(afterControl.Value.Tasks);
         Assert.Null((await human.Account.SignOutAsync(new AccountServiceSignOutRequest
         {
             Meta = new RequestMeta { CommandId = CommandIds.New(), CorrelationId = CommandIds.New() },
@@ -198,11 +192,11 @@ public sealed class CloudChannelTests
             Assert.Contains(CloudLinkService.ChannelFeature, (await human.Node.GetNodeInfoAsync(new NodeServiceGetNodeInfoRequest(), cancellationToken: ct)).Value.Node.Features);
         }
 
-        // A call whose payload carries a marker: verified, rejected by the N2 dispatcher as an invalid task, and signed; the payload is not stored.
+        // A call whose payload carries a marker: verified, rejected by the dispatcher for a mismatched command ID, and signed.
         var marker = "N1MARKER" + Convert.ToHexString(RandomNumberGenerator.GetBytes(8));
         var submit = new TaskServiceSubmitTaskRequest { Meta = new RequestMeta { CommandId = CommandIds.New(), CorrelationId = CommandIds.New() } };
         submit.Spec = new TaskSpec { WorkingDirectory = "/srv/" + marker };
-        var (call, _) = center.Channel.BuildCall(connection, new FakeCallSpec { Method = RoutedMethod.SubmitNodeTask, CommandId = submit.Meta.CommandId, Payload = submit.ToByteArray() });
+        var (call, _) = center.Channel.BuildCall(connection, new FakeCallSpec { Method = RoutedMethod.SubmitNodeTask, CommandId = CommandIds.New(), Payload = submit.ToByteArray() });
         await connection.SendCallAsync(call);
         await TestNode.WaitAsync(() => !connection.VerifiedResults.IsEmpty, TimeSpan.FromSeconds(15), "the signed result");
         Assert.Empty(connection.UnverifiedResults);
@@ -210,6 +204,7 @@ public sealed class CloudChannelTests
         Assert.Equal(RoutedOutcome.Executed, result.Header.Outcome);
         var error = TaskServiceSubmitTaskResponse.Parser.ParseFrom(result.Frame.Payload).Error;
         Assert.Equal((ErrorCategory.Validation, "invalid_argument", EffectCertainty.DidNotHappen), (error.Category, error.Code, error.Effect));
+        Assert.Equal("meta.command_id: equals the routed call's command ID", error.Details.State.Reason);
 
         // The node's refreshes on the hook's cadence each send TokenRefresh on the open channel.
         await TestNode.WaitAsync(() => connection.TokenRefreshes.Count >= 1, TimeSpan.FromSeconds(60), "TokenRefresh after a refresh");

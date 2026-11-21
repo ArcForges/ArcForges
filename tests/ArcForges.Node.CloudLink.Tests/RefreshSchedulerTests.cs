@@ -137,8 +137,9 @@ public sealed class RefreshSchedulerTests
         // The center applies the rotation and the reply is lost: the node retries with the same token (the only one it holds), which the
         // strict rotation treats as a reuse: the family is revoked and the node is signed out.
         link.Center.Script(Refresh, new FakeFault.DropReply());
-        await Eventually.AdvanceUntilAsync(link, TimeSpan.FromSeconds(20), TimeSpan.FromMinutes(50), () => link.Service.Phase == CloudLinkPhase.SignedOut,
-            "signed out");
+        // The scheduler publishes the notice after setting the terminal state.
+        await Eventually.AdvanceUntilAsync(link, TimeSpan.FromSeconds(20), TimeSpan.FromMinutes(50),
+            () => link.Service.Phase == CloudLinkPhase.SignedOut && link.Notices().Count > 0, "signed out and published the notice");
         var calls = link.Center.CallsOf(Refresh).Select(call => ArcForges.Contracts.Fleet.V1.NodeEnrollmentServiceRefreshNodeSessionRequest.Parser.ParseFrom(FakeCenter.Payload(call.Body)).RefreshToken).ToList();
         Assert.Equal([issued.RefreshToken, issued.RefreshToken], calls);
         Assert.Equal("refresh_reply_lost", link.Service.LastError);

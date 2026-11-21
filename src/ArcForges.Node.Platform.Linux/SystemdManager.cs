@@ -411,9 +411,10 @@ public sealed class SystemdManager : IDisposable
     }
 
     /// <summary>
-    /// The object path of the unit's queued start job (<c>Unit.Job</c>, of type <c>start</c>), or null when it has none, is not loaded, or
-    /// the manager does not answer.
+    /// The object path of the unit's queued start job (<c>Unit.Job</c>, of type <c>start</c>), or null when the manager confirms that
+    /// there is no loaded unit or no queued start job.
     /// </summary>
+    /// <exception cref="LegacyCustodyUnavailableException">The pending start could not be determined.</exception>
     public string? PendingStartJob(string name)
     {
         try
@@ -437,10 +438,10 @@ public sealed class SystemdManager : IDisposable
                 return type.GetString() == "start" ? jobPath : null;
             });
         }
-        catch (Exception exception) when (exception is DBusExceptionBase or TimeoutException)
+        catch (Exception exception) when (exception is DBusExceptionBase or TimeoutException or OperationCanceledException or InvalidOperationException
+            or IOException)
         {
-            // Gone meanwhile (the job finished, the unit was unloaded), or no answer: no start job to wait for.
-            return null;
+            throw new LegacyCustodyUnavailableException("The systemd user manager did not confirm the recorded unit's pending start job.", exception);
         }
     }
 

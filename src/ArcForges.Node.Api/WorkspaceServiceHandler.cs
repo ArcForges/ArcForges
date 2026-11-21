@@ -29,14 +29,11 @@ internal sealed class WorkspaceServiceHandler(NodeRuntime node) : IDisposable
 
     public void Dispose() => CryptographicOperations.ZeroMemory(_pageKey);
 
-    // A test may coordinate real policy changes after preparation; production never sets this callback.
-    internal Func<CancellationToken, Task>? AfterPrepareForTests { get; set; }
-
     // A test may change real policy after the first check and before the transactional usage update.
     internal Func<CancellationToken, Task>? BeforeReadUseForTests { get; set; }
 
     internal async Task<WorkspaceServiceRegisterWorkspaceResponse> RegisterAsync(Caller caller, WorkspaceServiceRegisterWorkspaceRequest request,
-        CancellationToken cancellationToken)
+        WorkspaceServiceRegisterWorkspaceResponse reconciliation, CancellationToken cancellationToken)
     {
         var meta = ApiCommands.Meta(request.Meta);
         if (caller.Routed is { } responseRouting)
@@ -93,59 +90,40 @@ internal sealed class WorkspaceServiceHandler(NodeRuntime node) : IDisposable
             return new WorkspaceServiceRegisterWorkspaceResponse { Meta = meta, Error = NodeErrors.PermissionDenied(PermissionMatrix.WorkspaceRegister) };
         }
 
-        RegisteredWorkspaces.PreparedRegistration? prepared = null;
-        GitStatusSummary? summary = null;
-        ArcError? prepareError = null;
-        try
+        cancellationToken.ThrowIfCancellationRequested();
+        return reconciliation;
+    }
+
+    internal (WorkspaceServiceRegisterWorkspaceResponse Response, ReadOnlyMemory<byte>? Retained) ReadRegistration(
+        Caller caller, WorkspaceServiceRegisterWorkspaceRequest request)
+    {
+        var meta = ApiCommands.Meta(request.Meta);
+        if (caller.Routed is { } routing)
         {
-            prepared = _workspaces.PrepareRegistration(request.Path, request.HasName ? request.Name : null, cancellationToken: cancellationToken);
-            summary = await WorkspaceGitStatus.ObserveAsync(prepared.Opened, cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception exception) when (exception is RegisteredWorkspaceException or WorkspacePathException or UnauthorizedAccessException or ArgumentException)
-        {
-            prepareError = Failure(exception, null);
+            meta.CorrelationId = routing.Correlation(request.Meta);
         }
 
-        using (prepared)
+        WorkspaceServiceRegisterWorkspaceResponse Failed(ArcError error) => new() { Meta = meta, Error = error };
+        if (caller.CenterCaller is null || caller.Routed is null)
         {
-            if (AfterPrepareForTests is { } coordinate)
-            {
-                await coordinate(cancellationToken).ConfigureAwait(false);
-            }
-
-            return await MutationAsync(caller, request, request.Meta, "RegisterWorkspace", PermissionMatrix.WorkspaceRegister,
-                WorkspaceServiceRegisterWorkspaceResponse.Parser, error => new WorkspaceServiceRegisterWorkspaceResponse { Meta = meta, Error = error },
-                command =>
-                {
-                    var response = new WorkspaceServiceRegisterWorkspaceResponse { Meta = meta };
-                    try
-                    {
-                        CheckAuthority(command.Transaction, caller, PermissionMatrix.WorkspaceRegister);
-                        if (prepareError is not null)
-                        {
-                            response.Error = prepareError;
-                        }
-                        else
-                        {
-                            var record = _workspaces.RegisterPreparedFromVerifiedHuman(command.Transaction, prepared!,
-                                () => CheckAuthority(command.Transaction, caller, PermissionMatrix.WorkspaceRegister), cancellationToken);
-                            var workspace = Projection(record, summary);
-                            response.Value = new WorkspaceServiceRegisterWorkspaceValue { Workspace = workspace };
-                            response.Audit = WorkspaceAuditMetadata.ForRecords([workspace]);
-                        }
-                    }
-                    catch (Exception exception) when (exception is RegisteredWorkspaceException or WorkspacePathException or UnauthorizedAccessException)
-                    {
-                        response.Error = Failure(exception, null);
-                    }
-
-                    var id = response.Value?.Workspace?.WorkspaceId?.Value.ToByteArray();
-                    AuditLog.AppendFileWorkspace(command.Transaction, caller.Actor, "workspace.register WorkspaceService.RegisterWorkspace",
-                        id, null, response.Value?.Workspace?.RootPath, response.Error is null ? PermissionDecision.Allow : PermissionDecision.Deny,
-                        response.Error is null ? "registered" : "refused: " + response.Error.Code, response.Audit);
-                    return response;
-                }).ConfigureAwait(false);
+            return (Failed(NodeErrors.PermissionDenied(PermissionMatrix.WorkspaceRegister)), null);
         }
+
+        if (!NodeShapes.IsValid(request) || Validation.CommandId(request.Meta) is not null)
+        {
+            return (Failed(NodeErrors.InvalidArgument("workspace registration request")), null);
+        }
+
+        var lookup = ApiCommands.ReadRetained(node, Service, request, request.Meta, caller, "RegisterWorkspace",
+            WorkspaceServiceRegisterWorkspaceResponse.Parser, Failed, NodeErrors.LegacyWorkspaceRegistrationUnknown(),
+            NodeErrors.LegacyWorkspaceRegistrationUnknown(inProgress: true), maximumOutcomeBytes: 131_072, allowTerminalApproval: false);
+        if (lookup.Retained is { } retained &&
+            (retained.IsEmpty || !RoutedFileResponseValidation.WorkspaceRegistrationOutcome(lookup.Response, request)))
+        {
+            return (Failed(NodeErrors.LegacyWorkspaceRegistrationUnknown()), null);
+        }
+
+        return lookup;
     }
 
     internal async Task<WorkspaceServiceUnregisterWorkspaceResponse> UnregisterAsync(Caller caller, WorkspaceServiceUnregisterWorkspaceRequest request,
@@ -344,7 +322,6 @@ internal sealed class WorkspaceServiceHandler(NodeRuntime node) : IDisposable
                     var outcome = effect(command);
                     var error = outcome switch
                     {
-                        WorkspaceServiceRegisterWorkspaceResponse response => response.Error,
                         WorkspaceServiceUnregisterWorkspaceResponse response => response.Error,
                         _ => null,
                     };

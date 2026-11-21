@@ -11,7 +11,7 @@ namespace ArcForges.Repository.Tests;
 /// <item>the local-submission allowance is derived only from <c>--test-mode</c> and the exact variable (<c>LocalSubmission.ScriptAllowed</c>),
 /// and only the host derives it (CTR5-NODE-14: production ignores the variable);</item>
 /// <item><c>ExecutionSupervisor.BindingOf</c> is read only by tests (N2a review N-5);</item>
-/// <item>every AGENT-only rule of the TaskService bodies reads the caller's cells origin, so a relayed AGENT gets it (decisions B-4).</item>
+/// <item>the retained TaskService has no scheduler-only AGENT rules or entry to the retired Task admission path.</item>
 /// </list>
 /// </summary>
 public sealed partial class RoutedDispatchPolicyTests
@@ -55,11 +55,11 @@ public sealed partial class RoutedDispatchPolicyTests
     }
 
     [Fact]
-    public void EveryAgentRuleOfTheTaskServiceReadsTheCellsOrigin()
+    public void RetainedTaskServiceHasNoLegacyAdmissionOrAgentSchedulingRule()
     {
         var text = File.ReadAllText(RepositoryFiles.PathOf("src/ArcForges.Node.Api/TaskServiceHandler.cs"));
-        Assert.DoesNotMatch(@"\borigin == Origin\.Agent\b", text);
-        Assert.Equal(2, Regex.Count(text, @"caller\.CellsOrigin == Origin\.Agent"));
+        Assert.DoesNotMatch(@"\b(?:caller\.(?:CellsOrigin|Origin)|origin)\s*==\s*Origin\.Agent\b", text);
+        Assert.DoesNotMatch(@"\b(?:Execution|_execution)\.Submit\s*\(", text);
     }
 
     [GeneratedRegex(@"(INSERT INTO|UPDATE|DELETE FROM)\s+remote_command_log\b", RegexOptions.IgnoreCase)]

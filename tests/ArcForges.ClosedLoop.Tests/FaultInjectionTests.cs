@@ -1,11 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-using System.Diagnostics;
-using System.Globalization;
 using System.Runtime.Versioning;
 using System.Security.AccessControl;
 using System.Security.Cryptography;
 using System.Security.Principal;
-using System.Text;
 using System.Text.Json;
 using ArcForges.Client;
 using ArcForges.Node.Store;
@@ -17,6 +14,10 @@ namespace ArcForges.ClosedLoop.Tests;
 /// mid-stream, permission failures on the data root and the store, and (Windows) a supervisor that is killed. Each test names the
 /// contract it checks; the fixture fails a test that leaves a node, supervisor or attempt of its environment running.
 /// </summary>
+/// <remarks>
+/// The former V1 attached-output peer and live Task checks remain at eaaccb8380a2bd265aaad0a67d62c8fab2a8a29a.
+/// The installed V2 terminal and recovery fixtures exercise Run output and per-Run supervisor loss.
+/// </remarks>
 [Trait("loop", "local")]
 public sealed class FaultInjectionTests
 {
@@ -24,42 +25,28 @@ public sealed class FaultInjectionTests
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    /// <summary>
-    /// IPC failures (16 section 1: a pipe or socket peer gone mid-call): clients killed while they stream events and attempt output are
-    /// released by the node, which keeps serving: its stream subscriptions and client sessions return to what they were, and the task
-    /// they watched keeps running (watching never binds a task to its watcher).
-    /// </summary>
+    /// <summary>A killed event-stream client releases its subscription and local session, and the same Node still serves.</summary>
     [Fact(Timeout = 180_000)]
-    public async Task ClientsKilledMidStreamAreReleasedAndTheNodeKeepsServing()
+    public async Task AClientKilledMidEventStreamIsReleasedAndTheNodeKeepsServing()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         await using var node = TestNode.Create();
         await node.StartNodeAsync();
+        var pid = node.NodePid();
         var before = await HealthAsync(node);
-        var detached = await node.CliBytesAsync(Bound, "run", "--detach", "--", TestNode.TestLoad, "output", "--bytes", "1073741824", "--rate", "1000000");
-        var id = Encoding.UTF8.GetString(detached.Stdout).Trim();
 
-        using var events = node.Start(TestNode.Host, ["events", "--topic", "tasks", "--topic", "node", NodeLocations.TestModeOption]);
-        using var attach = node.Start(TestNode.Host, [NodeLocations.TestModeOption, "tasks", "attach", id]);
-        var buffer = new byte[4096];
+        using var events = node.StartProduct(["events", "--topic", "node", NodeLocations.TestModeOption]);
         Assert.NotNull(await events.StandardOutput.ReadLineAsync(Ct).AsTask().WaitAsync(Bound, Ct));
-        Assert.True(await attach.StandardOutput.BaseStream.ReadAsync(buffer, Ct).AsTask().WaitAsync(Bound, Ct) > 0, "The attach printed no output.");
         var streaming = await HealthAsync(node);
         TestContext.Current.TestOutputHelper?.WriteLine($"before {before}, while streaming {streaming}");
-        Assert.True(streaming.Subscribers > before.Subscribers && streaming.Sessions >= before.Sessions + 2, $"Not streaming: {streaming}.");
+        Assert.True(streaming.Subscribers > before.Subscribers && streaming.Sessions >= before.Sessions + 1, $"Not streaming: {streaming}.");
 
         events.Kill(entireProcessTree: true);
-        attach.Kill(entireProcessTree: true);
         await events.WaitForExitAsync(Ct);
-        await attach.WaitForExitAsync(Ct);
 
-        // The node notices the dead peers and drops their streams and sessions (the health call itself is one session in both counts).
-        var after = before;
-        await TestNode.WaitAsync(async () => (after = await HealthAsync(node)) == before, Bound, $"the node to release the killed clients' streams and sessions ({before})");
-        var shown = JsonElement.Parse((await node.CliAsync("tasks", "show", id, "--json")).Output).GetProperty("task");
-        Assert.Equal("TASK_STATE_RUNNING", shown.GetProperty("state").GetString());
-        Assert.Equal(0, (await node.CliBytesAsync(Bound, "tasks", "cancel", id)).ExitCode);
-        Assert.Equal("TASK_STATE_CANCELLED", JsonElement.Parse((await node.CliAsync("tasks", "wait", id, "--json")).Output).GetProperty("state").GetString());
+        await TestNode.WaitAsync(async () => await HealthAsync(node) == before, Bound, "the Node to release the killed event client");
+        await node.WaitReadyAsync();
+        Assert.Equal(pid, node.NodePid());
     }
 
     /// <summary>
@@ -96,9 +83,10 @@ public sealed class FaultInjectionTests
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         await using var node = TestNode.Create();
+        var id = RetainedClosedLoopTask.Seed(node, exitCode: 0);
         await node.StartNodeAsync();
-        var id = Encoding.UTF8.GetString((await node.CliBytesAsync(Bound, "run", "--detach", "--", TestNode.TestLoad, "args", "recorded")).Stdout).Trim();
-        await node.CliAsync("tasks", "wait", id);
+        var before = await node.CliAsync("tasks", "show", id, "--json");
+        Assert.Equal(0, before.ExitCode);
         Assert.Equal(0, (await node.CliAsync("node", "stop")).ExitCode);
         await TestNode.WaitAsync(() => node.LiveProcesses().Count == 0, Bound, "the node to exit");
 
@@ -117,19 +105,21 @@ public sealed class FaultInjectionTests
         Assert.Empty(node.LiveProcesses());
 
         await node.StartNodeAsync();
-        Assert.Contains("TASK_STATE_SUCCEEDED", (await node.CliAsync("tasks", "show", id, "--json")).Output, StringComparison.Ordinal);
+        var after = await node.CliAsync("tasks", "show", id, "--json");
+        Assert.Equal(0, after.ExitCode);
+        using var beforeJson = JsonDocument.Parse(before.Output);
+        using var afterJson = JsonDocument.Parse(after.Output);
+        var restored = afterJson.RootElement.GetProperty("task");
+        Assert.Equal("TASK_STATE_SUCCEEDED", restored.GetProperty("state").GetString());
+        Assert.True(JsonElement.DeepEquals(beforeJson.RootElement.GetProperty("task"), restored));
         Assert.Equal(0, (await node.CliAsync("node", "stop")).ExitCode);
     }
 
-    /// <summary>
-    /// Supervisor and node lifecycle failures (02 section 2: no in-memory state is authoritative; F-W03: executions outlive their
-    /// supervisors): a supervisor that is killed leaves the node it started serving and the node's attempt running; the node still stops
-    /// cleanly and cancels the attempt.
-    /// </summary>
+    /// <summary>Killing the Windows auto-start supervisor leaves the same Node serving and stoppable.</summary>
     [Fact(Timeout = 180_000)]
     [Trait("env", "windows-real")]
     [SupportedOSPlatform("windows")]
-    public async Task AKilledSupervisorLeavesItsNodeAndTheAttemptsRunning()
+    public async Task AKilledSupervisorLeavesItsNodeServing()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows supervisor.");
@@ -137,18 +127,12 @@ public sealed class FaultInjectionTests
         using var supervisor = node.Start(Path.Combine(Path.GetDirectoryName(TestNode.Host)!, "arcforges-supervisor.exe"), [NodeLocations.TestModeOption]);
         await node.WaitReadyAsync();
         var nodePid = node.NodePid();
-        var marker = Path.Combine(node.Root, "m.txt");
-        var id = Encoding.UTF8.GetString((await node.CliBytesAsync(Bound, "run", "--detach", "--", TestNode.TestLoad, "signal", "--hold-ms", "120000", "--marker", marker)).Stdout).Trim();
-        await TestNode.WaitAsync(() => TestNode.ReadShared(marker).Length > 0, Bound, "the attempt to run");
 
         supervisor.Kill();
         await supervisor.WaitForExitAsync(Ct);
 
+        await node.WaitReadyAsync();
         Assert.Equal(nodePid, node.NodePid());
-        Assert.Equal(0, (await node.CliAsync("status")).ExitCode);
-        Assert.Contains("TASK_STATE_RUNNING", (await node.CliAsync("tasks", "show", id, "--json")).Output, StringComparison.Ordinal);
-        Assert.Equal(0, (await node.CliBytesAsync(Bound, "tasks", "cancel", id)).ExitCode);
-        Assert.Contains("TASK_STATE_CANCELLED", (await node.CliAsync("tasks", "wait", id, "--json")).Output, StringComparison.Ordinal);
         await node.StopNodeAsync();
     }
 

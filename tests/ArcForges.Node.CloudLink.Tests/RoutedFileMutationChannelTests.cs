@@ -7,13 +7,15 @@ using ArcForges.Contracts.Node.V1;
 using ArcForges.Contracts.Relay.V1;
 using ArcForges.Node.Core;
 using ArcForges.Node.Core.Files;
+using ArcForges.Node.Core.Platform;
+using ArcForges.Node.Store;
 using Google.Protobuf;
 using NodeFilePath = ArcForges.Contracts.Node.V1.FilePath;
 using NodeShapes = ArcForges.Contracts.Node.Shapes.ContractShapeValidation;
 
 namespace ArcForges.Node.CloudLink.Tests;
 
-/// <summary>Real node, SQLite, native files and signed WebSocket; the center peer and routed caller are synthetic.</summary>
+/// <summary>Real node, SQLite and signed WebSocket with a synthetic center peer and retained file history.</summary>
 public sealed class RoutedFileMutationChannelTests
 {
     [Fact(Timeout = 120_000)]
@@ -45,16 +47,20 @@ public sealed class RoutedFileMutationChannelTests
         var workspace = new RegisteredWorkspaces(node.Runtime.Store).RegisterFromVerifiedHuman(root, cancellationToken: ct);
         var path = Path.Combine(root, "target.txt");
         var original = Encoding.UTF8.GetBytes("signed-native-original-4e34");
-        var intended = Encoding.UTF8.GetBytes("SIGNED_NATIVE_PRIVATE_BODY_680ab hello");
-        File.WriteAllBytes(path, original);
-        if (OperatingSystem.IsWindows()) File.SetAttributes(path, FileAttributes.Archive);
+        const string oldText = "SIGNED_EDIT_OLD_PRIVATE_7dbb1";
+        const string newText = "SIGNED_EDIT_NEW_PRIVATE_7dbb2";
+        var intended = Encoding.UTF8.GetBytes("SIGNED_NATIVE_PRIVATE_BODY_680ab " + oldText);
+        var editedBody = Encoding.UTF8.GetBytes("SIGNED_NATIVE_PRIVATE_BODY_680ab " + newText);
+        var later = Encoding.UTF8.GetBytes("independent-later-change");
+        File.WriteAllBytes(path, later);
 
-        async Task<(ResultHeader Header, ByteString Payload)> Invoke(RoutedMethod method, IMessage request, Id commandId, CenterCaller source)
+        async Task<(ResultHeader Header, ByteString Payload)> Invoke(RoutedMethod method, IMessage request, Id commandId, CenterCaller source,
+            byte[]? transmitted = null)
         {
             var built = center.Channel.BuildCall(connection, new FakeCallSpec
             {
                 Method = method,
-                Payload = request.ToByteArray(),
+                Payload = transmitted ?? request.ToByteArray(),
                 Caller = source,
                 CommandId = commandId,
                 Lifetime = TimeSpan.FromSeconds(30),
@@ -76,65 +82,87 @@ public sealed class RoutedFileMutationChannelTests
             ExpectedSha256 = ByteString.CopyFrom(SHA256.HashData(original)),
         };
         var raw = write.ToByteArray();
+        var edit = new FileServiceEditFileRequest
+        {
+            Meta = CloudNode.Command(),
+            Path = write.Path.Clone(),
+            ExpectedSha256 = ByteString.CopyFrom(SHA256.HashData(intended)),
+            OldText = oldText,
+            NewText = newText,
+            ExpectedOccurrences = 1,
+        };
+        var rawEdit = edit.ToByteArray();
+        var rootId = ReadRootIdentity(root);
+        var targetId = ReadFileIdentity(path);
+        // Only fixture identities are materialized. The old and proposed bodies are held in memory for their exact hashes.
+        var oldStage = FixtureStage(node.Root, "old-stage-identity", original.Length);
+        var writtenStage = FixtureStage(node.Root, "write-stage-identity", intended.Length);
+        var beforeEditStage = FixtureStage(node.Root, "edit-preimage-identity", intended.Length);
+        var editedStage = FixtureStage(node.Root, "edit-stage-identity", editedBody.Length);
+        var (retainedWrite, retainedEdit) = await node.Runtime.Processor.ExecuteAsync(command =>
+        {
+            var transaction = command.Transaction;
+            byte[] Retain(FileOperationKind kind, RequestMeta meta, byte[] transmitted, byte[] before, byte[] after,
+                RegisteredWorkspaces.RootIdentity preimage, RegisteredWorkspaces.RootIdentity result, uint? replacements)
+            {
+                var id = meta.CommandId.Value.ToByteArray();
+                var resultHash = SHA256.HashData(after);
+                var intent = new FileJournalIntent(kind, id, meta.CorrelationId.Value.ToByteArray(), caller, workspace.Id, write.Path.Path,
+                    rootId.Platform, rootId.Bytes, rootId.Bytes, targetId.Bytes, before.Length, SHA256.HashData(before), preimage.Bytes,
+                    after.Length, resultHash, result.Bytes);
+                Assert.Equal(FileJournalPreparation.Prepared, FileMutationJournal.Prepare(transaction, intent, transmitted));
+                return FileMutationJournal.CompleteVerifiedEffect(transaction, id, transmitted, after.Length, resultHash, replacements);
+            }
+
+            return (Retain(FileOperationKind.Write, write.Meta, raw, original, intended, oldStage, writtenStage, null),
+                Retain(FileOperationKind.Edit, edit.Meta, rawEdit, intended, editedBody, beforeEditStage, editedStage, 1));
+        }, CommitDurability.Full).WaitAsync(ct);
+
         var (header, payload) = await Invoke(RoutedMethod.WriteNodeFile, write, write.Meta.CommandId, caller);
         Assert.Equal(RoutedOutcome.Executed, header.Outcome);
         var response = FileServiceWriteFileResponse.Parser.ParseFrom(payload);
         Assert.True(NodeShapes.IsValid(response));
         Assert.Equal(write.Meta.CorrelationId, response.Meta.CorrelationId);
-        if (OperatingSystem.IsWindows())
-        {
-            Assert.Null(response.Error);
-            Assert.Equal(intended, File.ReadAllBytes(path));
-            Assert.Equal(SHA256.HashData(intended), response.Value.Result.Sha256.ToByteArray());
-            var recorded = node.Runtime.Store.Read(reader =>
-                FileMutationJournal.GetForCaller(reader, write.Meta.CommandId.Value.Span, caller));
-            Assert.Equal(FileOperationState.Completed, recorded!.State);
-            Assert.Equal(SHA256.HashData(raw), recorded.RequestSha256.ToByteArray());
+        Assert.Null(response.Error);
+        Assert.Equal(retainedWrite, payload.ToByteArray());
+        Assert.Equal(SHA256.HashData(intended), response.Value.Result.Sha256.ToByteArray());
 
-            var edit = new FileServiceEditFileRequest
-            {
-                Meta = CloudNode.Command(),
-                Path = write.Path.Clone(),
-                ExpectedSha256 = ByteString.CopyFrom(SHA256.HashData(intended)),
-                OldText = "hello",
-                NewText = "world",
-                ExpectedOccurrences = 1,
-            };
-            var (editHeader, editBytes) = await Invoke(RoutedMethod.EditNodeFile, edit, edit.Meta.CommandId, caller);
-            Assert.Equal(RoutedOutcome.Executed, editHeader.Outcome);
-            var edited = FileServiceEditFileResponse.Parser.ParseFrom(editBytes);
-            Assert.True(NodeShapes.IsValid(edited));
-            Assert.Null(edited.Error);
-            Assert.Equal(1U, edited.Value.Result.Replacements);
-            Assert.Equal("SIGNED_NATIVE_PRIVATE_BODY_680ab world", File.ReadAllText(path));
+        var (editHeader, editBytes) = await Invoke(RoutedMethod.EditNodeFile, edit, edit.Meta.CommandId, caller);
+        Assert.Equal(RoutedOutcome.Executed, editHeader.Outcome);
+        var edited = FileServiceEditFileResponse.Parser.ParseFrom(editBytes);
+        Assert.True(NodeShapes.IsValid(edited));
+        Assert.Equal(edit.Meta.CorrelationId, edited.Meta.CorrelationId);
+        Assert.Null(edited.Error);
+        Assert.Equal(retainedEdit, editBytes.ToByteArray());
+        Assert.Equal(SHA256.HashData(editedBody), edited.Value.Result.Sha256.ToByteArray());
+        Assert.Equal(1U, edited.Value.Result.Replacements);
 
-            var outside = Encoding.UTF8.GetBytes("independent-later-change");
-            File.WriteAllBytes(path, outside);
-            var (_, repeated) = await Invoke(RoutedMethod.WriteNodeFile, write, write.Meta.CommandId, caller);
-            Assert.Equal(payload, repeated);
-            Assert.Equal(outside, File.ReadAllBytes(path));
-            var (_, repeatedEdit) = await Invoke(RoutedMethod.EditNodeFile, edit, edit.Meta.CommandId, caller);
-            Assert.Equal(editBytes, repeatedEdit);
-            Assert.Equal(outside, File.ReadAllBytes(path));
+        var (_, repeated) = await Invoke(RoutedMethod.WriteNodeFile, write, write.Meta.CommandId, caller);
+        Assert.Equal(payload, repeated);
+        var (_, repeatedEdit) = await Invoke(RoutedMethod.EditNodeFile, edit, edit.Meta.CommandId, caller);
+        Assert.Equal(editBytes, repeatedEdit);
+        Assert.Equal(later, File.ReadAllBytes(path));
 
-            var changed = write.Clone();
-            changed.Meta.CorrelationId = CommandIds.New();
-            var (_, changedBytes) = await Invoke(RoutedMethod.WriteNodeFile, changed, changed.Meta.CommandId, caller);
-            Assert.Equal("command_id_reused", FileServiceWriteFileResponse.Parser.ParseFrom(changedBytes).Error.Code);
-            var foreign = caller.Clone();
-            foreign.LocalSessionId = CommandIds.New();
-            var (_, foreignBytes) = await Invoke(RoutedMethod.WriteNodeFile, write, write.Meta.CommandId, foreign);
-            Assert.Equal("command_id_reused", FileServiceWriteFileResponse.Parser.ParseFrom(foreignBytes).Error.Code);
-        }
-        else
-        {
-            Assert.Equal(ErrorCategory.Resource, response.Error.Category);
-            Assert.Equal("enforcement_unavailable", response.Error.Code);
-            Assert.Equal(EffectCertainty.DidNotHappen, response.Error.Effect);
-            Assert.Equal(original, File.ReadAllBytes(path));
-            Assert.Null(node.Runtime.Store.Read(reader =>
-                FileMutationJournal.GetForCaller(reader, write.Meta.CommandId.Value.Span, caller)));
-        }
+        var changed = write.Clone();
+        changed.Meta.CorrelationId = CommandIds.New();
+        var (_, changedBytes) = await Invoke(RoutedMethod.WriteNodeFile, changed, changed.Meta.CommandId, caller);
+        Assert.Equal("command_id_reused", FileServiceWriteFileResponse.Parser.ParseFrom(changedBytes).Error.Code);
+        using var input = new CodedInputStream(raw);
+        Assert.Equal(10U, input.ReadTag());
+        input.SkipLastField();
+        var firstField = checked((int)input.Position);
+        byte[] reordered = [.. raw.AsSpan(firstField), .. raw.AsSpan(0, firstField)];
+        Assert.NotEqual(raw, reordered);
+        Assert.Equal(write, FileServiceWriteFileRequest.Parser.ParseFrom(reordered));
+        var (_, reorderedBytes) = await Invoke(RoutedMethod.WriteNodeFile, write, write.Meta.CommandId, caller, reordered);
+        Assert.Equal("command_id_reused", FileServiceWriteFileResponse.Parser.ParseFrom(reorderedBytes).Error.Code);
+
+        var foreign = caller.Clone();
+        foreign.LocalSessionId = CommandIds.New();
+        var (_, foreignBytes) = await Invoke(RoutedMethod.WriteNodeFile, write, write.Meta.CommandId, foreign);
+        Assert.Equal("command_id_reused", FileServiceWriteFileResponse.Parser.ParseFrom(foreignBytes).Error.Code);
+        var (_, foreignEdit) = await Invoke(RoutedMethod.EditNodeFile, edit, edit.Meta.CommandId, foreign);
+        Assert.Equal("command_id_reused", FileServiceEditFileResponse.Parser.ParseFrom(foreignEdit).Error.Code);
 
         var tooLarge = write.Clone();
         tooLarge.Meta = CloudNode.Command();
@@ -160,13 +188,52 @@ public sealed class RoutedFileMutationChannelTests
         var (agentHeader, _) = await Invoke(RoutedMethod.WriteNodeFile, denied, denied.Meta.CommandId, agent);
         Assert.Equal(RoutedOutcome.RefusedByPolicy, agentHeader.Outcome);
         Assert.Empty(connection.UnverifiedResults);
+        Assert.Equal(later, File.ReadAllBytes(path));
+        node.Runtime.Store.Read(reader =>
+        {
+            foreach (var (commandId, requestBytes) in new[] { (write.Meta.CommandId, raw), (edit.Meta.CommandId, rawEdit) })
+            {
+                var operation = FileMutationJournal.GetForCaller(reader, commandId.Value.Span, caller);
+                Assert.NotNull(operation);
+                Assert.Equal(FileOperationState.Completed, operation.State);
+                Assert.False(operation.Held);
+                Assert.Equal(SHA256.HashData(requestBytes), operation.RequestSha256.ToByteArray());
+            }
+            Assert.Equal(2L, reader.Scalar("SELECT count(*) FROM file_operation_journal;"));
+            Assert.Equal(0L, reader.Scalar("SELECT count(*) FROM file_private_stage_reservation;"));
+            Assert.Equal(0L, reader.Scalar("SELECT count(*) FROM file_stage_worker;"));
+            Assert.Equal(0L, reader.Scalar("SELECT count(*) FROM file_effect_worker;"));
+            return 0;
+        });
+        byte[][] privateBodies = [intended, editedBody, Encoding.UTF8.GetBytes(oldText), Encoding.UTF8.GetBytes(newText)];
         foreach (var database in new[] { node.Runtime.Store.DatabasePath, node.Runtime.Store.DatabasePath + "-wal" })
         {
             if (!File.Exists(database)) continue;
             using var file = new FileStream(database, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
             using var copy = new MemoryStream();
             file.CopyTo(copy);
-            Assert.Equal(-1, copy.ToArray().AsSpan().IndexOf(intended));
+            var contents = copy.ToArray();
+            foreach (var body in privateBodies)
+                Assert.Equal(-1, contents.AsSpan().IndexOf(body));
         }
+    }
+
+    private static RegisteredWorkspaces.RootIdentity ReadRootIdentity(string path)
+    {
+        using var root = WorkspacePath.OpenRoot(path);
+        return RegisteredWorkspaces.RootIdentity.Encode(root.RootIdentity);
+    }
+
+    private static RegisteredWorkspaces.RootIdentity ReadFileIdentity(string path)
+    {
+        using var handle = File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        return RegisteredWorkspaces.RootIdentity.Encode(WorkspacePath.Identity(handle), directory: false);
+    }
+
+    private static RegisteredWorkspaces.RootIdentity FixtureStage(string root, string name, int size)
+    {
+        var path = Path.Combine(root, name);
+        File.WriteAllBytes(path, new byte[size]);
+        return ReadFileIdentity(path);
     }
 }

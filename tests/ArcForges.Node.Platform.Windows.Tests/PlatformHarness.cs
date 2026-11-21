@@ -77,7 +77,7 @@ internal sealed partial class PlatformHarness : IDisposable
         var env = environment ?? Environment.GetEnvironmentVariables().Cast<System.Collections.DictionaryEntry>()
             .ToDictionary(entry => (string)entry.Key, entry => (string?)entry.Value ?? string.Empty, StringComparer.OrdinalIgnoreCase);
         var cwd = workingDirectory ?? Root;
-        var prepared = Platform.Prepare(new CommandRequest { Argv = argv, WorkingDirectory = cwd, Environment = env, TempDirectory = files.TempDirectory });
+        var prepared = WindowsCommands.Prepare(new CommandRequest { Argv = argv, WorkingDirectory = cwd, Environment = env, TempDirectory = files.TempDirectory });
         var handle = (WindowsAttemptHandle)Platform.Launch(new AttemptLaunch
         {
             NodeName = NodeName,

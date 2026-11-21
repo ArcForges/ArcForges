@@ -1,179 +1,117 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Security.Cryptography;
-using System.Text;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
-using ArcForges.Node.Api;
+using ArcForges.Contracts.Relay.V1;
 using ArcForges.Node.Core.Files;
 using ArcForges.Node.Core.Platform;
-using ArcForges.Node.Core.Security;
+using ArcForges.Node.Store;
 using Google.Protobuf;
-using NodeFilePath = ArcForges.Contracts.Node.V1.FilePath;
-using NodeShapes = ArcForges.Contracts.Node.Shapes.ContractShapeValidation;
 
 namespace ArcForges.Node.Core.Tests;
 
-/// <summary>Actual internal create candidate and SQLite on owned Windows files; the routed caller is synthetic.</summary>
+/// <summary>
+/// Retained expected-absent receipts and holds through the routed component seam. The original native producer
+/// and competing create remain exercised at eaaccb8380a2bd265aaad0a67d62c8fab2a8a29a.
+/// </summary>
 public sealed class FileCreateCandidateTests
 {
-    [Fact(Timeout = 120_000)]
-    [Trait("env", "windows-real")]
-    public async Task WindowsCreateWritesOnceRecordsCollisionAndHoldsAnInterruptedCreation()
+    [Fact(Timeout = 30_000)]
+    public async Task RetainedCreateAndCollisionReplayWithoutMotionAndHeldCreationCanBeAcknowledged()
     {
-        if (!OperatingSystem.IsWindows()) { Assert.Skip("Windows native expected-absent candidate."); return; }
-        var token = TestContext.Current.CancellationToken;
+        var ct = TestContext.Current.CancellationToken;
         await using var node = await InProcessNode.Create().StartAsync();
         var calls = new RoutedCalls(node);
-        var actor = calls.Relay(Origin.Human);
-        var root = Directory.CreateDirectory(Path.Combine(node.Root, "create-root")).FullName;
-        var workspace = new RegisteredWorkspaces(node.Runtime.Store).RegisterFromVerifiedHuman(root, cancellationToken: token);
-        var body = Encoding.UTF8.GetBytes("actual-create-private-body-7a239b");
-        FileServiceWriteFileRequest Request(string path) => new()
-        {
-            Meta = new RequestMeta { CommandId = CommandIds.New(), CorrelationId = CommandIds.New() },
-            Path = new NodeFilePath { WorkspaceId = new Id { Value = ByteString.CopyFrom(workspace.Id) }, Path = path },
-            Data = ByteString.CopyFrom(body),
-            ExpectedAbsent = true,
-        };
-        async Task<byte[]?> Invoke(FileServiceWriteFileRequest request)
-        {
-            var raw = request.ToByteArray();
-            var now = node.Runtime.Clock.GetUtcNow();
-            var routed = new RoutedContext(calls.Link, node.Runtime.Lifecycle, now.AddSeconds(30), TimeSpan.FromSeconds(15),
-                node.Runtime.Clock, node.Runtime.Clock.GetTimestamp(), CommandIds.New(), fileWorkspace: true);
-            var caller = new Caller(Origin.Remote, ClientKind.Unspecified, null, centerCaller: actor.Clone())
-            {
-                CellsOrigin = CenterRouting.CellsOrigin(actor, node.Runtime.NodeId.Span),
-                RemoteCommandId = request.Meta.CommandId.Clone(),
-                RawRequest = raw,
-                Routed = routed,
-            };
-            return await calls.Dispatcher.FileHandlerForTests!.WriteExistingCandidateAsync(caller, token);
-        }
-        var handler = calls.Dispatcher.FileHandlerForTests!;
-        var create = Request("created.txt");
-        var createdPath = Path.Combine(root, create.Path.Path);
-        Assert.False(File.Exists(createdPath));
-        var responseBytes = await Invoke(create);
-        var response = FileServiceWriteFileResponse.Parser.ParseFrom(responseBytes);
-        Assert.True(NodeShapes.IsValid(response));
-        Assert.Null(response.Error);
-        Assert.Equal(create.Meta.CommandId, response.Value.Result.CommandId);
-        Assert.Equal(create.Meta.CorrelationId, response.Meta.CorrelationId);
-        Assert.Equal((ulong)body.Length, response.Value.Result.SizeBytes);
-        Assert.Equal(SHA256.HashData(body), response.Value.Result.Sha256.ToByteArray());
-        Assert.Equal(body, File.ReadAllBytes(createdPath));
-        Assert.True((File.GetAttributes(createdPath) & FileAttributes.Archive) != 0);
-        var completed = node.Runtime.Store.Read(reader =>
-            FileMutationJournal.GetForCaller(reader, create.Meta.CommandId.Value.Span, actor));
-        Assert.Equal(FileOperationState.Completed, completed!.State);
-        Assert.Equal(SHA256.HashData(create.ToByteArray()), completed.RequestSha256.ToByteArray());
-        Assert.False(completed.Held);
+        var owner = calls.Relay(Origin.Human);
+        var rootPath = Directory.CreateDirectory(Path.Combine(node.Root, "retained-creation")).FullName;
+        var workspace = new RegisteredWorkspaces(node.Runtime.Store).RegisterFromVerifiedHuman(rootPath, cancellationToken: ct);
+        using var root = WorkspacePath.OpenRoot(rootPath);
+        var body = "historical-private-create-body-7a239b"u8.ToArray();
+        var hash = SHA256.HashData(body);
 
-        var external = Encoding.UTF8.GetBytes("later-other-file-data");
-        File.WriteAllBytes(createdPath, external);
-        Assert.Equal(responseBytes, await Invoke(create));
-        Assert.Equal(external, File.ReadAllBytes(createdPath));
+        var created = Request(workspace.Id, "created.txt", body);
+        var collision = Request(workspace.Id, "occupied.txt", body);
+        var interrupted = Request(workspace.Id, "interrupted.txt", body);
+        var createdPath = Path.Combine(rootPath, created.Path.Path);
+        var collisionPath = Path.Combine(rootPath, collision.Path.Path);
+        var interruptedPath = Path.Combine(rootPath, interrupted.Path.Path);
+        File.WriteAllText(createdPath, "current data must not be overwritten");
+        File.WriteAllText(collisionPath, "competitor must be left alone");
+        File.WriteAllBytes(interruptedPath, []);
 
-        var collision = Request("raced.txt");
-        var collisionPath = Path.Combine(root, collision.Path.Path);
-        handler.BeforeCreateForTests = () =>
+        var (success, conflict) = node.Runtime.Store.Write(transaction =>
         {
-            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Tasks.TestLoad,
-                ["hold", "--hold-ms", "0", "--file", collisionPath])
-            {
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            }) ?? throw new InvalidOperationException("The owned competitor did not start.");
-            try
-            {
-                Assert.True(process.WaitForExit(5_000), "The owned competing create did not finish.");
-                Assert.Equal(0, process.ExitCode);
-            }
-            finally
-            {
-                if (!process.HasExited)
-                {
-                    process.Kill();
-                    process.WaitForExit();
-                }
-            }
-        };
-        byte[]? collisionBytes;
-        try { collisionBytes = await Invoke(collision); }
-        finally { handler.BeforeCreateForTests = null; }
-        var conflict = FileServiceWriteFileResponse.Parser.ParseFrom(collisionBytes);
-        Assert.True(NodeShapes.IsValid(conflict));
-        Assert.Equal("file_changed", conflict.Error.Code);
-        Assert.Equal("expected_absent_conflict", conflict.Error.Details.State.Reason);
-        Assert.Equal(EffectCertainty.DidNotHappen, conflict.Error.Effect);
-        Assert.Equal(RetryMode.Never, conflict.Error.Retry.Mode);
-        Assert.Equal(collision.Meta.CorrelationId, conflict.Error.CorrelationId);
-        Assert.Equal("ready", File.ReadAllText(collisionPath));
-        var collisionStatus = node.Runtime.Store.Read(reader =>
-            FileMutationJournal.GetForCaller(reader, collision.Meta.CommandId.Value.Span, actor));
-        Assert.True(NodeShapes.IsValid(collisionStatus));
-        Assert.Equal(FileOperationState.Completed, collisionStatus!.State);
-        Assert.False(collisionStatus.Held);
-        Assert.Equal("expected_absent_conflict", collisionStatus.Error.Details.State.Reason);
-        Assert.Equal(collision.Meta.CorrelationId, collisionStatus.Error.CorrelationId);
-        Assert.Equal(SHA256.HashData(collision.ToByteArray()), collisionStatus.RequestSha256.ToByteArray());
-        File.Delete(collisionPath);
-        Assert.Equal(collisionBytes, await Invoke(collision));
-        Assert.False(File.Exists(collisionPath));
+            SeedPrepared(transaction, owner, root, created);
+            var success = FileMutationJournal.CompleteVerifiedEffect(transaction, created.Meta.CommandId.Value.Span,
+                created.ToByteArray(), body.Length, hash, replacements: null);
+            var stage = SeedPrepared(transaction, owner, root, collision);
+            var conflict = FileMutationJournal.CompleteKnownExpectedAbsentConflict(transaction, collision.Meta.CommandId.Value.Span,
+                owner, collision.ToByteArray(), new WorkspaceCreateCollisionException(root.RootIdentity, collision.Path.Path, stage));
+            SeedPrepared(transaction, owner, root, interrupted);
+            return (success, conflict);
+        }, CommitDurability.Full);
 
-        var interrupted = Request("interrupted.txt");
-        var interruptedPath = Path.Combine(root, interrupted.Path.Path);
-        handler.AfterCreateForTests = () => throw new IOException("test interruption after real create");
-        byte[]? unknownBytes;
-        try { unknownBytes = await Invoke(interrupted); }
-        finally { handler.AfterCreateForTests = null; }
-        var uncertain = FileServiceWriteFileResponse.Parser.ParseFrom(unknownBytes);
-        Assert.True(NodeShapes.IsValid(uncertain));
-        Assert.Equal("file_outcome_unknown", uncertain.Error.Details.State.Reason);
-        Assert.Equal(EffectCertainty.Unknown, uncertain.Error.Effect);
-        Assert.Equal(RetryMode.Never, uncertain.Error.Retry.Mode);
-        Assert.Equal(interrupted.Meta.CorrelationId, uncertain.Error.CorrelationId);
-        Assert.True(File.Exists(interruptedPath)); // the empty object was actually created before the injected interruption
-        Assert.Empty(File.ReadAllBytes(interruptedPath));
-        var held = node.Runtime.Store.Read(reader =>
-            FileMutationJournal.GetForCaller(reader, interrupted.Meta.CommandId.Value.Span, actor));
-        Assert.Equal(FileOperationState.Unknown, held!.State);
-        Assert.True(held.Held);
-        var blocked = Request("blocked.txt");
-        var blockedResponse = FileServiceWriteFileResponse.Parser.ParseFrom(await Invoke(blocked));
-        Assert.Equal("invalid_state", blockedResponse.Error.Code);
-        Assert.Equal("file_recovery_pending", blockedResponse.Error.Details.State.Reason);
-        Assert.False(File.Exists(Path.Combine(root, blocked.Path.Path)));
+        var replay = await ReplayAsync(calls, owner, created, ct);
+        Assert.Equal(success, replay);
+        var recorded = FileServiceWriteFileResponse.Parser.ParseFrom(replay);
+        Assert.Equal(created.Meta.CommandId, recorded.Value.Result.CommandId);
+        Assert.Equal(created.Meta.CorrelationId, recorded.Meta.CorrelationId);
+        Assert.Equal((ulong)body.Length, recorded.Value.Result.SizeBytes);
+        Assert.Equal(hash, recorded.Value.Result.Sha256.ToByteArray());
+        Assert.Equal("current data must not be overwritten", File.ReadAllText(createdPath));
+
+        var rejected = await ReplayAsync(calls, owner, collision, ct);
+        Assert.Equal(conflict, rejected);
+        var refused = FileServiceWriteFileResponse.Parser.ParseFrom(rejected).Error;
+        Assert.Equal(("expected_absent_conflict", EffectCertainty.DidNotHappen, RetryMode.Never),
+            (refused.Details.State.Reason, refused.Effect, refused.Retry.Mode));
+        Assert.Equal(collision.Meta.CorrelationId, refused.CorrelationId);
+        Assert.Equal("competitor must be left alone", File.ReadAllText(collisionPath));
+
+        var foreign = calls.Relay(Origin.Human);
+        Assert.Equal("command_id_reused", FileServiceWriteFileResponse.Parser.ParseFrom(await ReplayAsync(calls, foreign, created, ct)).Error.Code);
+        var changed = created.Clone();
+        changed.Meta.CorrelationId = CommandIds.New();
+        Assert.Equal("command_id_reused", FileServiceWriteFileResponse.Parser.ParseFrom(await ReplayAsync(calls, owner, changed, ct)).Error.Code);
+        var interruptedCall = await calls.CallAsync(owner, RoutedMethod.WriteNodeFile, interrupted.ToByteArray(), interrupted.Meta.CommandId,
+            cancellationToken: ct);
+        Assert.Null(interruptedCall.Answer);
+        Assert.Equal(FileOperationState.Prepared, Status(node, interrupted, owner).State);
 
         Assert.Equal(0, await node.StopAsync());
         await node.StartAsync();
-        var afterRestart = node.Runtime.Store.Read(reader =>
-            FileMutationJournal.GetForCaller(reader, interrupted.Meta.CommandId.Value.Span, actor));
-        Assert.Equal(FileOperationState.Unknown, afterRestart!.State);
-        Assert.True(afterRestart.Held);
-        Assert.Equal(unknownBytes, await Invoke(interrupted));
-        Assert.Empty(File.ReadAllBytes(interruptedPath));
-        // The in-process interactive peer is a synthetic HUMAN; the endpoint and SQLite acknowledgment are real.
-        await using (var human = await node.ChannelAsync(helloAsHuman: true))
-        {
-            var ack = new FileServiceAcknowledgeFileOperationRequest
-            {
-                Meta = new RequestMeta { CommandId = CommandIds.New(), CorrelationId = CommandIds.New() },
-                OperationCommandId = interrupted.Meta.CommandId.Clone(),
-                OperationDigest = ByteString.CopyFrom(SHA256.HashData(interrupted.ToByteArray())),
-            };
-            var acknowledged = await human.Files.AcknowledgeFileOperationAsync(ack, cancellationToken: token);
-            Assert.Null(acknowledged.Error);
-            Assert.True(acknowledged.Value.Operation.Acknowledged);
-            Assert.False(acknowledged.Value.Operation.Held);
-            Assert.Equal(FileOperationState.Unknown, acknowledged.Value.Operation.State);
-        }
-        Assert.Empty(File.ReadAllBytes(interruptedPath));
+        calls = new RoutedCalls(node);
+        Assert.Equal(success, await ReplayAsync(calls, owner, created, ct));
+        Assert.Equal(conflict, await ReplayAsync(calls, owner, collision, ct));
+        var recovered = Status(node, interrupted, owner);
+        Assert.Equal(FileOperationState.Unknown, recovered.State);
+        Assert.True(recovered.Held);
+        var rawUnknown = await ReplayAsync(calls, owner, interrupted, ct);
+        Assert.Equal(recovered.Error, FileServiceWriteFileResponse.Parser.ParseFrom(rawUnknown).Error);
+        Assert.Equal((EffectCertainty.Unknown, RetryMode.Never), (recovered.Error.Effect, recovered.Error.Retry.Mode));
 
+        var fresh = Request(workspace.Id, "fresh.txt", body);
+        var unknown = FileServiceWriteFileResponse.Parser.ParseFrom(await ReplayAsync(calls, owner, fresh, ct)).Error;
+        Assert.Equal((EffectCertainty.Unknown, RetryMode.Never), (unknown.Effect, unknown.Retry.Mode));
+        Assert.False(File.Exists(Path.Combine(rootPath, fresh.Path.Path)));
+        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_private_stage_reservation;")));
+        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_effect_worker;")));
+        Assert.Equal(3L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_operation_journal;")));
+
+        await using var human = await node.ChannelAsync(helloAsHuman: true);
+        var ack = await human.Files.AcknowledgeFileOperationAsync(new FileServiceAcknowledgeFileOperationRequest
+        {
+            Meta = Tasks.Meta(),
+            OperationCommandId = interrupted.Meta.CommandId.Clone(),
+            OperationDigest = ByteString.CopyFrom(SHA256.HashData(interrupted.ToByteArray())),
+        }, cancellationToken: ct);
+        Assert.Null(ack.Error);
+        Assert.True(ack.Value.Operation.Acknowledged);
+        Assert.False(ack.Value.Operation.Held);
+        Assert.Equal(FileOperationState.Unknown, ack.Value.Operation.State);
+        Assert.Equal(rawUnknown, await ReplayAsync(calls, owner, interrupted, ct));
+        Assert.Empty(File.ReadAllBytes(interruptedPath));
         foreach (var database in new[] { node.Runtime.Store.DatabasePath, node.Runtime.Store.DatabasePath + "-wal" })
         {
             if (!File.Exists(database)) continue;
@@ -183,4 +121,38 @@ public sealed class FileCreateCandidateTests
             Assert.Equal(-1, copy.ToArray().AsSpan().IndexOf(body));
         }
     }
+
+    internal static FileServiceWriteFileRequest Request(byte[] workspace, string path, byte[] body) => new()
+    {
+        Meta = Tasks.Meta(),
+        Path = new FilePath { WorkspaceId = new Id { Value = ByteString.CopyFrom(workspace) }, Path = path },
+        Data = ByteString.CopyFrom(body),
+        ExpectedAbsent = true,
+    };
+
+    internal static RegisteredWorkspaces.RootIdentity SeedPrepared(StoreTransaction transaction, CenterCaller owner,
+        WorkspacePath root, FileServiceWriteFileRequest request)
+    {
+        var identity = RegisteredWorkspaces.RootIdentity.Encode(root.RootIdentity);
+        // These retained records need a stage identity of the same format. No native stage is opened by the fixture or replay.
+        var seed = new FileJournalIntent(FileOperationKind.Write,
+            request.Meta.CommandId.Value.ToByteArray(), request.Meta.CorrelationId.Value.ToByteArray(), owner,
+            request.Path.WorkspaceId.Value.ToByteArray(), request.Path.Path, identity.Platform, identity.Bytes, identity.Bytes,
+            null, null, null, null, request.Data.Length, SHA256.HashData(request.Data.Span), identity.Bytes);
+        Assert.Equal(FileJournalPreparation.Prepared, FileMutationJournal.Prepare(transaction, seed, request.ToByteArray()));
+        return identity;
+    }
+
+    internal static async Task<byte[]> ReplayAsync(RoutedCalls calls, CenterCaller caller, FileServiceWriteFileRequest request, CancellationToken ct)
+    {
+        var answer = (await calls.CallAsync(caller, RoutedMethod.WriteNodeFile, request.ToByteArray(), request.Meta.CommandId,
+            cancellationToken: ct)).Answer;
+        Assert.NotNull(answer);
+        Assert.Equal(RoutedOutcome.Executed, answer.Outcome);
+        Assert.NotNull(answer.Response);
+        return answer.Response.ToByteArray();
+    }
+
+    private static FileOperation Status(InProcessNode node, FileServiceWriteFileRequest request, CenterCaller owner) =>
+        Assert.IsType<FileOperation>(node.Runtime.Store.Read(reader => FileMutationJournal.GetForCaller(reader, request.Meta.CommandId.Value.Span, owner)));
 }

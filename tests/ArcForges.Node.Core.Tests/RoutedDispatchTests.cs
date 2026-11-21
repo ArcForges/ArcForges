@@ -1,22 +1,29 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text.Json;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Contracts.Relay.V1;
+using ArcForges.Node.Api;
 using ArcForges.Node.CloudLink;
+using ArcForges.Node.Core.Events;
+using ArcForges.Node.Core.Execution;
 using ArcForges.Node.Core.Security;
+using ArcForges.Node.Platform;
 using ArcForges.Node.Store;
 using Google.Protobuf;
+using OutputIndexRecord = ArcForges.Node.Platform.OutputIndexRecord;
 
 namespace ArcForges.Node.Core.Tests;
 
 /// <summary>
 /// AF-CTR-05 part N2b on real nodes, through the routed test seam (<see cref="RoutedCalls"/>): the center-routed policy and the routed column
-/// (N2-1, PB-2), the AGENT narrowing (N2-4, decisions B-4), approvals (N2-5), MR-08 (N2-2, N2-3), the owner and what a routed read shows
+/// (N2-1, PB-2), caller narrowing, approvals (N2-5), MR-08 (N2-2, N2-3), the owner and what a routed read shows
 /// (N2-6, PN-8), command deduplication over the exact bytes with Q-5 replay fidelity (N2-7, N2-8), the in-progress duplicate (decisions
 /// B-2), the cross-part rule for handler errors (decisions B-1), the link and stop re-checks (B-3), the expiry re-check (PN-15),
-/// <c>routed_call_log</c> (N2-10) and the bounded local submission (N2-11..N2-13).
+/// <c>routed_call_log</c> (N2-10) and retained local and routed submission records.
 /// </summary>
 public sealed class RoutedDispatchTests
 {
@@ -156,9 +163,9 @@ public sealed class RoutedDispatchTests
         Assert.False(CenterRouting.SameClass(account, relay));
     }
 
-    /// <summary>N2-1, N2-6, N2-10: a routed submission by each caller kind; its owner, its records and what other callers read of it.</summary>
+    /// <summary>N2-6, N2-10: a retained routed submission's owner, original outcome and command privacy.</summary>
     [Fact(Timeout = 180_000)]
-    public async Task ARoutedSubmissionIsOwnedByItsCenterCallerAndOthersReadOnlyItsSummary()
+    public async Task ARetainedRoutedSubmissionPreservesOwnershipAndCommandPrivacy()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         await using var node = await InProcessNode.Create().StartAsync();
@@ -167,15 +174,16 @@ public sealed class RoutedDispatchTests
         Assert.Null((await human.Queue.PausePoolAsync(new QueueServicePausePoolRequest { Meta = Tasks.Meta(), All = true }, cancellationToken: Ct)).Error);
         var routed = new RoutedCalls(node);
         var owner = RoutedCalls.Session();
-        var spec = Tasks.Argv(node.Root, Tasks.TestLoad, "hold", "--hold-ms", "100");
+        var spec = Tasks.Argv(node.Root, "historical-fixture-no-launch");
         spec.Environment.Set["VISIBLE_NAME"] = "a value";
         var request = new TaskServiceSubmitTaskRequest { Meta = Tasks.Meta(), Spec = spec, CancelWhenCallerGone = true };
+        var retained = await SeedHistoricalSubmitAsync(node, owner, request, retainQueued: true,
+            historicalWarning: "cancel_when_caller_gone was ignored for this routed submission");
         var (answer, response) = await routed.SubmitAsync(owner, request);
         Assert.Equal(RoutedOutcome.Executed, answer!.Outcome);
-        Assert.True(response!.Error is null, $"{response.Error?.Category}/{response.Error?.Code}");
-        Assert.Contains(response.Value.Warnings, warning => warning.Contains("cancel_when_caller_gone", StringComparison.Ordinal));
+        Assert.Equal(retained.ToByteArray(), answer.Response!.ToByteArray());
         Assert.Equal(3, answer.Risk);
-        var taskId = response.Value.TaskId;
+        var taskId = response!.Value.TaskId;
         Assert.Null(node.Runtime.Execution!.BindingOf(taskId.Value.Span));
         Assert.Equal(taskId.Value.ToByteArray(), answer.TaskId);
 
@@ -209,13 +217,6 @@ public sealed class RoutedDispatchTests
         Assert.Equal(spec.WorkingDirectory, lines.Spec.WorkingDirectory);
         Assert.Equal(string.Empty, lines.Spec.Environment.Set["VISIBLE_NAME"]);
 
-        // Every routed caller kind of this node submits: an own-node relay of each local origin.
-        foreach (var origin in (Origin[])[Origin.Human, Origin.Script, Origin.Agent])
-        {
-            var relayed = await routed.SubmitAsync(routed.Relay(origin), new TaskServiceSubmitTaskRequest { Meta = Tasks.Meta(), Spec = Tasks.Argv(node.Root, Tasks.TestLoad, "hold", "--hold-ms", "100") });
-            Assert.True(relayed.Response?.Error is null, $"{origin}: {relayed.Answer?.Outcome} {relayed.Response?.Error?.Code}");
-        }
-
         // N2-10: one routed_call_log row per decision, completed with the risk, the task and the response's digest; no payload.
         var rows = node.Runtime.Store.Read(reader =>
         {
@@ -239,59 +240,7 @@ public sealed class RoutedDispatchTests
         var replayed = (await routed.CancelAsync(owner, taskId, cancelMeta)).Answer!;
         Assert.Equal(RoutedOutcome.Executed, cancelled.Outcome);
         Assert.Equal(cancelled.Response!.ToByteArray(), replayed.Response!.ToByteArray());
-    }
-
-    /// <summary>Two own-node relayed caller origins share the same queue, resource budget and fixed global parallelism.</summary>
-    [Fact(Timeout = 120_000)]
-    public async Task RelayedHumanAndScriptShareQueueAndBudget()
-    {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        await using var node = await InProcessNode.Create().StartAsync();
-        Assert.SkipWhen(node.Runtime.Execution is null, "The node has no execution supervisor.");
-        await using var human = await node.ChannelAsync(helloAsHuman: true);
-        await Sched.SetParallelismAsync(human, ParallelismScope.Global, string.Empty, ParallelismMode.Fixed, 1);
-        Assert.Null((await human.Queue.PausePoolAsync(new QueueServicePausePoolRequest { Meta = Tasks.Meta(), All = true }, cancellationToken: Ct)).Error);
-        var routed = new RoutedCalls(node);
-        var spec = Tasks.Argv(node.Root, Tasks.TestLoad, "hold", "--hold-ms", "120000");
-        spec.Resources = new ResourceSpec { Hint = new ResourceDemand { CpuMillicores = 100, MemExpectedBytes = 64UL << 20 } };
-        var first = (await routed.SubmitAsync(routed.Relay(Origin.Human), new TaskServiceSubmitTaskRequest { Meta = Tasks.Meta(), Spec = spec })).Response!;
-        var second = (await routed.SubmitAsync(routed.Relay(Origin.Script), new TaskServiceSubmitTaskRequest { Meta = Tasks.Meta(), Spec = spec })).Response!;
-        Assert.Null(first.Error);
-        Assert.Null(second.Error);
-        var watch = Stopwatch.StartNew();
-        QueueServiceGetQueueValue queue;
-        while (true)
-        {
-            queue = await Sched.QueueAsync(human);
-            if (queue.Entries.Count(entry => entry.TaskId.Equals(first.Value.TaskId) || entry.TaskId.Equals(second.Value.TaskId)) == 2)
-            {
-                break;
-            }
-
-            Assert.True(watch.Elapsed < TimeSpan.FromSeconds(30), "both routed tasks appear in the shared queue");
-            await Task.Delay(50, Ct);
-        }
-
-        var entries = queue.Entries.Where(entry => entry.TaskId.Equals(first.Value.TaskId) || entry.TaskId.Equals(second.Value.TaskId)).ToArray();
-        Assert.Equal(2, entries.Length);
-        Assert.NotEqual(entries[0].Queue.Position, entries[1].Queue.Position);
-        Assert.Equal(Origin.Human, entries.Single(entry => entry.TaskId.Equals(first.Value.TaskId)).Owner.CenterCaller.LocalOrigin);
-        Assert.Equal(Origin.Script, entries.Single(entry => entry.TaskId.Equals(second.Value.TaskId)).Owner.CenterCaller.LocalOrigin);
-        Assert.All(entries, entry => Assert.Equal((100u, 64UL << 20), (entry.Request.CpuMillicores, entry.Request.MemExpectedBytes)));
-        var policy = await human.Policy.GetPolicyAsync(new PolicyServiceGetPolicyRequest { Meta = Tasks.Meta() }, cancellationToken: Ct);
-        Assert.Null(policy.Error);
-        Assert.Contains(policy.Value.Document.Parallelism, rule => rule.Scope == ParallelismScope.Global && rule.Mode == ParallelismMode.Fixed && rule.Fixed == 1);
-        Assert.True(queue.Budget.GlobalMaxRunning > 0);
-        Assert.Null((await human.Queue.ResumePoolAsync(new QueueServiceResumePoolRequest { Meta = Tasks.Meta(), All = true }, cancellationToken: Ct)).Error);
-        await Tasks.WaitForAsync(() => node.Runtime.Execution.RunningAttempts.Count() == 1, TimeSpan.FromSeconds(30), "one task in the shared budget");
-        var running = await Sched.QueueAsync(human);
-        Assert.Equal(1u, running.Budget.GlobalRunning);
-        Assert.Equal(queue.Budget.GlobalMaxRunning, running.Budget.GlobalMaxRunning);
-        Assert.True(running.Budget.AccountedMemBytes > 0);
-        var states = new[] { (await Tasks.GetAsync(human, first.Value.TaskId)).State, (await Tasks.GetAsync(human, second.Value.TaskId)).State };
-        Assert.Equal(new[] { TaskState.Queued, TaskState.Running }, states.OrderBy(state => state));
-        await Sched.CancelAsync(human, first.Value.TaskId);
-        await Sched.CancelAsync(human, second.Value.TaskId);
+        Assert.Equal(TaskState.Cancelled, (await Tasks.GetAsync(human, taskId)).State);
     }
 
     /// <summary>N2-1 (PB-2): cross-node relay refused by default; the opt-in gives the SCRIPT cells; an AGENT never crosses; off refuses all.</summary>
@@ -305,7 +254,7 @@ public sealed class RoutedDispatchTests
         await using var script = await node.ChannelAsync();
         Assert.Null((await human.Queue.PausePoolAsync(new QueueServicePausePoolRequest { Meta = Tasks.Meta(), All = true }, cancellationToken: Ct)).Error);
         var routed = new RoutedCalls(node);
-        TaskServiceSubmitTaskRequest Request() => new() { Meta = Tasks.Meta(), Spec = Tasks.Argv(node.Root, Tasks.TestLoad, "hold", "--hold-ms", "100") };
+        TaskServiceSubmitTaskRequest Request() => new() { Meta = Tasks.Meta(), Spec = Tasks.Argv(node.Root, "historical-fixture-no-launch") };
         int TaskCount() => (int)(long)node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM task;"))!;
 
         foreach (var origin in (Origin[])[Origin.Human, Origin.Script, Origin.Agent])
@@ -367,49 +316,46 @@ public sealed class RoutedDispatchTests
         // from another node is refused.
         var crossHuman = (await routed.SubmitAsync(routed.Relay(Origin.Human, ownNode: false), Request())).Answer!;
         Assert.Equal((RoutedOutcome.RefusedByPolicy, "permission_override"), (crossHuman.Outcome, crossHuman.Error?.Details.State.Reason));
-        Assert.Null((await routed.SubmitAsync(routed.Relay(Origin.Human), Request())).Response?.Error);
+        var ownHuman = routed.Relay(Origin.Human);
+        AssertRetiredSubmit((await routed.SubmitAsync(ownHuman, Request())).Response!);
+        var ownRead = await routed.ReadAsync(ownHuman, RoutedMethod.ListNodeTasks, new TaskServiceListTasksRequest { Meta = Tasks.Meta() },
+            TaskServiceListTasksResponse.Parser);
+        Assert.Equal(RoutedOutcome.Executed, ownRead.Answer!.Outcome);
+        Assert.Null(ownRead.Response!.Error);
         Assert.Equal(CenterRouting.AgentOwnNodeOnly, (await routed.SubmitAsync(routed.Relay(Origin.Agent, ownNode: false), Request())).Answer!.Error?.Details.State.Reason);
-        Assert.Equal(1, TaskCount());
+        Assert.Equal(0, TaskCount());
 
         // Off: every routed call is refused before any effect.
         Assert.Null((await Sched.ChangePolicyAsync(human, policy => policy.CenterRouted.Enabled = false)).Error);
         Assert.Equal(CenterRouting.Disabled, (await routed.SubmitAsync(RoutedCalls.Session(), Request())).Answer!.Error?.Details.State.Reason);
-        Assert.Equal(1, TaskCount());
+        Assert.Equal(0, TaskCount());
     }
 
-    /// <summary>
-    /// Decisions B-4: a relayed AGENT gets the AGENT rules: patterns (N2-4), its PURE claim not accepted; INTERACTIVE priority is refused for
-    /// every routed caller with the error of a local AGENT.
-    /// </summary>
-    [Fact(Timeout = 180_000)]
-    public async Task ARelayedAgentGetsTheNarrowerAgentRulesAndNoRoutedCallerSubmitsInteractive()
+    /// <summary>Routed Submit retains its caller gate and accepts no fresh legacy work.</summary>
+    [Fact(Timeout = 30_000)]
+    public async Task FreshRoutedSubmitDoesNotAdmitLegacyWorkForAnyCallerKind()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         await using var node = await InProcessNode.Create().StartAsync();
-        Assert.SkipWhen(node.Runtime.Execution is null, "The node has no execution supervisor.");
-        await using var human = await node.ChannelAsync(helloAsHuman: true);
-        Assert.Null((await human.Queue.PausePoolAsync(new QueueServicePausePoolRequest { Meta = Tasks.Meta(), All = true }, cancellationToken: Ct)).Error);
         var routed = new RoutedCalls(node);
-        TaskSpec Pure()
+        // The live caller matrix remains covered by TheRoutedColumnNarrowedByTheCellsDecidesARoutedCaller.
+        // Queue placement and Submit-time spec narrowing belonged to the retired admission path.
+        foreach (var caller in new[] { RoutedCalls.Session(), routed.Relay(Origin.Human), routed.Relay(Origin.Script), routed.Relay(Origin.Agent) })
         {
-            var spec = Tasks.Argv(node.Root, Tasks.TestLoad, "hold", "--hold-ms", "100");
-            spec.SideEffect = SideEffectClass.Pure;
-            return spec;
+            foreach (var priority in new[] { Priority.Normal, Priority.Interactive })
+            {
+                var spec = Tasks.Argv(node.Root, "historical-fixture-no-launch");
+                spec.Priority = priority;
+                spec.SideEffect = SideEffectClass.Pure;
+                var (answer, response) = await routed.SubmitAsync(caller, new TaskServiceSubmitTaskRequest { Meta = Tasks.Meta(), Spec = spec });
+                Assert.Equal(RoutedOutcome.Executed, answer!.Outcome);
+                AssertRetiredSubmit(response!);
+            }
         }
 
-        var agent = (await routed.SubmitAsync(routed.Relay(Origin.Agent), new TaskServiceSubmitTaskRequest { Meta = Tasks.Meta(), Spec = Pure() })).Response!;
-        Assert.Contains(agent.Value.Warnings, warning => warning.Contains("accept_agent_assertions", StringComparison.Ordinal));
-        Assert.Equal(SideEffectClass.Unknown, (await Tasks.GetAsync(human, agent.Value.TaskId)).SideEffect);
-        var script = (await routed.SubmitAsync(routed.Relay(Origin.Script), new TaskServiceSubmitTaskRequest { Meta = Tasks.Meta(), Spec = Pure() })).Response!;
-        Assert.Equal(SideEffectClass.Pure, (await Tasks.GetAsync(human, script.Value.TaskId)).SideEffect);
-
-        foreach (var caller in (CenterCaller[])[routed.Relay(Origin.Human), RoutedCalls.Session()])
-        {
-            var interactive = Tasks.Argv(node.Root, Tasks.TestLoad, "hold", "--hold-ms", "100");
-            interactive.Priority = Priority.Interactive;
-            var refused = (await routed.SubmitAsync(caller, new TaskServiceSubmitTaskRequest { Meta = Tasks.Meta(), Spec = interactive })).Answer!;
-            Assert.Equal((RoutedOutcome.RefusedByPolicy, "permission_denied", "task.submit"), (refused.Outcome, refused.Error?.Code, refused.Error?.Details.State.State));
-        }
+        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM task;")));
+        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM attempt;")));
+        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM command_dedup;")));
     }
 
     /// <summary>N2-5, decisions B-2: a routed caller never approves; its approval is closed; an APPROVED one is in progress; the executed one replays.</summary>
@@ -423,8 +369,8 @@ public sealed class RoutedDispatchTests
         Assert.Null((await human.Queue.PausePoolAsync(new QueueServicePausePoolRequest { Meta = Tasks.Meta(), All = true }, cancellationToken: Ct)).Error);
         var routed = new RoutedCalls(node);
         var caller = RoutedCalls.Session();
-        var first = await Tasks.SubmitAsync(human, Tasks.Argv(node.Root, Tasks.TestLoad, "hold", "--hold-ms", "100"));
-        var second = await Tasks.SubmitAsync(human, Tasks.Argv(node.Root, Tasks.TestLoad, "hold", "--hold-ms", "100"));
+        var first = await SeedHumanQueueAsync(node);
+        var second = await SeedHumanQueueAsync(node);
 
         // Another owner's task: P. The approval is raised and answered with closed fields: its ID, RECONCILE through GetApproval.
         var meta = Tasks.Meta();
@@ -467,46 +413,79 @@ public sealed class RoutedDispatchTests
     public async Task NoPolicyOrApprovalReachesTheRoutedCancelOfAnAdoptedTask()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        await using var node = await InProcessNode.Create().StartAsync();
-        Assert.SkipWhen(node.Runtime.Execution is null, "The node has no execution supervisor.");
-        await using var human = await node.ChannelAsync(helloAsHuman: true);
-        Assert.Null((await human.Queue.PausePoolAsync(new QueueServicePausePoolRequest { Meta = Tasks.Meta(), All = true }, cancellationToken: Ct)).Error);
-        Assert.Null((await Sched.ChangePolicyAsync(human, policy =>
+        await using var files = InProcessNode.Create();
+        files.Clock = new RoutedWallClock();
+        var human = new Caller(Origin.Human, ClientKind.Cli, null);
+        var (queued, approval, requester) = await WithRoutedAdoptionAsync(files, seed: true, async fixture =>
         {
-            policy.Permissions.Add(new PermissionOverride { Operation = PermissionMatrix.ProcessTerminate, Origin = Origin.Script, Decision = A });
-            policy.Permissions.Add(new PermissionOverride { Operation = PermissionMatrix.ProcessTerminate, Origin = Origin.Agent, Decision = A });
-        })).Error);
-        var routed = new RoutedCalls(node);
-        var nodeId = node.Runtime.NodeId.ToArray();
-        var adopted = new Id { Value = ByteString.CopyFrom(await node.Runtime.Processor.ExecuteAsync(context => GateAndReplayTests.SeedAdopted(context, nodeId))) };
-        foreach (var caller in (CenterCaller[])[RoutedCalls.Session(), routed.Relay(Origin.Human), routed.Relay(Origin.Script), routed.Relay(Origin.Agent)])
+            var before = await fixture.ReadTaskAsync(human, fixture.AdoptedTaskId);
+            Assert.Equal((TaskState.Running, TaskKind.Adopted, AttemptKind.Adopted), (before.State, before.Spec.Kind, before.CurrentAttempt.Kind));
+            foreach (var caller in (CenterCaller[])[RoutedCalls.Session(), fixture.Relay(Origin.Human), fixture.Relay(Origin.Script), fixture.Relay(Origin.Agent)])
+            {
+                var denied = await fixture.CancelAsync(caller, fixture.AdoptedTaskId);
+                Assert.Equal((RoutedOutcome.RefusedByPolicy, "permission_denied", PermissionMatrix.ProcessTerminate, EffectCertainty.DidNotHappen),
+                    (denied.Outcome, denied.Error?.Code, denied.Error?.Details.State.State, denied.Error?.Effect));
+                Assert.Contains(fixture.Runtime.Store.Read(reader => AuditLog.Recent(reader)), entry =>
+                    entry.Operation == PermissionMatrix.ProcessTerminate + " TaskService.CancelTask" && entry.Decision == D
+                    && entry.Actor.Origin == Origin.Remote && caller.Equals(entry.Actor.CenterCaller));
+            }
+
+            Assert.Equal(before, await fixture.ReadTaskAsync(human, fixture.AdoptedTaskId));
+            Assert.Equal(0, fixture.Platform.Terminations);
+            Assert.Equal(0L, fixture.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM approval;")));
+            var task = await fixture.Runtime.Processor.ExecuteAsync(command => LegacyTaskHistoryFixture.SeedQueued(command.Transaction, human.Actor),
+                CommitDurability.Full).WaitAsync(Ct);
+            var session = RoutedCalls.Session();
+            var pending = await fixture.CancelAsync(session, task);
+            Assert.Equal((RoutedOutcome.RefusedByPolicy, "approval_required", PermissionMatrix.TaskCancelOthers),
+                (pending.Outcome, pending.Error?.Code, pending.Error?.Details.State.State));
+            var approvalId = pending.Error!.Details.State.Resource.Id;
+            await fixture.Runtime.Processor.ExecuteAsync(command =>
+            {
+                var tx = command.Transaction;
+                var spec = TaskRecords.GetRow(tx, task.Value.Span)!.Spec;
+                spec.Kind = TaskKind.Adopted;
+                var serialized = spec.ToByteArray();
+                return tx.Execute("UPDATE task SET kind = $kind, spec = $spec, spec_digest = $digest WHERE task_id = $id;",
+                    ("$kind", (int)TaskKind.Adopted), ("$spec", serialized), ("$digest", SHA256.HashData(serialized)), ("$id", task.Value.ToByteArray()));
+            }, CommitDurability.Full).WaitAsync(Ct);
+            return (task, approvalId, session);
+        });
+
+        // Verifier N-7: reopening the database preserves the pending approval and the target's new classification.
+        await WithRoutedAdoptionAsync(files, seed: false, async fixture =>
         {
-            var denied = (await routed.CancelAsync(caller, adopted)).Answer!;
-            Assert.Equal((RoutedOutcome.RefusedByPolicy, "permission_denied", PermissionMatrix.ProcessTerminate), (denied.Outcome, denied.Error?.Code, denied.Error?.Details.State.State));
-        }
+            var target = await fixture.ReadTaskAsync(human, queued);
+            Assert.Equal((TaskKind.Adopted, TaskState.Queued), (target.Spec.Kind, target.State));
+            var approvalId = approval.Value.ToByteArray();
+            var pending = fixture.Runtime.Store.Read(reader => Approvals.Get(reader, approvalId));
+            Assert.NotNull(pending);
+            Assert.Equal(ApprovalState.Pending, pending.State);
+            Assert.Equal(requester, pending.View.Requester.CenterCaller);
+            var approved = await fixture.Runtime.Processor.ExecuteAsync(command =>
+                Approvals.Decide(command, approvalId, approve: true, human.Actor, null), CommitDurability.Full).WaitAsync(Ct);
+            Assert.Equal(ApprovalState.Approved, approved.State);
+            await fixture.ApprovalHandler.ResumeAsync().WaitAsync(Ct);
 
-        Assert.Equal(TaskState.Running, (await Tasks.GetAsync(human, adopted)).State);
-        Assert.Empty((await human.Approvals.ListApprovalsAsync(new ApprovalServiceListApprovalsRequest { Meta = Tasks.Meta() }, cancellationToken: Ct)).Value.Approvals);
-        Assert.Contains(node.Runtime.Store.Read(reader => AuditLog.Recent(reader)), entry => entry.Operation == PermissionMatrix.ProcessTerminate + " TaskService.CancelTask"
-            && entry.Decision == D && entry.Actor.Origin == Origin.Remote);
-
-        // Verifier N-7: an approved routed cancel of another owner's task that became ADOPTED before it executed is still denied.
-        var queued = await Tasks.SubmitAsync(human, Tasks.Argv(node.Root, Tasks.TestLoad, "hold", "--hold-ms", "100"));
-        var approval = (await routed.CancelAsync(RoutedCalls.Session(), queued)).Answer!.Error!.Details.State.Resource.Id;
-        await node.Runtime.Processor.ExecuteAsync(context => context.Transaction.Execute("UPDATE task SET kind = 3 WHERE task_id = $id;", ("$id", queued.Value.ToByteArray())));
-        Assert.Equal(0, await node.StopAsync());
-        await node.StartAsync();
-        await using var restartedHuman = await node.ChannelAsync(helloAsHuman: true);
-        Assert.Equal(3L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT kind FROM task WHERE task_id = $id;", ("$id", queued.Value.ToByteArray()))));
-        var decided = (await restartedHuman.Approvals.DecideApprovalAsync(new ApprovalServiceDecideApprovalRequest { Meta = Tasks.Meta(), ApprovalId = approval, Decision = ApprovalDecisionKind.Approve },
-            cancellationToken: Ct)).Value.Approval;
-        Assert.Equal(ApprovalState.Failed, decided.State);
-        Assert.NotEqual(TaskState.Cancelled, (await Tasks.GetAsync(restartedHuman, queued)).State);
+            var completed = fixture.Runtime.Store.Read(reader => Approvals.Get(reader, approvalId));
+            Assert.NotNull(completed);
+            Assert.Equal(ApprovalState.Failed, completed.State);
+            var refused = TaskServiceCancelTaskResponse.Parser.ParseFrom(completed.Outcome);
+            Assert.Equal((ErrorCategory.Authorization, "permission_denied", EffectCertainty.DidNotHappen, RetryMode.Never),
+                (refused.Error.Category, refused.Error.Code, refused.Error.Effect, refused.Error.Retry.Mode));
+            Assert.Contains(PermissionMatrix.ProcessTerminate + " is denied for REMOTE callers", refused.Error.Details.State.Reason, StringComparison.Ordinal);
+            Assert.Contains(fixture.Runtime.Store.Read(reader => AuditLog.Recent(reader)), entry =>
+                entry.Operation == PermissionMatrix.ProcessTerminate + " TaskService.CancelTask" && entry.Decision == D
+                && requester.Equals(entry.Actor.CenterCaller) && entry.TargetId.AsSpan().SequenceEqual(queued.Value.Span));
+            Assert.Equal(target, await fixture.ReadTaskAsync(human, queued));
+            Assert.Equal(0, fixture.Platform.Terminations);
+            return true;
+        });
     }
 
     /// <summary>
-    /// N2-7, Q-5, decisions Q6: one task per command ID and exact bytes; a replay equals the recorded bytes (outside the volatile fields, here
-    /// all of them); other bytes under the command ID, a re-encoded equivalent included, are <c>command_id_reused</c>.
+    /// N2-7, Q-5, decisions Q6: a historical task keeps its exact recorded bytes. Other bytes under the command ID,
+    /// including a re-encoded equivalent, are <c>command_id_reused</c>.
     /// </summary>
     [Fact(Timeout = 180_000)]
     public async Task ARoutedSubmitDeduplicatesByTheExactBytesAndReplaysTheRecordedOutcome()
@@ -514,15 +493,16 @@ public sealed class RoutedDispatchTests
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         await using var node = await InProcessNode.Create().StartAsync();
         Assert.SkipWhen(node.Runtime.Execution is null, "The node has no execution supervisor.");
-        await using var human = await node.ChannelAsync(helloAsHuman: true);
-        Assert.Null((await human.Queue.PausePoolAsync(new QueueServicePausePoolRequest { Meta = Tasks.Meta(), All = true }, cancellationToken: Ct)).Error);
         var routed = new RoutedCalls(node);
         var caller = routed.Relay(Origin.Script);
-        var spec = Tasks.Argv(node.Root, Tasks.TestLoad, "hold", "--hold-ms", "100");
+        var spec = Tasks.Argv(node.Root, "historical-fixture-no-launch");
         spec.Labels["a"] = "1";
         spec.Labels["b"] = "2";
         var request = new TaskServiceSubmitTaskRequest { Meta = Tasks.Meta(), Spec = spec };
+        var retained = await SeedHistoricalSubmitAsync(node, caller, request);
         var first = (await routed.SubmitAsync(caller, request)).Answer!;
+        Assert.Equal(RoutedOutcome.Executed, first.Outcome);
+        Assert.Equal(retained.ToByteArray(), first.Response!.ToByteArray());
 
         // The same bytes under a new call ID (and a new local session of the same origin): the recorded bytes, exactly.
         var again = (await routed.SubmitAsync(routed.Relay(Origin.Script), request)).Answer!;
@@ -567,18 +547,19 @@ public sealed class RoutedDispatchTests
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         await using var node = await InProcessNode.Create().StartAsync();
         Assert.SkipWhen(node.Runtime.Execution is null, "The node has no execution supervisor.");
-        await using var human = await node.ChannelAsync(helloAsHuman: true);
-        Assert.Null((await human.Queue.PausePoolAsync(new QueueServicePausePoolRequest { Meta = Tasks.Meta(), All = true }, cancellationToken: Ct)).Error);
         var routed = new RoutedCalls(node);
         var earlier = routed.Relay(Origin.Script);
         var executing = RoutedCalls.Session();
-        var request = new TaskServiceSubmitTaskRequest { Meta = Tasks.Meta(), Spec = Tasks.Argv(node.Root, Tasks.TestLoad, "hold", "--hold-ms", "100") };
+        var request = new TaskServiceSubmitTaskRequest { Meta = Tasks.Meta(), Spec = Tasks.Argv(node.Root, "historical-fixture-no-launch") };
 
         routed.Link.Reset(notStoppingFor: 0);
         Assert.Equal("node_stopping", (await routed.SubmitAsync(earlier, request)).Response!.Error?.Code);
         routed.Link.Reset();
+        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM command_dedup WHERE command_id = $id;",
+            ("$id", request.Meta.CommandId.Value.ToByteArray()))));
+        var retained = await SeedHistoricalSubmitAsync(node, executing, request);
         var first = (await routed.SubmitAsync(executing, request)).Response!;
-        Assert.Null(first.Error);
+        Assert.Equal(retained, first);
         var sameClass = (await routed.SubmitAsync(RoutedCalls.Session(), request)).Response!;
         Assert.Equal(first.Value.TaskId, sameClass.Value.TaskId);
         var wrongClass = (await routed.SubmitAsync(earlier, request)).Response!;
@@ -603,7 +584,7 @@ public sealed class RoutedDispatchTests
         Assert.SkipWhen(node.Runtime.Execution is null, "The node has no execution supervisor.");
         await using var human = await node.ChannelAsync(helloAsHuman: true);
         Assert.Null((await human.Queue.PausePoolAsync(new QueueServicePausePoolRequest { Meta = Tasks.Meta(), All = true }, cancellationToken: Ct)).Error);
-        var task = await Tasks.SubmitAsync(human, Tasks.Argv(node.Root, Tasks.TestLoad, "hold", "--hold-ms", "100"));
+        var task = await SeedHumanQueueAsync(node);
         var routed = new RoutedCalls(node);
         var owner = ownerIsRelay ? routed.Relay(Origin.Script) : RoutedCalls.Session();
         var foreign = ownerIsRelay ? RoutedCalls.Session() : routed.Relay(Origin.Script);
@@ -640,12 +621,11 @@ public sealed class RoutedDispatchTests
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         await using var node = await InProcessNode.Create().StartAsync();
         Assert.SkipWhen(node.Runtime.Execution is null, "The node has no execution supervisor.");
-        await using var human = await node.ChannelAsync(helloAsHuman: true);
-        Assert.Null((await human.Queue.PausePoolAsync(new QueueServicePausePoolRequest { Meta = Tasks.Meta(), All = true }, cancellationToken: Ct)).Error);
         var routed = new RoutedCalls(node);
         var caller = RoutedCalls.Session();
-        var request = new TaskServiceSubmitTaskRequest { Meta = Tasks.Meta(), Spec = Tasks.Argv(node.Root, Tasks.TestLoad, "hold", "--hold-ms", "100") };
-        Assert.Null((await routed.SubmitAsync(caller, request)).Response!.Error);
+        var request = new TaskServiceSubmitTaskRequest { Meta = Tasks.Meta(), Spec = Tasks.Argv(node.Root, "historical-fixture-no-launch") };
+        var retained = await SeedHistoricalSubmitAsync(node, caller, request);
+        Assert.Equal(retained, (await routed.SubmitAsync(caller, request)).Response);
 
         routed.Link.Reset(notStoppingFor: 0);
         var stopped = (await routed.SubmitAsync(caller, request)).Response!.Error;
@@ -712,38 +692,43 @@ public sealed class RoutedDispatchTests
         }
     }
 
-    /// <summary>Decisions B-2: a duplicate while the first call is admitted answers effect UNKNOWN; the first then completes and replays.</summary>
+    /// <summary>Decisions B-2: a duplicate while the retained Task's Cancel is admitted answers UNKNOWN before the original settles.</summary>
     [Fact(Timeout = 180_000)]
-    public async Task ADuplicateWhileTheFirstIsAdmittedAnswersEffectUnknownAndNeverFinal()
+    public async Task ADuplicateCancelWhileTheFirstIsAdmittedAnswersEffectUnknownAndNeverFinal()
     {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        var ct = TestContext.Current.CancellationToken;
+        ct.ThrowIfCancellationRequested();
         await using var node = await InProcessNode.Create().StartAsync();
         Assert.SkipWhen(node.Runtime.Execution is null, "The node has no execution supervisor.");
         await using var human = await node.ChannelAsync(helloAsHuman: true);
         Assert.Null((await human.Queue.PausePoolAsync(new QueueServicePausePoolRequest { Meta = Tasks.Meta(), All = true }, cancellationToken: Ct)).Error);
         var routed = new RoutedCalls(node);
         var caller = RoutedCalls.Session();
-        var request = new TaskServiceSubmitTaskRequest { Meta = Tasks.Meta(), Spec = Tasks.Argv(node.Root, Tasks.TestLoad, "hold", "--hold-ms", "100") };
+        var taskId = await SeedOwnedQueueAsync(node, caller);
+        var request = new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = taskId };
+        var bytes = request.ToByteArray();
+        Task<(RoutedAnswer? Answer, long LogId)> Call(bool record = false) =>
+            routed.CallAsync(caller, RoutedMethod.CancelNodeTask, bytes, request.Meta.CommandId, record: record, cancellationToken: ct);
 
         // The writer is held, so the first call waits in its admission.
         using var hold = new ManualResetEventSlim();
         var held = node.Runtime.Processor.ExecuteAsync(_ =>
         {
-            hold.Wait(TimeSpan.FromSeconds(60));
+            hold.Wait(TimeSpan.FromSeconds(45), ct);
             return 0;
         });
-        var first = routed.SubmitAsync(caller, request, record: false);
-        await Tasks.WaitForAsync(() => node.Runtime.Processor.Queued >= 1, TimeSpan.FromSeconds(30), "the first submission to wait for the writer");
+        var first = Call();
         try
         {
-            var duplicate = (await routed.SubmitAsync(caller, request, record: false)).Answer!;
-            var error = TaskServiceSubmitTaskResponse.Parser.ParseFrom(duplicate.Response).Error;
+            await Tasks.WaitForAsync(() => node.Runtime.Processor.Queued >= 1, TimeSpan.FromSeconds(30), "the first cancellation to wait for the writer");
+            var duplicate = (await Call()).Answer!;
+            var error = TaskServiceCancelTaskResponse.Parser.ParseFrom(duplicate.Response).Error;
             Assert.Equal((RoutedOutcome.Executed, "operation_failed", EffectCertainty.Unknown, RetryMode.SameCommand, "command_in_progress"),
                 (duplicate.Outcome, error?.Code, error?.Effect ?? EffectCertainty.Unspecified, error?.Retry.Mode ?? RetryMode.Unspecified, error?.Details.State.Reason));
 
             // Once stopping begins, even a duplicate of an in-progress command is refused before replay/in-progress lookup.
             routed.Link.Reset(notStoppingFor: 0);
-            var afterStop = (await routed.SubmitAsync(caller, request, record: false)).Response!.Error;
+            var afterStop = TaskServiceCancelTaskResponse.Parser.ParseFrom((await Call()).Answer!.Response).Error;
             Assert.Equal(("node_stopping", EffectCertainty.DidNotHappen, RetryMode.AfterTime), (afterStop?.Code, afterStop?.Effect, afterStop?.Retry.Mode));
             routed.Link.Reset();
         }
@@ -752,31 +737,37 @@ public sealed class RoutedDispatchTests
             hold.Set();
         }
 
-        await held;
-        var done = (await first).Answer!;
-        Assert.Null(TaskServiceSubmitTaskResponse.Parser.ParseFrom(done.Response).Error);
-        var resent = (await routed.SubmitAsync(caller, request)).Answer!;
+        await held.WaitAsync(ct);
+        var done = (await first.WaitAsync(ct)).Answer!;
+        var completed = TaskServiceCancelTaskResponse.Parser.ParseFrom(done.Response);
+        Assert.Null(completed.Error);
+        Assert.Equal(TaskState.Cancelled, completed.Value.State);
+        var resent = (await Call(record: true)).Answer!;
         Assert.Equal(RoutedCalls.OutcomeDigest(done.Response!.Span), RoutedCalls.OutcomeDigest(resent.Response!.Span));
         Assert.Equal(1L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM task;")));
+        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM attempt;")));
     }
 
-    /// <summary>
-    /// Decisions B-1 and B-3: every routed handler error is recorded and replayed, or decided before any effect with DID_NOT_HAPPEN; the
-    /// link and the stop are read again immediately before the effect; PN-15's expiry re-check.
-    /// </summary>
+    /// <summary>Retained Cancel keeps the B-1/B-3 effect, link, stopping and expiry boundaries.</summary>
     [Fact(Timeout = 180_000)]
-    public async Task EveryRoutedHandlerErrorIsRecordedOrDidNotHappenAndTheLinkIsReadBeforeTheEffect()
+    public async Task RoutedCancelChecksTheLinkAndExpiryBeforeChangingARetainedTask()
     {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        await using var node = await InProcessNode.Create().StartAsync();
+        var ct = TestContext.Current.CancellationToken;
+        var clock = new RoutedWallClock();
+        await using var node = InProcessNode.Create();
+        node.Clock = clock;
+        await node.StartAsync();
         Assert.SkipWhen(node.Runtime.Execution is null, "The node has no execution supervisor.");
         await using var human = await node.ChannelAsync(helloAsHuman: true);
         Assert.Null((await human.Queue.PausePoolAsync(new QueueServicePausePoolRequest { Meta = Tasks.Meta(), All = true }, cancellationToken: Ct)).Error);
         var routed = new RoutedCalls(node);
         var caller = RoutedCalls.Session();
-        TaskServiceSubmitTaskRequest Request() => new() { Meta = Tasks.Meta(), Spec = Tasks.Argv(node.Root, Tasks.TestLoad, "hold", "--hold-ms", "100") };
-        long Count(string table) => (long)node.Runtime.Store.Read(reader => reader.Scalar(table == "command_dedup"
-            ? "SELECT count(*) FROM command_dedup WHERE method LIKE 'arcforges.node.v1.TaskService/%';" : $"SELECT count(*) FROM {table};"))!;
+        var first = await SeedOwnedQueueAsync(node, caller);
+        var second = await SeedOwnedQueueAsync(node, caller);
+        var third = await SeedOwnedQueueAsync(node, caller);
+        TaskServiceCancelTaskRequest Request(Id task) => new() { Meta = Tasks.Meta(), TaskId = task };
+        long Receipts() => (long)node.Runtime.Store.Read(reader => reader.Scalar(
+            "SELECT count(*) FROM command_dedup WHERE method = 'arcforges.node.v1.TaskService/CancelTask';"))!;
         (long Decision, string? Code) Row(long logId) => node.Runtime.Store.Read(reader =>
         {
             using var command = reader.CreateCommand("SELECT decision, refusal_code FROM routed_call_log WHERE log_id = $id;");
@@ -785,54 +776,112 @@ public sealed class RoutedDispatchTests
             Assert.True(row.Read());
             return (row.GetInt64(0), row.IsDBNull(1) ? null : row.GetString(1));
         });
+        Task<(RoutedAnswer? Answer, long LogId)> Call(TaskServiceCancelTaskRequest request, Id? headerId = null,
+            DateTimeOffset? expires = null, bool record = true) =>
+            routed.CallAsync(caller, RoutedMethod.CancelNodeTask, request.ToByteArray(), headerId ?? request.Meta.CommandId, expires, record, ct);
 
-        // A validation error before the deduplication: DID_NOT_HAPPEN, nothing recorded.
-        var invalid = Request();
-        invalid.Spec.TimeoutMs = 5;
-        var refused = await routed.SubmitAsync(caller, invalid);
-        Assert.Equal((RoutedOutcome.Executed, EffectCertainty.DidNotHappen), (refused.Answer!.Outcome, refused.Response!.Error.Effect));
-        Assert.Equal(0L, Count("command_dedup"));
+        async Task<RoutedAnswer?> CrossWriterExpiryAsync(TaskServiceCancelTaskRequest request, TimeSpan afterExpiry)
+        {
+            using var release = new ManualResetEventSlim();
+            var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var processor = node.Runtime.Processor;
+            var held = processor.ExecuteAsync(_ =>
+            {
+                entered.SetResult();
+                Assert.True(release.Wait(TimeSpan.FromSeconds(45), ct));
+                return 0;
+            });
+            Task<(RoutedAnswer? Answer, long LogId)> pending;
+            try
+            {
+                await entered.Task.WaitAsync(TimeSpan.FromSeconds(20), ct);
+                var enqueued = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                processor.EnqueuedForTests = new Dictionary<string, TaskCompletionSource>(StringComparer.Ordinal)
+                {
+                    [Convert.ToHexString(request.Meta.CommandId.Value.Span)] = enqueued,
+                };
+                var lifetime = TimeSpan.FromMinutes(1);
+                var expires = clock.GetUtcNow() + lifetime;
+                // This seam starts after verification. Skip its log write so Cancel can reach the held writer.
+                pending = Call(request, expires: expires, record: false);
+                await enqueued.Task.WaitAsync(TimeSpan.FromSeconds(20), ct);
+                Assert.False(pending.IsCompleted);
+                clock.Advance(lifetime + afterExpiry);
+            }
+            finally
+            {
+                release.Set();
+                processor.EnqueuedForTests = null;
+                await held;
+            }
 
-        // A mismatching inner command ID: VALIDATION/invalid_argument, DID_NOT_HAPPEN.
-        var mismatched = Request();
-        var (wrong, wrongLog) = await routed.CallAsync(caller, RoutedMethod.SubmitNodeTask, mismatched.ToByteArray(), CommandIds.New());
-        var mismatch = TaskServiceSubmitTaskResponse.Parser.ParseFrom(wrong!.Response).Error;
+            return (await pending.WaitAsync(ct)).Answer;
+        }
+
+        static TaskServiceCancelTaskResponse Result(RoutedAnswer? answer)
+        {
+            Assert.NotNull(answer);
+            Assert.Equal(RoutedOutcome.Executed, answer.Outcome);
+            return TaskServiceCancelTaskResponse.Parser.ParseFrom(Assert.IsType<ByteString>(answer.Response));
+        }
+
+        var invalid = Request(first);
+        invalid.GraceMs = 300_001;
+        var refused = Result((await Call(invalid)).Answer).Error;
+        Assert.Equal(("invalid_argument", EffectCertainty.DidNotHappen), (refused.Code, refused.Effect));
+        Assert.Equal(0L, Receipts());
+
+        var (wrong, wrongLog) = await Call(Request(first), headerId: CommandIds.New());
+        var mismatch = Result(wrong).Error;
         Assert.Equal(("invalid_argument", EffectCertainty.DidNotHappen), (mismatch.Code, mismatch.Effect));
         Assert.Equal((1L, "VALIDATION/invalid_argument"), Row(wrongLog));
 
-        // The node's stop began: STATE/node_stopping, DID_NOT_HAPPEN, AFTER_TIME with retry_at; after the restart the same bytes execute once.
-        var stopped = Request();
+        var stopped = Request(first);
         routed.Link.Reset(notStoppingFor: 0);
-        var stopping = (await routed.SubmitAsync(caller, stopped)).Response!.Error;
-        Assert.Equal(("node_stopping", EffectCertainty.DidNotHappen, RetryMode.AfterTime, true), (stopping.Code, stopping.Effect, stopping.Retry.Mode, stopping.Retry.RetryAt is not null));
-
-        // ... also when the stop begins immediately before the effect (decisions B-3): nothing is stored.
+        var stopping = Result((await Call(stopped)).Answer).Error;
+        Assert.Equal(("node_stopping", EffectCertainty.DidNotHappen, RetryMode.AfterTime, true),
+            (stopping.Code, stopping.Effect, stopping.Retry.Mode, stopping.Retry.RetryAt is not null));
         routed.Link.Reset(notStoppingFor: 1);
-        Assert.Equal("node_stopping", (await routed.SubmitAsync(caller, stopped)).Response!.Error?.Code);
-        Assert.Equal((0L, 0L), (Count("task"), Count("command_dedup")));
+        Assert.Equal("node_stopping", Result((await Call(stopped)).Answer).Error.Code);
+        Assert.Equal(0L, Receipts());
+        Assert.Equal(TaskState.Queued, (await Tasks.GetAsync(human, first)).State);
         routed.Link.Reset();
-        Assert.Null((await routed.SubmitAsync(caller, stopped)).Response!.Error);
-        Assert.Equal(1L, Count("task"));
+        var cancelled = Result((await Call(stopped)).Answer);
+        Assert.Null(cancelled.Error);
+        Assert.Equal(TaskState.Cancelled, cancelled.Value.State);
+        Assert.Equal(1L, Receipts());
 
-        // The link ends immediately before the effect: the call is dropped, nothing is stored and its row stays pending.
-        var dropped = Request();
+        // A link ending before the writer checks the call leaves its log pending and the Task unchanged.
         routed.Link.Reset(usableFor: 2);
-        var (gone, goneLog) = await routed.CallAsync(caller, RoutedMethod.SubmitNodeTask, dropped.ToByteArray(), dropped.Meta.CommandId);
-        Assert.Null(gone);
-        Assert.Equal((5L, (string?)null), Row(goneLog));
-        Assert.Equal(1L, Count("task"));
+        var (dropped, droppedLog) = await Call(Request(second));
+        Assert.Null(dropped);
+        Assert.Equal((5L, (string?)null), Row(droppedLog));
+        Assert.Equal(1L, Receipts());
+        Assert.Equal(TaskState.Queued, (await Tasks.GetAsync(human, second)).State);
         routed.Link.Reset();
 
-        // PN-15: inside the 120 s skew band the call executes; past it, EXPIRED (decision 4) and nothing is stored.
-        var late = Request();
-        var (lateAnswer, _) = await routed.CallAsync(caller, RoutedMethod.SubmitNodeTask, late.ToByteArray(), late.Meta.CommandId, node.Runtime.Clock.GetUtcNow().AddSeconds(-60));
-        Assert.Null(TaskServiceSubmitTaskResponse.Parser.ParseFrom(lateAnswer!.Response).Error);
-        var expired = Request();
-        var (expiredAnswer, expiredLog) = await routed.CallAsync(caller, RoutedMethod.SubmitNodeTask, expired.ToByteArray(), expired.Meta.CommandId,
-            node.Runtime.Clock.GetUtcNow().AddSeconds(-121));
-        Assert.Equal((RoutedOutcome.Expired, "expired"), (expiredAnswer!.Outcome, expiredAnswer.Error?.Code));
-        Assert.Equal((4L, "STATE/expired"), Row(expiredLog));
-        Assert.Equal(2L, Count("task"));
+        var late = Result(await CrossWriterExpiryAsync(Request(second), CallVerifier.Skew / 2));
+        Assert.Null(late.Error);
+        Assert.Equal(TaskState.Cancelled, late.Value.State);
+        var original = await Tasks.GetAsync(human, third);
+        var request = Request(third);
+        var expired = await CrossWriterExpiryAsync(request, CallVerifier.Skew + TimeSpan.FromSeconds(1));
+        Assert.NotNull(expired);
+        Assert.Equal(RoutedOutcome.Expired, expired.Outcome);
+        Assert.Null(expired.Response);
+        Assert.Equal(("expired", "expired_before_effect", EffectCertainty.DidNotHappen),
+            (expired.Error?.Code, expired.Error?.Details.State.Reason, expired.Error?.Effect));
+        var unchanged = await Tasks.GetAsync(human, third);
+        Assert.Equal(third, unchanged.TaskId);
+        Assert.Equal(TaskState.Queued, unchanged.State);
+        Assert.Equal(original.Revision, unchanged.Revision);
+        Assert.Equal(caller, unchanged.Owner.CenterCaller);
+        Assert.Equal(original.Owner, unchanged.Owner);
+        Assert.Equal(2L, Receipts());
+        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM command_dedup WHERE command_id = $id;",
+            ("$id", request.Meta.CommandId.Value.ToByteArray()))));
+        Assert.Equal(3L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM task;")));
+        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM attempt;")));
     }
 
     /// <summary>N2-12 (CTR5-NODE-12): routed output by offset, other owners' output only by policy, the routed cap, and waits within the deadline.</summary>
@@ -842,17 +891,34 @@ public sealed class RoutedDispatchTests
     public async Task RoutedOutputIsReadByOffsetWithinTheCapAndTheDeadline()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        await using var node = await InProcessNode.Create().StartAsync();
+        await using var node = InProcessNode.Create();
+        var (taskId, attemptId) = LegacyTaskHistoryFixture.Seed(node, AttemptState.Finished);
+        var (waitingTaskId, waitingAttemptId) = LegacyTaskHistoryFixture.Seed(node, AttemptState.Finished);
+        var files = Tasks.Files(node, attemptId);
+        var output = Enumerable.Range(0, 4096).Select(index => (byte)(index % 251)).ToArray();
+        Directory.CreateDirectory(files.Directory);
+        File.WriteAllBytes(files.StdoutPath, output);
+        var index = new byte[OutputIndexRecord.Size];
+        new OutputIndexRecord(OutputStreamKind.Stdout, 0, (uint)output.Length, 1_700_000_000_000_000_000, OutputChunkMarks.None).Write(index);
+        File.WriteAllBytes(files.IndexPath, index);
+
+        await node.StartAsync();
         Assert.SkipWhen(node.Runtime.Execution is null, "The node has no execution supervisor.");
         await using var human = await node.ChannelAsync(helloAsHuman: true);
         var routed = new RoutedCalls(node);
         var owner = RoutedCalls.Session();
-        var printed = (await routed.SubmitAsync(owner, new TaskServiceSubmitTaskRequest { Meta = Tasks.Meta(), Spec = Tasks.Argv(node.Root, Tasks.TestLoad, "output", "--bytes", "4096") })).Response!;
-        var task = await Tasks.WaitAsync(human, printed.Value.TaskId);
+        await node.Runtime.Processor.ExecuteAsync(command => command.Transaction.Execute(
+            "UPDATE task SET owner = $owner, owner_origin = $origin WHERE task_id = $id;",
+            ("$owner", new ActorRef { Origin = Origin.Remote, CenterCaller = owner }.ToByteArray()),
+            ("$origin", (int)Origin.Remote), ("$id", taskId.Value.ToByteArray())), CommitDurability.Full).WaitAsync(Ct);
+
+        var task = await Tasks.GetAsync(human, taskId);
         Assert.Equal(TaskState.Succeeded, task.State);
-        var read = new TaskServiceReadTaskOutputRequest { Meta = Tasks.Meta(), AttemptId = task.CurrentAttempt.AttemptId, FromOffset = 1000, MaxBytes = 100 };
+        Assert.Equal(attemptId, task.CurrentAttempt.AttemptId);
+        var read = new TaskServiceReadTaskOutputRequest { Meta = Tasks.Meta(), AttemptId = attemptId, FromOffset = 1000, MaxBytes = 100 };
         var own = (await routed.ReadAsync(owner, RoutedMethod.ReadNodeTaskOutput, read, TaskServiceReadTaskOutputResponse.Parser)).Response!.Value;
         Assert.Equal((100, 1100UL), (own.Data.Length, own.NextOffset));
+        Assert.Equal(output[1000..1100], own.Data.ToByteArray());
         var others = (await routed.ReadAsync(RoutedCalls.Session(), RoutedMethod.ReadNodeTaskOutput, read, TaskServiceReadTaskOutputResponse.Parser)).Answer!;
         Assert.Equal((RoutedOutcome.RefusedByPolicy, PermissionMatrix.TaskReadOutput, "remote_output_tail_off"),
             (others.Outcome, others.Error?.Details.State.State, others.Error?.Details.State.Reason));
@@ -861,28 +927,54 @@ public sealed class RoutedDispatchTests
         Assert.Equal("invalid_argument", (await routed.ReadAsync(owner, RoutedMethod.ReadNodeTaskOutput, large, TaskServiceReadTaskOutputResponse.Parser)).Response!.Error?.Code);
         Assert.Null((await human.Tasks.ReadTaskOutputAsync(large, cancellationToken: Ct)).Error);
 
-        // wait_ms: a running attempt without new bytes is waited on (local callers too); a routed wait ends before the call's deadline.
-        var holding = await Tasks.SubmitAsync(human, Tasks.Argv(node.Root, Tasks.TestLoad, "hold", "--hold-ms", "30000"));
-        var started = await Tasks.WaitAsync(human, holding, WaitTarget.Started);
-        var wait = new TaskServiceReadTaskOutputRequest { Meta = Tasks.Meta(), AttemptId = started.CurrentAttempt.AttemptId, FromOffset = 1_000_000, WaitMs = 1_500 };
-        var clock = Stopwatch.StartNew();
-        Assert.Null((await human.Tasks.ReadTaskOutputAsync(wait, cancellationToken: Ct)).Error);
-        Assert.InRange(clock.Elapsed, TimeSpan.FromMilliseconds(1_200), TimeSpan.FromSeconds(10));
-        var waitTask = new TaskServiceWaitTaskRequest { Meta = Tasks.Meta(), TaskId = holding, WaitMs = 20_000 };
-        clock.Restart();
-        var (bounded, _) = await routed.CallAsync(RoutedCalls.Session(), RoutedMethod.WaitNodeTask, waitTask.ToByteArray(), null, node.Runtime.Clock.GetUtcNow().AddSeconds(3));
-        Assert.Equal(RoutedOutcome.Executed, bounded!.Outcome);
-        Assert.False(TaskServiceWaitTaskResponse.Parser.ParseFrom(bounded.Response).Value.Reached);
-        TestContext.Current.TestOutputHelper?.WriteLine($"routed-wait elapsed-ms={clock.Elapsed.TotalMilliseconds:F3}; original bound=4000ms");
-        Assert.InRange(clock.Elapsed, TimeSpan.Zero, TimeSpan.FromSeconds(4));
-        Assert.Null((await human.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = holding }, cancellationToken: Ct)).Error);
-        var ended = await Tasks.WaitAsync(human, holding);
-        Assert.Equal(TaskState.Cancelled, ended.State);
+        // The second synthetic attempt has no output. Expose its active metadata only during the two wait observations.
+        Task SetFinishedAsync(bool finished) => node.Runtime.Processor.ExecuteAsync(command =>
+        {
+            var transaction = command.Transaction;
+            var end = finished ? transaction.NowMicroseconds : (long?)null;
+            transaction.Execute("UPDATE task SET state = $state, finished_at = $end WHERE task_id = $id;",
+                ("$state", (int)(finished ? TaskState.Succeeded : TaskState.Running)), ("$end", end), ("$id", waitingTaskId.Value.ToByteArray()));
+            transaction.Execute("""
+                UPDATE attempt SET state = $state, finished_at = $end, exit_code = $exit, termination_reason = $reason, effect = $effect
+                WHERE attempt_id = $id;
+                """, ("$state", (int)(finished ? AttemptState.Finished : AttemptState.Running)), ("$end", end),
+                ("$exit", finished ? 0 : (int?)null), ("$reason", finished ? (int)TerminationReason.Exited : (int?)null),
+                ("$effect", finished ? (int)EffectCertainty.Happened : (int?)null), ("$id", waitingAttemptId.Value.ToByteArray()));
+            return 0;
+        }, CommitDurability.Full);
+
+        try
+        {
+            await SetFinishedAsync(finished: false).WaitAsync(Ct);
+            var wait = new TaskServiceReadTaskOutputRequest { Meta = Tasks.Meta(), AttemptId = waitingAttemptId, FromOffset = 1_000_000, WaitMs = 1_500 };
+            var clock = Stopwatch.StartNew();
+            var waiting = await human.Tasks.ReadTaskOutputAsync(wait, cancellationToken: Ct);
+            Assert.Null(waiting.Error);
+            Assert.Empty(waiting.Value.Data);
+            Assert.False(waiting.Value.Eof);
+            Assert.InRange(clock.Elapsed, TimeSpan.FromMilliseconds(1_200), TimeSpan.FromSeconds(10));
+            var waitTask = new TaskServiceWaitTaskRequest { Meta = Tasks.Meta(), TaskId = waitingTaskId, WaitMs = 20_000 };
+            clock.Restart();
+            var (bounded, _) = await routed.CallAsync(RoutedCalls.Session(), RoutedMethod.WaitNodeTask, waitTask.ToByteArray(), null,
+                node.Runtime.Clock.GetUtcNow().AddSeconds(3));
+            Assert.Equal(RoutedOutcome.Executed, bounded!.Outcome);
+            var value = TaskServiceWaitTaskResponse.Parser.ParseFrom(bounded.Response).Value;
+            Assert.False(value.Reached);
+            Assert.Equal(waitingTaskId, value.Task.TaskId);
+            Assert.Equal(waitingAttemptId, value.Task.CurrentAttempt.AttemptId);
+            TestContext.Current.TestOutputHelper?.WriteLine($"routed-wait elapsed-ms={clock.Elapsed.TotalMilliseconds:F3}; original bound=4000ms");
+            Assert.InRange(clock.Elapsed, TimeSpan.Zero, TimeSpan.FromSeconds(4));
+            Assert.Empty(node.Runtime.Execution!.RunningAttempts);
+        }
+        finally
+        {
+            await SetFinishedAsync(finished: true);
+        }
     }
 
-    /// <summary>N2-11, N2-12, N2-13 (AD-0021 section 5, Q8): a local submission is HUMAN only and diagnostic; the test allowance needs test mode.</summary>
+    /// <summary>Legacy local Submit retains its origin gate, and diagnostic labels remain readable on historical Tasks.</summary>
     [Fact(Timeout = 180_000)]
-    public async Task ALocalSubmissionIsHumanOnlyAndDiagnostic()
+    public async Task LegacyLocalSubmissionRetainsItsOriginGateAndHistoricalDiagnosticLabels()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         var created = InProcessNode.Create();
@@ -894,7 +986,7 @@ public sealed class RoutedDispatchTests
         await using var agent = await node.ChannelAsync(kind: ClientKind.McpAdapter);
         await using var bare = NodeChannel.Create(node.Endpoint);
         Assert.Null((await human.Queue.PausePoolAsync(new QueueServicePausePoolRequest { Meta = Tasks.Meta(), All = true }, cancellationToken: Ct)).Error);
-        var spec = Tasks.Argv(node.Root, Tasks.TestLoad, "hold", "--hold-ms", "100");
+        var spec = Tasks.Argv(node.Root, "historical-fixture-no-launch");
         foreach (var channel in (NodeChannel[])[script, agent, bare])
         {
             var refused = (await Tasks.SubmitRawAsync(channel, spec)).Error;
@@ -902,10 +994,18 @@ public sealed class RoutedDispatchTests
                 (refused?.Code, refused?.Details.State.State, refused?.Details.State.Reason, refused?.Effect ?? EffectCertainty.Unspecified));
         }
 
-        var local = await Tasks.GetAsync(human, await Tasks.SubmitAsync(human, spec));
-        Assert.True(local.LocalDiagnostic);
-        var routed = (await new RoutedCalls(node).SubmitOkAsync(RoutedCalls.Session(), spec)).Value.TaskId;
-        Assert.False((await Tasks.GetAsync(human, routed)).HasLocalDiagnostic);
+        AssertRetiredSubmit(await Tasks.SubmitRawAsync(human, spec));
+        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM task;")));
+        var local = await node.Runtime.Processor.ExecuteAsync(command =>
+        {
+            var task = LegacyTaskHistoryFixture.SeedQueued(command.Transaction, new ActorRef { Origin = Origin.Human });
+            command.Transaction.Execute("UPDATE task SET local_diagnostic = 1, state = $done, finished_at = $now WHERE task_id = $id;",
+                ("$done", (int)TaskState.Succeeded), ("$now", command.Transaction.NowMicroseconds), ("$id", task.Value.ToByteArray()));
+            return task;
+        }, CommitDurability.Full).WaitAsync(Ct);
+        Assert.True((await Tasks.GetAsync(human, local)).LocalDiagnostic);
+        var retained = await SeedHistoricalSubmitAsync(node, RoutedCalls.Session(), new TaskServiceSubmitTaskRequest { Meta = Tasks.Meta(), Spec = spec });
+        Assert.False((await Tasks.GetAsync(human, retained.Value.TaskId)).HasLocalDiagnostic);
 
         // CTR5-NODE-14: the allowance holds only in test mode and only for exactly "1".
         Assert.True(LocalSubmission.ScriptAllowed(testMode: true, "1"));
@@ -913,6 +1013,209 @@ public sealed class RoutedDispatchTests
         Assert.False(LocalSubmission.ScriptAllowed(testMode: true, "true"));
         Assert.False(LocalSubmission.ScriptAllowed(testMode: true, null));
     }
+
+    private static Task<Id> SeedHumanQueueAsync(InProcessNode node) => node.Runtime.Processor.ExecuteAsync(command =>
+        LegacyTaskHistoryFixture.SeedQueued(command.Transaction, new ActorRef { Origin = Origin.Human }), CommitDurability.Full).WaitAsync(Ct);
+
+    private static Task<Id> SeedOwnedQueueAsync(InProcessNode node, CenterCaller owner) => node.Runtime.Processor.ExecuteAsync(command =>
+        LegacyTaskHistoryFixture.SeedQueued(command.Transaction, new ActorRef { Origin = Origin.Remote, CenterCaller = owner }), CommitDurability.Full).WaitAsync(Ct);
+
+    private static async Task<T> WithRoutedAdoptionAsync<T>(InProcessNode files, bool seed, Func<RoutedAdoptionFixture, Task<T>> verify)
+    {
+        const string fixtureBoot = "linux:532cb2f3-6b2a-48af-a8ca-3b72ac02ecb1";
+        using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = files.DataRoot, BootIdentity = fixtureBoot, Clock = files.Clock });
+        using var log = new NodeLog(Path.Combine(files.DataRoot, "logs", "node"), LogLevel.Info, files.Clock);
+        using var heartbeat = new NodeHeartbeatWriter(files.DataRoot, log, files.Clock);
+        using var keys = new NodeDataKeyRing(store, files.Secrets.Selection);
+        var journal = EventJournal.Open(store);
+        var hub = new StreamHub();
+        await using var processor = new CommandProcessor(store, journal, hub);
+        if (seed)
+        {
+            await processor.ExecuteAsync(command =>
+            {
+                Tasks.SeedPolicy(command.Transaction, policy =>
+                {
+                    policy.Permissions.Add(new PermissionOverride { Operation = PermissionMatrix.ProcessTerminate, Origin = Origin.Script, Decision = A });
+                    policy.Permissions.Add(new PermissionOverride { Operation = PermissionMatrix.ProcessTerminate, Origin = Origin.Agent, Decision = A });
+                });
+                var adopted = GateAndReplayTests.SeedAdopted(command, store.Metadata.NodeId.ToArray());
+                return command.Transaction.Execute("UPDATE attempt SET container_name = $name, boot_identity = $boot, root_pid = $pid WHERE task_id = $id;",
+                    ("$name", RoutedAdoptionPlatform.RecordedName), ("$boot", store.Metadata.BootIdentity), ("$pid", RoutedAdoptionPlatform.RecordedPid), ("$id", adopted));
+            }, CommitDurability.Full).WaitAsync(Ct);
+        }
+
+        using var platform = new RoutedAdoptionPlatform();
+        await using var execution = new ExecutionSupervisor(new ExecutionOptions
+        {
+            Store = store,
+            Processor = processor,
+            Log = log,
+            Clock = files.Clock,
+            DataRoot = files.DataRoot,
+            Platform = platform,
+            Secrets = new TaskSecrets(store, keys),
+            Heartbeat = heartbeat,
+        });
+        var recovery = new RecoveryReport(!seed, false, null, store.Opening);
+        using var runtime = new NodeRuntime(store, journal, hub, processor, log,
+            new NodeSettingsManager(files.ConfigPath, files.DataRoot, log), files.DataRoot, "routed-adoption-fixture", files.Clock,
+            recovery, new CapabilityReport())
+        { Execution = execution };
+        await runtime.TransitionAsync(NodeLifecycleState.Recovering, "fixture").WaitAsync(Ct);
+        await execution.RecoverAsync(recovery, processor, Ct);
+        await runtime.TransitionAsync(NodeLifecycleState.Ready, "fixture").WaitAsync(Ct);
+        Assert.Equal(1, platform.Reopens);
+        Assert.Single(execution.Adoptions.Tracked);
+        var sessions = new ClientSessions();
+        var executors = new ApprovalExecutors();
+        var tasks = new TaskServiceHandler(runtime, sessions, executors);
+        var approvals = new ApprovalServiceHandler(runtime, sessions, executors);
+        using var dispatcher = new RoutedDispatcher(runtime);
+        dispatcher.Bind(tasks, new WorkspaceServiceHandler(runtime), new FileServiceHandler(runtime));
+        var taskId = store.Read(reader => new Id
+        {
+            Value = ByteString.CopyFrom((byte[])reader.Scalar("SELECT task_id FROM attempt WHERE container_name = $name;",
+                ("$name", RoutedAdoptionPlatform.RecordedName))!),
+        });
+        return await verify(new RoutedAdoptionFixture(runtime, tasks, approvals, dispatcher, platform, taskId));
+    }
+
+    private sealed record RoutedAdoptionFixture(NodeRuntime Runtime, TaskServiceHandler TaskHandler, ApprovalServiceHandler ApprovalHandler,
+        RoutedDispatcher Dispatcher, RoutedAdoptionPlatform Platform, Id AdoptedTaskId)
+    {
+        public CenterCaller Relay(Origin origin) => new()
+        {
+            Kind = CenterCallerKind.NodeRelay,
+            AccountId = RoutedCalls.Account.Clone(),
+            RelayingNodeId = new Id { Value = ByteString.CopyFrom(Runtime.NodeId.Span) },
+            LocalOrigin = origin,
+            LocalSessionId = CommandIds.New(),
+        };
+
+        public async Task<ManagedTask> ReadTaskAsync(Caller caller, Id taskId)
+        {
+            var response = await TaskHandler.GetTask(caller, new TaskServiceGetTaskRequest { TaskId = taskId, Detail = TaskDetail.Full }, Ct);
+            Assert.Null(response.Error);
+            return response.Value.Task;
+        }
+
+        public async Task<RoutedAnswer> CancelAsync(CenterCaller caller, Id taskId)
+        {
+            var request = new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = taskId };
+            var payload = request.ToByteString();
+            var now = Runtime.Clock.GetUtcNow();
+            var header = new CallHeader
+            {
+                CallId = CommandIds.New(),
+                Caller = caller,
+                AccountId = caller.AccountId,
+                TargetNodeId = new Id { Value = ByteString.CopyFrom(Runtime.NodeId.Span) },
+                CommandId = request.Meta.CommandId,
+                Method = RoutedMethod.CancelNodeTask,
+                RequestSha256 = ByteString.CopyFrom(SHA256.HashData(payload.Span)),
+                RequestSize = (uint)payload.Length,
+                IssuedAt = ProtoTime.ToInstant(now.AddSeconds(-1)),
+                ExpiresAt = ProtoTime.ToInstant(now.AddSeconds(60)),
+                Deadline = ProtoTime.ToInstant(now.AddSeconds(10)),
+            };
+            return Assert.IsType<RoutedAnswer>(
+                await Dispatcher.DispatchAsync(new VerifiedCall(header, payload, 0), new RoutedCalls.TestLink(), Ct));
+        }
+    }
+
+    private sealed class RoutedAdoptionPlatform : IExecutionPlatform, IAdoptedContainer
+    {
+        public const string RecordedName = "routed-adoption-fixture";
+        public const int RecordedPid = int.MaxValue;
+        public int Reopens { get; private set; }
+        public int Terminations { get; private set; }
+        public string Name => RecordedName;
+        public string ContainerName => RecordedName;
+        public MachineCapacity Capacity => new(4, 1L << 30);
+
+        public IAdoptedContainer ReopenAdopted(string containerName)
+        {
+            Assert.Equal(RecordedName, containerName);
+            Reopens++;
+            return this;
+        }
+
+        public IReadOnlyList<int> Processes() => [RecordedPid];
+        public void Terminate() => Terminations++;
+        public CapabilityReport Evaluate() => new();
+        public void UpdateRootLimits(RootLimits limits) { }
+        public bool AcknowledgeRecorded(string nodeName, string attemptName) => false;
+        public IAttemptHandle? Reopen(string nodeName, AttemptFiles files, RootProcess? root, bool stopping) => throw new NotSupportedException();
+        public void Start(string nodeName, RootLimits limits, string helperExecutable) => throw new NotSupportedException();
+        public void Dispose() { }
+    }
+
+    private sealed class RoutedWallClock : TimeProvider
+    {
+        private long _utcTicks = DateTimeOffset.UtcNow.Ticks;
+
+        public override DateTimeOffset GetUtcNow() => new(Interlocked.Read(ref _utcTicks), TimeSpan.Zero);
+
+        public void Advance(TimeSpan elapsed) => Interlocked.Add(ref _utcTicks, elapsed.Ticks);
+    }
+
+    private static Task<TaskServiceSubmitTaskResponse> SeedHistoricalSubmitAsync(InProcessNode node, CenterCaller owner,
+        TaskServiceSubmitTaskRequest request, bool retainQueued = false, string? historicalWarning = null) =>
+        node.Runtime.Processor.ExecuteAsync(command =>
+        {
+            var tx = command.Transaction;
+            var id = request.Meta.CommandId;
+            var actor = new ActorRef { Origin = Origin.Remote, ClientKind = ClientKind.Unspecified, CenterCaller = owner, RemoteCommandId = id };
+            var task = LegacyTaskHistoryFixture.SeedQueued(tx, actor);
+            var spec = request.Spec;
+            var storedSpec = spec.ToByteArray();
+            var summary = CommandText.Summary(spec.Command, SecretNameMatcher.Default);
+            var title = spec.HasTitle ? spec.Title : summary;
+            var labels = JsonSerializer.Serialize(new Dictionary<string, string>(spec.Labels, StringComparer.Ordinal),
+                ExecutionJsonContext.Default.DictionaryStringString);
+            tx.Execute("""
+                UPDATE task SET remote_command_id = $id, spec = $spec, spec_digest = $digest, title = $title, command_summary = $summary,
+                                labels_json = $labels, command_fingerprint = $fingerprint, command_digest = $commandDigest
+                WHERE task_id = $task;
+                """, ("$id", id.Value.ToByteArray()), ("$spec", storedSpec), ("$digest", SHA256.HashData(storedSpec)),
+                ("$title", title), ("$summary", summary), ("$labels", labels), ("$fingerprint", CommandText.Fingerprint(spec.Command)),
+                ("$commandDigest", CommandText.Digest(spec, [])), ("$task", task.Value.ToByteArray()));
+            var queued = TaskRecords.GetTask(tx, task.Value.Span, full: true);
+            Assert.NotNull(queued);
+            Assert.Equal(TaskState.Queued, queued.State);
+            Assert.Equal(spec, queued.Spec);
+            Assert.Equal((title, summary), (queued.Title, queued.CommandSummary));
+            Assert.Equal(spec.Labels, queued.Labels);
+            Assert.NotNull(queued.Queue);
+            var outcome = new TaskServiceSubmitTaskResponse
+            {
+                Meta = new() { CorrelationId = request.Meta.CorrelationId },
+                Value = new()
+                {
+                    TaskId = queued.TaskId,
+                    State = queued.State,
+                    Queue = queued.Queue,
+                    Receipt = new Receipt { CommandId = id, Effect = EffectCertainty.Happened },
+                },
+            };
+            if (historicalWarning is not null)
+            {
+                outcome.Value.Warnings.Add(historicalWarning);
+            }
+
+            Assert.Equal(DedupStatus.Execute, CommandDeduplication.Begin(tx, id.Value.Span, "arcforges.node.v1.TaskService/SubmitTask",
+                PayloadDigest.Compute(request.ToByteArray()), Origin.Remote).Status);
+            CommandDeduplication.Complete(tx, id.Value.Span, outcome.ToByteArray());
+            RoutedCommandOwnership.Record(tx, id.Value.Span, actor);
+            if (!retainQueued)
+            {
+                tx.Execute("UPDATE task SET state = $state, finished_at = $finished WHERE task_id = $task;",
+                    ("$state", (int)TaskState.Succeeded), ("$finished", tx.NowMicroseconds), ("$task", task.Value.ToByteArray()));
+            }
+
+            return outcome;
+        }, CommitDurability.Full).WaitAsync(Ct);
 
     /// <summary>
     /// A copy of <paramref name="request"/>'s bytes that parses to the same message with its spec's top-level fields in reverse order: another
@@ -958,16 +1261,14 @@ public sealed class RoutedDispatchTests
             fields.Add((WireFormat.GetTagFieldNumber(tag), message[start..(int)input.Position]));
         }
     }
-}
-
-/// <summary>Shorthands of the routed tests.</summary>
-internal static class RoutedCallsExtensions
-{
-    /// <summary>A routed submission of <paramref name="spec"/> by <paramref name="caller"/>; fails the test unless it executed without an error.</summary>
-    public static async Task<TaskServiceSubmitTaskResponse> SubmitOkAsync(this RoutedCalls calls, CenterCaller caller, TaskSpec spec)
+    private static void AssertRetiredSubmit(TaskServiceSubmitTaskResponse response)
     {
-        var (answer, response) = await calls.SubmitAsync(caller, new TaskServiceSubmitTaskRequest { Meta = Tasks.Meta(), Spec = spec });
-        Assert.True(answer?.Outcome == RoutedOutcome.Executed && response?.Error is null, $"routed SubmitTask: {answer?.Outcome} {response?.Error?.Code}");
-        return response!;
+        Assert.Null(response.Value);
+        var error = Assert.IsType<ArcError>(response.Error);
+        Assert.Equal("operation_failed", error.Code);
+        Assert.Equal("LEGACY_DRAIN", error.Details.State.State);
+        Assert.Equal("legacy_task_outcome_unavailable", error.Details.State.Reason);
+        Assert.Equal(EffectCertainty.Unknown, error.Effect);
+        Assert.Equal(RetryMode.Never, error.Retry.Mode);
     }
 }

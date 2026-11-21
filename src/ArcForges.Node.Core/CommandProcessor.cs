@@ -47,6 +47,9 @@ public sealed class CommandContext
     /// <summary>The events appended so far.</summary>
     public IReadOnlyList<NodeEvent> Events => _events;
 
+    // Updates in-memory command state before the next writer item, once the journal and receipt are durable.
+    internal Action? AfterCommit { get; set; }
+
     /// <summary>Appends an event to the journal in this transaction; it is published after the commit.</summary>
     public NodeEvent Emit(EventTopic topic, NodeEvent item)
     {
@@ -193,14 +196,33 @@ public sealed class CommandProcessor : IAsyncDisposable
             }
 
             Interlocked.Increment(ref _executed);
+            Exception? completionError = null;
+            try
+            {
+                item.ApplyCommittedState();
+            }
+            catch (Exception exception)
+            {
+                completionError = exception;
+            }
+
             _hub.Publish(events);
-            item.Succeed();
+            if (completionError is null)
+            {
+                item.Succeed();
+            }
+            else
+            {
+                item.Fail(completionError);
+            }
         }
     }
 
     private abstract class WorkItem
     {
         public abstract IReadOnlyList<NodeEvent> Run(NodeStore store, EventJournal journal);
+
+        public abstract void ApplyCommittedState();
 
         public abstract void Succeed();
 
@@ -210,6 +232,7 @@ public sealed class CommandProcessor : IAsyncDisposable
     private sealed class WorkItem<T>(Func<CommandContext, T> command, CommitDurability durability) : WorkItem
     {
         private T _result = default!;
+        private Action? _afterCommit;
 
         public TaskCompletionSource<T> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -221,10 +244,13 @@ public sealed class CommandProcessor : IAsyncDisposable
                 var context = new CommandContext(transaction, journal);
                 var result = command(context);
                 events = context.Events;
+                _afterCommit = context.AfterCommit;
                 return result;
             }, durability);
             return events;
         }
+
+        public override void ApplyCommittedState() => _afterCommit?.Invoke();
 
         public override void Succeed() => Completion.TrySetResult(_result);
 

@@ -4,6 +4,7 @@ using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.LocalRpc;
 using ArcForges.Node.Core;
+using ArcForges.Node.Core.Sandboxes;
 using ArcForges.Node.Core.Security;
 using ArcForges.Node.Store;
 using Grpc.Core;
@@ -129,6 +130,17 @@ public sealed class NodeServiceHandler : NodeService.NodeServiceBase
             Summary = NodeCapabilities.FullyEnforced(_node.Capabilities)
                 ? "Resource limits are enforced."
                 : "Resource limits are observed only: " + (NodeCapabilities.MissingReason(_node.Capabilities) ?? NodeCapabilities.NotInBuild) + ".",
+        });
+        var runReadiness = _node.RunReadiness;
+        value.Checks.Add(new DoctorCheck
+        {
+            CheckId = "node.v2_run_profile",
+            Area = "enforcement",
+            Status = runReadiness.Qualified ? CheckStatus.Pass : CheckStatus.Warn,
+            Summary = runReadiness.Qualified
+                ? "The default V2 Run profile matched the last host observation. Each Run checks its native scope before execution."
+                : "The default V2 Run profile is " + runReadiness.State.ToString().ToLowerInvariant() + ": " +
+                    (runReadiness.Reason ?? SandboxRunReadiness.NotObserved.Reason) + ".",
         });
         value.Metrics.Add(Gauge("node.uptime_seconds", (_node.Clock.GetUtcNow() - _node.StartedAt).TotalSeconds));
         value.Metrics.Add(Counter("node.rpc_calls", _node.RpcCalls));
@@ -342,7 +354,7 @@ public sealed class NodeServiceHandler : NodeService.NodeServiceBase
             return response;
         }
 
-        var reason = request.HasReason && request.Reason.Length > 0 ? request.Reason : "stop requested";
+        var beginShutdown = false;
         var (result, _) = await _api.IdempotentAsync(request, request.Meta, caller, "StopNode", NodeServiceStopNodeResponse.Parser,
             failure => new NodeServiceStopNodeResponse { Meta = Meta(request.Meta), Error = failure }, command =>
         {
@@ -359,8 +371,14 @@ public sealed class NodeServiceHandler : NodeService.NodeServiceBase
 
             if (!_node.Lifecycle.IsStopping)
             {
-                _node.Lifecycle.MoveTo(NodeLifecycleState.Stopping, "stop_node");
-                command.Emit(EventTopic.Node, new NodeEvent { Node = _node.Status("stop_node") });
+                var status = _node.Status("stop_node");
+                status.State = NodeLifecycleState.Stopping;
+                command.Emit(EventTopic.Node, new NodeEvent { Node = status });
+                command.AfterCommit = () =>
+                {
+                    _node.Lifecycle.MoveTo(NodeLifecycleState.Stopping, "stop_node");
+                    beginShutdown = true;
+                };
             }
 
             return new NodeServiceStopNodeResponse
@@ -372,12 +390,18 @@ public sealed class NodeServiceHandler : NodeService.NodeServiceBase
                 },
             };
         }, gate).ConfigureAwait(false);
-        if (result.OutcomeCase == NodeServiceStopNodeResponse.OutcomeOneofCase.Value)
+        if (beginShutdown && result.OutcomeCase == NodeServiceStopNodeResponse.OutcomeOneofCase.Value)
         {
+            // Let Kestrel queue the gRPC reply and trailers before requesting graceful listener shutdown.
+            // Kestrel also invokes this callback when a disconnected request is torn down.
+            context.GetHttpContext().Response.OnCompleted(static state =>
+            {
+                ((NodeRuntime)state).RequestStop("stop_node");
+                return Task.CompletedTask;
+            }, _node);
             // The caller's free-text reason is not logged (it may carry anything); the log records that one was given and its length.
             _node.Log.Info("node.stop.requested", new LogField("origin", _sessions.OriginOf(context)), new LogField("reasonGiven", request.HasReason && request.Reason.Length > 0),
                 new LogField("reasonLength", request.Reason.Length), new LogField("cancelRunning", request.CancelRunning));
-            _node.RequestStop("stop_node");
         }
 
         return result;

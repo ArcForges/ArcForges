@@ -64,9 +64,6 @@ public sealed class WindowsExecutionPlatform : IExecutionPlatform
     public string Name => "windows-jobs";
 
     /// <inheritdoc />
-    public StringComparer EnvironmentNames => StringComparer.OrdinalIgnoreCase;
-
-    /// <inheritdoc />
     public MachineCapacity Capacity { get; }
 
     /// <summary>The root job's name.</summary>
@@ -208,10 +205,7 @@ public sealed class WindowsExecutionPlatform : IExecutionPlatform
         return (inJob, total);
     }
 
-    /// <inheritdoc />
-    public PreparedCommand Prepare(CommandRequest request) => WindowsCommands.Prepare(request);
-
-    /// <inheritdoc />
+    /// <summary>Adopts an existing process for the legacy Windows platform fixtures.</summary>
     public AdoptionResult Adopt(AdoptionRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -271,7 +265,9 @@ public sealed class WindowsExecutionPlatform : IExecutionPlatform
     public IAdoptedContainer? ReopenAdopted(string containerName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(containerName);
-        return JobObject.Open(containerName) is { } job ? new WindowsAdoptedJob(job) : null;
+        return JobObject.Open(containerName) is { } job
+            ? new WindowsAdoptedJob(job)
+            : throw new LegacyCustodyUnavailableException("The recorded adoption job was not found in this Windows session.");
     }
 
     /// <inheritdoc />
@@ -385,7 +381,7 @@ public sealed class WindowsExecutionPlatform : IExecutionPlatform
     /// <inheritdoc />
     public bool Listens(int port, IReadOnlyCollection<int> processIds) => ListeningSockets.Listens(port, processIds);
 
-    /// <inheritdoc />
+    /// <summary>Starts a new legacy attempt for the Windows platform fixtures.</summary>
     public IAttemptHandle Launch(AttemptLaunch launch)
     {
         ArgumentNullException.ThrowIfNull(launch);
@@ -490,34 +486,53 @@ public sealed class WindowsExecutionPlatform : IExecutionPlatform
         var job = JobObject.Open(JobName(nodeName, files.AttemptName));
         if (job is null)
         {
-            return null;
+            // Legacy attempts did not record their Windows session. A Local job can exist in another session.
+            throw new LegacyCustodyUnavailableException("The recorded attempt job was not found in this Windows session.");
         }
 
-        var key = (nuint)Interlocked.Increment(ref _nextKey);
-        var handle = new WindowsAttemptHandle(this, key, job, files, stdinWriter: null, root);
-        if (root is null && !File.Exists(files.ExitPath) && !File.Exists(files.LaunchPath))
+        WindowsAttemptHandle? handle = null;
+        try
         {
-            // The node stopped in the middle of the attempt's launch: the holder may still start a launch step or the command. A stop awaits
-            // it; any other attempt may be stopped later, and that forced phase must see it too (WatchLaunch). Before the port is associated:
-            // the association posts a new-process message for every process in the job then (observed on the workstation), so the ones present
-            // now are told apart, and none that enters later is missed.
-            handle.AwaitLaunch(stopping);
-        }
+            var key = (nuint)Interlocked.Increment(ref _nextKey);
+            handle = new WindowsAttemptHandle(this, key, job, files, stdinWriter: null, root);
+            if (root is null && !File.Exists(files.ExitPath) && !File.Exists(files.LaunchPath))
+            {
+                // The node stopped in the middle of the attempt's launch: the holder may still start a launch step or the command. A stop awaits
+                // it; any other attempt may be stopped later, and that forced phase must see it too (WatchLaunch). Before the port is associated:
+                // the association posts a new-process message for every process in the job then (observed on the workstation), so the ones present
+                // now are told apart, and none that enters later is missed.
+                handle.AwaitLaunch(stopping);
+            }
 
-        _attempts[key] = handle;
-        job.AssociateCompletionPort(_port, key, clearFirst: true);
-        var ack = Native.OpenEvent(Native.EventModifyState | Native.Synchronize, inherit: false, AckName(nodeName, files.AttemptName));
-        if (ack.IsInvalid)
-        {
-            ack.Dispose();
-        }
-        else
-        {
-            handle.Ack = ack;
-        }
+            _attempts[key] = handle;
+            job.AssociateCompletionPort(_port, key, clearFirst: true);
+            var ack = Native.OpenEvent(Native.EventModifyState | Native.Synchronize, inherit: false, AckName(nodeName, files.AttemptName));
+            if (ack.IsInvalid)
+            {
+                ack.Dispose();
+            }
+            else
+            {
+                handle.Ack = ack;
+            }
 
-        handle.MarkReopened();
-        return handle;
+            handle.MarkReopened();
+            return handle;
+        }
+        catch
+        {
+            // The caller has not received this handle. Release only our reference, without signalling the holder or its Job.
+            if (handle is null)
+            {
+                job.Dispose();
+            }
+            else
+            {
+                handle.Dispose();
+            }
+
+            throw;
+        }
     }
 
     /// <inheritdoc />

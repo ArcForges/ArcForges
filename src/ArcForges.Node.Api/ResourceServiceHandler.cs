@@ -13,6 +13,7 @@ using ArcForges.Node.Platform;
 using ArcForges.Node.Store;
 using Google.Protobuf;
 using Grpc.Core;
+using NodeShapes = ArcForges.Contracts.Node.Shapes.ContractShapeValidation;
 using V2 = ArcForges.Contracts.Sandbox.V2;
 using V2Shapes = ArcForges.Contracts.Sandbox.V2.Shapes.ContractShapeValidation;
 
@@ -21,9 +22,9 @@ namespace ArcForges.Node.Api;
 /// <summary>
 /// <c>arcforges.node.v1.ResourceService</c> (resources.proto; architecture 03): <c>GetResourceSnapshot</c>, <c>WatchResources</c> (a
 /// snapshot at once, then one per interval, with 15 s heartbeats when none was due), <c>ListProcesses</c> and <c>GetSamples</c>, built by
-/// <see cref="ResourceViews"/>; <c>AdoptProcess</c> (04 section 10; HUMAN only) and <c>TerminateProcess</c> (HUMAN A, SCRIPT and AGENT P),
-/// which ends only a same-user process the node manages, adopted, or classified (an attempt's member, an ESCAPED process, a leftover): never
-/// an unrelated one, and always by process ID and start time, so a reused ID is never terminated. Both are audited. The guest-link methods are
+/// <see cref="ResourceViews"/>; <c>AdoptProcess</c> reconciles original adoption receipts. <c>TerminateProcess</c> (HUMAN A, SCRIPT and AGENT P)
+/// ends only a same-user process the node manages, adopted, or classified (an attempt's member, an ESCAPED process, a leftover): never
+/// an unrelated one, and always by process ID and start time, so a reused ID is never terminated. Termination is audited. The guest-link methods are
 /// retired (AD-0018 section 3); the generated base answers them <c>UNIMPLEMENTED</c>.
 /// </summary>
 public sealed class ResourceServiceHandler : ResourceService.ResourceServiceBase
@@ -50,8 +51,8 @@ public sealed class ResourceServiceHandler : ResourceService.ResourceServiceBase
         _api = new ApiCommands(node, sessions ?? throw new ArgumentNullException(nameof(sessions)), ServiceName);
         executors.Register<ResourceServiceTerminateProcessRequest, ResourceServiceTerminateProcessResponse>("ResourceService.TerminateProcess",
             PermissionMatrix.ProcessTerminate, ResourceServiceTerminateProcessRequest.Parser, TerminateProcess);
-        executors.Register<ResourceServiceAdoptProcessRequest, ResourceServiceAdoptProcessResponse>("ResourceService.AdoptProcess",
-            PermissionMatrix.ProcessAdopt, ResourceServiceAdoptProcessRequest.Parser, AdoptProcess);
+        executors.RegisterRetained("ResourceService.AdoptProcess", PermissionMatrix.ProcessAdopt, ResourceServiceAdoptProcessRequest.Parser,
+            ReconcileAdoption, response => response.Error);
     }
 
     /// <inheritdoc />
@@ -187,95 +188,70 @@ public sealed class ResourceServiceHandler : ResourceService.ResourceServiceBase
     public override Task<ResourceServiceAdoptProcessResponse> AdoptProcess(ResourceServiceAdoptProcessRequest request, ServerCallContext context) =>
         AdoptProcess(request, _api.CallerOf(context ?? throw new ArgumentNullException(nameof(context))));
 
-    /// <summary><c>AdoptProcess</c> for <paramref name="caller"/> (a connection's caller, or an approval's requester).</summary>
-    internal async Task<ResourceServiceAdoptProcessResponse> AdoptProcess(ResourceServiceAdoptProcessRequest request, Caller caller)
+    /// <summary>Reconciles only the original adoption request for the caller or an approval's requester.</summary>
+    internal Task<ResourceServiceAdoptProcessResponse> AdoptProcess(ResourceServiceAdoptProcessRequest request, Caller caller) =>
+        Task.FromResult(ReconcileAdoption(request, caller).Response);
+
+    private (ResourceServiceAdoptProcessResponse Response, bool Retained) ReconcileAdoption(ResourceServiceAdoptProcessRequest request, Caller caller)
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(caller);
-        var response = new ResourceServiceAdoptProcessResponse { Meta = ApiCommands.Meta(request.Meta) };
-        var execution = _node.Execution;
-        var pool = request.HasPool && request.Pool.Length > 0 ? request.Pool : "default";
-        var invalid = Identity(request.Process, out var pid, out var start);
-        var refused = Stopping() ?? Validation.CommandId(request.Meta) ?? invalid
-            ?? (request.HasTitle && request.Title.Length > 200 ? NodeErrors.InvalidArgument("title: <= 200 chars") : null)
-            ?? (execution is null ? NodeErrors.EnforcementUnavailable("no execution platform could be started on this node (see the node log)") : null)
-            ?? (execution is not null && !execution.Settings.Pools.Contains(pool, StringComparer.Ordinal) ? NodeErrors.InvalidArgument("pool: an existing pool") : null);
-        var gate = new GateRequest(PermissionMatrix.ProcessAdopt, "ResourceService.AdoptProcess",
-            "adopt process " + pid.ToString(CultureInfo.InvariantCulture) + (request.HasTitle ? " (" + request.Title + ")" : string.Empty), "process");
-        refused ??= await _api.GateAsync(caller, gate, request, request.Meta).ConfigureAwait(false);
-        if (refused is not null)
+        ResourceServiceAdoptProcessResponse Failed(ArcError error) => new() { Meta = ApiCommands.Meta(request.Meta), Error = error };
+        if ((Stopping() ?? Validation.CommandId(request.Meta) ?? Identity(request.Process, out _, out _)) is { } refused)
         {
-            response.Error = refused;
-            return response;
+            return (Failed(refused), false);
         }
 
-        // Review round 1: the platform's adoption (D-Bus and a job wait, or job assignment) runs outside the store writer, then the result is
-        // recorded in the command. A command that already ran replays its outcome without adopting again.
-        PreparedAdoption? prepared = null;
-        if (_api.Recorded(gate.Method, request, request.Meta))
+        var retained = _api.ReadRetained(request, request.Meta, caller, "AdoptProcess", ResourceServiceAdoptProcessResponse.Parser,
+            Failed, NodeErrors.LegacyAdoptionUnknown());
+        return retained.Retained && !ValidAdoptionOutcome(retained.Response, request.Meta.CommandId, allowLegacyCorrelation: !caller.Approved)
+            ? (Failed(NodeErrors.LegacyAdoptionUnknown()), false)
+            : retained;
+    }
+
+    private static bool ValidAdoptionOutcome(ResourceServiceAdoptProcessResponse response, Id commandId, bool allowLegacyCorrelation)
+    {
+        var checkedResponse = response;
+        if (allowLegacyCorrelation && response is { Error: { CorrelationId: null }, Meta.CorrelationId: not null })
         {
-            _api.MarkReplayOnly(request.Meta);
-        }
-        else
-        {
-            try
-            {
-                prepared = await Task.Run(() => execution!.Adoptions.Prepare(pid, start, request.HasTitle ? request.Title : null, pool)).ConfigureAwait(false);
-            }
-            catch (AdoptionRefusedException refusal)
-            {
-                var error = refusal.NotFound ? NodeErrors.ProcessNotFound(refusal.Message)
-                    : refusal.AlreadyManaged ? NodeErrors.AlreadyExists("process", pid.ToString(CultureInfo.InvariantCulture))
-                    : NodeErrors.AdoptNotPermitted(refusal.Message);
-                await _api.AuditAsync(caller, gate, PermissionDecision.Allow, $"failed ({error.Category}/{error.Code}): {gate.Summary}: {refusal.Message}").ConfigureAwait(false);
-                response.Error = error;
-                return response;
-            }
+            // The old approval executor stored typed refusals with correlation only in ResponseMeta.
+            // Keep those original bytes. A generic executor failure has no ResponseMeta and remains unconfirmed.
+            checkedResponse = response.Clone();
+            checkedResponse.Error.CorrelationId = checkedResponse.Meta.CorrelationId;
+            CompleteLegacyAdoptionRefusal(checkedResponse.Error);
         }
 
-        var recorded = false;
-        var (result, _) = await _api.IdempotentAsync(request, request.Meta, caller, "AdoptProcess", ResourceServiceAdoptProcessResponse.Parser,
-            failure => new ResourceServiceAdoptProcessResponse { Meta = ApiCommands.Meta(request.Meta), Error = failure }, command =>
-            {
-                if (prepared is null)
-                {
-                    // The recorded outcome expired between the check and the command: nothing was adopted for this request now.
-                    return new ResourceServiceAdoptProcessResponse { Meta = ApiCommands.Meta(request.Meta), Error = NodeErrors.Internal(_node.Clock.GetUtcNow()) };
-                }
+        return NodeShapes.IsValid(checkedResponse) && (response.Value is { TaskId.Value.Length: 16, Receipt: { HasEffect: true, Effect: EffectCertainty.Happened } receipt }
+            && commandId.Equals(receipt.CommandId) || response.Error is
+            { Code.Length: > 0, HasEffect: true, Effect: EffectCertainty.Happened or EffectCertainty.DidNotHappen or EffectCertainty.Unknown });
+    }
 
-                var outcome = execution!.Adoptions.Record(command, prepared, caller.Actor);
-                recorded = true;
-                return new ResourceServiceAdoptProcessResponse
-                {
-                    Meta = ApiCommands.Meta(request.Meta),
-                    Value = new ResourceServiceAdoptProcessValue
-                    {
-                        Receipt = new Receipt { CommandId = request.Meta.CommandId, Effect = EffectCertainty.Happened },
-                        TaskId = new Id { Value = ByteString.CopyFrom(outcome.TaskId) },
-                        AdoptedChildren = (uint)outcome.AdoptedChildren,
-                        FailedChildren = (uint)outcome.FailedChildren,
-                    },
-                };
-            }, gate).ConfigureAwait(false);
-        if (prepared is not null && !recorded)
+    private static void CompleteLegacyAdoptionRefusal(ArcError error)
+    {
+        if (error is not { Effect: EffectCertainty.DidNotHappen, Retry.Mode: RetryMode.Never, Details.State: { } state })
         {
-            // Review round 2: the platform placed the process, but the node could not record it. Nothing is terminated; the outcome is
-            // reported and audited as it is.
-            var released = Adoptions.Release(prepared);
-            _node.Log.Warning("api.adoption.not_recorded", new LogField("pid", pid), new LogField("container", prepared.Result.Container.ContainerName),
-                new LogField("outcome", released));
-            await _api.AuditAsync(caller, gate, PermissionDecision.Allow, "failed: not recorded: " + gate.Summary + ": " + released).ConfigureAwait(false);
-            if (result.OutcomeCase == ResourceServiceAdoptProcessResponse.OutcomeOneofCase.Error && result.Error.Details?.State is { } state)
-            {
-                state.Reason = string.IsNullOrEmpty(state.Reason) ? released : state.Reason + "; " + released;
-            }
-            else if (result.OutcomeCase == ResourceServiceAdoptProcessResponse.OutcomeOneofCase.Error)
-            {
-                result.Error.Details = new ErrorDetails { State = new StateFailure { Reason = released } };
-            }
+            return;
         }
 
-        return result;
+        // Old process refusals identified an OS process by kind/text; they had no aggregate ID.
+        var processOnly = state.Resource is { Kind: "process", Id: null };
+        switch (error.Category, error.Code)
+        {
+            case (ErrorCategory.State, "not_found") when processOnly && !state.HasState && state.HasReason:
+                state.State = error.Code;
+                state.Resource = null;
+                break;
+            case (ErrorCategory.Conflict, "already_exists") when processOnly && !state.HasReason &&
+                int.TryParse(state.State, NumberStyles.None, CultureInfo.InvariantCulture, out var pid) && pid > 0:
+                state.Reason = error.Code;
+                state.Resource = null;
+                break;
+            case (ErrorCategory.Execution, "adopt_not_permitted") or (ErrorCategory.Resource, "enforcement_unavailable")
+                or (ErrorCategory.Authorization, "permission_denied") or (ErrorCategory.Validation, "invalid_argument")
+                when state.Resource is null && !state.HasState && state.HasReason:
+                state.State = error.Code;
+                break;
+        }
     }
 
     /// <inheritdoc />
@@ -294,7 +270,18 @@ public sealed class ResourceServiceHandler : ResourceService.ResourceServiceBase
             ?? (request.HasReason && request.Reason.Length > 500 ? NodeErrors.InvalidArgument("reason: <= 500 chars") : null)
             ?? (request.FindingId is { } finding && finding.Value.Length is not (0 or 16) ? NodeErrors.InvalidArgument("finding_id: a 16-byte ID") : null)
             ?? (platform is null ? NodeErrors.EnforcementUnavailable("no execution platform could be started on this node (see the node log)") : null);
-        var target = refused is null ? Classify(pid, start) : null;
+        ProcessTarget? target = null;
+        if (refused is null)
+        {
+            try
+            {
+                target = Classify(pid, start);
+            }
+            catch (LegacyCustodyUnavailableException)
+            {
+                refused = NodeErrors.EnforcementUnavailable("the recorded adoption scope's membership could not be confirmed");
+            }
+        }
         if (refused is null && target is null)
         {
             // resources.proto: never unrelated processes.

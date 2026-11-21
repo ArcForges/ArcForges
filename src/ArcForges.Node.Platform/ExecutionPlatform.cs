@@ -3,48 +3,6 @@ using ArcForges.Contracts.Node.V1;
 
 namespace ArcForges.Node.Platform;
 
-/// <summary>
-/// A command could not be prepared for execution: a catalogued <c>VALIDATION</c> code (errors.md) with the detail the error carries in
-/// <c>details.state.reason</c>: <c>program_not_found</c> (the program), <c>unsafe_batch_argument</c> (the argument index),
-/// <c>unsupported_shell</c> (the shell kind) or <c>invalid_argument</c> (the field and rule).
-/// </summary>
-public sealed class CommandRefusedException : Exception
-{
-    /// <summary>Creates the exception.</summary>
-    public CommandRefusedException(string code, string reason)
-        : base($"{code}: {reason}")
-    {
-        Code = code;
-        Reason = reason;
-    }
-
-    /// <summary>Creates the exception.</summary>
-    public CommandRefusedException()
-        : this("invalid_argument", string.Empty)
-    {
-    }
-
-    /// <summary>Creates the exception.</summary>
-    public CommandRefusedException(string message)
-        : this("invalid_argument", message)
-    {
-    }
-
-    /// <summary>Creates the exception.</summary>
-    public CommandRefusedException(string message, Exception innerException)
-        : base(message, innerException)
-    {
-        Code = "invalid_argument";
-        Reason = message;
-    }
-
-    /// <summary>The catalogued VALIDATION code.</summary>
-    public string Code { get; } = "invalid_argument";
-
-    /// <summary><c>details.state.reason</c>.</summary>
-    public string Reason { get; } = string.Empty;
-}
-
 /// <summary>What to run: an argument vector or a shell script, in a working directory, with the resolved environment.</summary>
 public sealed class CommandRequest
 {
@@ -399,17 +357,26 @@ public interface IAttemptHandle : IDisposable
 /// <param name="PhysicalMemoryBytes">Physical memory.</param>
 public sealed record MachineCapacity(int LogicalProcessors, long PhysicalMemoryBytes);
 
+/// <summary>The original legacy process scope could not be observed reliably.</summary>
+public sealed class LegacyCustodyUnavailableException : IOException
+{
+    /// <summary>Creates a custody failure.</summary>
+    public LegacyCustodyUnavailableException() : base("Legacy process custody could not be confirmed.") { }
+
+    /// <summary>Creates a custody failure with the platform reason.</summary>
+    public LegacyCustodyUnavailableException(string message) : base(message) { }
+
+    /// <summary>Creates a custody failure with the underlying observation error.</summary>
+    public LegacyCustodyUnavailableException(string message, Exception innerException) : base(message, innerException) { }
+}
+
 /// <summary>
-/// An execution platform (architecture 02 section 1 "Platform layer"; AD-0005): the root container, attempt containers with their
-/// holders, command preparation and recovery by name. The Windows platform is <c>WindowsExecutionPlatform</c>.
+/// The legacy root container and the controls needed to recover existing attempt containers and holders by name.
 /// </summary>
 public interface IExecutionPlatform : IDisposable
 {
     /// <summary>The platform's name for logs.</summary>
     string Name { get; }
-
-    /// <summary>How environment variable names compare (case-insensitive on Windows).</summary>
-    StringComparer EnvironmentNames { get; }
 
     /// <summary>The machine's capacity.</summary>
     MachineCapacity Capacity { get; }
@@ -423,19 +390,13 @@ public interface IExecutionPlatform : IDisposable
     /// <summary>Applies new root limits.</summary>
     void UpdateRootLimits(RootLimits limits);
 
-    /// <summary>Resolves and builds the command (04 section 2).</summary>
-    /// <exception cref="CommandRefusedException">The program, shell or an argument is refused.</exception>
-    PreparedCommand Prepare(CommandRequest request);
-
-    /// <summary>Creates the attempt's container and starts it (through its holder, or directly for <c>kill_with_node</c>).</summary>
-    IAttemptHandle Launch(AttemptLaunch launch);
-
     /// <summary>
     /// Re-opens a recovered attempt's container by name, or returns <see langword="null"/> when it is gone. With <paramref name="stopping"/>
     /// (the node continues the attempt's stop) a launch that may still go on (no root recorded, no launch or exit record) is awaited:
     /// <see cref="IAttemptHandle.Started"/> completes when it continues. Otherwise the start completes at once with <paramref name="root"/>, and
     /// a forced phase that stops the attempt later still sees such a launch go on (<see cref="IAttemptHandle.WatchLaunch"/>).
     /// </summary>
+    /// <exception cref="LegacyCustodyUnavailableException">The original container's existence could not be determined.</exception>
     IAttemptHandle? Reopen(string nodeName, AttemptFiles files, RootProcess? root, bool stopping = false);
 
     /// <summary>
@@ -449,18 +410,9 @@ public interface IExecutionPlatform : IDisposable
     /// <c>tcp_listen_port</c> readiness condition of 04 section 8; only the service's own processes count).
     /// </summary>
     bool Listens(int port, IReadOnlyCollection<int> processIds) => false;
-    /// <summary>The container name of an attempt (the Windows job name; the Linux unit name), recorded with the attempt.</summary>
-    string ContainerName(string nodeName, string attemptName) => @"Local\ArcForges." + nodeName + "." + attemptName;
-
-    /// <summary>
-    /// Places an existing same-user process, and its children that exist now, under management in a new adoption container (04 section 10;
-    /// R-RES-013): on Windows the root job and then a new adoption job nested under it; on Linux a transient scope in the node's slice.
-    /// </summary>
-    /// <exception cref="AdoptionRefusedException">The process is not the one named, not the node's user's, or the OS refused to place it.</exception>
-    AdoptionResult Adopt(AdoptionRequest request) => throw new AdoptionRefusedException("process adoption is not supported on this platform");
-
     /// <summary>Re-opens a recorded adoption container by name after a node restart, or returns <see langword="null"/> when it is gone.</summary>
-    IAdoptedContainer? ReopenAdopted(string containerName) => null;
+    /// <exception cref="LegacyCustodyUnavailableException">The original container's existence could not be determined.</exception>
+    IAdoptedContainer? ReopenAdopted(string containerName) => throw new LegacyCustodyUnavailableException();
 
     /// <summary>
     /// Terminates the process identified by <paramref name="pid"/> and its start time when it still is that process and runs as the node's

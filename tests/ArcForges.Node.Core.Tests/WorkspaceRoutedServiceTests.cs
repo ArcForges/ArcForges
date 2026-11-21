@@ -4,8 +4,10 @@ using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Contracts.Relay.V1;
 using ArcForges.Node.Api;
+using ArcForges.Node.CloudLink;
 using ArcForges.Node.Core.Files;
 using ArcForges.Node.Core.Security;
+using ArcForges.Node.Store;
 using Google.Protobuf;
 
 namespace ArcForges.Node.Core.Tests;
@@ -16,7 +18,7 @@ public sealed class WorkspaceRoutedServiceTests
     private static readonly Origin[] RefusedOrigins = [Origin.Script, Origin.Agent];
 
     [Fact(Timeout = 120_000)]
-    public async Task RoutedHumanRegistrationReadReplayAndUnregisterAreRealAndAgentCannotRegister()
+    public async Task RegistrationReplaysTheHistoricalReceiptAndExistingWorkspaceControlsStillWork()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         var ct = TestContext.Current.CancellationToken;
@@ -42,44 +44,64 @@ public sealed class WorkspaceRoutedServiceTests
         var human = calls.Relay(Origin.Human);
         await using var humanChannel = await node.ChannelAsync(helloAsHuman: true);
         var handler = calls.Dispatcher.WorkspaceHandlerForTests!;
-        handler.AfterPrepareForTests = async _ =>
-        {
-            var changedPolicy = await Sched.ChangePolicyAsync(humanChannel, policy => (policy.CenterRouted ??= new CenterRoutedPolicy()).Enabled = false);
-            Assert.Null(changedPolicy.Error);
-        };
-        var stalePolicyRequest = request.Clone();
-        stalePolicyRequest.Meta = Tasks.Meta();
-        var stalePolicy = await calls.CallAsync(human, RoutedMethod.RegisterNodeWorkspace,
-            stalePolicyRequest.ToByteArray(), stalePolicyRequest.Meta.CommandId);
-        Assert.Equal(RoutedOutcome.RefusedByPolicy, stalePolicy.Answer!.Outcome);
-        Assert.Equal("center_routed_disabled", stalePolicy.Answer.Error!.Details.State.Reason);
-        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM workspace WHERE removed_at IS NULL;")));
-        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar(
-            "SELECT count(*) FROM command_dedup WHERE command_id=$id;", ("$id", stalePolicyRequest.Meta.CommandId.Value.ToByteArray()))));
-        handler.AfterPrepareForTests = null;
-        Assert.Null((await Sched.ChangePolicyAsync(humanChannel, policy => policy.CenterRouted.Enabled = true)).Error);
-
-        var droppedRequest = request.Clone();
-        droppedRequest.Meta = Tasks.Meta();
-        // The real dispatcher and writer run; this seam switches the link off on the final pre-effect recheck.
-        calls.Link.Reset(usableFor: 5);
-        var dropped = await calls.CallAsync(human, RoutedMethod.RegisterNodeWorkspace,
-            droppedRequest.ToByteArray(), droppedRequest.Meta.CommandId);
+        var fresh = request.Clone();
+        fresh.Meta = Tasks.Meta();
+        fresh.Path = Path.Combine(node.Root, "missing-registration-root");
+        calls.Link.Reset(usableFor: 0);
+        var dropped = await calls.CallAsync(human, RoutedMethod.RegisterNodeWorkspace, fresh.ToByteArray(), fresh.Meta.CommandId);
         Assert.Null(dropped.Answer);
-        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM workspace WHERE removed_at IS NULL;")));
-        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar(
-            "SELECT count(*) FROM command_dedup WHERE command_id=$id;", ("$id", droppedRequest.Meta.CommandId.Value.ToByteArray()))));
         calls.Link.Reset();
+        var refused = await calls.CallAsync(human, RoutedMethod.RegisterNodeWorkspace, fresh.ToByteArray(), fresh.Meta.CommandId);
+        AssertUnknown(WorkspaceServiceRegisterWorkspaceResponse.Parser.ParseFrom(refused.Answer!.Response).Error);
+        Assert.False(Directory.Exists(fresh.Path));
+        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM workspace;")));
+        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM command_dedup;")));
+
+        var manager = new RegisteredWorkspaces(node.Runtime.Store);
+        var originalPending = request.Clone();
+        originalPending.Meta = Tasks.Meta();
+        WorkspaceServiceRegisterWorkspaceResponse originalReceipt;
+        using (var prepared = manager.PrepareRegistration(path, "demo", cancellationToken: ct))
+        {
+            originalReceipt = node.Runtime.Store.Write(transaction =>
+            {
+                var workspace = manager.RegisterPreparedFromVerifiedHuman(transaction, prepared, cancellationToken: ct);
+                var view = new Workspace
+                {
+                    WorkspaceId = new Id { Value = ByteString.CopyFrom(workspace.Id) },
+                    Kind = WorkspaceKind.Registered,
+                    State = WorkspaceState.Active,
+                    Name = workspace.Name,
+                    RootPath = workspace.RootPath,
+                    CreatedAt = ProtoTime.ToInstant(StoreTime.FromMicroseconds(workspace.CreatedAt)),
+                    LastUsedAt = ProtoTime.ToInstant(StoreTime.FromMicroseconds(workspace.LastUsedAt)),
+                };
+                var response = new WorkspaceServiceRegisterWorkspaceResponse
+                {
+                    Meta = new() { CorrelationId = request.Meta.CorrelationId },
+                    Value = new() { Workspace = view },
+                    Audit = WorkspaceAuditMetadata.ForRecords([view]),
+                };
+                SeedRegistration(transaction, human, request, response.ToByteArray());
+                SeedRegistration(transaction, human, originalPending, null);
+                return response;
+            }, CommitDurability.Full);
+        }
+
+        Assert.Null((await Sched.ChangePolicyAsync(humanChannel, policy => (policy.CenterRouted ??= new CenterRoutedPolicy()).Enabled = false)).Error);
         var first = await calls.CallAsync(human, RoutedMethod.RegisterNodeWorkspace, request.ToByteArray(), meta.CommandId);
         Assert.Equal(RoutedOutcome.Executed, first.Answer!.Outcome);
-        var registered = WorkspaceServiceRegisterWorkspaceResponse.Parser.ParseFrom(first.Answer.Response);
-        Assert.Null(registered.Error);
-        Assert.NotNull(registered.Value.Workspace);
-        Assert.Equal(path, registered.Value.Workspace.RootPath);
-        Assert.Equal("demo", registered.Value.Workspace.Name);
-        Assert.NotNull(registered.Audit);
-        var id = registered.Value.Workspace.WorkspaceId;
+        Assert.NotNull(first.Answer.Response);
+        Assert.Equal(originalReceipt.ToByteArray(), first.Answer.Response.ToByteArray());
+        var id = originalReceipt.Value.Workspace.WorkspaceId;
         Assert.Equal(id.Value.ToByteArray(), first.Answer.WorkspaceId);
+        var stillPending = await calls.CallAsync(human, RoutedMethod.RegisterNodeWorkspace, originalPending.ToByteArray(), originalPending.Meta.CommandId);
+        Assert.Equal(RoutedOutcome.Executed, stillPending.Answer!.Outcome);
+        AssertPending(WorkspaceServiceRegisterWorkspaceResponse.Parser.ParseFrom(stillPending.Answer.Response).Error);
+        var closedPolicy = await calls.CallAsync(human, RoutedMethod.RegisterNodeWorkspace, fresh.ToByteArray(), fresh.Meta.CommandId);
+        Assert.Equal(RoutedOutcome.RefusedByPolicy, closedPolicy.Answer!.Outcome);
+        Assert.Equal("center_routed_disabled", closedPolicy.Answer.Error!.Details.State.Reason);
+        Assert.Null((await Sched.ChangePolicyAsync(humanChannel, policy => policy.CenterRouted.Enabled = true)).Error);
         Assert.Equal(1L, node.Runtime.Store.Read(reader => reader.Scalar("""
             SELECT count(*) FROM audit_log a JOIN routed_file_audit_retention h ON h.audit_seq = a.seq
             WHERE a.target_kind = 'routed_command_owner' AND a.remote_command_id = $id
@@ -182,7 +204,6 @@ public sealed class WorkspaceRoutedServiceTests
         Assert.Equal(id, Assert.Single(list.Value.Workspaces).WorkspaceId);
         Assert.Equal(WorkspaceAuditMetadata.ForRecords(list.Value.Workspaces), list.Audit);
 
-        var manager = new RegisteredWorkspaces(node.Runtime.Store);
         using var use = manager.OpenForUse(id.Value.Span, ct);
         var removeMeta = Tasks.Meta();
         removeMeta.WorkspaceId = unrelatedId;
@@ -201,5 +222,130 @@ public sealed class WorkspaceRoutedServiceTests
         Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM workspace WHERE removed_at IS NULL;")));
         Assert.Equal(1L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM workspace WHERE removed_at IS NOT NULL;")));
         Assert.True((long)node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_workspace_audit;"))! >= 6);
+    }
+
+    [Fact(Timeout = 30_000)]
+    public async Task OnlyTheOriginalCallerCanReadTheHeldBytesAndUnreadableOrMissingResultsStayUnknown()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var node = await InProcessNode.Create().StartAsync();
+        var calls = new RoutedCalls(node);
+        var caller = calls.Relay(Origin.Human);
+        var missingPath = Path.Combine(node.Root, "nonexistent-reconcile-root");
+        WorkspaceServiceRegisterWorkspaceRequest Request() => new() { Meta = Tasks.Meta(), Path = missingPath, Name = "historical" };
+        Task<(RoutedAnswer? Answer, long LogId)> Route(WorkspaceServiceRegisterWorkspaceRequest request, CenterCaller? owner = null, byte[]? payload = null) =>
+            calls.CallAsync(owner ?? caller, RoutedMethod.RegisterNodeWorkspace, payload ?? request.ToByteArray(), request.Meta.CommandId).WaitAsync(ct);
+
+        var prior = Request();
+        var corrupt = Request();
+        var empty = Request();
+        var incomplete = Request();
+        var oversized = Request();
+        var pending = Request();
+        var workspace = new Workspace { WorkspaceId = CommandIds.New(), Kind = WorkspaceKind.Registered, State = WorkspaceState.Active, Name = prior.Name, RootPath = prior.Path };
+        var registered = new WorkspaceServiceRegisterWorkspaceResponse
+        {
+            Meta = new() { CorrelationId = prior.Meta.CorrelationId },
+            Value = new() { Workspace = workspace },
+            Audit = WorkspaceAuditMetadata.ForRecords([workspace]),
+        };
+        byte[] retainedBytes = [0x98, 0x06, 0x01, .. registered.ToByteArray()];
+        node.Runtime.Store.Write(transaction =>
+        {
+            SeedRegistration(transaction, caller, prior, retainedBytes, wallExpired: true);
+            SeedRegistration(transaction, caller, corrupt, [0x80]);
+            SeedRegistration(transaction, caller, empty, []);
+            var incompleteOutcome = registered.Clone();
+            incompleteOutcome.Meta.CorrelationId = incomplete.Meta.CorrelationId;
+            incompleteOutcome.Value.Workspace = new Workspace { WorkspaceId = CommandIds.New() };
+            SeedRegistration(transaction, caller, incomplete, incompleteOutcome.ToByteArray());
+            var oversizedOutcome = registered.Clone();
+            oversizedOutcome.Meta.CorrelationId = oversized.Meta.CorrelationId;
+            oversizedOutcome.Meta.Warnings.Add(new string('x', 131_072));
+            SeedRegistration(transaction, caller, oversized, oversizedOutcome.ToByteArray());
+            SeedRegistration(transaction, caller, pending, null);
+            Assert.True(RoutedFileRetention.IsHeld(transaction, prior.Meta.CommandId.Value.Span));
+        }, CommitDurability.Full);
+
+        var retry = prior.Clone();
+        retry.Meta.CorrelationId = CommandIds.New();
+        var concurrent = await Task.WhenAll(Route(retry), Route(retry, RoutedCalls.Session()),
+            Route(retry, payload: [.. retry.ToByteArray(), 0x98, 0x06, 0x01]));
+        var known = concurrent[0].Answer;
+        Assert.NotNull(known);
+        Assert.NotNull(known.Response);
+        Assert.Equal(retainedBytes, known.Response.ToByteArray());
+        Assert.Equal(prior.Meta.CorrelationId, WorkspaceServiceRegisterWorkspaceResponse.Parser.ParseFrom(known.Response).Meta.CorrelationId);
+        Assert.Equal(workspace.WorkspaceId.Value.ToByteArray(), known.WorkspaceId);
+
+        var other = concurrent[1].Answer!;
+        Assert.Equal("command_id_reused", WorkspaceServiceRegisterWorkspaceResponse.Parser.ParseFrom(other.Response).Error.Code);
+        var changedWire = concurrent[2].Answer!;
+        Assert.Equal("command_id_reused", WorkspaceServiceRegisterWorkspaceResponse.Parser.ParseFrom(changedWire.Response).Error.Code);
+
+        foreach (var request in new[] { corrupt, empty, incomplete, oversized, Request() })
+        {
+            var unknown = (await Route(request)).Answer!;
+            AssertUnknown(WorkspaceServiceRegisterWorkspaceResponse.Parser.ParseFrom(unknown.Response).Error);
+        }
+
+        var inProgress = WorkspaceServiceRegisterWorkspaceResponse.Parser.ParseFrom((await Route(pending)).Answer!.Response).Error;
+        AssertPending(inProgress);
+
+        Assert.Equal(1L, node.Runtime.Store.Read(reader => reader.Scalar(
+            "SELECT count(*) FROM command_dedup WHERE command_id = $id AND expires_at <= $now;",
+            ("$id", prior.Meta.CommandId.Value.ToByteArray()), ("$now", reader.NowMicroseconds))));
+
+        Assert.False(Directory.Exists(missingPath));
+        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM workspace;")));
+        Assert.Equal(6L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM command_dedup;")));
+        Assert.Equal(1L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM command_dedup WHERE outcome IS NULL;")));
+    }
+
+    internal static void SeedRegistration(StoreTransaction transaction, CenterCaller caller, WorkspaceServiceRegisterWorkspaceRequest request,
+        byte[]? outcome, bool wallExpired = false)
+    {
+        var id = request.Meta.CommandId.Value.Span;
+        const string method = "arcforges.node.v1.WorkspaceService/RegisterWorkspace";
+        var digest = PayloadDigest.Compute(request.ToByteArray());
+        if (wallExpired)
+        {
+            // Seed an older generation before the retention trigger guards its original timestamps.
+            var day = (long)TimeSpan.FromDays(1).TotalMicroseconds;
+            var now = transaction.NowMicroseconds;
+            transaction.Execute("""
+                INSERT INTO command_dedup (command_id, method, payload_digest, origin, outcome, created_at, expires_at)
+                VALUES ($id, $method, $digest, $origin, NULL, $created, $expires);
+                """, ("$id", id.ToArray()), ("$method", method), ("$digest", digest), ("$origin", (int)Origin.Remote),
+                ("$created", now - 2 * day), ("$expires", now - day));
+        }
+        else
+        {
+            Assert.Equal(DedupStatus.Execute, CommandDeduplication.Begin(transaction, id, method, digest, Origin.Remote).Status);
+        }
+
+        if (outcome is not null)
+        {
+            CommandDeduplication.Complete(transaction, id, outcome);
+        }
+
+        RoutedCommandOwnership.Record(transaction, id, new ActorRef { Origin = Origin.Remote, CenterCaller = caller, RemoteCommandId = request.Meta.CommandId });
+    }
+
+    private static void AssertUnknown(ArcError error)
+    {
+        Assert.Equal(ErrorCategory.Internal, error.Category);
+        Assert.Equal("internal", error.Code);
+        Assert.Equal("legacy_workspace_registration_outcome_unavailable", error.Details.State.Reason);
+        Assert.Equal(EffectCertainty.Unknown, error.Effect);
+        Assert.Equal(RetryMode.Never, error.Retry.Mode);
+    }
+
+    private static void AssertPending(ArcError error)
+    {
+        Assert.Equal("internal", error.Code);
+        Assert.Equal("command_in_progress", error.Details.State.Reason);
+        Assert.Equal(EffectCertainty.Unknown, error.Effect);
+        Assert.Equal(RetryMode.Never, error.Retry.Mode);
     }
 }

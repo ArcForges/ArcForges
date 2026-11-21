@@ -17,8 +17,7 @@ namespace ArcForges.Node.Api;
 
 internal sealed partial class FileServiceHandler
 {
-    // The routed mutation path remains unadvertised until approval, settlement and both native platform paths are complete.
-    // Each guarded creation or existing-file effect still needs the exact authorized caller and durable intent.
+    // Legacy WriteFile and EditFile admit only the reconciliation of prior commands.
     private readonly FileStageBudget _writeStageBudget = node.FileStages;
 
     // Test-only callbacks coordinate a real competing create and an interruption after the actual creation effect.
@@ -114,7 +113,7 @@ internal sealed partial class FileServiceHandler
         var ownsLease = true;
         try
         {
-            preparation = node.Processor.ExecuteAsync(command => PrepareMutation(command.Transaction, caller, request, raw, lease, started, limit, token),
+            preparation = node.Processor.ExecuteAsync(command => PrepareMutation(command.Transaction, caller, request, raw, started, limit, token),
                 CommitDurability.Full);
             MutationPreparation prepared;
             try
@@ -229,7 +228,7 @@ internal sealed partial class FileServiceHandler
     }
 
     private MutationPreparation PrepareMutation(StoreTransaction transaction, Caller caller, MutationRequest request, byte[] raw,
-        MutationLease lease, long started, TimeSpan limit, CancellationToken token)
+        long started, TimeSpan limit, CancellationToken token)
     {
         var routed = caller.Routed!;
         var correlation = routed.Correlation(request.Meta);
@@ -238,36 +237,26 @@ internal sealed partial class FileServiceHandler
         var auditOperation = request.Kind == FileOperationKind.Write ? "file.write" : "file.edit";
         byte[]? workspace = null;
         string? path = null;
-        FileAuditMetadata? observed = null;
         void Audit(PermissionDecision decision, string outcome) => AuditLog.AppendFileWorkspace(transaction, caller.Actor,
-            auditOperation + " FileService." + method, workspace, null, path, decision, outcome, observed);
+            auditOperation + " FileService." + method, workspace, null, path, decision, outcome, null);
         MutationPreparation Refuse(ArcError error, string? policyReason = null)
         {
             RoutedFileErrors.Complete(error, request.Meta, correlation, node.Clock);
             Audit(PermissionDecision.Deny, "refused: " + error.Code);
             var bytes = request.Kind == FileOperationKind.Write
-                ? new FileServiceWriteFileResponse { Meta = meta, Error = error, Audit = observed }.ToByteArray()
-                : new FileServiceEditFileResponse { Meta = meta, Error = error, Audit = observed }.ToByteArray();
+                ? new FileServiceWriteFileResponse { Meta = meta, Error = error }.ToByteArray()
+                : new FileServiceEditFileResponse { Meta = meta, Error = error }.ToByteArray();
             return new MutationPreparation(false, bytes, policyReason);
         }
         void CheckBudget()
         {
             if (Expired(started, limit, token)) throw new OperationCanceledException(token);
         }
-        MutationPreparation Reserve(FileJournalIntent intent)
+        MutationPreparation Unavailable()
         {
-            CheckWriteCandidateAuthority(transaction, caller);
-            CheckBudget();
-            var reservation = FileMutationJournal.Prepare(transaction, intent, raw, lease.Use!.Root);
-            if (reservation == FileJournalPreparation.Prepared) lease.Intent = intent;
-            return reservation switch
-            {
-                FileJournalPreparation.Prepared => new MutationPreparation(true),
-                FileJournalPreparation.Conflict => Refuse(Error(ErrorCategory.Conflict, "command_id_reused", "command_id_reused", correlation)),
-                FileJournalPreparation.WorkspaceHeld => Refuse(Error(ErrorCategory.State, "invalid_state", "file_recovery_pending", correlation)),
-                FileJournalPreparation.Capacity => Refuse(Error(ErrorCategory.Resource, "enforcement_unavailable", "file_stage_capacity", correlation)),
-                _ => new MutationPreparation(false),
-            };
+            var error = Error(ErrorCategory.Execution, "operation_failed", "file_outcome_unknown", correlation);
+            error.Effect = EffectCertainty.Unknown;
+            return Refuse(error);
         }
 
         try
@@ -294,112 +283,54 @@ internal sealed partial class FileServiceHandler
             // another effect or depend on the current write matrix or the target remaining available.
             routed.BeforeReplay();
             CheckBudget();
-            var existing = FileMutationJournal.FindExisting(transaction, request.Kind, request.Meta.CommandId.Value.Span, caller.CenterCaller, raw);
-            if (existing == FileJournalPreparation.Conflict)
+            var id = request.Meta.CommandId.Value.ToByteArray();
+            var binding = FindRetainedMutation(transaction, request.Kind, id, caller.CenterCaller, SHA256.HashData(raw));
+            if (binding == RetainedMutation.Conflict)
                 return Refuse(Error(ErrorCategory.Conflict, "command_id_reused", "command_id_reused", correlation));
-            if (existing == FileJournalPreparation.Existing)
+            if (binding == RetainedMutation.Unavailable)
+                return Unavailable();
+            if (binding == RetainedMutation.Receipt)
             {
-                var cached = FileMutationJournal.Replay(transaction, request.Kind, request.Meta.CommandId.Value.Span, caller.CenterCaller, raw);
-                if (cached is not null)
+                byte[]? cached;
+                ArcError? replayError;
+                try
                 {
-                    var replayError = request.Kind == FileOperationKind.Write
+                    cached = FileMutationJournal.Replay(transaction, request.Kind, id, caller.CenterCaller, raw);
+                    if (cached is null) return new MutationPreparation(false);
+                    replayError = request.Kind == FileOperationKind.Write
                         ? FileServiceWriteFileResponse.Parser.ParseFrom(cached).Error
                         : FileServiceEditFileResponse.Parser.ParseFrom(cached).Error;
-                    Audit(replayError is null ? PermissionDecision.Allow : PermissionDecision.Deny,
-                        replayError is null ? "replayed" : "replayed: " + replayError.Code);
                 }
+                catch (Exception failure) when (failure is InvalidDataException or InvalidProtocolBufferException)
+                {
+                    return Unavailable();
+                }
+                Audit(replayError is null ? PermissionDecision.Allow : PermissionDecision.Deny,
+                    replayError is null ? "replayed" : "replayed: " + replayError.Code);
                 return new MutationPreparation(false, cached);
             }
 
-            if (PreviousFileApproval(transaction, caller, request, raw, correlation) is { } previous)
+            if (binding == RetainedMutation.PendingStage)
             {
+                MutationPreparation? previous;
+                try { previous = PreviousFileApproval(transaction, caller, request, raw, correlation); }
+                catch (Exception failure) when (failure is InvalidDataException or InvalidProtocolBufferException)
+                {
+                    return Unavailable();
+                }
+                if (previous is null) return new MutationPreparation(false); // Preserve an unsettled producer.
                 if (previous.PolicyReason == "approval_required")
                     Audit(PermissionDecision.Approval, "refused: approval_required");
                 else if (previous.Response is not null)
                     Audit(PermissionDecision.Deny, "refused: existing_approval");
                 return previous;
             }
+
             CheckWriteCandidateAuthority(transaction, caller);
             CheckBudget();
-            if (!OperatingSystem.IsWindows() && !(OperatingSystem.IsLinux() && LinuxFileEffectController.IsHostProcess()))
-                return Refuse(Error(ErrorCategory.Resource, "enforcement_unavailable", "file_guard_unavailable", correlation));
-            _ = WorkspacePath.Components(path);
-            lease.Use = _workspaces.OpenForUse(transaction, workspace, beforeUse: selectedTx =>
-                CheckWriteCandidateAuthority(selectedTx, caller), token);
-            CheckBudget();
-            if (!request.HasExpectedSha256)
-            {
-                lease.Stages = WorkspaceStagePair.TryCreateForCommand(lease.Use.Root, _writeStageBudget, transaction,
-                    request.Meta.CommandId.Value.Memory, original: null, request.Data.Memory, token);
-                if (lease.Stages is null)
-                    return Refuse(Error(ErrorCategory.Resource, "enforcement_unavailable", "file_stage_capacity", correlation));
-                AfterStageBeforeJournalForTests?.Invoke();
-                var slashAt = path.LastIndexOf('/', StringComparison.Ordinal);
-                if (OperatingSystem.IsLinux())
-                    lease.CreationSelection = lease.Use.Root.PrepareLinuxCreation(path, token);
-                var parentHandle = lease.CreationSelection?.Parent ??
-                    lease.Use.Root.OpenDirectory(slashAt < 0 ? "" : path[..slashAt]);
-                var rootId = RegisteredWorkspaces.RootIdentity.Encode(lease.Use.Root.RootIdentity);
-                var newParentIdentity = WorkspacePath.Identity(parentHandle);
-                lease.ParentIdentity = newParentIdentity;
-                var parentId = RegisteredWorkspaces.RootIdentity.Encode(newParentIdentity);
-                var stage = lease.Stages.Intended;
-                var absentIntent = new FileJournalIntent(FileOperationKind.Write, request.Meta.CommandId.Value.ToByteArray(),
-                    correlation.Value.ToByteArray(), caller.CenterCaller, workspace, path, rootId.Platform, rootId.Bytes,
-                    parentId.Bytes, null, null, null, null, stage.Length, stage.Sha256.ToArray(), stage.Identity.Bytes);
-                return Reserve(absentIntent);
-            }
-            if (OperatingSystem.IsLinux())
-            {
-                var guardedSelection = lease.Use.Root.OpenExistingWriteGuardWithNames(path, token);
-                lease.Guard = guardedSelection.Guard;
-                lease.ParentIdentity = guardedSelection.ParentIdentity;
-                lease.CheckNames = guardedSelection.CheckNames;
-                lease.Guard.CheckLinuxWritePreservation();
-            }
-            else lease.Guard = lease.Use.Root.OpenExistingWriteGuard(path);
-            using var original = lease.Guard.ReadForMutation(token);
-            observed = new FileAuditMetadata
-            {
-                Observations =
-                {
-                    new FileAuditObservation
-                    {
-                        Kind = FileAuditKind.InputBytes,
-                        SizeBytes = checked((ulong)original.Bytes.Length),
-                        DigestInputBytes = checked((ulong)original.Bytes.Length),
-                        Sha256 = ByteString.CopyFrom(original.Sha256.Span),
-                    },
-                },
-            };
-            if (!CryptographicOperations.FixedTimeEquals(request.ExpectedSha256.Span, original.Sha256.Span))
-                return Refuse(Error(ErrorCategory.Conflict, "file_changed", "hash_mismatch", correlation));
-            CheckBudget();
-            using var edit = request.Kind == FileOperationKind.Edit
-                ? WorkspaceFileEdit.Plan(original.Bytes.Span, request.ExpectedSha256.Span, request.OldText!, request.NewText!,
-                    request.ExpectedOccurrences, token) : null;
-            var intended = edit is null ? request.Data.ToByteArray() : edit.Bytes.ToArray();
-            try
-            {
-                lease.Stages = WorkspaceStagePair.TryCreateForCommand(lease.Use.Root, _writeStageBudget, transaction,
-                    request.Meta.CommandId.Value.Memory, original.Bytes, intended, token);
-            }
-            finally { CryptographicOperations.ZeroMemory(intended); }
-            if (lease.Stages is null)
-                return Refuse(Error(ErrorCategory.Resource, "enforcement_unavailable", "file_stage_capacity", correlation));
-            AfterStageBeforeJournalForTests?.Invoke();
-            lease.CheckNames?.Invoke();
-            var slash = path.LastIndexOf('/', StringComparison.Ordinal);
-            var parent = lease.ParentIdentity ?? WorkspacePath.Identity(lease.Use.Root.OpenDirectory(slash < 0 ? "" : path[..slash]));
-            var rootIdentity = RegisteredWorkspaces.RootIdentity.Encode(lease.Use.Root.RootIdentity);
-            var parentIdentity = RegisteredWorkspaces.RootIdentity.Encode(parent);
-            var targetIdentity = RegisteredWorkspaces.RootIdentity.Encode(lease.Guard.ObjectIdentity, directory: false);
-            var originalStage = lease.Stages.Original ?? throw new InvalidOperationException("An existing file needs a preimage stage.");
-            var intent = new FileJournalIntent(request.Kind, request.Meta.CommandId.Value.ToByteArray(),
-                correlation.Value.ToByteArray(), caller.CenterCaller, workspace, path, rootIdentity.Platform, rootIdentity.Bytes,
-                parentIdentity.Bytes, targetIdentity.Bytes, original.Bytes.Length, original.Sha256.ToArray(), originalStage.Identity.Bytes,
-                lease.Stages.Intended.Length, lease.Stages.Intended.Sha256.ToArray(), lease.Stages.Intended.Identity.Bytes);
-            return Reserve(intent);
+            // An absent receipt cannot establish the effect of an earlier submission. This path cannot open
+            // a target, reserve a journal, stage new data, or ask for a new approval.
+            return Unavailable();
         }
         catch (FilePolicyException refusal)
         {
@@ -407,35 +338,47 @@ internal sealed partial class FileServiceHandler
         }
         catch (FileApprovalNotImplementedException)
         {
-            return new MutationPreparation(false, NeedsApproval: true);
+            return Unavailable();
         }
-        catch (WorkspaceFileEditException failure)
-        {
-            return failure.Reason switch
-            {
-                "occurrence_mismatch" => Refuse(Error(ErrorCategory.Conflict, "occurrence_mismatch", "occurrence_mismatch", correlation)),
-                "file_existing_bytes" or "file_edit_result_bytes" => Refuse(TooLargeFile(failure.Reason, "4194304", correlation)),
-                "file_edit_text_bytes" => Refuse(TooLargeFile(failure.Reason, "65536", correlation)),
-                "hash_mismatch" => Refuse(Error(ErrorCategory.Conflict, "file_changed", "hash_mismatch", correlation)),
-                _ => Refuse(Error(ErrorCategory.Validation, "invalid_argument", "content: invalid_utf8", correlation)),
-            };
-        }
-        catch (WorkspacePreservationUnavailableException)
-        {
-            return Refuse(Error(ErrorCategory.Resource, "enforcement_unavailable", "file_guard_unavailable", correlation));
-        }
-        catch (WorkspacePathException exception) when (exception.Reason == "file_guard_unavailable")
-        {
-            return Refuse(Error(ErrorCategory.Resource, "enforcement_unavailable", "file_guard_unavailable", correlation));
-        }
-        catch (WorkspacePathException exception) when (exception.Reason == "file_too_large")
-        {
-            return Refuse(TooLargeFile("file_existing_bytes", "4194304", correlation));
-        }
-        catch (Exception exception) when (exception is RegisteredWorkspaceException or WorkspacePathException or UnauthorizedAccessException or IOException)
-        {
-            return Refuse(Failure(exception, correlation));
-        }
+    }
+
+    private enum RetainedMutation { None, Conflict, Unavailable, Receipt, PendingStage }
+
+    private static RetainedMutation FindRetainedMutation(StoreReader reader, FileOperationKind kind, byte[] id, CenterCaller caller,
+        byte[] digest)
+    {
+        // Match the journal or stage binding before reading retained outcomes or approval data.
+        using var query = reader.CreateCommand("""
+            SELECT coalesce(j.kind, r.kind), coalesce(j.request_sha256, r.request_sha256), coalesce(j.caller, r.caller),
+                   j.command_id IS NOT NULL, r.active, t.command_id IS NOT NULL,
+                   d.method, d.payload_digest, d.origin, d.outcome IS NULL
+            FROM command_dedup d
+            LEFT JOIN file_operation_journal j ON j.command_id = d.command_id
+            LEFT JOIN file_private_stage_reservation r ON r.command_id = d.command_id
+            LEFT JOIN file_private_stage_terminal t ON t.command_id = r.command_id
+            WHERE d.command_id = $id;
+            """);
+        query.Parameters.AddWithValue("$id", id);
+        using var row = query.ExecuteReader();
+        if (!row.Read()) return RetainedMutation.None;
+        if (row.IsDBNull(0) || row.GetInt32(0) != (int)kind ||
+            !CryptographicOperations.FixedTimeEquals((byte[])row.GetValue(1), digest))
+            return RetainedMutation.Conflict;
+
+        CenterCaller saved;
+        try { saved = CenterCaller.Parser.ParseFrom((byte[])row.GetValue(2)); }
+        catch (InvalidProtocolBufferException) { return RetainedMutation.None; }
+        if (CenterRouting.Shape(saved) is not null) return RetainedMutation.None;
+        if (!CenterRouting.SameFileCaller(saved, caller)) return RetainedMutation.Conflict;
+
+        var method = kind == FileOperationKind.Write ? "WriteFile" : "EditFile";
+        if (row.GetString(6) != "arcforges.node.v1.FileService/" + method || row.GetInt32(8) != (int)Origin.Remote ||
+            !CryptographicOperations.FixedTimeEquals((byte[])row.GetValue(7), digest))
+            return RetainedMutation.Unavailable;
+        if (row.GetBoolean(3)) return RetainedMutation.Receipt;
+        var outcomeMissing = row.GetBoolean(9);
+        if (row.GetBoolean(5)) return outcomeMissing ? RetainedMutation.Unavailable : RetainedMutation.Receipt;
+        return row.GetInt32(4) == 1 && outcomeMissing ? RetainedMutation.PendingStage : RetainedMutation.Unavailable;
     }
 
     private LinuxWorkerRegistration RegisterLinuxWorker(StoreTransaction transaction, Caller caller, MutationRequest request, byte[] raw,

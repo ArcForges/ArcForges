@@ -231,11 +231,12 @@ public sealed class NodeLifecycleTests
         Assert.Equal(2, (await node.CliAsync("config", "set", "dataRoot", "/elsewhere")).ExitCode);
         Assert.Equal(2, (await node.CliAsync("config", "set", "logLevel", "loud")).ExitCode);
 
-        var missing = await node.CliAsync("jobs", "show", "01m4zrxnr8e7d81pn7xnwfqw14");
-        Assert.Equal(4, missing.ExitCode);
-        Assert.Matches(@"^error: not found: .*\(STATE/not_found, correlation [0-9a-z]{26}\)", missing.Error.Trim());
-        var missingJson = await node.CliAsync("jobs", "show", "01m4zrxnr8e7d81pn7xnwfqw14", "--json");
-        Assert.Equal(4, missingJson.ExitCode);
+        const string missingSandbox = "01m4zrxnr8e7d81pn7xnwfqw14";
+        var missing = await node.CliAsync("sandbox", "inspect", missingSandbox);
+        Assert.Equal(2, missing.ExitCode);
+        Assert.Matches(@"^error: not found: .*\(STATE/not_found, effect DidNotHappen, correlation [0-9a-hjkmnp-tv-z]{26}\)$", missing.Error.Trim());
+        var missingJson = await node.CliAsync("sandbox", "inspect", missingSandbox, "--json");
+        Assert.Equal(2, missingJson.ExitCode);
         Assert.Equal("not_found", missingJson.Json().GetProperty("error").GetProperty("code").GetString());
         Assert.Equal(string.Empty, missingJson.Error);
         Assert.Equal(2, (await node.CliAsync("node", "rename", new string('n', 65))).ExitCode);
@@ -243,7 +244,13 @@ public sealed class NodeLifecycleTests
         var version = await node.CliAsync("version", "--json");
         Assert.Equal(version.Json().GetProperty("client").GetProperty("version").GetString(), version.Json().GetProperty("node").GetProperty("version").GetString());
         Assert.Equal(0, (await node.CliAsync("node", "capabilities", "--reevaluate")).ExitCode);
-        Assert.Contains("No jobs.", (await node.CliAsync("jobs", "list")).Output, StringComparison.Ordinal);
+        var listed = await node.CliAsync("sandbox", "list", "--json");
+        Assert.Equal(0, listed.ExitCode);
+        var document = listed.Json();
+        if (document.TryGetProperty("sandboxes", out var sandboxes))
+            Assert.Empty(sandboxes.EnumerateArray());
+        if (document.GetProperty("page").TryGetProperty("nextCursor", out var cursor))
+            Assert.Equal(string.Empty, cursor.GetString());
     }
 
     [Fact(Timeout = 120_000)]

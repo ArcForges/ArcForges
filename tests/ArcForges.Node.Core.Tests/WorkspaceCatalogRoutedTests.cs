@@ -6,6 +6,8 @@ using ArcForges.Contracts.Node.V1;
 using ArcForges.Contracts.Relay.V1;
 using ArcForges.Node.Api;
 using ArcForges.Node.Core.Files;
+using ArcForges.Node.Core.Platform;
+using ArcForges.Node.Store;
 using Google.Protobuf;
 using Microsoft.Win32.SafeHandles;
 using NodeShapes = ArcForges.Contracts.Node.Shapes.ContractShapeValidation;
@@ -22,13 +24,12 @@ public sealed partial class WorkspaceCatalogRoutedTests
         ct.ThrowIfCancellationRequested();
         await using var node = await InProcessNode.Create().StartAsync();
         var calls = new RoutedCalls(node);
-        var manager = new RegisteredWorkspaces(node.Runtime.Store);
         var a = Directory.CreateDirectory(Path.Combine(node.Root, "catalog-a")).FullName;
         var b = Directory.CreateDirectory(Path.Combine(node.Root, "catalog-missing")).FullName;
         var c = Directory.CreateDirectory(Path.Combine(node.Root, "catalog-replaced")).FullName;
-        var first = manager.RegisterFromVerifiedHuman(a, "available", cancellationToken: ct);
-        var missing = manager.RegisterFromVerifiedHuman(b, "missing", cancellationToken: ct);
-        var replaced = manager.RegisterFromVerifiedHuman(c, "replaced", cancellationToken: ct);
+        var first = ExistingWorkspaceReadFixture.Seed(node, a, "available", cancellationToken: ct);
+        var missing = ExistingWorkspaceReadFixture.Seed(node, b, "missing", cancellationToken: ct);
+        var replaced = ExistingWorkspaceReadFixture.Seed(node, c, "replaced", cancellationToken: ct);
         Directory.Move(b, b + "-held");
         Directory.Move(c, c + "-held");
         Directory.CreateDirectory(c);
@@ -212,7 +213,7 @@ public sealed partial class WorkspaceCatalogRoutedTests
         var calls = new RoutedCalls(node);
         var parent = Directory.CreateDirectory(Path.Combine(node.Root, "catalog-restricted-parent")).FullName;
         var root = Directory.CreateDirectory(Path.Combine(parent, "root")).FullName;
-        var workspace = new RegisteredWorkspaces(node.Runtime.Store).RegisterFromVerifiedHuman(root, cancellationToken: ct);
+        var workspace = ExistingWorkspaceReadFixture.Seed(node, root, cancellationToken: ct);
         var original = File.GetUnixFileMode(parent);
         try
         {
@@ -237,7 +238,7 @@ public sealed partial class WorkspaceCatalogRoutedTests
         await using var node = await InProcessNode.Create().StartAsync();
         var calls = new RoutedCalls(node);
         var root = Directory.CreateDirectory(Path.Combine(node.Root, "catalog-exclusive-root")).FullName;
-        var workspace = new RegisteredWorkspaces(node.Runtime.Store).RegisterFromVerifiedHuman(root, cancellationToken: ct);
+        var workspace = ExistingWorkspaceReadFixture.Seed(node, root, cancellationToken: ct);
         using (var blocker = CreateFile(root, 0x81, 0, 0, 3, 0x02000000, 0))
         {
             Assert.False(blocker.IsInvalid, "the owned test directory must be opened with no sharing; Win32 error " + Marshal.GetLastPInvokeError());
@@ -276,4 +277,34 @@ public sealed partial class WorkspaceCatalogRoutedTests
 
     [LibraryImport("kernel32.dll", EntryPoint = "CreateFileW", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
     private static partial SafeFileHandle CreateFile(string path, uint access, uint sharing, nint security, uint creation, uint flags, nint template);
+}
+
+internal static class ExistingWorkspaceReadFixture
+{
+    internal static RegisteredWorkspace Seed(InProcessNode node, string root, string? name = null,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        using var opened = WorkspacePath.OpenRoot(root);
+        var canonical = opened.RootPath;
+        var native = RegisteredWorkspaces.RootIdentity.Encode(opened.RootIdentity);
+        var selectedName = name ?? Path.GetFileName(Path.TrimEndingDirectorySeparator(canonical));
+
+        // The read fixtures start with persisted V1 records and the actual identity of their owned directory.
+        return node.Runtime.Store.Write(transaction =>
+        {
+            var id = StoreIds.NewUuid7(transaction.Clock);
+            var now = transaction.NowMicroseconds;
+            transaction.Execute("""
+                INSERT INTO workspace (workspace_id, kind, state, name, root_path, created_at, last_used_at, rev)
+                VALUES ($id, 1, 2, $name, $path, $now, $now, 0);
+                """, ("$id", id), ("$name", selectedName), ("$path", canonical), ("$now", now));
+            transaction.Execute("""
+                INSERT INTO workspace_root_identity (workspace_id, format_version, platform, native_identity, canonical_path, registered_at)
+                VALUES ($id, 1, $platform, $identity, $path, $now);
+                """, ("$id", id), ("$platform", native.Platform), ("$identity", native.Bytes), ("$path", canonical), ("$now", now));
+            cancellationToken.ThrowIfCancellationRequested();
+            return new RegisteredWorkspace(id, selectedName, canonical, now, now);
+        }, CommitDurability.Full);
+    }
 }

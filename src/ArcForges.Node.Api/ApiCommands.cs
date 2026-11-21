@@ -414,6 +414,69 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
         }
     }
 
+    /// <summary>Reads the original authorized result without reserving a command ID or entering the effect writer.</summary>
+    internal (TResponse Response, bool Retained) ReadRetained<TResponse>(IMessage request, RequestMeta meta, Caller caller, string method,
+        MessageParser<TResponse> parser, Func<ArcError, TResponse> fail, ArcError missing) where TResponse : class, IMessage<TResponse>
+    {
+        var (response, retained) = ReadRetained(node, service, request, meta, caller, method, parser, fail, missing);
+        return (response, retained is not null);
+    }
+
+    /// <summary>Returns the original serialized response for a routed replay that preserves its exact bytes and correlation.</summary>
+    internal static (TResponse Response, ReadOnlyMemory<byte>? Retained) ReadRetained<TResponse>(NodeRuntime node, string service,
+        IMessage request, RequestMeta meta, Caller caller, string method, MessageParser<TResponse> parser, Func<ArcError, TResponse> fail,
+        ArcError missing, ArcError? inProgress = null, int maximumOutcomeBytes = int.MaxValue, bool allowTerminalApproval = true)
+        where TResponse : class, IMessage<TResponse>
+    {
+        var commandId = meta.CommandId.Value.ToByteArray();
+        var digest = Digest(caller, request);
+        var operation = service[(service.LastIndexOf('.', StringComparison.Ordinal) + 1)..] + "." + method;
+        (TResponse Response, ReadOnlyMemory<byte>? Retained) Unconfirmed(ArcError error) => (fail(error), null);
+
+        try
+        {
+            return node.Store.Read<(TResponse Response, ReadOnlyMemory<byte>? Retained)>(reader =>
+            {
+                caller.Routed?.BeforeReplay();
+                var retained = CommandDeduplication.ReadRetained(reader, commandId, service + "/" + method, digest, reader.NowMicroseconds);
+                if (!RoutedCommandOwnership.MayExecute(reader, commandId, caller.CenterCaller, operation, digest, retained is not null))
+                {
+                    return Unconfirmed(StoreErrors.CommandIdReused());
+                }
+
+                var approval = Approvals.ByCommand(reader, commandId);
+                if (caller.ApprovalId is { } approvalId && (approval is not { State: ApprovalState.Approved } ||
+                    !approval.Id.AsSpan().SequenceEqual(approvalId)))
+                {
+                    return Unconfirmed(StoreErrors.CommandIdReused());
+                }
+
+                if (approval is not null && (approval.View.Operation != operation || !SameRequest(approval, method, digest)))
+                {
+                    return Unconfirmed(StoreErrors.CommandIdReused());
+                }
+
+                return retained switch
+                {
+                    { Status: DedupStatus.Replay, Outcome: { } stored } when stored.Length <= maximumOutcomeBytes =>
+                        (parser.ParseFrom(stored.Span), stored),
+                    { Status: DedupStatus.Conflict } => Unconfirmed(StoreErrors.CommandIdReused()),
+                    { Status: DedupStatus.InProgress } => Unconfirmed(inProgress ?? NodeErrors.CommandInProgress()),
+                    _ when allowTerminalApproval && !caller.Approved &&
+                        approval is { State: ApprovalState.Executed or ApprovalState.Failed, Outcome: { Length: > 0 } approved } &&
+                        approved.Length <= maximumOutcomeBytes =>
+                        (parser.ParseFrom(approved), new ReadOnlyMemory<byte>(approved)),
+                    _ => Unconfirmed(missing),
+                };
+            });
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException and not RoutedAbortException and not OutOfMemoryException)
+        {
+            node.Log.Warning("api.retained_command.unavailable", new LogField("errorType", exception.GetType().Name));
+            return Unconfirmed(missing);
+        }
+    }
+
     /// <summary>
     /// Runs <paramref name="execute"/> once per command ID (24 h); a replay returns the recorded response. A request that already executed
     /// after its approval returns the approval's stored outcome instead of executing again (also after the 24-hour window). With

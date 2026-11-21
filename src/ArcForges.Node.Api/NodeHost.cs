@@ -376,7 +376,14 @@ public static class NodeHost
 
         // 02 section 2 step 6: the platform layer creates or re-opens the root container and verifies enforcement with a probe.
         var platform = protectedStorage ? null : StartPlatform(options, store, log);
-        var capabilities = platform is null ? NodeCapabilities.Evaluate(clock) : NodeCapabilities.FromPlatform(platform, clock);
+        CapabilityReport ReadLegacyCapabilities()
+        {
+            var report = platform is null ? NodeCapabilities.Evaluate(clock) : NodeCapabilities.FromPlatform(platform, clock);
+            report.Adopt = AdoptSupport.Unsupported;
+            report.AdoptReason = "New legacy process adoption has been retired. Cleanup of recorded adoptions requires confirmed custody.";
+            return report;
+        }
+        var capabilities = ReadLegacyCapabilities();
         if (OperatingSystem.IsLinux())
         {
             // An in-memory data root: captured output and temporary files count against the attempts' memory (no swap to reclaim into).
@@ -430,6 +437,7 @@ public static class NodeHost
         {
             Execution = execution,
             Sandboxes = sandboxes,
+            ReadLegacyCapabilities = ReadLegacyCapabilities,
 
             // AD-0021 section 5 (Plan decision Q8): a local SCRIPT submission only on a --test-mode node with the allowance; never in production.
             LocalScriptSubmit = !protectedStorage && (options.AllowLocalScriptSubmit
@@ -524,7 +532,17 @@ public static class NodeHost
                 new LogField("generation", journal.Generation));
             if (execution is not null)
             {
-                await RecoverLegacyAsync(options, node, execution, recovery).ConfigureAwait(false);
+                try
+                {
+                    await RecoverLegacyAsync(options, node, execution, recovery).ConfigureAwait(false);
+                }
+                catch (LegacyCustodyUnavailableException exception)
+                {
+                    log.Error("node.legacy_custody.unavailable", exception);
+                    await options.Error.WriteLineAsync("arcforges: legacy process custody could not be confirmed. Retry when the original platform scope is available."
+                        .AsMemory(), cancellationToken).ConfigureAwait(false);
+                    return NodeExitCodes.Failure;
+                }
             }
 
             if (node.Sandboxes is { } recoveredSandboxes)
@@ -1048,8 +1066,8 @@ public static class NodeHost
     }
 
     /// <summary>
-    /// The Linux platform (AD-0005 Linux): transient units of the user manager in the slice, or plain child processes without a user
-    /// manager (observe only). Test mode takes the slice, the manager's address and simulated delegation from <see cref="LinuxTestHooks"/>.
+    /// Recovers legacy transient units through the Linux user manager. Without the manager, resource reporting is observe-only.
+    /// Test mode takes the slice, manager address and simulated delegation from <see cref="LinuxTestHooks"/>.
     /// </summary>
     [System.Runtime.Versioning.SupportedOSPlatform("linux")]
     private static ArcForges.Node.Platform.Linux.LinuxExecutionPlatform StartLinuxPlatform(NodeHostOptions options, NodeStore store, NodeLog log)

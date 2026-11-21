@@ -5,7 +5,10 @@ using ArcForges.Contracts.Node.V1;
 using ArcForges.Contracts.Relay.V1;
 using ArcForges.Node.Api;
 using ArcForges.Node.CloudLink;
+using ArcForges.Node.Core.Execution;
+using ArcForges.Node.Core.Platform;
 using ArcForges.Node.Platform;
+using ArcForges.Node.Store;
 using Google.Protobuf;
 using OutputIndexRecord = ArcForges.Node.Platform.OutputIndexRecord;
 
@@ -14,28 +17,23 @@ namespace ArcForges.Node.Core.Tests;
 /// <summary>Independent review: bound complete routed responses while preserving pages and output offsets.</summary>
 public sealed class RoutedResponseSizeReviewTests
 {
+    private const string HistoricalProgram = "response-size-fixture-never-starts";
+
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     [Fact(Timeout = 180_000)]
     public async Task LargeRoutedListPaginatesWithoutSkippingAnyTask()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        await using var node = await InProcessNode.Create().StartAsync();
-        Assert.SkipWhen(node.Runtime.Execution is null, "The node has no execution supervisor.");
-        await using var human = await node.ChannelAsync(helloAsHuman: true);
-        Assert.Null((await human.Queue.PausePoolAsync(new QueueServicePausePoolRequest { Meta = Tasks.Meta(), All = true }, cancellationToken: Ct)).Error);
-        var expected = new HashSet<string>(StringComparer.Ordinal);
-        for (var n = 0; n < 130; n++)
+        await using var node = InProcessNode.Create();
+        var spec = Tasks.Argv(node.Root, HistoricalProgram);
+        for (var i = 0; i < 32; i++)
         {
-            var spec = Tasks.Argv(node.Root, Tasks.TestLoad, "hold", "--hold-ms", "100");
-            for (var i = 0; i < 32; i++)
-            {
-                spec.Labels[("label" + i.ToString(System.Globalization.CultureInfo.InvariantCulture)).PadRight(64, 'k')] = new string('v', 256);
-            }
-
-            expected.Add(Convert.ToHexString((await Tasks.SubmitAsync(human, spec)).Value.Span));
+            spec.Labels[("label" + i.ToString(System.Globalization.CultureInfo.InvariantCulture)).PadRight(64, 'k')] = new string('v', 256);
         }
 
+        var expected = SeedQueuedTasks(node, spec, count: 130).Select(id => Convert.ToHexString(id.Value.Span)).ToHashSet(StringComparer.Ordinal);
+        await node.StartAsync();
         var routed = new RoutedCalls(node);
         var caller = RoutedCalls.Session();
         string? cursor = null;
@@ -49,18 +47,22 @@ public sealed class RoutedResponseSizeReviewTests
                 page.Cursor = cursor;
             }
 
-            var request = new TaskServiceListTasksRequest { Meta = Tasks.Meta(), Page = page };
+            var request = new TaskServiceListTasksRequest { Meta = ReadMeta(), Page = page };
             var (answer, response) = await routed.ReadAsync(caller, RoutedMethod.ListNodeTasks, request, TaskServiceListTasksResponse.Parser);
             Assert.Equal(RoutedOutcome.Executed, answer!.Outcome);
             Assert.Null(response!.Error);
             Assert.True(response.CalculateSize() <= ResultSigner.MaxPayloadBytes, "the complete list response must fit the routed payload");
+            Assert.Equal(response.CalculateSize(), answer.Response!.Length);
+            Assert.NotEmpty(response.Value.Tasks);
             foreach (var task in response.Value.Tasks)
             {
                 Assert.True(seen.Add(Convert.ToHexString(task.TaskId.Value.Span)), "a task must not repeat across pages");
+                Assert.Equal(spec.Labels, task.Labels);
             }
 
             pages++;
             cursor = response.Value.Page.HasMore ? response.Value.Page.NextCursor : null;
+            Assert.False(response.Value.Page.HasMore && string.IsNullOrEmpty(cursor), "a partial page must have a continuation cursor");
             Assert.True(pages < 10, "pagination must advance");
         }
         while (cursor is not null);
@@ -73,32 +75,30 @@ public sealed class RoutedResponseSizeReviewTests
     public async Task OversizedFullGetReturnsABoundedInternalFailureWithoutTruncatingTheTask()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        await using var node = await InProcessNode.Create().StartAsync();
-        Assert.SkipWhen(node.Runtime.Execution is null, "The node has no execution supervisor.");
+        await using var node = InProcessNode.Create();
+        var longArgument = "--" + new string('x', (1024 * 1024) - System.Text.Encoding.UTF8.GetByteCount(HistoricalProgram) - 2);
+        var spec = Tasks.Argv(node.Root, HistoricalProgram, longArgument);
+        var taskId = Assert.Single(SeedQueuedTasks(node, spec, count: 1));
+        await node.StartAsync();
         await using var human = await node.ChannelAsync(helloAsHuman: true);
-        Assert.Null((await human.Queue.PausePoolAsync(new QueueServicePausePoolRequest { Meta = Tasks.Meta(), All = true }, cancellationToken: Ct)).Error);
-        var spec = Tasks.Argv(node.Root, Tasks.TestLoad, "hold", "--hold-ms", "100");
-        var taskId = await Tasks.SubmitAsync(human, spec);
-        spec.Command.Argv.Argv.Clear();
-        spec.Command.Argv.Argv.Add(Tasks.TestLoad);
-        spec.Command.Argv.Argv.Add(new string('x', (1024 * 1024) - System.Text.Encoding.UTF8.GetByteCount(Tasks.TestLoad)));
+        var execution = Assert.IsType<ExecutionSupervisor>(node.Runtime.Execution);
         var valid = TaskValidation.Submit(new TaskServiceSubmitTaskRequest { Meta = Tasks.Meta(), Spec = spec }, Origin.Human,
-            node.Runtime.Execution!.Settings, node.Runtime.NodeId.Span, node.Runtime.Capabilities);
+            execution.Settings, node.Runtime.NodeId.Span, node.Runtime.Capabilities);
         Assert.Null(valid);
-        await node.Runtime.Processor.ExecuteAsync(context => context.Transaction.Execute("UPDATE task SET spec = $spec WHERE task_id = $id;",
-            ("$spec", spec.ToByteArray()), ("$id", taskId.Value.ToByteArray())));
         Assert.Null((await Sched.ChangePolicyAsync(human, policy => (policy.Privacy ??= new PrivacyPolicy()).RemoteCommandLines = true)).Error);
-        var request = new TaskServiceGetTaskRequest { Meta = Tasks.Meta(), TaskId = taskId, Detail = TaskDetail.Full };
+        var request = new TaskServiceGetTaskRequest { Meta = ReadMeta(), TaskId = taskId, Detail = TaskDetail.Full };
         var routed = new RoutedCalls(node);
         var (answer, response) = await routed.ReadAsync(RoutedCalls.Session(), RoutedMethod.GetNodeTask, request, TaskServiceGetTaskResponse.Parser);
         Assert.Equal(RoutedOutcome.Executed, answer!.Outcome);
         Assert.True(response!.CalculateSize() <= ResultSigner.MaxPayloadBytes);
+        Assert.Equal(response.CalculateSize(), answer.Response!.Length);
         Assert.Equal(("internal", ErrorCategory.Internal, EffectCertainty.Unknown, RetryMode.Never),
             (response.Error?.Code, response.Error?.Category, response.Error?.Effect, response.Error?.Retry.Mode));
         Assert.Null(response.Value);
         var local = await human.Tasks.GetTaskAsync(request, cancellationToken: Ct);
         Assert.Null(local.Error);
-        Assert.Equal(spec.Command.Argv.Argv[1], local.Value.Task.Spec.Command.Argv.Argv[1]);
+        Assert.Equal(taskId, local.Value.Task.TaskId);
+        Assert.Equal(spec, local.Value.Task.Spec);
     }
 
     [Theory(Timeout = 180_000)]
@@ -108,14 +108,11 @@ public sealed class RoutedResponseSizeReviewTests
     public async Task AShortRecordHeavyOutputRemainsBoundedAndResumable(OutputStream stream)
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        await using var node = await InProcessNode.Create().StartAsync();
-        Assert.SkipWhen(node.Runtime.Execution is null, "The node has no execution supervisor.");
-        await using var human = await node.ChannelAsync(helloAsHuman: true);
-        var taskId = await Tasks.SubmitAsync(human, Tasks.Argv(node.Root, Tasks.TestLoad, "output", "--bytes", "1"));
-        var task = await Tasks.WaitAsync(human, taskId);
-        Assert.Equal(TaskState.Succeeded, task.State);
-        var files = Tasks.Files(node, task.CurrentAttempt.AttemptId);
+        await using var node = InProcessNode.Create();
+        var (taskId, attemptId) = LegacyTaskHistoryFixture.Seed(node, AttemptState.Finished);
+        var files = Tasks.Files(node, attemptId);
         const int count = 65_536;
+        Directory.CreateDirectory(files.Directory);
         File.WriteAllBytes(files.StdoutPath, Enumerable.Repeat((byte)'x', count).ToArray());
         File.WriteAllBytes(files.StderrPath, Enumerable.Repeat((byte)'y', count).ToArray());
         using (var index = new FileStream(files.IndexPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete))
@@ -130,6 +127,20 @@ public sealed class RoutedResponseSizeReviewTests
             }
         }
 
+        using (var history = OpenHistory(node))
+        {
+            history.Write(transaction => Assert.Equal(1, transaction.Execute("""
+                UPDATE attempt SET stdout_bytes = $size, stderr_bytes = $size, stdout_offset = $size, stderr_offset = $size, index_offset = $records
+                WHERE attempt_id = $id;
+                """, ("$size", count), ("$records", 2 * count), ("$id", attemptId.Value.ToByteArray()))), CommitDurability.Full);
+        }
+
+        await node.StartAsync();
+        await using var human = await node.ChannelAsync(helloAsHuman: true);
+        var task = await Tasks.GetAsync(human, taskId);
+        Assert.Equal(TaskState.Succeeded, task.State);
+        Assert.Equal(attemptId, task.CurrentAttempt.AttemptId);
+        Assert.Equal(AttemptState.Finished, task.CurrentAttempt.State);
         Assert.Null((await Sched.ChangePolicyAsync(human, policy => (policy.Privacy ??= new PrivacyPolicy()).RemoteOutputTail = true)).Error);
         var routed = new RoutedCalls(node);
         var caller = RoutedCalls.Session();
@@ -139,11 +150,12 @@ public sealed class RoutedResponseSizeReviewTests
         bool eof;
         do
         {
-            var request = new TaskServiceReadTaskOutputRequest { Meta = Tasks.Meta(), AttemptId = task.CurrentAttempt.AttemptId, FromOffset = offset, MaxBytes = count, Stream = stream };
+            var request = new TaskServiceReadTaskOutputRequest { Meta = ReadMeta(), AttemptId = attemptId, FromOffset = offset, MaxBytes = count, Stream = stream };
             var (answer, response) = await routed.ReadAsync(caller, RoutedMethod.ReadNodeTaskOutput, request, TaskServiceReadTaskOutputResponse.Parser);
             Assert.Equal(RoutedOutcome.Executed, answer!.Outcome);
             Assert.Null(response!.Error);
             Assert.True(response.CalculateSize() <= ResultSigner.MaxPayloadBytes, "the complete data plus index must fit the routed payload");
+            Assert.Equal(response.CalculateSize(), answer.Response!.Length);
             Assert.Equal(offset + (ulong)response.Value.Data.Length, response.Value.NextOffset);
             Assert.True(response.Value.Data.Length > 0 || response.Value.Eof);
             Assert.Equal(response.Value.Data.Length, response.Value.Index.Count);
@@ -167,5 +179,38 @@ public sealed class RoutedResponseSizeReviewTests
 
         Assert.Equal(stream == OutputStream.Merged ? 2 * count : count, bytes.Count);
         Assert.True(chunks > 1, "record-heavy output is resumed across more than one bounded response");
+    }
+
+    private static RequestMeta ReadMeta() => new() { CorrelationId = CommandIds.New() };
+
+    private static NodeStore OpenHistory(InProcessNode node) => NodeStore.Open(
+        new NodeStoreOptions { DataRoot = node.DataRoot, BootIdentity = BootIdentity.Read(), Clock = node.Clock });
+
+    private static List<Id> SeedQueuedTasks(InProcessNode node, TaskSpec spec, int count)
+    {
+        // Materialize the same bounded spec/labels that were stored by historical admission.
+        spec.Kind = TaskKind.Command;
+        var storage = PreparedSubmitStorage.Create(SubmittedEnvironment.Split(spec, SecretNameMatcher.Default));
+        var summary = CommandText.Summary(spec.Command, SecretNameMatcher.Default);
+        var fingerprint = CommandText.Fingerprint(spec.Command);
+        var commandDigest = CommandText.Digest(spec, []);
+        using var history = OpenHistory(node);
+        return history.Write(transaction =>
+        {
+            var tasks = new List<Id>(count);
+            for (var i = 0; i < count; i++)
+            {
+                var task = LegacyTaskHistoryFixture.SeedQueued(transaction, new ActorRef { Origin = Origin.Human });
+                Assert.Equal(1, transaction.Execute("""
+                    UPDATE task SET spec = $spec, spec_digest = $digest, labels_json = $labels, title = $summary, command_summary = $summary,
+                                    command_fingerprint = $fingerprint, command_digest = $commandDigest
+                    WHERE task_id = $id;
+                    """, ("$spec", storage.Spec), ("$digest", storage.Digest), ("$labels", storage.Labels), ("$summary", summary),
+                    ("$fingerprint", fingerprint), ("$commandDigest", commandDigest), ("$id", task.Value.ToByteArray())));
+                tasks.Add(task);
+            }
+
+            return tasks;
+        }, CommitDurability.Full);
     }
 }

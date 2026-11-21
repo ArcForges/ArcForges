@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Globalization;
+using ArcForges.Client;
 using ArcForges.Contracts.Node.V1;
+using ArcForges.Node.Platform;
 
 namespace ArcForges.Node.Core.Tests;
 
@@ -27,21 +30,33 @@ public sealed class AttemptTempRetentionTests
     }
 
     [Fact(Timeout = 120_000)]
-    public async Task FinishedRealAttemptRetainsItsDirectoryWhenCleanupProtectionIsUnavailable()
+    public async Task FinalizingHistoricalAttemptRetainsItsDirectoryWhenCleanupProtectionIsUnavailable()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Sched.RequirePlatform();
-        await using var node = await InProcessNode.Create().StartAsync();
-        await using var channel = await node.ChannelAsync();
-        var task = await Tasks.WaitAsync(channel, await Tasks.SubmitAsync(channel, WriteFixtureToTemp(node.Root)));
+        await using var node = InProcessNode.Create();
+        var (taskId, attempt) = LegacyTaskHistoryFixture.Seed(node, AttemptState.Finalizing);
+        var name = IdText.Format(attempt);
+        var files = Tasks.Files(node, attempt);
+        Directory.CreateDirectory(files.Directory);
+        Directory.CreateDirectory(files.TempDirectory);
+        var payload = Path.Combine(files.TempDirectory, "keep.txt");
+        File.WriteAllText(payload, "retained");
+        HelperFiles.WriteAtomically(files.ExitPath, new ExitRecord
+        {
+            AttemptId = name,
+            RecordedAt = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture),
+        }.ToJson());
+
+        await node.StartAsync();
+        await using var channel = await node.ChannelAsync(helloAsHuman: true);
+        var task = await Tasks.WaitAsync(channel, taskId);
         var result = task.CurrentAttempt?.Result;
         Assert.True(task.State == TaskState.Succeeded,
             $"state={task.State}; termination={result?.TerminationReason}; exit={result?.ExitCode}; detail={result?.Detail}");
-        var attempt = task.CurrentAttempt!.AttemptId;
-        var name = ArcForges.Client.IdText.Format(attempt);
+        Assert.Equal(attempt, task.CurrentAttempt!.AttemptId);
         await Tasks.WaitForAsync(() => Sched.LogEvents(node, "execution.tmp.cleanup_unavailable")
-            .Any(entry => Sched.Text(entry, "attempt") == name), Tasks.Bound, "the cleanup refusal");
-        var payload = Path.Combine(Tasks.Files(node, attempt).TempDirectory, "keep.txt");
+            .Any(entry => Sched.Text(entry, "attempt") == name
+                && Sched.Text(entry, "reason") == "native_identity_and_tree_protection_unavailable"), Tasks.Bound, "the cleanup refusal");
         Assert.Equal("retained", File.ReadAllText(payload).Trim());
         Assert.Equal(0, node.Runtime.Execution!.RemoveExpiredTemp());
         Assert.Equal("retained", File.ReadAllText(payload).Trim());

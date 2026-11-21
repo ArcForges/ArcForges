@@ -26,6 +26,7 @@ internal sealed partial class SandboxManager : IDisposable
     private readonly SandboxProtectedEndpoint? _protectedEndpoint;
     private readonly Lazy<DurableCommandStore> _receipts;
     private readonly byte[] _cursorKey = System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
+    private SandboxRunReadiness _runReadiness = SandboxRunReadiness.NotObserved;
     private bool _disposed;
 
     internal SandboxManager(NodeStore store, string dataRoot, string ownerId, NodeSecretStore secrets,
@@ -48,6 +49,8 @@ internal sealed partial class SandboxManager : IDisposable
 
     internal string OwnerId { get; }
 
+    internal SandboxRunReadiness RunReadiness => Volatile.Read(ref _runReadiness);
+
     // The same lock covers reservation, native proof and revision changes. Start and Delete use
     // this gate when they bind their own durable intent to a particular owned root/revision.
     internal Lock OwnershipGate { get; } = new();
@@ -69,6 +72,7 @@ internal sealed partial class SandboxManager : IDisposable
                     OwnerEpoch = FromBytes(receipts.OwnerEpoch.Span),
                 };
                 value.Capabilities.AddRange(SandboxPolicyAdmission.HandshakeCapabilities(_dataRoot, _mxcInstallationRoot));
+                Volatile.Write(ref _runReadiness, SandboxRunReadiness.Observe(value.Capabilities, RunLauncher is not null));
                 response.Value = value;
             }
             catch (SandboxPrivateRootException error)

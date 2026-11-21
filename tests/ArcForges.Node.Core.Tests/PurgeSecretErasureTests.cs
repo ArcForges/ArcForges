@@ -2,11 +2,12 @@
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Node.Store;
+using ArcForges.Node.Store.Proto;
 using Microsoft.Data.Sqlite;
 
 namespace ArcForges.Node.Core.Tests;
 
-/// <summary>Real RPC purge and replay over real SQLite/GCM, native attempts and an isolated external key backend (MR-14).</summary>
+/// <summary>Real RPC purge and replay over historical SQLite/GCM data and the isolated key backend (MR-14).</summary>
 public sealed class PurgeSecretErasureTests
 {
     [Theory(Timeout = 120_000)]
@@ -38,14 +39,14 @@ public sealed class PurgeSecretErasureTests
     private static async Task PurgeAsync(int valueLength, bool holdSnapshot)
     {
         var cancellation = TestContext.Current.CancellationToken;
-        await using var node = await InProcessNode.Create().StartAsync();
+        await using var node = InProcessNode.Create();
+        var (taskId, _) = LegacyTaskHistoryFixture.Seed(node, AttemptState.Finished, new SecretEnvironment
+        {
+            Set = { new EnvEntry { Name = "API_TOKEN", Value = new string('s', valueLength) } },
+        });
+        await node.StartAsync();
         await using var channel = await node.ChannelAsync(helloAsHuman: true);
-        var spec = OperatingSystem.IsWindows()
-            ? Tasks.Argv(node.Root, Tasks.Cmd, "/d", "/c", "exit 0")
-            : Tasks.Argv(node.Root, "/bin/sh", "-c", "exit 0");
-        spec.Environment.Set["API_TOKEN"] = new string('s', valueLength);
-        var taskId = await Tasks.SubmitAsync(channel, spec);
-        Assert.Equal(TaskState.Succeeded, (await Tasks.WaitAsync(channel, taskId)).State);
+        Assert.Equal(TaskState.Succeeded, (await Tasks.GetAsync(channel, taskId)).State);
         var store = node.Runtime.Store;
         var ciphertext = store.Read(reader => (byte[])reader.Scalar(
             "SELECT ciphertext FROM task_secret WHERE task_id = $id;", ("$id", taskId.Value.ToByteArray()))!);
@@ -99,9 +100,10 @@ public sealed class PurgeSecretErasureTests
         Assert.Equal(EffectCertainty.Happened, replay.Value.Receipt.Effect);
         Assert.False(ContainsCiphertext(store.DatabasePath, ciphertext));
         Assert.Equal("ok", store.Read(reader => reader.Scalar("PRAGMA integrity_check;")));
-        var retry = await channel.Tasks.RetryTaskAsync(new TaskServiceRetryTaskRequest { Meta = Tasks.Meta(), TaskId = taskId },
-            cancellationToken: cancellation);
-        Assert.Equal("not_found", retry.Error.Code);
+        var fresh = await channel.Tasks.PurgeTaskRecordAsync(new TaskServicePurgeTaskRecordRequest { Meta = Tasks.Meta(), TaskId = taskId },
+            deadline: DateTime.UtcNow.AddSeconds(30), cancellationToken: cancellation);
+        Assert.Equal("not_found", fresh.Error.Code);
+        Assert.Equal(EffectCertainty.DidNotHappen, fresh.Error.Effect);
     }
 
     private static bool ContainsCiphertext(string database, byte[] ciphertext)

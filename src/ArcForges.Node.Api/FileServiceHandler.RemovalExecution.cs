@@ -24,10 +24,6 @@ internal sealed partial class FileServiceHandler
     // Coordinates a native replacement of a test-owned target after the metadata snapshot.
     internal Action? AfterRemovalExecutionCaptureForTests { get; set; }
 
-    internal Task<FileServiceExecuteRemovalResponse> ExecuteRemovalAsync(Caller caller,
-        FileServiceExecuteRemovalRequest request, CancellationToken cancellationToken) =>
-        ExecuteCoordinatedRemovalAsync(caller, request, cancellationToken);
-
     private void CheckRemovalPreflightAuthority(StoreReader reader, Caller caller)
     {
         if (caller.CenterCaller is not { } center || caller.Routed is null && !caller.Approved) throw new FilePolicyException("center_caller_incomplete");

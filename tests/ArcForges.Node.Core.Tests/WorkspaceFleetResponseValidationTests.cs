@@ -60,6 +60,38 @@ public sealed class WorkspaceFleetResponseValidationTests
     }
 
     [Fact]
+    public void RegistrationTransportPreservesUnknownUsingItsPublishedMutationEnvelope()
+    {
+        var target = CommandIds.New();
+        var request = new WorkspaceServiceRegisterWorkspaceRequest { Meta = Tasks.Meta(), Path = "/historical" };
+        var correlation = request.Meta.CorrelationId;
+        var inner = new WorkspaceServiceRegisterWorkspaceResponse { Meta = new ResponseMeta { CorrelationId = correlation } };
+        var fleet = new FleetServiceRegisterNodeWorkspaceResponse
+        {
+            Meta = inner.Meta.Clone(),
+            Value = new FleetServiceRegisterNodeWorkspaceValue { NodeId = target },
+        };
+        bool Accepts(ArcError error)
+        {
+            error.CorrelationId = correlation;
+            inner.Error = error;
+            fleet.Value.Response = inner.ToByteString();
+            return RoutedFileResponseValidation.RegisterWorkspace(fleet, target, request);
+        }
+
+        var unresolved = NodeErrors.LegacyWorkspaceRegistrationUnknown();
+        Assert.True(Accepts(unresolved));
+        unresolved.Retry.Mode = RetryMode.SameCommand;
+        Assert.False(Accepts(unresolved));
+
+        var pending = NodeErrors.LegacyWorkspaceRegistrationUnknown(inProgress: true);
+        Assert.True(Accepts(pending));
+        pending.Effect = EffectCertainty.DidNotHappen;
+        Assert.False(Accepts(pending));
+        Assert.False(Accepts(NodeErrors.CommandInProgress()));
+    }
+
+    [Fact]
     public void ListAndGetCheckWorkspaceIdentityFiltersAndExactMetadataTranscript()
     {
         var target = CommandIds.New();

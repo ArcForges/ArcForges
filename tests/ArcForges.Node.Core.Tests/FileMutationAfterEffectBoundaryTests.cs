@@ -3,83 +3,88 @@ using System.Security.Cryptography;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
-using ArcForges.Node.Api;
+using ArcForges.Contracts.Relay.V1;
 using ArcForges.Node.Core.Files;
-using ArcForges.Node.Core.Security;
+using ArcForges.Node.Store;
 using Google.Protobuf;
-using NodeFilePath = ArcForges.Contracts.Node.V1.FilePath;
 using NodeShapes = ArcForges.Contracts.Node.Shapes.ContractShapeValidation;
 
 namespace ArcForges.Node.Core.Tests;
 
-/// <summary>An actual held-handle partial write; the routed caller and link are isolated test substitutes.</summary>
 public sealed class FileMutationAfterEffectBoundaryTests
 {
+    // The native first-chunk link-loss test remains executable at eaaccb8380a2bd265aaad0a67d62c8fab2a8a29a.
     [Fact(Timeout = 120_000)]
     [Trait("env", "windows-real")]
-    public async Task LinkLossAfterFirstRealWriteStopsFurtherEffectsAndPersistsUnknown()
+    public async Task AnInterruptedHistoricalWriteKeepsPartialBytesAndRecoversItsExactUnknownReceipt()
     {
-        if (!OperatingSystem.IsWindows()) { Assert.Skip("Windows native guarded write boundary."); return; }
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "The historical partial write fixture uses Windows file identities.");
         var token = TestContext.Current.CancellationToken;
         await using var node = await InProcessNode.Create().StartAsync();
         var calls = new RoutedCalls(node);
         var actor = calls.Relay(Origin.Human);
-        var root = Directory.CreateDirectory(Path.Combine(node.Root, "link-after-first-write")).FullName;
+        var root = Directory.CreateDirectory(Path.Combine(node.Root, "historical-partial-write")).FullName;
         var workspace = new RegisteredWorkspaces(node.Runtime.Store).RegisterFromVerifiedHuman(root, cancellationToken: token);
         var path = Path.Combine(root, "target.bin");
         var before = Enumerable.Repeat((byte)0x41, 80_000).ToArray();
         var intended = Enumerable.Repeat((byte)0x42, 70_000).ToArray();
-        File.WriteAllBytes(path, before);
-        File.SetAttributes(path, FileAttributes.Archive);
-        var request = new FileServiceWriteFileRequest
-        {
-            Meta = new RequestMeta { CommandId = CommandIds.New(), CorrelationId = CommandIds.New() },
-            Path = new NodeFilePath { WorkspaceId = new Id { Value = ByteString.CopyFrom(workspace.Id) }, Path = "target.bin" },
-            Data = ByteString.CopyFrom(intended),
-            ExpectedSha256 = ByteString.CopyFrom(SHA256.HashData(before)),
-        };
+        var partial = before.ToArray();
+        intended.AsSpan(0, 65_536).CopyTo(partial);
+        File.WriteAllBytes(path, partial);
+        var request = RetainedExistingFileFixture.Write(workspace, "target.bin", before, intended);
         var raw = request.ToByteArray();
-        var now = node.Runtime.Clock.GetUtcNow();
-        var context = new RoutedContext(calls.Link, node.Runtime.Lifecycle, now.AddSeconds(30), TimeSpan.FromSeconds(15),
-            node.Runtime.Clock, node.Runtime.Clock.GetTimestamp(), CommandIds.New(), fileWorkspace: true);
-        var caller = new Caller(Origin.Remote, ClientKind.Unspecified, null, centerCaller: actor.Clone())
-        {
-            CellsOrigin = CenterRouting.CellsOrigin(actor, node.Runtime.NodeId.Span),
-            RemoteCommandId = request.Meta.CommandId.Clone(),
-            RawRequest = raw,
-            Routed = context,
-        };
-        var handler = calls.Dispatcher.FileHandlerForTests!;
-        var checks = 0;
-        handler.BeforeMutationEffectForTests = () =>
-        {
-            if (Interlocked.Increment(ref checks) == 2) calls.Link.Reset(usableFor: 0);
-        };
-        byte[]? outcome;
-        try { outcome = await handler.WriteExistingCandidateAsync(caller, token); }
-        finally { handler.BeforeMutationEffectForTests = null; calls.Link.Reset(); }
+        var id = request.Meta.CommandId.Value.ToByteArray();
+        var digest = SHA256.HashData(raw);
+        node.Runtime.Store.Write(tx => RetainedExistingFileFixture.Prepare(tx, workspace, actor, FileOperationKind.Write,
+            request.Meta, request.Path.Path, raw, before, intended), CommitDurability.Full);
 
-        var response = FileServiceWriteFileResponse.Parser.ParseFrom(outcome);
-        Assert.True(NodeShapes.IsValid(response));
-        Assert.Equal("file_outcome_unknown", response.Error.Details.State.Reason);
-        Assert.Equal(EffectCertainty.Unknown, response.Error.Effect);
-        Assert.Equal(RetryMode.Never, response.Error.Retry.Mode);
-        Assert.Equal(request.Meta.CorrelationId, response.Error.CorrelationId);
-        Assert.Equal(2, checks);
-        var expected = before.ToArray();
-        intended.AsSpan(0, 65_536).CopyTo(expected);
-        Assert.Equal(expected, File.ReadAllBytes(path)); // exactly one chunk, no second write and no truncation
-        var operation = node.Runtime.Store.Read(reader =>
-            FileMutationJournal.GetForCaller(reader, request.Meta.CommandId.Value.Span, actor));
-        Assert.Equal(FileOperationState.Unknown, operation!.State);
-        Assert.True(operation.Held);
-        Assert.Equal(SHA256.HashData(raw), operation.RequestSha256.ToByteArray());
-        Assert.Equal(0, await node.StopAsync());
+        calls.Link.Reset(usableFor: 0);
+        Assert.Null((await calls.CallAsync(actor, RoutedMethod.WriteNodeFile, raw, request.Meta.CommandId, cancellationToken: token)).Answer);
+        calls.Link.Reset();
+        Assert.Null((await calls.CallAsync(actor, RoutedMethod.WriteNodeFile, raw, request.Meta.CommandId, cancellationToken: token)).Answer);
+        var pending = node.Runtime.Store.Read(reader => FileMutationJournal.GetForCaller(reader, id, actor));
+        Assert.NotNull(pending);
+        Assert.Equal(FileOperationState.Prepared, pending.State);
+        Assert.True(pending.Held);
+        Assert.Null(node.Runtime.Store.Read(reader => reader.Scalar("SELECT outcome FROM command_dedup WHERE command_id = $id;", ("$id", id))) as byte[]);
+        Assert.Equal(partial, File.ReadAllBytes(path));
+
+        Assert.Equal(0, await node.StopAsync().WaitAsync(token));
         await node.StartAsync();
-        var restarted = node.Runtime.Store.Read(reader =>
-            FileMutationJournal.GetForCaller(reader, request.Meta.CommandId.Value.Span, actor));
-        Assert.Equal(FileOperationState.Unknown, restarted!.State);
-        Assert.True(restarted.Held);
-        Assert.Equal(expected, File.ReadAllBytes(path));
+        calls = new RoutedCalls(node);
+        var retained = Assert.IsType<byte[]>(node.Runtime.Store.Read(reader =>
+            reader.Scalar("SELECT outcome FROM command_dedup WHERE command_id = $id;", ("$id", id))));
+        var recovered = await RetainedExistingFileFixture.ReplyAsync(calls, actor, RoutedMethod.WriteNodeFile, raw, request.Meta.CommandId, token);
+        Assert.Equal(retained, recovered);
+        var replay = FileServiceWriteFileResponse.Parser.ParseFrom(recovered);
+        Assert.True(NodeShapes.IsValid(replay));
+        RetainedExistingFileFixture.AssertUnknown(replay.Error);
+        Assert.Equal(request.Meta.CorrelationId, replay.Meta.CorrelationId);
+        Assert.Equal(request.Meta.CorrelationId, replay.Error.CorrelationId);
+
+        var get = new FileServiceGetFileOperationRequest
+        {
+            Meta = new RequestMeta { CorrelationId = CommandIds.New() },
+            OperationCommandId = request.Meta.CommandId.Clone(),
+        };
+        var outcome = await RetainedExistingFileFixture.ReplyAsync(calls, actor, RoutedMethod.GetNodeFileOperation, get.ToByteArray(), null, token);
+        var status = FileServiceGetFileOperationResponse.Parser.ParseFrom(outcome);
+        Assert.True(NodeShapes.IsValid(status));
+        var operation = status.Value.Operation;
+        Assert.Equal(FileOperationState.Unknown, operation.State);
+        Assert.True(operation.Held);
+        Assert.False(operation.Acknowledged);
+        Assert.Equal(digest, operation.RequestSha256.ToByteArray());
+        Assert.Equal(request.Path, operation.WorkspacePath);
+        RetainedExistingFileFixture.AssertUnknown(operation.Error);
+
+        var other = actor.Clone();
+        other.LocalSessionId = CommandIds.New();
+        var withheld = await RetainedExistingFileFixture.ReplyAsync(calls, other, RoutedMethod.GetNodeFileOperation, get.ToByteArray(), null, token);
+        var denied = FileServiceGetFileOperationResponse.Parser.ParseFrom(withheld);
+        Assert.Null(denied.Value);
+        Assert.Equal("not_found", denied.Error.Code);
+        Assert.Equal(partial, File.ReadAllBytes(path));
+        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_effect_worker;")));
     }
 }

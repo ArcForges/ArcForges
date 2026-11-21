@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-using System.Diagnostics;
-using System.Text;
-using System.Text.Json;
+using System.Security.Cryptography;
 using ArcForges.Client;
+using ArcForges.Contracts.Foundation.V1;
+using ArcForges.Contracts.Node.V1;
+using ArcForges.Node.Core.Platform;
+using ArcForges.Node.Store;
 using ArcForges.Tests;
+using Google.Protobuf;
 
 namespace ArcForges.ClosedLoop.Tests;
 
 /// <summary>
-/// The scheduler through the CLI against the real node (loop=local; AF-SCHED-01; cli.md <c>run</c>, <c>queue</c>, <c>policy</c>):
-/// <c>run --exclusive/--depends-on/--kind service --ready-file</c>, <c>queue show/explain/pools/pool/pause/resume/parallelism</c> and
-/// <c>policy show/defaults/validate/apply/revisions/restore</c>. Each test runs on the OS its env trait names and skips elsewhere.
+/// The legacy queue and policy CLI reads persisted Tasks, applies authorized changes and reports actual approvals.
+/// Task admission, dependencies and service readiness are exercised by the original tests at 8496f155213d0c215396d1093f866f39b4678f43.
 /// </summary>
 [Trait("loop", "local")]
 public sealed class SchedulingCliTests
@@ -19,7 +21,7 @@ public sealed class SchedulingCliTests
 
     [Fact(Timeout = 300_000)]
     [Trait("env", "windows-real")]
-    public async Task TheSchedulerIsDrivenThroughTheCliOnWindows()
+    public async Task RetainedQueueAndPolicyControlsWorkThroughTheCliOnWindows()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows job platform test.");
@@ -28,9 +30,10 @@ public sealed class SchedulingCliTests
 
     [Fact(Timeout = 300_000)]
     [Trait("env", "linux-real")]
-    public async Task TheSchedulerIsDrivenThroughTheCliOnLinux()
+    public async Task RetainedQueueAndPolicyControlsWorkThroughTheCliOnLinux()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "Linux transient units.");
         Assert.SkipWhen(SystemdTestEnvironment.SkipReason is not null, SystemdTestEnvironment.SkipReason ?? string.Empty);
         await CliAsync();
     }
@@ -38,64 +41,23 @@ public sealed class SchedulingCliTests
     private static async Task CliAsync()
     {
         await using var node = TestNode.Create();
+        var writer = SeedQueuedTask(node);
         await node.StartNodeAsync();
-        async Task<string> RunAsync(params string[] args)
-        {
-            var run = await node.CliBytesAsync(Bound, ["run", "--detach", "--cwd", node.Root, .. args]);
-            Assert.True(run.ExitCode == 0, $"run {string.Join(' ', args)}: exit {run.ExitCode}; {Encoding.UTF8.GetString(run.Stderr)}");
-            return Encoding.UTF8.GetString(run.Stdout).Trim();
-        }
-
-        async Task<string> StateAsync(string id) =>
-            JsonElement.Parse((await node.CliAsync("tasks", "wait", id, "--json")).Output).GetProperty("state").GetString()!;
-
-        async Task<JsonElement> ExplainedAsync(string id, string reason)
-        {
-            var watch = Stopwatch.StartNew();
-            while (true)
-            {
-                var explain = await node.CliAsync("queue", "explain", id, "--json");
-                Assert.True(explain.ExitCode == 0, explain.ToString());
-                var json = explain.Json();
-                if (json.TryGetProperty("blockingReason", out var value) && value.GetString() == reason)
-                {
-                    return json;
-                }
-
-                Assert.True(watch.Elapsed < Bound, $"queue explain {id}: {reason} not reached ({explain.Output})");
-                await Task.Delay(200, TestContext.Current.CancellationToken);
-            }
-        }
-
-        string Hold(string name) => Path.Combine(node.Root, name + ".txt");
-
-        // A key holder, a writer of the same key and a dependent.
-        var holder = await RunAsync("--exclusive", "name:db", "--", TestNode.TestLoad, "hold", "--hold-ms", "120000", "--marker", Hold("holder"));
-        var writer = await RunAsync("--exclusive", "name:db", "--", TestNode.TestLoad, "hold", "--hold-ms", "100", "--marker", Hold("writer"));
-        var dependent = await RunAsync("--depends-on", holder + ":finished", "--", TestNode.TestLoad, "hold", "--hold-ms", "100", "--marker", Hold("dependent"));
-        var explained = await ExplainedAsync(writer, "exclusive_key");
-        Assert.Contains("name:db", explained.GetProperty("blockingKeys").EnumerateArray().Select(key => key.GetString()));
-        // The text view of the same explanation (bounded: under the parallel suites' load another blocking reason, such as the CPU budget,
-        // may be reported first for a moment, and the keys are listed with the exclusive_key reason).
-        var watchText = Stopwatch.StartNew();
-        while (true)
-        {
-            var text = await node.CliAsync("queue", "explain", writer);
-            Assert.True(text.ExitCode == 0, text.ToString());
-            if (text.Output.Contains("name:db", StringComparison.Ordinal))
-            {
-                break;
-            }
-
-            Assert.True(watchText.Elapsed < Bound, $"queue explain {writer}: the key name:db is not listed ({text.Output})");
-            await Task.Delay(200, TestContext.Current.CancellationToken);
-        }
-
-        await ExplainedAsync(dependent, "dependency");
+        var explain = await node.CliAsync("queue", "explain", writer, "--json");
+        Assert.True(explain.ExitCode == 0, explain.ToString());
+        Assert.Equal("TASK_STATE_QUEUED", explain.Json().GetProperty("state").GetString());
+        var text = await node.CliAsync("queue", "explain", writer);
+        Assert.True(text.ExitCode == 0, text.ToString());
+        Assert.Contains(writer, text.Output, StringComparison.Ordinal);
         var show = await node.CliAsync("queue", "show");
         Assert.True(show.ExitCode == 0, show.ToString());
         Assert.Contains("budget", show.Output, StringComparison.Ordinal);
-        Assert.Equal(0, (await node.CliAsync("queue", "show", "--json")).ExitCode);
+        var showJson = await node.CliAsync("queue", "show", "--json");
+        Assert.True(showJson.ExitCode == 0, showJson.ToString());
+        var queued = Assert.Single(showJson.Json().GetProperty("entries").EnumerateArray());
+        var recordedQueue = queued.GetProperty("queue");
+        Assert.Equal("legacy_admission_retired", recordedQueue.GetProperty("blockingReason").GetString());
+        Assert.False(recordedQueue.TryGetProperty("position", out _));
 
         // Pools and parallelism.
         var pools = await node.CliAsync("queue", "pools");
@@ -146,20 +108,8 @@ public sealed class SchedulingCliTests
         Assert.NotEqual(0, (await node.CliAsync("queue", "pool", "delete", "default")).ExitCode);
         Assert.Equal(2, (await node.CliAsync("queue", "parallelism", "everywhere", "off")).ExitCode);
 
-        // The holder ends (cancelled): the writer gets the key and the FINISHED dependent starts.
-        Assert.Equal(0, (await node.CliBytesAsync(Bound, "tasks", "cancel", holder)).ExitCode);
-        Assert.Equal("TASK_STATE_SUCCEEDED", await StateAsync(writer));
-        Assert.Equal("TASK_STATE_SUCCEEDED", await StateAsync(dependent));
-        Assert.True(TestNode.ReadShared(Hold("dependent")).Length > 0);
-
-        // A service with file readiness and a READY dependent.
-        var flag = Path.Combine(node.Root, "ready.flag");
-        var service = await RunAsync("--kind", "service", "--ready-file", flag, "--ready-timeout", "60s", "--", TestNode.TestLoad, "hold", "--hold-ms", "60000",
-            "--ready-after-ms", "1000", "--file", flag, "--marker", Hold("service"));
-        var afterReady = await RunAsync("--depends-on", service + ":ready", "--", TestNode.TestLoad, "hold", "--hold-ms", "100", "--marker", Hold("after-ready"));
-        Assert.Equal("TASK_STATE_SUCCEEDED", await StateAsync(afterReady));
-        Assert.Equal(0, (await node.CliBytesAsync(Bound, "tasks", "cancel", service)).ExitCode);
-        await StateAsync(service);
+        Assert.Equal(0, (await node.CliBytesAsync(Bound, "tasks", "cancel", writer)).ExitCode);
+        Assert.Contains("TASK_STATE_CANCELLED", (await node.CliAsync("tasks", "show", writer, "--json")).Output, StringComparison.Ordinal);
 
         // The policy.
         var policy = await node.CliAsync("policy", "show", "--section", "resources", "--json");
@@ -176,5 +126,28 @@ public sealed class SchedulingCliTests
         var revisions = await node.CliAsync("policy", "revisions");
         Assert.True(revisions.ExitCode == 0, revisions.ToString());
         await NeedsApprovalAsync("policy", "restore", "1", "--comment", "back to the defaults");
+    }
+
+    private static string SeedQueuedTask(TestNode node)
+    {
+        using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = node.DataRoot, BootIdentity = BootIdentity.Read() });
+        var task = StoreIds.NewUuid7(TimeProvider.System);
+        var spec = new TaskSpec
+        {
+            Kind = TaskKind.Command,
+            Command = new CommandSpec { Argv = new ArgvCommand { Argv = { "fixture-never-starts" } } },
+        }.ToByteArray();
+        store.Write(transaction => transaction.Execute(
+            """
+            INSERT INTO task (task_id, state, kind, title, command_summary, spec, spec_digest, owner, owner_origin,
+                              pool, priority, effective_priority, side_effect, side_effect_source, command_fingerprint,
+                              command_digest, created_at, queued_at, rev)
+            VALUES ($id, $queued, 1, 'retained CLI fixture', 'retained CLI fixture', $spec, $digest, $owner, $origin,
+                    'default', 3, 3, 4, 1, 'retained-cli-fixture', $digest, $now, $now, 0);
+            """,
+            ("$id", task), ("$queued", (int)TaskState.Queued), ("$spec", spec), ("$digest", SHA256.HashData(spec)),
+            ("$owner", new ActorRef { Origin = Origin.Script, ClientKind = ClientKind.Cli }.ToByteArray()),
+            ("$origin", (int)Origin.Script), ("$now", transaction.NowMicroseconds)), CommitDurability.Full);
+        return IdText.Format(task);
     }
 }

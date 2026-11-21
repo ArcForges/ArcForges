@@ -147,6 +147,13 @@ public sealed class CloudSignInHostTests
             .Value.Status.Relay == RelayState.Connected, TimeSpan.FromSeconds(30), "mock center channel connected");
         var connection = await center.Channel.ProvedAsync();
         var publicKey = Assert.IsType<byte[]>(center.Channel.NodeKeyOf(connection.Installation));
+        var retainedTask = new ManagedTask
+        {
+            TaskId = CommandIds.New(),
+            Title = "retained fleet task fixture",
+            State = TaskState.Succeeded,
+            Pool = "default",
+        };
         var response = new FleetServiceListNodeTasksResponse
         {
             Meta = new ResponseMeta(),
@@ -156,16 +163,22 @@ public sealed class CloudSignInHostTests
                 Response = new TaskServiceListTasksResponse
                 {
                     Meta = new ResponseMeta(),
-                    Value = new TaskServiceListTasksValue { Page = new PageState { HasMore = false } },
+                    Value = new TaskServiceListTasksValue
+                    {
+                        Page = new PageState { HasMore = false },
+                        Tasks = { retainedTask },
+                    },
                 }.ToByteString(),
             },
         };
         center.Script("ListNodeTasks", new FakeFault.Raw([.. FakeCenter.DataFrame(response), .. FakeCenter.TrailerFrame(0, null)]));
-        using var cli = node.Start(TestNode.LegacyCli, [NodeLocations.TestModeOption, "tasks", "list"]);
+        using var cli = node.Start(TestNode.LegacyCli, [NodeLocations.TestModeOption, "tasks", "list", "--json"]);
         Assert.Equal(Path.GetFullPath(TestNode.LegacyCli), Path.GetFullPath(cli.StartInfo.FileName), comparer);
         var result = await TestNode.CompleteAsync(cli, TimeSpan.FromSeconds(30));
         Assert.True(result.ExitCode == 0, result.ToString());
-        Assert.Equal("No tasks.", result.Output.Trim());
+        var displayed = Assert.Single(result.Json().GetProperty("tasks").EnumerateArray());
+        Assert.Equal(IdText.Format(retainedTask.TaskId), displayed.GetProperty("taskId").GetString());
+        Assert.Equal(retainedTask.Title, displayed.GetProperty("title").GetString());
         var request = FleetServiceListNodeTasksRequest.Parser.ParseFrom(FakeCenter.Payload(Assert.Single(center.CallsOf("ListNodeTasks")).Body));
         Assert.Equal(nodeId, request.NodeId);
         Assert.Equal(Origin.Script, request.Caller.LocalOrigin);
@@ -192,8 +205,8 @@ public sealed class CloudSignInHostTests
         Assert.Equal(nonceCount, connection.Received.Count(frame => frame.FrameCase == RelayFrame.FrameOneofCase.RelayNonceRequest));
         Assert.True(center.CallsOf("SubmitNodeTask").Count == 0);
 
-        var taskId = CommandIds.New();
-        var accepted = new FleetServiceSubmitNodeTaskResponse
+        // The fixture center represents the target's drain response for a command without a retained receipt.
+        var unknown = new FleetServiceSubmitNodeTaskResponse
         {
             Meta = new ResponseMeta(),
             Value = new FleetServiceSubmitNodeTaskValue
@@ -202,14 +215,16 @@ public sealed class CloudSignInHostTests
                 Response = new TaskServiceSubmitTaskResponse
                 {
                     Meta = new ResponseMeta(),
-                    Value = new TaskServiceSubmitTaskValue { TaskId = taskId, State = TaskState.Queued },
+                    Error = NodeErrors.LegacyTaskOutcomeUnknown(),
                 }.ToByteString(),
             },
         };
-        center.Script("SubmitNodeTask", new FakeFault.Raw([.. FakeCenter.DataFrame(accepted), .. FakeCenter.TrailerFrame(0, null)]));
-        using var run = node.Start(TestNode.LegacyCli, [NodeLocations.TestModeOption, "run", "--detach", "--", "test-program"]);
+        center.Script("SubmitNodeTask", new FakeFault.Raw([.. FakeCenter.DataFrame(unknown), .. FakeCenter.TrailerFrame(0, null)]));
+        using var run = node.Start(TestNode.LegacyCli, [NodeLocations.TestModeOption, "run", "--detach", "--", "fixture-never-starts"]);
         var runResult = await TestNode.CompleteAsync(run, TimeSpan.FromSeconds(30));
-        Assert.True(runResult.ExitCode == 0, "routed default submit must succeed against the scripted center");
+        Assert.Equal(1, runResult.ExitCode);
+        Assert.Contains("EXECUTION/operation_failed", runResult.Error, StringComparison.Ordinal);
+        Assert.Contains("the command may have run; do not submit a new command", runResult.Error, StringComparison.Ordinal);
         var submitted = FleetServiceSubmitNodeTaskRequest.Parser.ParseFrom(FakeCenter.Payload(Assert.Single(center.CallsOf("SubmitNodeTask")).Body));
         var submittedEnvironment = TaskServiceSubmitTaskRequest.Parser.ParseFrom(submitted.Request).Spec.Environment;
         Assert.Equal(EnvironmentInherit.Node, submittedEnvironment.Inherit);

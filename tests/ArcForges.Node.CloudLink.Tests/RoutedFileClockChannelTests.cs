@@ -5,6 +5,7 @@ using ArcForges.Contracts.Node.V1;
 using ArcForges.Contracts.Relay.V1;
 using ArcForges.Node.CloudLink;
 using ArcForges.Node.Core;
+using ArcForges.Node.Core.Files;
 using ArcForges.Node.Store;
 using Google.Protobuf;
 
@@ -45,19 +46,25 @@ public sealed class RoutedFileClockChannelTests
         };
         var root = Directory.CreateDirectory(Path.Combine(node.Root, "clock-workspace")).FullName;
         File.WriteAllText(Path.Combine(root, "kept.txt"), "REAL_CLOCK_TEST_KEEP");
-        var register = new WorkspaceServiceRegisterWorkspaceRequest { Meta = CloudNode.Command(), Path = root, Name = "clock" };
-        var registerCall = center.Channel.BuildCall(connection, new FakeCallSpec
+        var retained = new RegisteredWorkspaces(node.Runtime.Store).RegisterFromVerifiedHuman(root, cancellationToken: ct);
+        var workspace = new Id { Value = ByteString.CopyFrom(retained.Id) };
+        var list = new WorkspaceServiceListWorkspacesRequest { Meta = new RequestMeta { CorrelationId = CommandIds.New() } };
+        var baseline = center.Channel.BuildCall(connection, new FakeCallSpec
         {
-            Method = RoutedMethod.RegisterNodeWorkspace,
-            Payload = register.ToByteArray(),
+            Method = RoutedMethod.ListNodeWorkspaces,
+            Payload = list.ToByteArray(),
             Caller = caller,
-            CommandId = register.Meta.CommandId,
             Lifetime = TimeSpan.FromSeconds(30),
         }).Call;
-        await connection.SendCallAsync(registerCall);
-        var registered = WorkspaceServiceRegisterWorkspaceResponse.Parser.ParseFrom((await connection.ResultOfAsync(registerCall.CallId)).Payload);
-        Assert.Null(registered.Error);
-        var workspace = registered.Value.Workspace.WorkspaceId.Clone();
+        await connection.SendCallAsync(baseline);
+        var baselineFrame = await connection.ResultOfAsync(baseline.CallId);
+        await Eventually.TrueAsync(() => connection.VerifiedResults.Any(value => value.Header.CallId.Equals(baseline.CallId)),
+            "the signed read of the retained workspace");
+        var verified = connection.VerifiedResults.Single(value => value.Header.CallId.Equals(baseline.CallId));
+        Assert.Equal(RoutedOutcome.Executed, verified.Header.Outcome);
+        var listed = WorkspaceServiceListWorkspacesResponse.Parser.ParseFrom(baselineFrame.Payload);
+        Assert.Null(listed.Error);
+        Assert.Contains(listed.Value.Workspaces, entry => entry.WorkspaceId.Equals(workspace));
 
         var unregister = new WorkspaceServiceUnregisterWorkspaceRequest { Meta = CloudNode.Command(), WorkspaceId = workspace };
         var delayed = center.Channel.BuildCall(connection, new FakeCallSpec
@@ -68,7 +75,6 @@ public sealed class RoutedFileClockChannelTests
             CommandId = unregister.Meta.CommandId,
             Lifetime = TimeSpan.FromSeconds(30),
         }).Call;
-        var list = new WorkspaceServiceListWorkspacesRequest { Meta = new RequestMeta { CorrelationId = CommandIds.New() } };
         var probe = center.Channel.BuildCall(connection, new FakeCallSpec
         {
             Method = RoutedMethod.ListNodeWorkspaces,
@@ -78,6 +84,7 @@ public sealed class RoutedFileClockChannelTests
         }).Call;
 
         var floorBefore = (long)node.Runtime.Store.Read(reader => reader.Scalar("SELECT highwater FROM routed_file_validation_time WHERE singleton = 1;"))!;
+        Assert.True(floorBefore > 0);
         var forged = center.Channel.BuildCall(connection, new FakeCallSpec
         {
             Method = RoutedMethod.ListNodeWorkspaces,
@@ -189,19 +196,8 @@ public sealed class RoutedFileClockChannelTests
             LocalSessionId = CommandIds.New(),
         };
         var root = Directory.CreateDirectory(Path.Combine(node.Root, "clock-before-effect")).FullName;
-        var register = new WorkspaceServiceRegisterWorkspaceRequest { Meta = CloudNode.Command(), Path = root, Name = "clock" };
-        var registration = center.Channel.BuildCall(connection, new FakeCallSpec
-        {
-            Method = RoutedMethod.RegisterNodeWorkspace,
-            Payload = register.ToByteArray(),
-            Caller = caller,
-            CommandId = register.Meta.CommandId,
-            Lifetime = TimeSpan.FromSeconds(30),
-        }).Call;
-        await connection.SendCallAsync(registration);
-        var response = WorkspaceServiceRegisterWorkspaceResponse.Parser.ParseFrom((await connection.ResultOfAsync(registration.CallId)).Payload);
-        Assert.Null(response.Error);
-        var workspace = response.Value.Workspace.WorkspaceId.Clone();
+        var retained = new RegisteredWorkspaces(node.Runtime.Store).RegisterFromVerifiedHuman(root, cancellationToken: ct);
+        var workspace = new Id { Value = ByteString.CopyFrom(retained.Id) };
         var unregister = new WorkspaceServiceUnregisterWorkspaceRequest { Meta = CloudNode.Command(), WorkspaceId = workspace };
         var pending = center.Channel.BuildCall(connection, new FakeCallSpec
         {

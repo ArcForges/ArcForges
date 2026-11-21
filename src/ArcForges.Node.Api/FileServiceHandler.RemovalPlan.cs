@@ -11,7 +11,6 @@ using ArcForges.Node.Core.Security;
 using ArcForges.Node.Store;
 using ArcForges.Node.Store.Policy;
 using Google.Protobuf;
-using Microsoft.Data.Sqlite;
 using NodeShapes = ArcForges.Contracts.Node.Shapes.ContractShapeValidation;
 
 namespace ArcForges.Node.Api;
@@ -36,70 +35,6 @@ internal sealed partial class FileServiceHandler
     // Coordinates test-owned file changes and repeated real ownership checks; production sets neither callback.
     internal Action? AfterRemovalOwnershipReadForTests { get; set; }
     internal Action<WorkspaceRemovalEntry, Action>? AfterRemovalOwnershipCheckForTests { get; set; }
-
-    internal async Task<FileServicePlanRemovalResponse> PlanRemovalAsync(Caller caller, FileServicePlanRemovalRequest request,
-        CancellationToken cancellationToken)
-    {
-        var routed = caller.Routed ?? throw new InvalidOperationException("A removal plan requires a verified routed caller.");
-        var raw = caller.RawRequest ?? throw new InvalidOperationException("The original transmitted request is required.");
-        var limit = routed.RemainingFileOperation();
-        if (limit <= TimeSpan.Zero) throw new OperationCanceledException(cancellationToken);
-        var started = node.Clock.GetTimestamp();
-        using var deadline = new CancellationTokenSource(limit, node.Clock);
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
-        var token = linked.Token;
-        var pending = node.Processor.ExecuteAsync(command => PlanRemovalInTransaction(command.Transaction, caller, request,
-            SHA256.HashData(raw), started, limit, token), CommitDurability.Full);
-        RemovalPlanOutcome outcome;
-        try
-        {
-            outcome = await pending.WaitAsync(token).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-            _ = ObserveRemovalPlanPendingAsync(pending);
-            throw;
-        }
-        catch (RemovalPlanTargetCheckBeforeCommitException aborted)
-        {
-            // Observing this callback-only exception means NodeStore has unwound its transaction; a rollback
-            // failure would instead surface as the original store error. No plan or receipt was committed.
-            if (Expired(started, limit, token)) throw new OperationCanceledException(token);
-            var changed = aborted.InnerException is WorkspaceRemovalPlanException { Reason: "planned_tree_changed" }
-                ? Error(ErrorCategory.Conflict, "file_changed", "planned_tree_changed", routed.Correlation(request.Meta))
-                : Failure(aborted.InnerException!, routed.Correlation(request.Meta));
-            RoutedFileErrors.Complete(changed, request.Meta, routed.CallId, node.Clock);
-            return new FileServicePlanRemovalResponse
-            {
-                Meta = new ResponseMeta { CorrelationId = changed.CorrelationId.Clone() },
-                Error = changed,
-            };
-        }
-        catch (SqliteException)
-        {
-            // The COMMIT may have taken effect even when its completion was not returned. Do not fabricate a
-            // size refusal or a rollback; only a subsequently recovered exact receipt can establish the outcome.
-            if (Expired(started, limit, token)) throw new OperationCanceledException(token);
-            var uncertain = NodeErrors.Internal(node.Clock.GetUtcNow());
-            uncertain.Retry = new RetryAdvice { Mode = RetryMode.Never };
-            RoutedFileErrors.Complete(uncertain, request.Meta, routed.CallId, node.Clock);
-            return new FileServicePlanRemovalResponse
-            {
-                Meta = new ResponseMeta { CorrelationId = uncertain.CorrelationId.Clone() },
-                Error = uncertain,
-            };
-        }
-
-        if (Expired(started, limit, token)) throw new OperationCanceledException(token);
-        if (outcome.Abort is { } abort) throw abort;
-        if (outcome.PolicyReason is { } reason)
-        {
-            routed.Refused(PermissionMatrix.CleanupPlan, reason);
-            routed.MarkAudited();
-        }
-
-        return outcome.Response!;
-    }
 
     private RemovalPlanOutcome PlanRemovalInTransaction(StoreTransaction transaction, Caller caller,
         FileServicePlanRemovalRequest request, byte[] rawDigest, long started, TimeSpan limit, CancellationToken token)
@@ -481,9 +416,9 @@ internal sealed partial class FileServiceHandler
             (expires > reader.NowMicroseconds || RoutedFileRetention.IsHeld(reader, commandId));
     }
 
-    private static bool RemovalCallerMayUse(StoreReader reader, byte[] commandId, CenterCaller caller)
+    private static bool RemovalCallerMayUse(StoreReader reader, byte[] commandId, CenterCaller caller, bool? retained = null)
     {
-        if (!RemovalHasLiveReceipt(reader, commandId)) return true;
+        if (!(retained ?? RemovalHasLiveReceipt(reader, commandId))) return true;
         using var owner = reader.CreateCommand("SELECT caller FROM file_removal_command_owner WHERE command_id = $id;");
         owner.Parameters.AddWithValue("$id", commandId);
         try

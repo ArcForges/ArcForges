@@ -90,15 +90,12 @@ public sealed class OutputFollowTests
     public async Task AttachAndWatchDeliverOutputAfterThousandsOfSkippedRecordsBeforeTheResult()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows execution platform.");
-        await using var node = await InProcessNode.Create().StartAsync();
-        await using var channel = await node.ChannelAsync();
-        var taskId = await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, Tasks.Cmd, "/d", "/c", "exit 0"));
-        var task = await Tasks.WaitAsync(channel, taskId);
-        var files = Tasks.Files(node, task.CurrentAttempt.AttemptId);
-
-        // The finished attempt's captured output is replaced by test data of the two shapes (the node only reads it from now on).
+        await using var node = InProcessNode.Create();
+        var (taskId, attemptId) = LegacyTaskHistoryFixture.Seed(node, AttemptState.Finished);
+        var files = Tasks.Files(node, attemptId);
         Write(files, [.. Enumerable.Repeat(OutputStreamKind.Stdout, 9_001), .. Enumerable.Repeat(OutputStreamKind.Stderr, 5_000), OutputStreamKind.Stdout]);
+        await node.StartAsync();
+        await using var channel = await node.ChannelAsync(helloAsHuman: true);
 
         // An attach reconnecting after 9,000 stdout records and every stderr record: the rest comes before the result frame.
         using (var attach = channel.Tasks.AttachTask(new TaskServiceAttachTaskRequest
@@ -119,13 +116,15 @@ public sealed class OutputFollowTests
             var outputs = frames.Where(frame => frame.FrameCase == TaskServiceAttachTaskFrame.FrameOneofCase.Output).Select(frame => frame.Output).ToList();
             Assert.Equal([9_000UL * ChunkBytes, 9_001UL * ChunkBytes], outputs.Select(chunk => chunk.Offset));
             Assert.All(outputs, chunk => Assert.Equal(OutputStream.Stdout, chunk.Stream));
+            Assert.Equal(Data(OutputStreamKind.Stdout, 9_000), outputs[0].Data.ToByteArray());
+            Assert.Equal(Data(OutputStreamKind.Stdout, 9_001), outputs[1].Data.ToByteArray());
         }
 
         // A stdout-only watch from the end of the first 9,001 records: 5,000 stderr records, then the last stdout record.
         using var watch = channel.Tasks.WatchTaskOutput(new TaskServiceWatchTaskOutputRequest
         {
             Meta = Tasks.Meta(),
-            AttemptId = task.CurrentAttempt.AttemptId,
+            AttemptId = attemptId,
             Stream = OutputStream.Stdout,
             FromOffset = 9_001UL * ChunkBytes,
         }, cancellationToken: Ct);

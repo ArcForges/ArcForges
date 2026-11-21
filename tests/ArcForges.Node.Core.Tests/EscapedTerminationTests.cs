@@ -1,166 +1,125 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-using System.Diagnostics;
+using System.Collections.Concurrent;
 using System.Globalization;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
+using ArcForges.Node.Core.Events;
+using ArcForges.Node.Core.Execution;
+using ArcForges.Node.Core.Platform;
+using ArcForges.Node.Platform;
 using ArcForges.Node.Store;
-using ArcForges.Tests;
 
 namespace ArcForges.Node.Core.Tests;
 
-/// <summary>
-/// The stop sequence's escaped-process step (04 section 6 step 4: <c>terminate_escaped</c>, true for cancellation) with a real node, real
-/// containers and real processes, on each OS (env=windows-real, env=linux-real; repair MR-01). The attempt's root traps the graceful signal
-/// and exits at once, so the stop never reaches its forced phase. The processes the node recorded as the attempt's ESCAPED processes are
-/// terminated when the stop sequence ends, after a node restart too (the process records are then all the node has), each by its process ID
-/// and start time: a record whose ID now names a later process (a reused ID) is never terminated. An attempt that ends on its own keeps
-/// its escaped processes (step 4 belongs to the stop sequence).
-/// <para>
-/// The escaped processes are recorded by the test, as the ancestry scan records one (process_record, label ESCAPED): a node attempt cannot
-/// escape its job on Windows (no breakaway, and every process of the workstation is already in a job, L-30), and after its root exits an
-/// escaped process on Linux no longer descends from the attempt, so the records are what the step must use. The closed-loop test
-/// <c>AnEscapedProcessOfAnAttemptCancelledGracefullyIsTerminatedOnLinux</c> makes a real escape on Linux.
-/// </para>
-/// </summary>
+/// <summary>Exchanges stored process identities with a simulated platform during legacy Stop recovery.</summary>
 public sealed class EscapedTerminationTests
 {
-    private static CancellationToken Ct => TestContext.Current.CancellationToken;
-
-    [Fact(Timeout = 180_000)]
-    [Trait("env", "windows-real")]
-    public async Task RecordedEscapedProcessesAreTerminatedWhenTheRootEndsOnTheGracefulSignalOnWindows()
+    [Fact(Timeout = 120_000)]
+    public async Task ARecoveredStopUsesRecordedProcessBirthAndLeavesNaturalExitAlone()
     {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows execution platform.");
-        await RecordedEscapedProcessesAsync(
-            (root, ready) => Tasks.Argv(root, Tasks.TestLoad, "signal", "--hold-ms", "120000", "--marker", ready),
-            ready => Tasks.Marker(ready).Any(line => line.Event == "ready"),
-            (root, go) => Tasks.Argv(root, Tasks.WaitForFile(go)),
-            "CTRL_BREAK_EVENT delivered");
+        var ct = TestContext.Current.CancellationToken;
+        ct.ThrowIfCancellationRequested();
+        await using var node = InProcessNode.Create();
+        var (stoppedTask, stoppedAttempt) = LegacyTaskHistoryFixture.Seed(node, AttemptState.Stopping);
+        var (exitedTask, exitedAttempt) = LegacyTaskHistoryFixture.Seed(node, AttemptState.Running);
+        WriteExit(node, stoppedAttempt);
+        WriteExit(node, exitedAttempt);
+
+        const int exactPid = 101;
+        const int reusedPid = 102;
+        const int naturalPid = 103;
+        var recordedBirth = DateTimeOffset.UnixEpoch.AddDays(1);
+        var laterBirth = recordedBirth.AddSeconds(30);
+
+        using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = node.DataRoot, BootIdentity = BootIdentity.Read(), Clock = node.Clock });
+        store.Write(transaction =>
+        {
+            Assert.Equal(1, transaction.Execute("UPDATE attempt SET termination_reason = $reason WHERE attempt_id = $id;",
+                ("$reason", (int)TerminationReason.Cancelled), ("$id", stoppedAttempt.Value.ToByteArray())));
+            RecordProcess(transaction, stoppedAttempt, exactPid, recordedBirth, "matched-fixture");
+            RecordProcess(transaction, stoppedAttempt, reusedPid, recordedBirth, "stale-fixture");
+            RecordProcess(transaction, exitedAttempt, naturalPid, laterBirth, "natural-fixture");
+        }, CommitDurability.Full);
+
+        using var platform = new ObservedTerminationPlatform(new Dictionary<int, DateTimeOffset>
+        {
+            [exactPid] = recordedBirth,
+            [reusedPid] = laterBirth,
+            [naturalPid] = laterBirth,
+        });
+        using var log = new NodeLog(Path.Combine(node.DataRoot, "logs", "node"), LogLevel.Info, node.Clock);
+        using var heartbeat = new NodeHeartbeatWriter(node.DataRoot, log, node.Clock);
+        using var keys = new NodeDataKeyRing(store, node.Secrets.Selection);
+        var journal = EventJournal.Open(store);
+        await using var processor = new CommandProcessor(store, journal, new StreamHub());
+        await using var execution = new ExecutionSupervisor(new ExecutionOptions
+        {
+            Store = store,
+            Processor = processor,
+            Log = log,
+            Clock = node.Clock,
+            DataRoot = node.DataRoot,
+            Platform = platform,
+            Secrets = new TaskSecrets(store, keys),
+            Heartbeat = heartbeat,
+        });
+        await execution.RecoverAsync(new RecoveryReport(true, false, null, store.Opening), processor, ct);
+        execution.Start();
+
+        ManagedTask? Read(Id taskId) => store.Read(reader => TaskRecords.GetTask(reader, taskId.Value.Span, full: false));
+
+        await Tasks.WaitForAsync(() => Read(stoppedTask)?.State == TaskState.Cancelled && Read(exitedTask)?.State == TaskState.Succeeded,
+            Tasks.Bound, "both retained attempts to finish");
+        var stopped = Assert.IsType<ManagedTask>(Read(stoppedTask)).CurrentAttempt;
+        var exited = Assert.IsType<ManagedTask>(Read(exitedTask)).CurrentAttempt;
+        Assert.Equal(stoppedAttempt, stopped.AttemptId);
+        Assert.Equal(exitedAttempt, exited.AttemptId);
+        Assert.True(stopped.NodeGap);
+        Assert.True(exited.NodeGap);
+        Assert.Equal(TerminationReason.Cancelled, stopped.Result.TerminationReason);
+        Assert.Equal(TerminationReason.Exited, exited.Result.TerminationReason);
+        Assert.Contains("matched-fixture (101)", stopped.Result.Detail, StringComparison.Ordinal);
+        Assert.DoesNotContain("stale-fixture", stopped.Result.Detail, StringComparison.Ordinal);
+        Assert.Equal([(exactPid, recordedBirth, ProcessTermination.Terminated), (reusedPid, recordedBirth, ProcessTermination.Gone)],
+            platform.Observations.OrderBy(item => item.Pid).ToArray());
     }
 
-    [Fact(Timeout = 180_000)]
-    [Trait("env", "linux-real")]
-    public async Task RecordedEscapedProcessesAreTerminatedWhenTheRootEndsOnTheGracefulSignalOnLinux()
+    private static void WriteExit(InProcessNode node, Id attempt)
     {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipWhen(SystemdTestEnvironment.SkipReason is not null, SystemdTestEnvironment.SkipReason ?? string.Empty);
-        await RecordedEscapedProcessesAsync(
-            (root, ready) => Tasks.Argv(root, "/bin/sh", "-c", "trap 'exit 0' TERM; echo ready > \"$1\"; sleep 120 & wait", "sh", ready),
-            File.Exists,
-            (root, go) => Tasks.Argv(root, "/bin/sh", "-c", "while [ ! -e \"$1\" ]; do sleep 0.05; done", "sh", go),
-            "SIGTERM sent to every process");
+        var files = Tasks.Files(node, attempt);
+        Directory.CreateDirectory(files.Directory);
+        HelperFiles.WriteAtomically(files.ExitPath, new ExitRecord
+        {
+            AttemptId = IdText.Format(attempt),
+            RecordedAt = node.Clock.GetUtcNow().ToString("O", CultureInfo.InvariantCulture),
+        }.ToJson());
     }
 
-    private static async Task RecordedEscapedProcessesAsync(Func<string, string, TaskSpec> trapping, Func<string, bool> trapped,
-        Func<string, string, TaskSpec> untilFile, string graceful)
-    {
-        var image = Path.GetFileName(Tasks.TestLoad);
-        Process? escaped = null, reused = null, ownEnd = null;
-        try
-        {
-            escaped = StartOutside();
-            reused = StartOutside();
-            ownEnd = StartOutside();
-            await using var node = await InProcessNode.Create().StartAsync();
-            var ready = Path.Combine(node.Root, "ready.txt");
-            var go = Path.Combine(node.Root, "go");
-            Id stopped, ended;
-            Attempt stoppedAttempt, endedAttempt;
-            await using (var channel = await node.ChannelAsync())
-            {
-                stopped = await Tasks.SubmitAsync(channel, trapping(node.Root, ready));
-                ended = await Tasks.SubmitAsync(channel, untilFile(node.Root, go));
-                stoppedAttempt = await Tasks.RunningAsync(channel, stopped);
-                endedAttempt = await Tasks.RunningAsync(channel, ended);
-                await Tasks.WaitForAsync(() => trapped(ready), Tasks.Bound, "the root to handle the graceful signal");
-            }
-
-            // The stopped attempt's escaped process; a record of it whose ID now names a later process (the record's process exited and
-            // its ID was reused); and an escaped process of the attempt that will end on its own.
-            RecordEscaped(node, stoppedAttempt.AttemptId, escaped.Id, StartOf(escaped.Id), image);
-            RecordEscaped(node, stoppedAttempt.AttemptId, reused.Id, StartOf(reused.Id).AddSeconds(-30), image);
-            RecordEscaped(node, endedAttempt.AttemptId, ownEnd.Id, StartOf(ownEnd.Id), image);
-
-            // After a node restart the records are all the node knows of them.
-            await node.StopAsync();
-            await node.StartAsync();
-            await using var after = await node.ChannelAsync();
-            await File.WriteAllTextAsync(go, "go", Ct);
-            Assert.Equal(TaskState.Succeeded, (await Tasks.WaitAsync(after, ended)).State);
-
-            await after.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = stopped, Reason = "test" }, cancellationToken: Ct);
-            var task = await Tasks.WaitAsync(after, stopped);
-            Assert.Equal(TaskState.Cancelled, task.State);
-            Assert.Equal(TerminationReason.Cancelled, task.CurrentAttempt.Result.TerminationReason);
-            var detail = task.CurrentAttempt.Result.Detail;
-            Assert.Contains(graceful, detail, StringComparison.Ordinal);
-            Assert.Contains(string.Create(CultureInfo.InvariantCulture, $"escaped processes terminated: {image} ({escaped.Id})"), detail, StringComparison.Ordinal);
-            Assert.True(escaped.WaitForExit(TimeSpan.FromSeconds(10)), "The stopped attempt's escaped process was terminated.");
-
-            // Never a process whose ID matches but whose start does not, and never an escaped process of an attempt that ended on its own.
-            Assert.DoesNotContain(string.Create(CultureInfo.InvariantCulture, $"({reused.Id})"), detail, StringComparison.Ordinal);
-            Assert.False(reused.HasExited, "A process that reused a recorded ID was terminated.");
-            Assert.False(ownEnd.HasExited, "An escaped process of an attempt that ended on its own was terminated.");
-        }
-        finally
-        {
-            foreach (var process in ((Process?[])[escaped, reused, ownEnd]).OfType<Process>())
-            {
-                if (!process.HasExited)
-                {
-                    process.Kill();
-                    process.WaitForExit(TimeSpan.FromSeconds(10));
-                }
-
-                process.Dispose();
-            }
-        }
-    }
-
-    /// <summary>A process of the test's user outside every attempt container (<c>arcforges-testload hold</c>).</summary>
-    private static Process StartOutside()
-    {
-        var start = new ProcessStartInfo(Tasks.TestLoad)
-        {
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        foreach (var argument in (string[])["hold", "--hold-ms", "150000"])
-        {
-            start.ArgumentList.Add(argument);
-        }
-
-        return Process.Start(start) ?? throw new InvalidOperationException("arcforges-testload did not start");
-    }
-
-    /// <summary>The process's start time as the node's platform reads it (Windows: its creation FILETIME; Linux: <c>/proc</c>).</summary>
-    private static DateTimeOffset StartOf(int pid)
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            using var handle = ArcForges.Node.Platform.Windows.ProcessInfo.Open(pid) ?? throw new InvalidOperationException($"process {pid} is gone");
-            return ArcForges.Node.Platform.Windows.ProcessInfo.FromFileTime(ArcForges.Node.Platform.Windows.ProcessInfo.CreationFileTime(handle));
-        }
-
-        if (OperatingSystem.IsLinux())
-        {
-            return ArcForges.Node.Platform.Linux.ProcFs.StartOf(pid)?.Start ?? throw new InvalidOperationException($"process {pid} is gone");
-        }
-
-        throw new PlatformNotSupportedException();
-    }
-
-    /// <summary>Records <paramref name="pid"/> as an ESCAPED process of the attempt, as the ancestry scan records one (04 section 3).</summary>
-    private static void RecordEscaped(InProcessNode node, Id attemptId, int pid, DateTimeOffset start, string image) =>
-        node.Runtime.Store.Write(transaction => transaction.Execute(
-            """
+    private static void RecordProcess(StoreTransaction transaction, Id attempt, int pid, DateTimeOffset birth, string image) =>
+        transaction.Execute("""
             INSERT INTO process_record (attempt_id, pid, start_at, parent_pid, executable, arguments_redacted, first_seen, last_seen, mem_peak_bytes, label)
             VALUES ($attempt, $pid, $start, 0, $image, NULL, $now, $now, 0, $label);
-            """,
-            ("$attempt", attemptId.Value.ToByteArray()), ("$pid", pid), ("$start", StoreTime.ToMicroseconds(start)), ("$image", image),
-            ("$now", transaction.NowMicroseconds), ("$label", (int)ProcessLabel.Escaped)));
+            """, ("$attempt", attempt.Value.ToByteArray()), ("$pid", pid), ("$start", StoreTime.ToMicroseconds(birth)), ("$image", image),
+            ("$now", transaction.NowMicroseconds), ("$label", (int)ProcessLabel.Escaped));
+
+    private sealed class ObservedTerminationPlatform(IReadOnlyDictionary<int, DateTimeOffset> observed) : IExecutionPlatform
+    {
+        public ConcurrentQueue<(int Pid, DateTimeOffset Birth, ProcessTermination Outcome)> Observations { get; } = new();
+        public string Name => "retained-identity-fixture";
+        public MachineCapacity Capacity => new(4, 1L << 30);
+        public CapabilityReport Evaluate() => new();
+        public IAttemptHandle? Reopen(string nodeName, AttemptFiles files, RootProcess? root, bool stopping) => null;
+        public bool AcknowledgeRecorded(string nodeName, string attemptName) => false;
+        public void Start(string nodeName, RootLimits limits, string helperExecutable) => throw new NotSupportedException();
+        public void UpdateRootLimits(RootLimits limits) => throw new NotSupportedException();
+        public void Dispose() { }
+
+        public ProcessTermination TerminateProcess(int pid, DateTimeOffset start)
+        {
+            var outcome = observed.TryGetValue(pid, out var actual) && actual == start ? ProcessTermination.Terminated : ProcessTermination.Gone;
+            Observations.Enqueue((pid, start, outcome));
+            return outcome;
+        }
+    }
 }

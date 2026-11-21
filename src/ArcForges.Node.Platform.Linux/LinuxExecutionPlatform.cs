@@ -53,8 +53,7 @@ public sealed class LinuxPlatformOptions
 /// <c>MemoryMax</c>, <c>MemorySwapMax</c>, <c>TasksMax</c>) set through the user manager; a transient slice when no unit file
 /// defines it. Startup verifies enforcement with a probe unit whose cgroup files must carry its limits.</item>
 /// <item>Each attempt is the transient service <c>arcforges-a-&lt;attempt&gt;.service</c> (see <see cref="LinuxAttemptHandle"/>).</item>
-/// <item>Without a user manager the platform runs attempts as plain child processes of the node (observe only; see
-/// <see cref="DirectAttemptHandle"/>); a controller missing from the manager's delegation makes that resource observe only.</item>
+/// <item>Attempt launch requires a systemd user manager. A controller missing from the manager's delegation makes that resource observe only.</item>
 /// </list>
 /// </summary>
 [SupportedOSPlatform("linux")]
@@ -121,10 +120,7 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
     }
 
     /// <inheritdoc />
-    public string Name => UnitMode ? "linux-systemd" : "linux-direct";
-
-    /// <inheritdoc />
-    public StringComparer EnvironmentNames => StringComparer.Ordinal;
+    public string Name => UnitMode ? "linux-systemd" : "linux-unavailable";
 
     /// <inheritdoc />
     public MachineCapacity Capacity { get; }
@@ -132,7 +128,7 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
     /// <summary>The root slice.</summary>
     public string Slice => _options.Slice;
 
-    /// <summary>True when attempts run as transient units of the user manager (false: plain child processes, degraded).</summary>
+    /// <summary>True when the platform has a systemd user manager for transient attempt units.</summary>
     public bool UnitMode => _manager is not null;
 
     /// <summary>Why there is no user manager, when there is none.</summary>
@@ -262,13 +258,12 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
             report.IoReason = why;
             report.Pause = PauseSupport.Unsupported;
             report.PauseReason = why;
-            report.KillTree = KillTreeGuarantee.BestEffort;
-            report.KillTreeReason = "attempts are plain child processes of the node in their own process group; a process that leaves the group is not reached"
-                + SameUserQualifier;
+            report.KillTree = KillTreeGuarantee.Unspecified;
+            report.KillTreeReason = "legacy attempt tree control requires the systemd user manager: " + why;
             report.Adopt = AdoptSupport.Unsupported;
             report.AdoptReason = "adoption needs a transient scope of the systemd user manager: " + why;
             report.RestartSurvival = false;
-            report.RestartSurvivalReason = "attempts are plain child processes of the node: their exit status is lost when the node restarts before they finish";
+            report.RestartSurvivalReason = "native legacy attempt recovery requires the systemd user manager: " + why;
         }
         else
         {
@@ -310,7 +305,7 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
         report.PlatformFacts.Add(Fact("runtime", RuntimeInformation.FrameworkDescription));
         report.PlatformFacts.Add(Fact("cgroup_v2", File.Exists(Path.Combine(ProcFs.CgroupRoot, "cgroup.controllers")) ? "present" : "absent"));
         report.PlatformFacts.Add(Fact("systemd_user_manager", _manager is null ? "absent" : "running"));
-        report.PlatformFacts.Add(Fact("execution", _manager is null ? "child processes (observe only)" : "transient user units"));
+        report.PlatformFacts.Add(Fact("execution", _manager is null ? "unavailable (requires a systemd user manager)" : "transient user units"));
         if (_manager is { } manager)
         {
             report.PlatformFacts.Add(Fact("systemd_version", manager.Version));
@@ -341,9 +336,6 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
 
         return report;
     }
-
-    /// <inheritdoc />
-    public PreparedCommand Prepare(CommandRequest request) => LinuxCommands.Prepare(request);
 
     /// <summary>
     /// The unit hardening as read back (AD-0007 section 8; F-L04): applied only when the probe unit and every attempt unit read back so far
@@ -531,7 +523,7 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
         }
     }
 
-    /// <inheritdoc />
+    /// <summary>Adopts an existing process for the legacy Linux platform fixtures.</summary>
     public AdoptionResult Adopt(AdoptionRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -748,18 +740,24 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
         ArgumentException.ThrowIfNullOrWhiteSpace(containerName);
         if (_manager is null)
         {
-            return null;
+            throw new LegacyCustodyUnavailableException(_managerReason ?? "No systemd user manager is connected.");
         }
 
         try
         {
-            return Manager.ScopeControlGroup(containerName) is { Length: > 0 } controlGroup
+            var controlGroup = Manager.ScopeControlGroup(containerName);
+            if (controlGroup is null)
+            {
+                return null;
+            }
+
+            return controlGroup.Length > 0
                 ? new LinuxAdoptedScope(this, containerName, ProcFs.CgroupDirectory(controlGroup))
-                : null;
+                : throw new LegacyCustodyUnavailableException("The recorded scope has no reported cgroup.");
         }
         catch (Exception exception) when (exception is DBusExceptionBase or TimeoutException or InvalidOperationException)
         {
-            return null;
+            throw new LegacyCustodyUnavailableException("The systemd user manager did not resolve the recorded scope.", exception);
         }
     }
 
@@ -821,13 +819,15 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
     /// <inheritdoc />
     public bool Listens(int port, IReadOnlyCollection<int> processIds) => ListeningSockets.Listens(port, processIds);
 
-    /// <inheritdoc />
-    public string ContainerName(string nodeName, string attemptName) => _manager is null ? "pgid:" + attemptName : UnitName(attemptName);
-
-    /// <inheritdoc />
+    /// <summary>Starts a new legacy attempt for the Linux platform fixtures.</summary>
     public IAttemptHandle Launch(AttemptLaunch launch)
     {
         ArgumentNullException.ThrowIfNull(launch);
+        if (_manager is null)
+        {
+            throw new InvalidOperationException("Cannot start a legacy Linux attempt: " + (_managerReason ?? "no systemd user manager is connected."));
+        }
+
         var files = launch.Files;
         Directory.CreateDirectory(files.Directory);
         Directory.CreateDirectory(files.TempDirectory);
@@ -844,10 +844,6 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
             LeftoverGraceMs = launch.LeftoverGraceMs,
             EnvironmentNames = [.. launch.Environment.Select(entry => entry[..Math.Max(0, entry.IndexOf('=', StringComparison.Ordinal))]).Distinct(StringComparer.Ordinal)],
         }.ToJson());
-        if (_manager is null)
-        {
-            return DirectAttemptHandle.Start(this, launch);
-        }
 
         try
         {
@@ -865,7 +861,7 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
         ArgumentNullException.ThrowIfNull(files);
         if (_manager is null)
         {
-            return null;
+            throw new LegacyCustodyUnavailableException(_managerReason ?? "No systemd user manager is connected.");
         }
 
         try
@@ -874,7 +870,7 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
         }
         catch (Exception exception) when (exception is DBusExceptionBase or TimeoutException)
         {
-            throw new IOException("The systemd user manager did not answer for the attempt unit: " + OneLine(exception.Message), exception);
+            throw new LegacyCustodyUnavailableException("The systemd user manager did not resolve the attempt unit.", exception);
         }
     }
 

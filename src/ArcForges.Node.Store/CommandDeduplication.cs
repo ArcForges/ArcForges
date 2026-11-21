@@ -139,27 +139,9 @@ public sealed class CommandDeduplication
 
         var id = commandId.ToArray();
         var now = transaction.NowMicroseconds;
-        using (var command = transaction.CreateCommand(
-            "SELECT method, payload_digest, outcome, expires_at FROM command_dedup WHERE command_id = $id;"))
+        if (ReadRetained(transaction, id, method, payloadDigest, now) is { } retained)
         {
-            command.Parameters.AddWithValue("$id", id);
-            using var row = command.ExecuteReader();
-            if (row.Read())
-            {
-                if (row.GetInt64(3) > now || RoutedFileRetention.IsHeld(transaction, id))
-                {
-                    var sameMethod = string.Equals(row.GetString(0), method, StringComparison.Ordinal);
-                    var samePayload = CryptographicOperations.FixedTimeEquals((byte[])row.GetValue(1), payloadDigest);
-                    if (!sameMethod || !samePayload)
-                    {
-                        return new DedupDecision(DedupStatus.Conflict, null);
-                    }
-
-                    return row.IsDBNull(2)
-                        ? new DedupDecision(DedupStatus.InProgress, null)
-                        : new DedupDecision(DedupStatus.Replay, (byte[])row.GetValue(2));
-                }
-            }
+            return retained;
         }
 
         // New, or past its window: the ID starts a new record.
@@ -176,6 +158,27 @@ public sealed class CommandDeduplication
             ("$now", now),
             ("$expires", now + WindowMicroseconds));
         return new DedupDecision(DedupStatus.Execute, null);
+    }
+
+    /// <summary>Looks for a retained command without reserving its ID or changing expiry.</summary>
+    internal static DedupDecision? ReadRetained(StoreReader reader, byte[] commandId, string method, ReadOnlySpan<byte> payloadDigest, long now)
+    {
+        using var command = reader.CreateCommand("SELECT method, payload_digest, outcome, expires_at FROM command_dedup WHERE command_id = $id;");
+        command.Parameters.AddWithValue("$id", commandId);
+        using var row = command.ExecuteReader();
+        if (!row.Read() || (row.GetInt64(3) <= now && !RoutedFileRetention.IsHeld(reader, commandId)))
+        {
+            return null;
+        }
+
+        var sameMethod = string.Equals(row.GetString(0), method, StringComparison.Ordinal);
+        var samePayload = CryptographicOperations.FixedTimeEquals((byte[])row.GetValue(1), payloadDigest);
+        if (!sameMethod || !samePayload)
+        {
+            return new DedupDecision(DedupStatus.Conflict, null);
+        }
+
+        return row.IsDBNull(2) ? new DedupDecision(DedupStatus.InProgress, null) : new DedupDecision(DedupStatus.Replay, (byte[])row.GetValue(2));
     }
 
     /// <summary>Stores the serialized response of a command begun in this transaction.</summary>

@@ -48,6 +48,30 @@ public static class NodeErrors
     public static ArcError InvalidState(string state, string reason) =>
         Create(ErrorCategory.State, "invalid_state", RetryMode.Never, new StateFailure { State = state, Reason = reason });
 
+    /// <summary>Without a retained result a legacy Task command has an unknown historical effect.</summary>
+    public static ArcError LegacyTaskOutcomeUnknown() => LegacyOutcomeUnknown("legacy_task_outcome_unavailable");
+
+    /// <summary>Without a retained registration response the effect on the historical workspace catalogue is unknown.</summary>
+    public static ArcError LegacyWorkspaceRegistrationUnknown(bool inProgress = false)
+    {
+        var error = Create(ErrorCategory.Internal, "internal", RetryMode.Never, inProgress
+            ? new StateFailure { State = "command_dedup", Reason = "command_in_progress" }
+            : new StateFailure { State = "LEGACY_DRAIN", Reason = "legacy_workspace_registration_outcome_unavailable" });
+        error.Effect = EffectCertainty.Unknown;
+        return error;
+    }
+
+    /// <summary>Legacy adoption could affect native ownership before recording a result. An absent receipt does not confirm its effect.</summary>
+    public static ArcError LegacyAdoptionUnknown() => LegacyOutcomeUnknown("legacy_adoption_outcome_unavailable");
+
+    private static ArcError LegacyOutcomeUnknown(string reason)
+    {
+        var error = Create(ErrorCategory.Execution, "operation_failed", RetryMode.Never,
+            new StateFailure { State = "LEGACY_DRAIN", Reason = reason });
+        error.Effect = EffectCertainty.Unknown;
+        return error;
+    }
+
     /// <summary>A catalogued <c>VALIDATION</c> error with <c>state.reason</c> (unsafe_batch_argument, program_not_found, unsupported_shell, path_not_found, invalid_dependency).</summary>
     public static ArcError Validation(string code, string reason) =>
         Create(ErrorCategory.Validation, code, RetryMode.Never, new StateFailure { Reason = reason });

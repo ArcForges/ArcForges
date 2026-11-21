@@ -7,6 +7,7 @@ using ArcForges.Contracts.Node.V1;
 using ArcForges.Contracts.Relay.V1;
 using ArcForges.Node.Api;
 using ArcForges.Node.Core;
+using ArcForges.Node.Core.Files;
 using Google.Protobuf;
 using NodeFilePath = ArcForges.Contracts.Node.V1.FilePath;
 
@@ -51,6 +52,9 @@ public sealed class RoutedFileChannelTests
         var root = Directory.CreateDirectory(Path.Combine(node.Root, "signed-read-root")).FullName;
         var content = Encoding.UTF8.GetBytes("REAL_SIGNED_CHANNEL_BODY_MUST_NOT_BE_STORED_241ca");
         File.WriteAllBytes(Path.Combine(root, "payload.txt"), content);
+        var retained = new RegisteredWorkspaces(node.Runtime.Store).RegisterFromVerifiedHuman(root, "signed-read", cancellationToken: ct);
+        var workspace = new Id { Value = ByteString.CopyFrom(retained.Id) };
+
         var register = new WorkspaceServiceRegisterWorkspaceRequest { Meta = CloudNode.Command(), Path = root, Name = "signed-read" };
         var (registerCall, _) = center.Channel.BuildCall(connection, new FakeCallSpec
         {
@@ -61,11 +65,24 @@ public sealed class RoutedFileChannelTests
             Lifetime = TimeSpan.FromSeconds(30),
         });
         await connection.SendCallAsync(registerCall);
-        var registeredFrame = await connection.ResultOfAsync(registerCall.CallId);
-        await Eventually.TrueAsync(() => connection.VerifiedResults.Any(x => x.Header.CallId.Equals(registerCall.CallId)), "signed workspace registration");
-        var registered = WorkspaceServiceRegisterWorkspaceResponse.Parser.ParseFrom(registeredFrame.Payload);
-        Assert.Null(registered.Error);
-        var workspace = registered.Value.Workspace.WorkspaceId;
+        var registrationFrame = await connection.ResultOfAsync(registerCall.CallId);
+        await Eventually.TrueAsync(() => connection.VerifiedResults.Any(x => x.Header.CallId.Equals(registerCall.CallId)),
+            "signed refusal of a fresh workspace registration");
+        Assert.Equal(RoutedOutcome.Executed, connection.VerifiedResults.Single(x => x.Header.CallId.Equals(registerCall.CallId)).Header.Outcome);
+        var registration = WorkspaceServiceRegisterWorkspaceResponse.Parser.ParseFrom(registrationFrame.Payload);
+        Assert.Null(registration.Value);
+        Assert.Equal((ErrorCategory.Internal, "internal", "legacy_workspace_registration_outcome_unavailable", EffectCertainty.Unknown, RetryMode.Never),
+            (registration.Error.Category, registration.Error.Code, registration.Error.Details.State.Reason, registration.Error.Effect,
+                registration.Error.Retry.Mode));
+        Assert.Equal(register.Meta.CorrelationId, registration.Error.CorrelationId);
+        node.Runtime.Store.Read(reader =>
+        {
+            Assert.Equal(1L, reader.Scalar("SELECT count(*) FROM workspace WHERE removed_at IS NULL;"));
+            Assert.Equal(0L, reader.Scalar("SELECT count(*) FROM command_dedup WHERE command_id = $id;",
+                ("$id", register.Meta.CommandId.Value.ToByteArray())));
+            return 0;
+        });
+
         var correlation = CommandIds.New();
         var read = new FileServiceReadFileRequest
         {

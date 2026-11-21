@@ -197,13 +197,27 @@ public sealed class LinuxAttemptHandle : IAttemptHandle
         if (state.ControlGroup.Length > 0)
         {
             handle._cgroup = ProcFs.CgroupDirectory(state.ControlGroup);
-            handle.ReleaseStuckFreeze(state);
         }
 
         handle._root = root ?? RootOf(state);
         handle._watch = manager.WatchUnit(SystemdManager.UnitPath(handle.Unit), handle.OnUnitChanged);
-        if (stopping && handle._root is null && !File.Exists(files.ExitPath) && !File.Exists(files.LaunchPath)
-            && manager.PendingStartJob(handle.Unit) is { } job)
+        var launchMayBePending = handle._root is null && !File.Exists(files.ExitPath) && !File.Exists(files.LaunchPath);
+        string? pendingStart;
+        try
+        {
+            pendingStart = stopping && launchMayBePending ? manager.PendingStartJob(handle.Unit) : null;
+            if (handle._cgroup is not null)
+            {
+                handle.ReleaseStuckFreeze(state);
+            }
+        }
+        catch
+        {
+            handle.Dispose();
+            throw;
+        }
+
+        if (pendingStart is { } job)
         {
             // The node stopped before the user manager started the unit of an attempt it was stopping (its start job still waits): the
             // command may still start, and Started completes once the job ends. No bound and no launch record: the unit can start at any
@@ -216,7 +230,7 @@ public sealed class LinuxAttemptHandle : IAttemptHandle
             handle._started.TrySetResult(handle._root);
 
             // Not being stopped, and not started yet: a stop may come later, and its forced phase reads the unit's start job then (WatchLaunch).
-            handle._launchWatchable = !stopping && handle._root is null && !File.Exists(files.ExitPath) && !File.Exists(files.LaunchPath) ? 1 : 0;
+            handle._launchWatchable = !stopping && launchMayBePending ? 1 : 0;
         }
 
         if (state.ActiveState == "failed" && !File.Exists(files.ExitPath))
@@ -240,9 +254,16 @@ public sealed class LinuxAttemptHandle : IAttemptHandle
         {
             job = _platform.Manager.PendingStartJob(Unit);
         }
-        catch (Exception exception) when (exception is DBusExceptionBase or TimeoutException or InvalidOperationException or IOException)
+        catch (Exception exception) when (exception is DBusExceptionBase or TimeoutException or OperationCanceledException or InvalidOperationException
+            or IOException)
         {
-            return false;
+            Volatile.Write(ref _launchWatchable, 1);
+            if (exception is LegacyCustodyUnavailableException)
+            {
+                throw;
+            }
+
+            throw new LegacyCustodyUnavailableException("The systemd user manager did not confirm the attempt's late start.", exception);
         }
 
         if (job is null)

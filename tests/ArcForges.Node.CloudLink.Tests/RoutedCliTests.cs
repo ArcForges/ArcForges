@@ -398,26 +398,31 @@ public sealed class RoutedCliTests
         Assert.False(outer.Request.Span.IndexOf(Encoding.UTF8.GetBytes(SyntheticEnvironmentValue)) >= 0);
     }
 
+    // The active V1 diagnostic launch is preserved at eaaccb8380a2bd265aaad0a67d62c8fab2a8a29a.
+    // SecurityMxcRunServiceTests.InstalledOfflineOwnerRunsExactInputsWithProtectedIpcAndRedactedAuthority covers live V2 inputs.
     [Fact(Timeout = 60000)]
-    public async Task LocalDiagnosticCanStillSubmitWithCallerInheritance()
+    public async Task LegacyLocalDiagnosticRefusesWithoutRoutingOrExposingCallerEnvironment()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        await using var fixture = await Fixture.StartAsync();
-        var result = await fixture.CliSyntheticAsync("run", "--local", "--detach", "--", CloudNode.TestLoad, "hold", "--hold-ms", "1");
-        Assert.True(result.ExitCode == 0, "local diagnostic caller inheritance remains available");
-        Assert.True(IdText.TryParse(result.Stdout.Trim(), out var taskId));
-        await using var human = await fixture.Node.ChannelAsync(Origin.Human);
-        var task = await human.Tasks.GetTaskAsync(new TaskServiceGetTaskRequest
-        {
-            Meta = CloudNode.Command(),
-            TaskId = new Id { Value = ByteString.CopyFrom(taskId) },
-            Detail = TaskDetail.Full,
-        }, cancellationToken: TestContext.Current.CancellationToken);
-        Assert.Null(task.Error);
-        Assert.Equal(EnvironmentInherit.Caller, task.Value.Task.Spec.Environment.Inherit);
-        Assert.True(fixture.Center.CallsOf("SubmitNodeTask").Count == 0);
-        Assert.False(result.Stdout.Contains(SyntheticEnvironmentValue, StringComparison.Ordinal));
-        Assert.False(result.Stderr.Contains(SyntheticEnvironmentValue, StringComparison.Ordinal));
+        await using var fixture = await Fixture.StartAsync(signedIn: false);
+        var store = fixture.Node.Runtime.Store;
+        var before = store.Read(reader => reader.Scalar("SELECT count(*) FROM task;"));
+        var result = await fixture.CliSyntheticAsync("--json", "run", "--local", "--detach", "--", "historical-task-fixture");
+        AssertLegacyLocalUnavailable(result.ExitCode, result.Stdout);
+        Assert.Equal(before, store.Read(reader => reader.Scalar("SELECT count(*) FROM task;")));
+        Assert.Empty(fixture.Center.CallsOf("SubmitNodeTask"));
+        Assert.DoesNotContain(SyntheticEnvironmentValue, result.Stdout, StringComparison.Ordinal);
+        Assert.DoesNotContain(SyntheticEnvironmentValue, result.Stderr, StringComparison.Ordinal);
+    }
+
+    private static void AssertLegacyLocalUnavailable(int exitCode, string stdout)
+    {
+        Assert.Equal(125, exitCode);
+        using var json = System.Text.Json.JsonDocument.Parse(stdout);
+        var error = json.RootElement.GetProperty("error");
+        Assert.Equal("operation_failed", error.GetProperty("code").GetString());
+        Assert.Equal("EFFECT_CERTAINTY_UNKNOWN", error.GetProperty("effect").GetString());
+        Assert.Equal("legacy_task_outcome_unavailable", error.GetProperty("details").GetProperty("state").GetProperty("reason").GetString());
     }
 
     private static int NonceRequests(FakeCenter center) => center.Channel.Connections.SelectMany(connection => connection.Received)
@@ -1024,12 +1029,10 @@ public sealed class RoutedCliTests
     }
 
     [Fact(Timeout = 60000)]
-    public async Task ARealCliUnderARegisteredAgentRootCannotSubmitLocally()
+    public async Task RegisteredAgentRootRefusesBeforeLegacyTaskReconciliation()
     {
         var ct = TestContext.Current.CancellationToken;
         await using var fixture = await Fixture.StartAsync(signedIn: false);
-        await using var human = await fixture.Node.ChannelAsync(Origin.Human);
-        Assert.Null((await human.Queue.PausePoolAsync(new QueueServicePausePoolRequest { Meta = CloudNode.Command(), All = true }, cancellationToken: ct)).Error);
         var sessionsSeen = new System.Collections.Concurrent.ConcurrentQueue<ClientSession>();
         var sessions = new ClientSessions { Opened = sessionsSeen.Enqueue };
         var processStart = ProtoTime.ToDateTimeOffset(ClientProcess.Identity(Environment.ProcessId)!.StartTime)!.Value;
@@ -1050,7 +1053,7 @@ public sealed class RoutedCliTests
             {
                 var before = fixture.Node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM task;"));
                 var denied = await fixture.CliAtEndpointAsync(endpoint.Address, "--json", "run", "--local", "--detach", "--env-inherit", "none",
-                    "--cwd", fixture.Node.Root, "--", CloudNode.TestLoad, "hold", "--hold-ms", "100");
+                    "--cwd", fixture.Node.Root, "--", "historical-task-fixture");
                 Assert.Equal(125, denied.ExitCode);
                 using (var json = System.Text.Json.JsonDocument.Parse(denied.Stdout))
                 {
@@ -1064,15 +1067,14 @@ public sealed class RoutedCliTests
                 Assert.NotEqual(Environment.ProcessId, agent.Peer.ProcessId);
                 Assert.Equal(before, fixture.Node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM task;")));
 
-                // Removing the exact root makes another real child SCRIPT, which the isolated in-process test explicitly permits.
+                // Removing the exact root changes this new child to SCRIPT, which can reconcile but cannot launch a V1 Task.
                 sessions.Agents.Remove(Environment.ProcessId);
-                var script = await fixture.CliAtEndpointAsync(endpoint.Address, "run", "--local", "--detach", "--env-inherit", "none",
-                    "--cwd", fixture.Node.Root, "--", CloudNode.TestLoad, "hold", "--hold-ms", "100");
-                Assert.Equal(0, script.ExitCode);
-                Assert.True(IdText.TryParse(script.Stdout.Trim(), out var taskBytes));
+                var script = await fixture.CliAtEndpointAsync(endpoint.Address, "--json", "run", "--local", "--detach", "--env-inherit", "none",
+                    "--cwd", fixture.Node.Root, "--", "historical-task-fixture");
+                AssertLegacyLocalUnavailable(script.ExitCode, script.Stdout);
                 Assert.Contains(sessionsSeen, session => session.Kind == ClientKind.Cli && session.Origin == Origin.Script);
-                var task = new Id { Value = ByteString.CopyFrom(taskBytes) };
-                Assert.Null((await human.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = CloudNode.Command(), TaskId = task }, cancellationToken: ct)).Error);
+                Assert.Equal(before, fixture.Node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM task;")));
+                Assert.Empty(fixture.Center.CallsOf("SubmitNodeTask"));
             }
             finally
             {

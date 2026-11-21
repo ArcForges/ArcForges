@@ -325,13 +325,36 @@ public sealed class NodeServiceTests
         var descriptor = NodeLocations.EndpointDescriptorFile(node.DataRoot);
         Assert.True(File.Exists(descriptor));
 
+        var failedCommand = InProcessNode.Command();
+        var failedId = failedCommand.CommandId.Value.ToByteArray();
+        node.Runtime.Store.Write(tx =>
+        {
+            tx.Execute($"""
+                CREATE TRIGGER test_fail_stop_receipt BEFORE UPDATE OF outcome ON command_dedup
+                WHEN NEW.command_id = X'{Convert.ToHexString(failedId)}' AND NEW.outcome IS NOT NULL
+                BEGIN SELECT RAISE(ABORT, 'test_stop_receipt_failure'); END;
+                """);
+            return 0;
+        }, CommitDurability.Full);
+
         // A free-text reason may carry anything; it never reaches the log (R-SEC-003).
         var value = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(12));
         var reason = "token=" + value;
+        var meta = InProcessNode.Command();
+        NodeServiceStopNodeResponse response;
         await using (var channel = await node.ChannelAsync(helloAsHuman: true))
         {
-            var meta = InProcessNode.Command();
-            var response = await channel.Node.StopNodeAsync(new NodeServiceStopNodeRequest { Meta = meta, Reason = reason }, deadline: DateTime.UtcNow + Deadline, cancellationToken: ct);
+            var failed = await channel.Node.StopNodeAsync(new NodeServiceStopNodeRequest { Meta = failedCommand },
+                deadline: DateTime.UtcNow + Deadline, cancellationToken: ct);
+            Assert.Equal("internal", Assert.IsType<ArcError>(failed.Error).Code);
+            Assert.Equal(0L, Assert.IsType<long>(node.Runtime.Store.Read(reader => reader.Scalar(
+                "SELECT COUNT(*) FROM command_dedup WHERE command_id = $id;", ("$id", failedId)))));
+            Assert.Equal(InProcessNode.ExpectedState, node.Runtime.Lifecycle.State);
+            Assert.False(node.Runtime.Stopping.IsCancellationRequested);
+
+            response = await channel.Node.StopNodeAsync(new NodeServiceStopNodeRequest { Meta = meta, Reason = reason },
+                deadline: DateTime.UtcNow + Deadline, cancellationToken: ct);
+            Assert.Null(response.Error);
             Assert.Equal(meta.CommandId, response.Value.Receipt.CommandId);
             Assert.Equal(EffectCertainty.Happened, response.Value.Receipt.Effect);
         }
@@ -340,6 +363,10 @@ public sealed class NodeServiceTests
         Assert.False(File.Exists(descriptor));
         using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = node.DataRoot, BootIdentity = "check" });
         Assert.True(store.Metadata.PreviousShutdownClean);
+        var recorded = store.Read(reader => reader.Scalar(
+            "SELECT outcome FROM command_dedup WHERE command_id = $id AND method = 'arcforges.node.v1.NodeService/StopNode';",
+            ("$id", meta.CommandId.Value.ToByteArray())));
+        Assert.Equal(response, NodeServiceStopNodeResponse.Parser.ParseFrom(Assert.IsType<byte[]>(recorded)));
         var log = File.ReadAllText(Path.Combine(node.DataRoot, "logs", "node", "node.log"));
         Assert.Contains("\"event\":\"node.stopped\"", log, StringComparison.Ordinal);
         Assert.Contains("\"reasonLength\":" + reason.Length.ToString(System.Globalization.CultureInfo.InvariantCulture), log, StringComparison.Ordinal);

@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Diagnostics;
+using System.Security.Cryptography;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
+using ArcForges.Contracts.Relay.V1;
 using ArcForges.Node.Api;
+using ArcForges.Node.Core.Execution;
 using ArcForges.Node.Core.Security;
 using ArcForges.Node.Store;
 using Google.Protobuf;
@@ -11,63 +14,99 @@ using Google.Protobuf;
 namespace ArcForges.Node.Core.Tests;
 
 /// <summary>
-/// AF-SEC-01 review round 1: the permission gate against the command record and the matrix's per-target rules, on real nodes in the test
-/// process through the real client. <c>task.retry</c> (an AGENT's retry of a SIDE_EFFECTING or UNKNOWN task needs approval); the gate runs
-/// after dedup (a command that ran answers with its outcome whatever the matrix says now; a no-op raises no approval); the long-window
-/// replay of an approval's outcome answers only the same method and request; an approval approved before a restart executes once after it;
-/// an approved cancel of an ADOPTED task is audited as <c>process.terminate</c>; AGENT submissions follow
-/// <c>agents.allowed_command_patterns</c>; the client-image test hook applies only to an isolated test node.
+/// Verifies command replay, approval ownership and current policy gates through the real local handlers and a synthetic routed link.
+/// Legacy Task submission and retry use retained SQLite history while Queue and Cancel still exercise their live decisions.
 /// </summary>
 public sealed class GateAndReplayTests
 {
-    private const PermissionDecision A = PermissionDecision.Allow;
     private const PermissionDecision P = PermissionDecision.Approval;
     private const PermissionDecision D = PermissionDecision.Deny;
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     /// <summary>
-    /// <c>task.retry</c> (tasks.proto <c>RetryTask</c>): HUMAN and SCRIPT retry any task; an AGENT retries an IDEMPOTENT task at once, while its
-    /// retry of an UNKNOWN (or SIDE_EFFECTING) task raises an approval; each retry is audited under <c>task.retry</c>.
+    /// A completed historical Retry approval retains its exact reply after the command window without creating another attempt.
     /// </summary>
     [Fact(Timeout = 120_000)]
-    public async Task RetryNeedsApprovalOnlyForAnAgentOnASideEffectingOrUnknownTask()
+    public async Task AnExecutedRetryApprovalReplaysAfterItsCommandWindowWithoutRequeuing()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         await using var node = await InProcessNode.Create().StartAsync();
-        Assert.SkipWhen(node.Runtime.Execution is null, "The node has no execution supervisor.");
         await using var human = await node.ChannelAsync(helloAsHuman: true);
-        await using var script = await node.ChannelAsync();
         await using var agent = await node.ChannelAsync(kind: ClientKind.McpAdapter);
-        Assert.Null((await human.Queue.PausePoolAsync(new QueueServicePausePoolRequest { Meta = Tasks.Meta(), All = true }, cancellationToken: Ct)).Error);
-        async Task<Id> CancelledAsync(SideEffectClass sideEffect)
+        var (request, stored, approvalId) = await node.Runtime.Processor.ExecuteAsync(command =>
         {
-            var spec = Tasks.Argv(node.Root, Tasks.TestLoad, "hold", "--hold-ms", "100");
-            spec.SideEffect = sideEffect;
-            var id = await Tasks.SubmitAsync(script, spec);
-            Assert.Equal(TaskState.Cancelled, (await script.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = id }, cancellationToken: Ct)).Value.State);
-            return id;
-        }
+            var transaction = command.Transaction;
+            var requester = new ActorRef { Origin = Origin.Agent, ClientKind = ClientKind.McpAdapter };
+            var task = LegacyTaskHistoryFixture.SeedQueued(transaction, requester);
+            transaction.Execute("UPDATE task SET state = $state, finished_at = $now WHERE task_id = $task;",
+                ("$state", (int)TaskState.Cancelled), ("$now", transaction.NowMicroseconds), ("$task", task.Value.ToByteArray()));
+            var retry = new TaskServiceRetryTaskRequest { Meta = Tasks.Meta(), TaskId = task };
+            var response = new TaskServiceRetryTaskResponse
+            {
+                Meta = new() { CorrelationId = retry.Meta.CorrelationId },
+                Value = new()
+                {
+                    Receipt = new Receipt { CommandId = retry.Meta.CommandId, Effect = EffectCertainty.Happened },
+                    State = TaskState.Queued,
+                    Warnings = { "The task's side effects are unknown: running it again may repeat external effects." },
+                },
+            };
+            var (approval, created, error) = Approvals.Raise(command, new ApprovalCapture
+            {
+                Operation = "TaskService.RetryTask",
+                MatrixOperation = PermissionMatrix.TaskRetry,
+                Summary = "retry task " + IdText.Format(task) + " (UNKNOWN)",
+                Risk = PermissionMatrix.Find(PermissionMatrix.TaskRetry)!.Risk,
+                Requester = requester,
+                CommandId = retry.Meta.CommandId.Value.ToByteArray(),
+                Request = retry.ToByteArray(),
+                RequestDigest = PayloadDigest.Compute(retry),
+                TargetKind = "task",
+                TargetId = task.Value.ToByteArray(),
+            }, Approvals.DefaultTtl);
+            Assert.True(created);
+            Assert.Null(error);
+            Assert.NotNull(approval);
+            Approvals.Decide(command, approval.Id, approve: true, new ActorRef { Origin = Origin.Human }, null);
+            Assert.Equal(ApprovalState.Executed, Approvals.Executed(command, approval.Id, response.ToByteArray(), null, PermissionMatrix.TaskRetry)?.State);
+            RetainCommand(transaction, "RetryTask", retry.Meta.CommandId, retry, response, Origin.Agent);
+            return (retry, response, approval.Id);
+        }, CommitDurability.Full).WaitAsync(Ct);
 
-        static TaskServiceRetryTaskRequest Retry(Id id) => new() { Meta = Tasks.Meta(), TaskId = id };
-        var unknown = await CancelledAsync(SideEffectClass.Unknown);
-        var sideEffecting = await CancelledAsync(SideEffectClass.SideEffecting);
-        var idempotent = await CancelledAsync(SideEffectClass.Idempotent);
-
-        var raised = (await agent.Tasks.RetryTaskAsync(Retry(unknown), cancellationToken: Ct)).Error;
-        Assert.Equal("approval_required", raised?.Code);
-        Assert.Equal("approval_required", (await agent.Tasks.RetryTaskAsync(Retry(sideEffecting), cancellationToken: Ct)).Error?.Code);
-        Assert.Null((await agent.Tasks.RetryTaskAsync(Retry(idempotent), cancellationToken: Ct)).Error);
-        Assert.Null((await script.Tasks.RetryTaskAsync(Retry(unknown), cancellationToken: Ct)).Error);
-        Assert.Null((await human.Tasks.RetryTaskAsync(Retry(sideEffecting), cancellationToken: Ct)).Error);
-        Assert.Equal((A, A, A), (PermissionMatrix.Decide(Origin.Human, PermissionMatrix.TaskRetry, []).Decision,
-            PermissionMatrix.Decide(Origin.Script, PermissionMatrix.TaskRetry, []).Decision, PermissionMatrix.Decide(Origin.Agent, PermissionMatrix.TaskRetry, []).Decision));
-
-        var audit = node.Runtime.Store.Read(reader => AuditLog.Recent(reader)).Where(entry => entry.Operation == PermissionMatrix.TaskRetry + " TaskService.RetryTask").ToList();
-        Assert.Equal(2, audit.Count(entry => entry.Decision == P && entry.Actor.Origin == Origin.Agent));
-        Assert.Contains(audit, entry => entry.Decision == A && entry.Actor.Origin == Origin.Agent && entry.Outcome.StartsWith("done: retry task", StringComparison.Ordinal));
-        Assert.Contains(audit, entry => entry.Decision == A && entry.Actor.Origin == Origin.Script);
-        Assert.Contains(audit, entry => entry.Decision == A && entry.Actor.Origin == Origin.Human);
+        Assert.Equal(stored, await agent.Tasks.RetryTaskAsync(request, cancellationToken: Ct));
+        var expiry = ExpireCommand(node, request.Meta.CommandId);
+        var retried = request.Clone();
+        retried.Meta.CorrelationId = CommandIds.New();
+        Assert.Equal(stored, await agent.Tasks.RetryTaskAsync(retried, cancellationToken: Ct));
+        retried.TaskId = CommandIds.New();
+        Assert.Equal("command_id_reused", (await agent.Tasks.RetryTaskAsync(retried, cancellationToken: Ct)).Error.Code);
+        var fresh = new TaskServiceRetryTaskRequest { Meta = Tasks.Meta(), TaskId = request.TaskId };
+        AssertLegacyTaskUnknown((await agent.Tasks.RetryTaskAsync(fresh, cancellationToken: Ct)).Error);
+        Assert.Equal(TaskState.Cancelled, (await Tasks.GetAsync(human, request.TaskId)).State);
+        node.Runtime.Store.Read(reader =>
+        {
+            Assert.Equal(0L, reader.Scalar("SELECT count(*) FROM attempt;"));
+            Assert.Equal(1L, reader.Scalar("SELECT count(*) FROM approval;"));
+            Assert.Equal(0L, reader.Scalar("SELECT count(*) FROM command_dedup WHERE command_id = $id;", ("$id", fresh.Meta.CommandId.Value.ToByteArray())));
+            Assert.Equal(expiry, reader.Scalar("SELECT expires_at FROM command_dedup WHERE command_id = $id;",
+                ("$id", request.Meta.CommandId.Value.ToByteArray())));
+            var approval = Approvals.Get(reader, approvalId)!;
+            Assert.Equal(ApprovalState.Executed, approval.State);
+            Assert.Equal(Origin.Agent, approval.View.Requester.Origin);
+            Assert.Equal(stored.ToByteArray(), approval.Outcome);
+            var audit = AuditLog.Recent(reader);
+            const string retryOperation = PermissionMatrix.TaskRetry + " TaskService.RetryTask";
+            var raised = Assert.Single(audit, entry => entry.Operation == retryOperation && entry.Decision == P);
+            Assert.Equal(("task", Origin.Agent, "approval requested: retry task " + IdText.Format(request.TaskId) + " (UNKNOWN)"),
+                (raised.TargetKind, raised.Actor.Origin, raised.Outcome));
+            Assert.Equal(request.TaskId.Value.ToByteArray(), raised.TargetId);
+            Assert.Equal(approvalId, raised.ApprovalId);
+            var executed = Assert.Single(audit, entry => entry.Operation == retryOperation && entry.Outcome == "executed after approval");
+            Assert.Equal(("approval", Origin.Agent), (executed.TargetKind, executed.Actor.Origin));
+            Assert.Equal(approvalId, executed.TargetId);
+            return 0;
+        });
     }
 
     /// <summary>
@@ -99,10 +138,10 @@ public sealed class GateAndReplayTests
         Assert.Empty((await human.Approvals.ListApprovalsAsync(new ApprovalServiceListApprovalsRequest { Meta = Tasks.Meta() }, cancellationToken: Ct)).Value.Approvals);
         Assert.Equal("approval_required", (await script.Queue.PausePoolAsync(new QueueServicePausePoolRequest { Meta = Tasks.Meta(), All = true }, cancellationToken: Ct)).Error?.Code);
 
-        // A task another owner's session owns, cancelled by a HUMAN; a SCRIPT cancel of it now changes nothing and raises no approval.
-        byte[] session = [];
-        node.Runtime.Store.Write(transaction => session = Sched.SeedSession(transaction));
-        var others = await Sched.SubmitAsSessionAsync(node, Tasks.Argv(node.Root, Tasks.TestLoad, "hold", "--hold-ms", "100"), session);
+        // A recovered task owned by a different session can still be cancelled; its subsequent cancel is a no-op.
+        var others = node.Runtime.Store.Write(transaction => LegacyTaskHistoryFixture.SeedQueued(transaction,
+            new ActorRef { Origin = Origin.Agent, ClientKind = ClientKind.McpAdapter, SessionId = new Id { Value = ByteString.CopyFrom(Sched.SeedSession(transaction)) } }),
+            CommitDurability.Full);
         Assert.Equal(TaskState.Cancelled, (await human.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = others }, cancellationToken: Ct)).Value.State);
         var before = (await human.Approvals.ListApprovalsAsync(new ApprovalServiceListApprovalsRequest { Meta = Tasks.Meta() }, cancellationToken: Ct)).Value.Approvals.Count;
         var noOp = await script.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = others }, cancellationToken: Ct);
@@ -240,50 +279,140 @@ public sealed class GateAndReplayTests
     }
 
     /// <summary>
-    /// 11 section 1, "Submit task (own)": an AGENT submission whose command line matches none of <c>agents.allowed_command_patterns</c> is
-    /// <c>AUTHORIZATION/command_pattern_denied</c> (audited); a matching one is accepted; SCRIPT and HUMAN callers are not filtered; the
-    /// default (<c>[".*"]</c>) allows every command.
+    /// A historical routed Submit receipt is bound to its requester class and digest. Expiry does not admit another Task or replace that receipt.
     /// </summary>
     [Fact(Timeout = 120_000)]
-    public async Task AgentSubmissionsFollowTheAllowedCommandPatterns()
+    public async Task ARoutedSubmitReceiptRequiresOwnershipAndExpiryDoesNotAdmitWork()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         await using var node = await InProcessNode.Create().StartAsync();
-        Assert.SkipWhen(node.Runtime.Execution is null, "The node has no execution supervisor.");
         await using var human = await node.ChannelAsync(helloAsHuman: true);
         await using var script = await node.ChannelAsync();
         await using var agent = await node.ChannelAsync(kind: ClientKind.McpAdapter);
-        Assert.Null((await human.Queue.PausePoolAsync(new QueueServicePausePoolRequest { Meta = Tasks.Meta(), All = true }, cancellationToken: Ct)).Error);
-        Assert.True(node.Runtime.Execution!.Settings.AgentCommandAllowed("anything at all\nover two lines"), "The default allows every command.");
-        var hold = Tasks.Argv(node.Root, Tasks.TestLoad, "hold", "--hold-ms", "100");
-        var other = Tasks.Argv(node.Root, Tasks.TestLoad, "signal", "--hold-ms", "100");
-
-        // A local AGENT submits nothing (AD-0021 section 5): the agent's submissions arrive relayed through the center from this node, where
-        // the patterns narrow it (AF-CTR-05 decisions B-4, SEC-10).
-        Assert.Equal("local_submission_human_only", (await Tasks.SubmitRawAsync(agent, other)).Error?.Details.State.Reason);
-        var routed = new RoutedCalls(node);
-        var relayedAgent = routed.Relay(Origin.Agent);
-        async Task<(ArcForges.Node.CloudLink.RoutedAnswer? Answer, TaskServiceSubmitTaskResponse? Response)> AgentSubmitAsync(TaskSpec spec) =>
-            await routed.SubmitAsync(relayedAgent, new TaskServiceSubmitTaskRequest { Meta = Tasks.Meta(), Spec = spec });
-        Assert.Null((await AgentSubmitAsync(other)).Response?.Error);
-
-        Assert.Null((await Sched.ChangePolicyAsync(human, policy =>
+        const string program = "historical-fixture-never-starts";
+        var spec = new TaskSpec
         {
-            policy.Agents.AllowedCommandPatterns.Clear();
-            policy.Agents.AllowedCommandPatterns.Add(".*arcforges-testload(\\.exe)? hold .*");
-        })).Error);
-        await Tasks.WaitForAsync(() => node.Runtime.Execution.Settings.AgentCommandPatterns is not null, TimeSpan.FromSeconds(30), "the policy to take effect");
-        var denied = (await AgentSubmitAsync(other)).Answer!;
-        Assert.Equal(ArcForges.Contracts.Relay.V1.RoutedOutcome.RefusedByPolicy, denied.Outcome);
-        Assert.Equal(("command_pattern_denied", ErrorCategory.Authorization, "agents.allowed_command_patterns", PermissionMatrix.TaskSubmit),
-            (denied.Error?.Code, denied.Error?.Category ?? ErrorCategory.Unspecified, denied.Error?.Details.State.Reason, denied.Error?.Details.State.State));
-        Assert.Null((await AgentSubmitAsync(hold)).Response?.Error);
-        Assert.Null((await Tasks.SubmitRawAsync(script, other)).Error);
-        Assert.Null((await Tasks.SubmitRawAsync(human, other)).Error);
-        // The audited actor is the routed caller: REMOTE, with the center caller whose local origin is AGENT (N2a review N-3: the whole actor).
-        Assert.Contains(node.Runtime.Store.Read(reader => AuditLog.Recent(reader)), entry => entry.Operation == PermissionMatrix.TaskSubmit + " TaskService.SubmitTask"
-            && entry.Decision == D && entry.Actor.Origin == Origin.Remote && entry.Actor.ClientKind == ClientKind.Unspecified
-            && entry.Actor.CenterCaller is { LocalOrigin: Origin.Agent } center && center.Equals(relayedAgent));
+            Kind = TaskKind.Command,
+            Title = "historical routed submit",
+            WorkingDirectory = node.Root,
+            Command = new CommandSpec { Argv = new ArgvCommand { Argv = { program } } },
+        };
+        Assert.Equal("local_submission_human_only", (await Tasks.SubmitRawAsync(agent, spec)).Error?.Details.State.Reason);
+        AssertLegacyTaskUnknown((await Tasks.SubmitRawAsync(script, spec)).Error);
+        AssertLegacyTaskUnknown((await Tasks.SubmitRawAsync(human, spec)).Error);
+
+        var routed = new RoutedCalls(node);
+        var owner = RoutedCalls.Session();
+        var relayedAgent = routed.Relay(Origin.Agent);
+        var request = new TaskServiceSubmitTaskRequest { Meta = Tasks.Meta(), Spec = spec };
+        var commandId = request.Meta.CommandId.Value.ToByteArray();
+        var stored = node.Runtime.Store.Write(transaction =>
+        {
+            var actor = new ActorRef { Origin = Origin.Remote, CenterCaller = owner, RemoteCommandId = request.Meta.CommandId };
+            var taskId = LegacyTaskHistoryFixture.SeedQueued(transaction, actor);
+            var storedSpec = spec.ToByteArray();
+            transaction.Execute("""
+                UPDATE task SET remote_command_id = $command, spec = $spec, spec_digest = $specDigest, title = $title,
+                                command_summary = $summary, command_fingerprint = $fingerprint, command_digest = $commandDigest
+                WHERE task_id = $task;
+                """, ("$command", commandId), ("$spec", storedSpec), ("$specDigest", SHA256.HashData(storedSpec)),
+                ("$title", spec.Title), ("$summary", program), ("$fingerprint", CommandText.Fingerprint(spec.Command)),
+                ("$commandDigest", CommandText.Digest(spec, [])), ("$task", taskId.Value.ToByteArray()));
+            var task = TaskRecords.GetTask(transaction, taskId.Value.Span, full: true);
+            Assert.NotNull(task);
+            Assert.Equal(spec, task.Spec);
+            Assert.NotNull(task.Queue);
+            var response = new TaskServiceSubmitTaskResponse
+            {
+                Meta = new() { CorrelationId = request.Meta.CorrelationId },
+                Value = new()
+                {
+                    Receipt = new Receipt { CommandId = request.Meta.CommandId, Effect = EffectCertainty.Happened },
+                    State = task.State,
+                    TaskId = task.TaskId,
+                    Queue = task.Queue,
+                },
+            };
+            RetainCommand(transaction, "SubmitTask", request.Meta.CommandId, request, response, Origin.Remote);
+            RoutedCommandOwnership.Record(transaction, commandId, actor);
+            return response;
+        }, CommitDurability.Full);
+
+        var sameOwner = (await routed.SubmitAsync(RoutedCalls.Session(), request)).Answer;
+        Assert.NotNull(sameOwner);
+        Assert.Equal(RoutedOutcome.Executed, sameOwner.Outcome);
+        Assert.Equal(ByteString.CopyFrom(stored.ToByteArray()), sameOwner.Response);
+        var changed = request.Clone();
+        changed.Spec.Title = "different request";
+        Assert.Equal("command_id_reused", (await routed.SubmitAsync(owner, changed)).Response?.Error?.Code);
+        Assert.Equal("command_id_reused", (await routed.SubmitAsync(relayedAgent, request)).Response?.Error?.Code);
+
+        var expiry = ExpireCommand(node, request.Meta.CommandId);
+        AssertLegacyTaskUnknown((await routed.SubmitAsync(owner, request)).Response?.Error);
+        AssertLegacyTaskUnknown((await routed.SubmitAsync(relayedAgent, request)).Response?.Error);
+        var fresh = new TaskServiceSubmitTaskRequest { Meta = Tasks.Meta(), Spec = spec };
+        AssertLegacyTaskUnknown((await routed.SubmitAsync(relayedAgent, fresh)).Response?.Error);
+
+        Assert.Null((await Sched.ChangePolicyAsync(human, policy => policy.Permissions.Add(new PermissionOverride
+        {
+            Operation = PermissionMatrix.TaskSubmit,
+            Origin = Origin.Remote,
+            Decision = D,
+        }))).Error);
+        var denial = (await routed.SubmitAsync(relayedAgent, fresh)).Answer;
+        Assert.NotNull(denial);
+        Assert.NotNull(denial.Error);
+        Assert.Equal(RoutedOutcome.RefusedByPolicy, denial.Outcome);
+        Assert.Equal(("permission_denied", ErrorCategory.Authorization, "permission_override", PermissionMatrix.TaskSubmit),
+            (denial.Error.Code, denial.Error.Category, denial.Error.Details.State.Reason, denial.Error.Details.State.State));
+        node.Runtime.Store.Read(reader =>
+        {
+            Assert.Equal(1L, reader.Scalar("SELECT count(*) FROM task WHERE remote_command_id = $id;", ("$id", commandId)));
+            Assert.Equal(1L, reader.Scalar("SELECT count(*) FROM task;"));
+            Assert.Equal(0L, reader.Scalar("SELECT count(*) FROM attempt;"));
+            Assert.Equal(0L, reader.Scalar("SELECT count(*) FROM approval;"));
+            Assert.Equal(0L, reader.Scalar("SELECT count(*) FROM command_dedup WHERE command_id = $id;", ("$id", fresh.Meta.CommandId.Value.ToByteArray())));
+            Assert.Equal(stored.ToByteArray(), reader.Scalar("SELECT outcome FROM command_dedup WHERE command_id = $id;", ("$id", commandId)) as byte[]);
+            Assert.Equal(expiry, reader.Scalar("SELECT expires_at FROM command_dedup WHERE command_id = $id;", ("$id", commandId)));
+            var audit = AuditLog.Recent(reader);
+            var marker = Assert.Single(audit, entry => entry.TargetKind == RoutedCommandOwnership.TargetKind
+                && entry.Actor.RemoteCommandId?.Equals(request.Meta.CommandId) == true);
+            Assert.Equal(("routed.command.outcome", "routed command outcome recorded", Origin.Remote),
+                (marker.Operation, marker.Outcome, marker.Actor.Origin));
+            Assert.Equal(owner, marker.Actor.CenterCaller);
+            Assert.Null(marker.TargetId);
+            var refused = Assert.Single(audit, entry => entry.Operation == PermissionMatrix.TaskSubmit + " FleetService.SubmitTask"
+                && entry.Decision == D && entry.Actor.RemoteCommandId?.Equals(fresh.Meta.CommandId) == true);
+            Assert.Equal(("denied: permission_override", Origin.Remote, ClientKind.Unspecified),
+                (refused.Outcome, refused.Actor.Origin, refused.Actor.ClientKind));
+            Assert.Equal(relayedAgent, refused.Actor.CenterCaller);
+            Assert.Equal("task", refused.TargetKind);
+            Assert.Null(refused.TargetId);
+            return 0;
+        });
+    }
+
+    private static void RetainCommand(StoreTransaction transaction, string method, Id id, IMessage request, IMessage outcome, Origin origin)
+    {
+        Assert.Equal(DedupStatus.Execute, CommandDeduplication.Begin(transaction, id.Value.Span,
+            "arcforges.node.v1.TaskService/" + method, PayloadDigest.Compute(request), origin).Status);
+        CommandDeduplication.Complete(transaction, id.Value.Span, outcome.ToByteArray());
+    }
+
+    private static long ExpireCommand(InProcessNode node, Id commandId) => node.Runtime.Store.Write(transaction =>
+    {
+        var expiry = transaction.NowMicroseconds - 1;
+        Assert.Equal(1, transaction.Execute("UPDATE command_dedup SET expires_at = $expires WHERE command_id = $id;",
+            ("$expires", expiry), ("$id", commandId.Value.ToByteArray())));
+        return expiry;
+    }, CommitDurability.Full);
+
+    private static void AssertLegacyTaskUnknown(ArcError? error)
+    {
+        Assert.NotNull(error);
+        Assert.Equal((ErrorCategory.Execution, "operation_failed", "LEGACY_DRAIN", "legacy_task_outcome_unavailable",
+                EffectCertainty.Unknown, RetryMode.Never),
+            (error.Category, error.Code, error.Details.State.State, error.Details.State.Reason, error.Effect, error.Retry.Mode));
     }
 
     /// <summary>

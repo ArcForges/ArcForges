@@ -2,14 +2,11 @@
 using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Globalization;
-using System.Security.Cryptography;
-using System.Text;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Node.Platform;
 using ArcForges.Node.Store;
-using Google.Protobuf;
 
 namespace ArcForges.Node.Core.Execution;
 
@@ -20,33 +17,7 @@ namespace ArcForges.Node.Core.Execution;
 public sealed record AdoptedTask(byte[] TaskId, byte[] AttemptId, IAdoptedContainer Container);
 
 /// <summary>
-/// A process the platform placed in an adoption container (<see cref="Adoptions.Prepare"/>, outside the store writer), not yet recorded
-/// (<see cref="Adoptions.Record"/>).
-/// </summary>
-/// <param name="TaskId">The ADOPTED task to record.</param>
-/// <param name="AttemptId">Its ADOPTED attempt.</param>
-/// <param name="Pid">The process.</param>
-/// <param name="Start">Its start time.</param>
-/// <param name="Title">The title, or <see langword="null"/>.</param>
-/// <param name="Pool">The pool.</param>
-/// <param name="Result">What the platform did.</param>
-public sealed record PreparedAdoption(byte[] TaskId, byte[] AttemptId, int Pid, DateTimeOffset Start, string? Title, string Pool, AdoptionResult Result);
-
-/// <summary>What <see cref="Adoptions.Record"/> recorded.</summary>
-/// <param name="TaskId">The new ADOPTED task.</param>
-/// <param name="AdoptedChildren">Children placed individually.</param>
-/// <param name="FailedChildren">Children that could not be placed.</param>
-public sealed record AdoptionOutcome(byte[] TaskId, int AdoptedChildren, int FailedChildren);
-
-/// <summary>
-/// Adoption (04 section 10; R-RES-013): an existing same-user process, and the children it has at that moment (each individually, best effort,
-/// with each result recorded), is placed in an adoption container by the platform, and a synthetic task (<c>kind=ADOPTED</c>) with one
-/// ADOPTED attempt records it, so the process appears in every surface: the task lists, <c>ListProcesses</c> (label ADOPTED) and the process
-/// controls. Adoption is explicit and HUMAN-only (11 section 1). An adopted task is never admitted, queued, preempted, paused or retried:
-/// it is RUNNING from adoption until its container is empty. A container that empties by itself ends the task LOST ("no exit status: the
-/// node is not the adopted process's parent"); <c>CancelTask</c> terminates the container and ends it CANCELLED. After a node restart the
-/// container is re-opened by name; one the node cannot re-open (a Windows adoption job has no holder, L-14) follows the SM-TASK recovery rule
-/// "container missing -> LOST".
+/// Recovers and drains already recorded adopted processes. A retained container can be inspected or cancelled until it empties.
 /// </summary>
 public sealed class Adoptions : IDisposable
 {
@@ -77,109 +48,6 @@ public sealed class Adoptions : IDisposable
 
     /// <summary>The adoption containers tracked now.</summary>
     public IReadOnlyCollection<AdoptedTask> Tracked => [.. _tracked.Values];
-
-    /// <summary>
-    /// Places the process in an adoption container through the platform, outside the store writer (review round 1: a D-Bus call and a job wait
-    /// of up to 10 s never hold the single writer). The caller records the result with <see cref="Record"/> in a command, or releases it with
-    /// <see cref="Release"/> when it is not recorded.
-    /// </summary>
-    /// <exception cref="AdoptionRefusedException">The platform refused (not found, another user, already managed, or the OS refused).</exception>
-    public PreparedAdoption Prepare(int pid, DateTimeOffset start, string? title, string pool)
-    {
-        var platform = _execution.Platform ?? throw new AdoptionRefusedException("no execution platform could be started on this node (see the node log)");
-        if (_execution.RunningAttempts.Any(attempt => attempt.Handle?.Usage(null).Pids.Contains(pid) == true)
-            || _tracked.Values.Any(adopted => adopted.Container.Processes().Contains(pid)))
-        {
-            throw new AdoptionRefusedException("the process is already managed by this node") { AlreadyManaged = true };
-        }
-
-        var taskId = StoreIds.NewUuid7(_store.Clock);
-        var attemptId = StoreIds.NewUuid7(_store.Clock);
-        var result = platform.Adopt(new AdoptionRequest(_execution.NodeName, IdText.Format(attemptId), pid, start));
-        return new PreparedAdoption(taskId, attemptId, pid, start, title, pool, result);
-    }
-
-    /// <summary>
-    /// Gives up a prepared adoption that was not recorded (review round 2): nothing is terminated; on Linux the scope is abandoned, on Windows
-    /// the processes stay in the jobs they cannot leave. Returns what became of the processes.
-    /// </summary>
-    public static string Release(PreparedAdoption prepared)
-    {
-        ArgumentNullException.ThrowIfNull(prepared);
-        try
-        {
-            return prepared.Result.Container.Abandon();
-        }
-        finally
-        {
-            prepared.Result.Container.Dispose();
-        }
-    }
-
-    /// <summary>Records a prepared adoption's ADOPTED task and attempt (in the writer's command) and starts tracking its container.</summary>
-    public AdoptionOutcome Record(CommandContext context, PreparedAdoption prepared, ActorRef owner)
-    {
-        ArgumentNullException.ThrowIfNull(context);
-        ArgumentNullException.ThrowIfNull(prepared);
-        ArgumentNullException.ThrowIfNull(owner);
-        var (taskId, attemptId, pid, start, title, pool, result) = prepared;
-        var name = IdText.Format(attemptId);
-        var transaction = context.Transaction;
-        try
-        {
-            var image = result.Image;
-            var summary = Path.GetFileName(image) is { Length: > 0 } file ? file : image;
-            var spec = new TaskSpec
-            {
-                Kind = TaskKind.Adopted,
-                Title = Truncate(title is { Length: > 0 } ? title : "adopted " + summary, 200),
-                Pool = pool,
-                Command = new CommandSpec { Argv = new ArgvCommand { Argv = { image } } },
-            };
-            var specBytes = spec.ToByteArray();
-            var now = transaction.NowMicroseconds;
-            var digest = SHA256.HashData(Encoding.UTF8.GetBytes("adopted\n" + pid.ToString(CultureInfo.InvariantCulture) + "\n" + StoreTime.ToMicroseconds(start)));
-            transaction.Execute(
-                """
-                INSERT INTO task (task_id, state, state_reason, kind, title, command_summary, spec, env_digest, spec_digest, owner, owner_origin, owner_session_id,
-                                  workspace_id, pool, priority, effective_priority, side_effect, side_effect_source, command_fingerprint, command_digest, created_at,
-                                  queued_at, started_at, current_attempt_id, attempt_count, pinned, labels_json, rev)
-                VALUES ($id, 4, 'adopted', 3, $title, $summary, $spec, NULL, $specDigest, $owner, $origin, NULL, NULL, $pool, 3, 3, 4, 1, $fingerprint, $digest,
-                        $now, NULL, $now, $attempt, 1, 0, '{}', 0);
-                """,
-                ("$id", taskId), ("$title", spec.Title), ("$summary", Truncate(image, 500)), ("$spec", specBytes), ("$specDigest", SHA256.HashData(specBytes)),
-                ("$owner", owner.ToByteArray()), ("$origin", (int)owner.Origin), ("$pool", pool), ("$fingerprint", "adopted:" + summary), ("$digest", digest),
-                ("$now", now), ("$attempt", attemptId));
-            transaction.Execute(
-                """
-                INSERT INTO attempt (attempt_id, task_id, number, kind, state, executor_node_id, container_name, root_pid, root_start, boot_identity,
-                                     request_cpu_millicores, request_mem_expected_bytes, request_mem_ceiling_bytes, request_source, accounted_mem_bytes,
-                                     unenforced, created_at, started_at, detail, rev)
-                VALUES ($id, $task, 1, 4, 4, $node, $container, $pid, $start, $boot, 1, 1, 0, 4, 1, 0, $now, $now, $detail, 0);
-                """,
-                ("$id", attemptId), ("$task", taskId), ("$node", _store.Metadata.NodeId.ToArray()), ("$container", result.Container.ContainerName),
-                ("$pid", pid), ("$start", StoreTime.ToMicroseconds(start)), ("$boot", _store.Metadata.BootIdentity), ("$now", now),
-                ("$detail", Truncate(result.ChildResults.Count == 0 ? "adopted (no children at adoption time)" : "children at adoption: " + string.Join("; ", result.ChildResults), 500)));
-            transaction.Execute(
-                """
-                INSERT INTO process_record (attempt_id, pid, start_at, parent_pid, executable, arguments_redacted, first_seen, last_seen, mem_peak_bytes, label)
-                VALUES ($attempt, $pid, $start, NULL, $image, NULL, $now, $now, 0, $label);
-                """,
-                ("$attempt", attemptId), ("$pid", pid), ("$start", StoreTime.ToMicroseconds(start)), ("$image", image), ("$now", now), ("$label", (int)ProcessLabel.Adopted));
-            _execution.EmitTask(context, taskId, null);
-            context.Emit(EventTopic.Tasks, new NodeEvent { Attempt = new AttemptChanged { Attempt = TaskRecords.GetAttempt(transaction, attemptId) } });
-        }
-        catch
-        {
-            // The record could not be written: the caller releases the container (Release), and reports what became of the processes.
-            throw;
-        }
-
-        _tracked[name] = new AdoptedTask(taskId, attemptId, result.Container);
-        _log.Info("execution.adopted", new LogField("task", IdText.Format(taskId)), new LogField("pid", pid), new LogField("container", result.Container.ContainerName),
-            new LogField("children", result.AdoptedChildren), new LogField("childrenFailed", result.FailedChildren));
-        return new AdoptionOutcome(taskId, result.AdoptedChildren, result.FailedChildren);
-    }
 
     /// <summary>
     /// Cancels an ADOPTED task (in the writer's command): its container is terminated, and the task ends CANCELLED once the container is empty.
@@ -218,13 +86,17 @@ public sealed class Adoptions : IDisposable
         return TaskState.Running;
     }
 
-    /// <summary>Re-opens the containers of the ADOPTED attempts the store records as live (node start), or records them LOST.</summary>
-    internal async Task RecoverAsync(bool bootChanged)
+    /// <summary>Re-opens local live ADOPTED attempts or records authoritative absence. Unavailable custody leaves the attempt live.</summary>
+    internal async Task RecoverAsync()
     {
         var live = _store.Read(reader =>
         {
             var rows = new List<(byte[] Attempt, byte[] Task, string? Container, int State, string? Boot)>();
-            using var command = reader.CreateCommand("SELECT attempt_id, task_id, container_name, state, boot_identity FROM attempt WHERE kind = 4 AND state BETWEEN 1 AND 8;");
+            using var command = reader.CreateCommand("""
+                SELECT attempt_id, task_id, container_name, state, boot_identity FROM attempt
+                WHERE kind = 4 AND state BETWEEN 1 AND 8
+                  AND executor_node_id = (SELECT node_id FROM store_meta WHERE singleton = 1);
+                """);
             using var result = command.ExecuteReader();
             while (result.Read())
             {
@@ -239,17 +111,37 @@ public sealed class Adoptions : IDisposable
             var name = IdText.Format(row.Attempt);
             IAdoptedContainer? container = null;
             string? why = null;
-            if (bootChanged && !string.Equals(row.Boot, _store.Metadata.BootIdentity, StringComparison.Ordinal))
+            var originalBoot = _execution.OriginalBoot(row.Boot);
+            if (originalBoot == ExecutionSupervisor.LegacyBootProof.EndedOnThisHost)
             {
                 why = "boot_changed: the machine restarted since the process was adopted";
             }
-            else if (row.Container is null || _execution.Platform?.ReopenAdopted(row.Container) is not { } reopened)
-            {
-                why = ContainerMissing + ": the adoption container " + (row.Container ?? "(none)") + " could not be re-opened after the node restarted";
-            }
             else
             {
-                container = reopened;
+                if (string.IsNullOrWhiteSpace(row.Container))
+                {
+                    throw new LegacyCustodyUnavailableException("The live adopted attempt has no recorded scope identity.");
+                }
+
+                try
+                {
+                    var platform = _execution.Platform ?? throw new LegacyCustodyUnavailableException("The legacy execution platform is unavailable.");
+                    container = platform.ReopenAdopted(row.Container);
+                }
+                catch (Exception exception) when (exception is Win32Exception or IOException or TimeoutException or InvalidOperationException or UnauthorizedAccessException)
+                {
+                    _log.Warning("execution.adopted.reopen_failed", new LogField("attempt", name),
+                        new LogField("errorType", exception.GetType().Name),
+                        new LogField("error", exception is Win32Exception native ? native.NativeErrorCode : NodeLog.OneLine(exception.Message)));
+                    throw new LegacyCustodyUnavailableException("Legacy adoption custody could not be confirmed.", exception);
+                }
+
+                if (container is null && originalBoot != ExecutionSupervisor.LegacyBootProof.Current)
+                {
+                    throw new LegacyCustodyUnavailableException("The original adoption's boot could not be authenticated on this host.");
+                }
+
+                why = ContainerMissing + ": the adoption container " + row.Container + " no longer exists";
             }
 
             if (container is null)
@@ -283,6 +175,7 @@ public sealed class Adoptions : IDisposable
         }
 
         _tracked.Clear();
+        _cancelled.Clear();
     }
 
     private void Poll()

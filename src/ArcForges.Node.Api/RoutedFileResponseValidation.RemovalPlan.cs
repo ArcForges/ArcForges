@@ -20,6 +20,11 @@ internal static partial class RoutedFileResponseValidation
         FileServicePlanRemovalResponse inner;
         try { inner = FileServicePlanRemovalResponse.Parser.ParseFrom(value.Response); }
         catch (InvalidProtocolBufferException) { return false; }
+        return RemovalPlanOutcome(inner, request);
+    }
+
+    internal static bool RemovalPlanOutcome(FileServicePlanRemovalResponse inner, FileServicePlanRemovalRequest request)
+    {
         if (!NodeShapes.IsValid(inner) || !FileMetaMatches(inner.Meta, request.Meta, inner.Error) || !ValidRemovalPlanAudit(inner.Audit))
             return false;
         if (inner.Error is { } error) return RemovalPlanError(error, request);

@@ -227,7 +227,8 @@ public sealed partial class MxcRunServiceTests
         var resumed = await ReadWatchAsync(slow.ResponseStream, run, StreamKind.Stdout, first.NextOffset, gaps);
         var firstBlocked = gaps.FirstOrDefault(gap => gap.Reason == "slow_consumer");
         Assert.NotNull(firstBlocked);
-        Assert.InRange(firstBlocked.RequestedOffset, first.NextOffset, (ulong)(anchor.Length + prefix));
+        // ReadWatchAsync checks every gap against the actual cursor advanced by the delivered frames.
+        Assert.InRange(firstBlocked.RequestedOffset, first.NextOffset, firstBlocked.EarliestOffset - 1);
         Assert.Equal(produced, resumed.Offset);
 
         var fresh = await WatchAsync(installed.Runs, run, StreamKind.Stdout);

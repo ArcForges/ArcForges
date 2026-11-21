@@ -193,10 +193,8 @@ public sealed class PreparedSubmitStorage
 public readonly record struct CallerKey(int ProcessId, long StartTicks);
 
 /// <summary>
-/// The execution supervisor (architecture 02 section 1; 04): admission (03 section 4, in <c>ExecutionSupervisor.Scheduling.cs</c>), launch
-/// through the platform, the enforcement loop (output tailer and index, the output limit, timeouts and CPU-time limits, service readiness,
-/// the cancellation sequence, exit detection and the node heartbeat), finalization from the durable exit records with the automatic
-/// retries of AD-0006 section 4, recovery after a node restart or a machine reboot (LOST), and <c>cancel_when_caller_gone</c>.
+/// Recovers and drains existing legacy Task attempts. The supervisor enforces output and time limits, observes readiness and exit,
+/// processes cancellation and caller loss, and records final outcomes from durable evidence.
 /// </summary>
 public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDisposable, IPressureResponse
 {
@@ -238,7 +236,6 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
     private readonly string _dataRoot;
     private readonly TaskSecrets _secrets;
     private readonly Task _keysReady;
-    private readonly ILaunchStepProvider? _steps;
     private readonly ExecutionFaults _faults;
     private readonly Action<IAttemptHandle>? _forcedBeforeStart;
     private readonly Action<IAttemptHandle, bool>? _startObserved;
@@ -247,8 +244,6 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
     private readonly ConcurrentDictionary<string, AsyncPulse> _taskPulses = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, CallerKey> _bindings = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<CallerKey, int> _callerConnections = new();
-    private readonly AsyncPulse _admission = new();
-    private int _kicked;
     private readonly AsyncPulse _loopWake = new();
     private readonly CancellationTokenSource _stop = new();
 
@@ -257,10 +252,8 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
     private readonly HeartbeatMonitor _tailerMonitor;
     private ExecutionSettings _settings;
     private Thread? _loop;
-    private Task _admissionLoop = Task.CompletedTask;
     private long _lastSettingsRead;
     private readonly Lock _settingsLock = new();
-    private int _launching;
     private readonly Lock _preemptGate = new();
     private readonly CriticalShedding _shedding = new();
     private RunningAttempt? _lastVictim;
@@ -279,7 +272,6 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         Platform = options.Platform;
         _secrets = options.Secrets;
         _keysReady = options.KeysReady;
-        _steps = options.Steps;
         _faults = options.Faults;
         _forcedBeforeStart = options.ForcedBeforeStart;
         _startObserved = options.StartObserved;
@@ -388,6 +380,25 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
     {
         ArgumentNullException.ThrowIfNull(report);
         var live = _store.Read(TaskRecords.LiveAttempts);
+        try
+        {
+            await RecoverAttemptsAsync(live, cancellationToken).ConfigureAwait(false);
+            await Adoptions.RecoverAsync().ConfigureAwait(false);
+        }
+        catch (LegacyCustodyUnavailableException)
+        {
+            // A failed recovery is not an intentional Node stop. Release any handles already reopened without signalling their processes.
+            ReleaseAttemptHandles();
+            Adoptions.Dispose();
+            throw;
+        }
+
+        AcknowledgeRecordedAttempts(live);
+        Heartbeat.RecoveryDone = true;
+    }
+
+    private async Task RecoverAttemptsAsync(List<AttemptRow> live, CancellationToken cancellationToken)
+    {
         var gapStart = _store.Read(reader => reader.Scalar("SELECT max(at) FROM event_journal WHERE generation < (SELECT journal_generation FROM store_meta);") as long?);
         foreach (var row in live)
         {
@@ -395,7 +406,8 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             var name = IdText.Format(row.AttemptId);
             var files = new AttemptFiles(_dataRoot, name);
             var task = _store.Read(reader => TaskRecords.GetRow(reader, row.TaskId));
-            if (report.BootChanged && !string.Equals(row.BootIdentity, _store.Metadata.BootIdentity, StringComparison.Ordinal))
+            var originalBoot = OriginalBoot(row.BootIdentity);
+            if (originalBoot == LegacyBootProof.EndedOnThisHost)
             {
                 await RecordLostAsync(row, $"boot_changed: boot_id_old={row.BootIdentity}, boot_id_new={_store.Metadata.BootIdentity}", "boot_changed").ConfigureAwait(false);
                 continue;
@@ -408,24 +420,45 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             // later watches such a launch, TerminateEachLaunchProcess).
             var stopping = row.State is AttemptState.Stopping or AttemptState.Finalizing;
             IAttemptHandle? handle = null;
+            Exception? custodyError = null;
             try
             {
-                handle = Platform?.Reopen(NodeName, files, root, stopping);
+                if (OperatingSystem.IsLinux() && row.ContainerName?.StartsWith("pgid:", StringComparison.Ordinal) == true)
+                {
+                    throw new LegacyCustodyUnavailableException("The retired direct-process scope cannot be reopened through systemd.");
+                }
+
+                var platform = Platform ?? throw new LegacyCustodyUnavailableException("The legacy execution platform is unavailable.");
+                handle = platform.Reopen(NodeName, files, root, stopping);
             }
-            catch (Win32Exception exception)
+            catch (Exception exception) when (exception is Win32Exception or IOException or TimeoutException or InvalidOperationException or UnauthorizedAccessException)
             {
-                _log.Warning("execution.recover.reopen_failed", new LogField("attempt", name), new LogField("error", exception.NativeErrorCode));
-            }
-            catch (Exception exception) when (exception is IOException or TimeoutException or InvalidOperationException)
-            {
-                // Linux: the user manager did not answer; without a container the exit record (if any) still finalizes the attempt.
+                custodyError = exception;
                 _log.Warning("execution.recover.reopen_failed", new LogField("attempt", name), new LogField("errorType", exception.GetType().Name),
-                    new LogField("error", NodeLog.OneLine(exception.Message)));
+                    new LogField("error", exception is Win32Exception native ? native.NativeErrorCode : NodeLog.OneLine(exception.Message)));
+            }
+
+            var recoveredExit = handle is null ? ReadRecoveryExit(files) : null;
+            if (handle is null && recoveredExit is null)
+            {
+                if (custodyError is not null)
+                {
+                    throw new LegacyCustodyUnavailableException("Legacy attempt custody could not be confirmed.", custodyError);
+                }
+
+                if (originalBoot != LegacyBootProof.Current)
+                {
+                    throw new LegacyCustodyUnavailableException("The original attempt's boot could not be authenticated on this host.");
+                }
+
+                await RecordLostAsync(row, "container_missing: the attempt's original container no longer exists and no valid exit record was found", "container_missing").ConfigureAwait(false);
+                continue;
             }
 
             var running = new RunningAttempt(row.AttemptId, row.TaskId, name, row.Number, files)
             {
                 Handle = handle,
+                RecoveredExit = recoveredExit,
                 NodeGap = true,
                 ApproximateNext = true,
                 RootRecorded = row.RootPid is not null,
@@ -477,13 +510,6 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
                 running.StartedTimestamp = _clock.GetTimestamp() - (long)(Math.Max(0, elapsed.TotalSeconds) * TimeProvider.System.TimestampFrequency);
             }
 
-            if (handle is null && !File.Exists(files.ExitPath))
-            {
-                running.Dispose();
-                await RecordLostAsync(row, "container_missing: the attempt's job no longer exists and no exit record was written", "container_missing").ConfigureAwait(false);
-                continue;
-            }
-
             if (stopping)
             {
                 // The node was stopping it: the stop continues (forced, since the graceful phase cannot be resumed). The node may have
@@ -514,20 +540,67 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             _log.Info("execution.recovered", new LogField("attempt", name), new LogField("container", handle?.ContainerName ?? "-"),
                 new LogField("exitRecorded", File.Exists(files.ExitPath)), new LogField("portReassociated", handle is not null));
         }
+    }
 
-        AcknowledgeRecordedAttempts(live);
-        await Adoptions.RecoverAsync(report.BootChanged).ConfigureAwait(false);
-        Heartbeat.RecoveryDone = true;
+    private static ExitRecord? ReadRecoveryExit(AttemptFiles files) => HelperFiles.TryRead(files.ExitPath, json =>
+    {
+        using var document = JsonDocument.Parse(json);
+        var record = document.RootElement;
+        // Recovery without a handle needs an actual same-attempt receipt, not defaults from missing JSON fields.
+        return record.ValueKind == JsonValueKind.Object
+            && record.TryGetProperty("schema", out var schema) && schema.ValueKind == JsonValueKind.Number
+            && schema.TryGetInt32(out var version) && version == 1
+            && record.TryGetProperty("attempt_id", out var id) && id.ValueKind == JsonValueKind.String && id.ValueEquals(files.AttemptName)
+            && record.TryGetProperty("exit_code_kind", out var kind) && kind.ValueKind == JsonValueKind.String
+            && (kind.ValueEquals("exited") || kind.ValueEquals("killed") || kind.ValueEquals("dumped"))
+            && record.TryGetProperty("exit_status", out var status) && status.ValueKind == JsonValueKind.Number && status.TryGetInt32(out _)
+            && record.TryGetProperty("service_result", out var result) && result is { ValueKind: JsonValueKind.String } && !string.IsNullOrEmpty(result.GetString())
+            && record.TryGetProperty("recorded_at", out var at) && at.ValueKind == JsonValueKind.String && at.TryGetDateTimeOffset(out _)
+            ? ExitRecord.Parse(json) : null;
+    });
+
+    internal enum LegacyBootProof { Unknown, Current, EndedOnThisHost }
+
+    internal LegacyBootProof OriginalBoot(string? recordedBoot)
+    {
+        var currentBoot = _store.Metadata.BootIdentity;
+        if (TryReadWindowsBoot(recordedBoot, out var recordedMachine, out var recordedTime)
+            && TryReadWindowsBoot(currentBoot, out var currentMachine, out var currentTime)
+            && recordedMachine == currentMachine)
+        {
+            return recordedTime == currentTime ? LegacyBootProof.Current : LegacyBootProof.EndedOnThisHost;
+        }
+
+        // Linux records only the boot UUID. Different UUIDs cannot establish that the original and current host are the same.
+        return recordedBoot is { Length: 42 } && string.Equals(recordedBoot, currentBoot, StringComparison.Ordinal)
+            && recordedBoot.StartsWith("linux:", StringComparison.Ordinal)
+            && Guid.TryParseExact(recordedBoot.AsSpan(6), "D", out var linuxBoot) && linuxBoot != Guid.Empty
+            ? LegacyBootProof.Current : LegacyBootProof.Unknown;
+    }
+
+    private static bool TryReadWindowsBoot(string? value, out Guid machine, out long time)
+    {
+        machine = Guid.Empty;
+        time = 0;
+        if (value is null || !value.StartsWith("windows:", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var identity = value.AsSpan(8);
+        var separator = identity.IndexOf(':');
+        return separator == 36 && Guid.TryParseExact(identity[..separator], "D", out machine) && machine != Guid.Empty
+            && long.TryParse(identity[(separator + 1)..], NumberStyles.None, CultureInfo.InvariantCulture, out time)
+            && time > 0 && time <= DateTimeOffset.MaxValue.ToFileTime() / TimeSpan.TicksPerSecond;
     }
 
     /// <summary>
     /// The exit acknowledgement follows the record's commit, so a node that stopped between the two leaves a holder waiting on an
-    /// attempt the store already records as finished. Every attempt directory with a durable exit record that is not live is
-    /// acknowledged again (an ack event that no longer opens has no holder left).
+    /// attempt the store already records as finished. Retry only when the original same-boot exit matches the committed result.
     /// </summary>
     private void AcknowledgeRecordedAttempts(List<AttemptRow> live)
     {
-        if (Platform is null)
+        if (Platform is null || OriginalBoot(_store.Metadata.BootIdentity) != LegacyBootProof.Current)
         {
             return;
         }
@@ -542,7 +615,27 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         foreach (var directory in Directory.EnumerateDirectories(logs))
         {
             var name = Path.GetFileName(directory);
-            if (liveNames.Contains(name) || !File.Exists(Path.Combine(directory, AttemptFiles.Exit)))
+            if (liveNames.Contains(name) || !IdText.TryParse(name, out var attemptId)
+                || !string.Equals(name, IdText.Format(attemptId), StringComparison.Ordinal)
+                || ReadRecoveryExit(new AttemptFiles(_dataRoot, name)) is not { } exit)
+            {
+                continue;
+            }
+
+            var signalled = exit.ExitCodeKind is "killed" or "dumped";
+            var recordedAt = StoreTime.ToMicroseconds(DateTimeOffset.Parse(exit.RecordedAt, CultureInfo.InvariantCulture));
+            var finishedHere = _store.Read(reader => reader.Scalar("""
+                SELECT 1 FROM attempt
+                WHERE attempt_id = $attempt AND state = 9 AND kind <> 4
+                  AND executor_node_id = (SELECT node_id FROM store_meta WHERE singleton = 1)
+                  AND boot_identity = (SELECT boot_identity FROM store_meta WHERE singleton = 1)
+                  AND effect IN ($didNotHappen, $happened) AND termination_reason NOT IN ($lost, $incomplete)
+                  AND exit_code IS $exit AND signal IS $signal AND core_dumped IS $dumped AND finished_at >= $recordedAt;
+                """, ("$attempt", attemptId), ("$didNotHappen", (int)EffectCertainty.DidNotHappen), ("$happened", (int)EffectCertainty.Happened),
+                ("$lost", (int)TerminationReason.Lost), ("$incomplete", (int)TerminationReason.TerminationIncomplete),
+                ("$exit", signalled ? null : exit.ExitStatus), ("$signal", signalled ? exit.ExitStatus : null),
+                ("$dumped", signalled ? (exit.ExitCodeKind == "dumped" ? 1 : 0) : null), ("$recordedAt", recordedAt)) is not null);
+            if (!finishedHere)
             {
                 continue;
             }
@@ -556,27 +649,19 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
 
     // ------------------------------------------------------------------------------------------------------------------ lifecycle
 
-    /// <summary>Starts the enforcement loop, the admission loop and the heartbeat probes.</summary>
+    /// <summary>Starts monitoring and enforcing existing Attempt ownership while draining the legacy runtime.</summary>
     public void Start()
     {
         Heartbeat.Start();
         _loop = new Thread(EnforcementLoop) { IsBackground = true, Name = "arcforges-enforcement" };
         _loop.Start();
-        _admissionLoop = Task.Run(AdmissionLoopAsync);
+        // Keep the recovered holders and control path running. Queued, dependency-waiting and retrying Tasks must not start another Attempt.
         Resources?.Start();
         Adoptions.Start();
-        Kick();
-    }
-
-    /// <summary>Wakes the admission loop; a kick that arrives during a pass runs another pass right after it (a kick is never lost).</summary>
-    public void Kick()
-    {
-        Volatile.Write(ref _kicked, 1);
-        _admission.Pulse();
     }
 
     /// <summary>
-    /// The node's shutdown (02 section 2): admissions stop; <c>kill_with_node</c> attempts are terminated and recorded
+    /// The node's shutdown (02 section 2): <c>kill_with_node</c> attempts are terminated and recorded
     /// (<c>NODE_SHUTDOWN</c>); every other attempt keeps running under its holder, whose guard takes over the disk limits.
     /// </summary>
     public async Task StopAsync()
@@ -590,13 +675,6 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         _loopWake.Pulse();
         _loop?.Join(TimeSpan.FromSeconds(2));
         await PlatformCalls.DisposeAsync().ConfigureAwait(false);
-        try
-        {
-            await _admissionLoop.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
-        }
-        catch (TimeoutException)
-        {
-        }
 
         foreach (var attempt in _running.Values.Where(attempt => attempt.KillWithNode))
         {
@@ -606,14 +684,19 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         var deadline = _clock.GetTimestamp();
         foreach (var attempt in _running.Values.Where(attempt => attempt.KillWithNode))
         {
-            while (!File.Exists(attempt.Files.ExitPath) && _clock.GetElapsedTime(deadline) < TimeSpan.FromSeconds(3))
+            while (attempt.RecoveredExit is null && !File.Exists(attempt.Files.ExitPath) && _clock.GetElapsedTime(deadline) < TimeSpan.FromSeconds(3))
             {
                 await Task.Delay(20).ConfigureAwait(false);
             }
 
-            await FinalizeAsync(attempt, incomplete: !File.Exists(attempt.Files.ExitPath)).ConfigureAwait(false);
+            await FinalizeAsync(attempt, incomplete: attempt.RecoveredExit is null && !File.Exists(attempt.Files.ExitPath)).ConfigureAwait(false);
         }
 
+        ReleaseAttemptHandles();
+    }
+
+    private void ReleaseAttemptHandles()
+    {
         foreach (var attempt in _running.Values)
         {
             // The holder keeps the jobs; the node only releases its handles.
@@ -645,8 +728,8 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
     /// a stop is due only while available memory is below the Critical threshold at that evaluation, or once per newly observed OOM kill,
     /// and never before the previous victim has finalized and one more sample was taken. Non-preemptible attempts are never stopped for
     /// pressure; when only they remain while available memory is below the Critical threshold, a critical <c>MEMORY_PRESSURE</c> finding
-    /// leaves the decision to the user. Tight (admission) and the Pressure-level freeze or requeue join with the scheduler (AF-SCHED-01)
-    /// through <see cref="IPressureResponse"/>.
+    /// leaves the decision to the user. The pressure response also adjusts root limits, freezes or requeues affected attempts, and thaws
+    /// those that were pressure-frozen.
     /// </summary>
     void IPressureResponse.Respond(PressureLevel level, PressureLevel previous, ResourceState state)
     {
@@ -840,15 +923,13 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         return value;
     }
 
-    /// <summary>After a submission committed: binds the caller and wakes the admission loop.</summary>
+    /// <summary>Binds a committed Task to its caller when caller tracking applies.</summary>
     public void Submitted(ReadOnlySpan<byte> taskId, CallerKey? caller)
     {
         if (caller is { } key)
         {
             _bindings[IdText.Format(taskId)] = key;
         }
-
-        Kick();
     }
 
     /// <summary>The caller process a task is bound to by <c>cancel_when_caller_gone</c>, or <see langword="null"/> (tests read it).</summary>
@@ -991,12 +1072,22 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             return;
         }
 
-        attempt.LaunchProcessesWatched = true;
-        handle.LaunchProcessEntered += entered => _ = Task.Run(() => TerminateAgain(attempt, handle, reason));
-        if (handle.WatchLaunch())
+        Action<int> onEntered = entered => _ = Task.Run(() => TerminateAgain(attempt, handle, reason));
+        handle.LaunchProcessEntered += onEntered;
+        try
         {
-            attempt.TerminationOwed = true;
+            if (handle.WatchLaunch())
+            {
+                attempt.TerminationOwed = true;
+            }
         }
+        catch
+        {
+            handle.LaunchProcessEntered -= onEntered;
+            throw;
+        }
+
+        attempt.LaunchProcessesWatched = true;
     }
 
     /// <summary>
@@ -1023,8 +1114,8 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             return false;
         }
 
-        attempt.Forced = true;
         TerminateEachLaunchProcess(attempt, handle, reason);
+        attempt.Forced = true;
         TerminateNow(attempt, handle, reason);
         return true;
     }
@@ -1506,7 +1597,6 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
                     }
 
                     _log.Info("execution.caller_gone", new LogField("task", task), new LogField("cancelled", error is null));
-                    Kick();
                     break;
                 }
                 catch (CommandQueueFullException)
@@ -1728,7 +1818,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
 
         // Linux observes its units here (a failed unit whose ExecStopPost systemd skipped is recorded from the unit's own properties).
         handle?.Refresh();
-        if (File.Exists(attempt.Files.ExitPath))
+        if (attempt.RecoveredExit is not null || File.Exists(attempt.Files.ExitPath))
         {
             BeginFinalize(attempt, incomplete: false);
             return;
@@ -1778,9 +1868,9 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             {
                 // The forced phase after the grace period. A STOPPING attempt recovered after a node restart gets here at once, possibly in the
                 // middle of its launch (its handle's start still pending): read before the termination, as in ForceWhenStarted.
-                _forcedPhase?.Invoke(handle, false);
                 var startPending = !handle.Started.IsCompleted;
                 TerminateEachLaunchProcess(attempt, handle, stopReason);
+                _forcedPhase?.Invoke(handle, false);
                 handle.Terminate();
                 TerminateEscaped(attempt, stopReason);
                 attempt.Forced = true;
@@ -2026,142 +2116,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         return records;
     }
 
-    // ---------------------------------------------------------------------------------------------------------------- admission
-
-    private async Task LaunchAsync(RunningAttempt attempt, Admitted admitted, IExecutionPlatform platform, ExecutionSettings settings, Scheduling.ToolInvocation? tool)
-    {
-        var row = admitted.Row;
-        var files = attempt.Files;
-        var snapshot = row.EnvDigest is { } digest ? _store.Read(reader => EnvSnapshots.Get(reader, digest)) : null;
-        var unseal = _secrets.Unseal(row.TaskId);
-        if (unseal.Status == UnsealStatus.Unavailable)
-        {
-            throw new InvalidOperationException("the task's sealed environment values are unavailable: " + unseal.UnavailableReason);
-        }
-
-        var spec = SubmittedEnvironment.Restore(row.Spec, snapshot, unseal.Values);
-        if (tool is not null)
-        {
-            // 03 section 5.3: the adapter's invocation carries the tool-level setting for the CPU grant (never called a limit).
-            spec.Command = new CommandSpec { Argv = new ArgvCommand() };
-            spec.Command.Argv.Argv.Add(tool.Argv);
-        }
-        Directory.CreateDirectory(files.Directory);
-        if (OperatingSystem.IsWindows())
-        {
-            // FILE_CREATE returns the exact newly created directory handle. Persist its identity and the real task
-            // owner before exposing it to the attempt. A collision is never adopted as node-created provenance.
-            var temporaryRoot = Path.Combine(_dataRoot, "tmp");
-            StorePaths.CreatePrivateDirectory(temporaryRoot);
-            using var root = WorkspacePath.OpenRoot(temporaryRoot);
-            using var directory = root.CreateWindowsAttemptDirectory(attempt.Name);
-            try
-            {
-                await _processor.ExecuteAsync(context =>
-                {
-                    AttemptTempProvenance.Record(context.Transaction, root, directory, attempt.Name, attempt.AttemptId, attempt.TaskId);
-                    return 0;
-                }, CommitDurability.Full).ConfigureAwait(false);
-            }
-            catch (Microsoft.Data.Sqlite.SqliteException exception)
-            {
-                // A failed or uncertain registration never authorizes cleanup. Leave the directory untouched.
-                throw new InvalidOperationException("The attempt directory provenance could not be committed.", exception);
-            }
-        }
-        else
-        {
-            // Linux mkdir followed by a name-based open does not return an identity for the exact create.
-            // Preserve task execution but make no ownership claim and never auto-clean this unproven directory.
-            Directory.CreateDirectory(files.TempDirectory);
-        }
-        var environment = ResolveEnvironment(spec, row, attempt, platform);
-        var prepared = platform.Prepare(new CommandRequest
-        {
-            Argv = spec.Command.FormCase == CommandSpec.FormOneofCase.Argv ? [.. spec.Command.Argv.Argv] : null,
-            Shell = spec.Command.FormCase == CommandSpec.FormOneofCase.Shell ? spec.Command.Shell.Kind : ShellKind.Unspecified,
-            Script = spec.Command.FormCase == CommandSpec.FormOneofCase.Shell ? spec.Command.Shell.Script : null,
-            ShellPath = spec.Command.FormCase == CommandSpec.FormOneofCase.Shell && spec.Command.Shell.HasShellPath ? spec.Command.Shell.ShellPath : null,
-            WorkingDirectory = spec.WorkingDirectory,
-            Environment = environment,
-            TempDirectory = files.TempDirectory,
-        });
-        var stdinKind = StdinKind.None;
-        string? stdinPath = null;
-        switch (spec.Stdin?.Mode ?? StdinMode.None)
-        {
-            case StdinMode.Bytes:
-                stdinKind = StdinKind.File;
-                stdinPath = Path.Combine(files.TempDirectory, "stdin.bin");
-                File.WriteAllBytes(stdinPath, spec.Stdin!.Data.ToByteArray());
-                break;
-            case StdinMode.File:
-                stdinKind = StdinKind.File;
-                stdinPath = spec.Stdin!.FilePath;
-                break;
-            case StdinMode.Stream:
-                stdinKind = StdinKind.Stream;
-                break;
-        }
-
-        HelperFiles.WriteAtomically(files.GuardPath, new GuardSpec
-        {
-            AttemptId = attempt.Name,
-            OutputFiles = attempt.DiscardOutput ? [] : [files.StdoutPath, files.StderrPath],
-            TempDirectory = files.TempDirectory,
-            Volumes = [.. new[] { spec.WorkingDirectory, files.TempDirectory, files.Directory }.Select(path => Path.GetPathRoot(path) ?? path).Distinct(StringComparer.OrdinalIgnoreCase)],
-            MaxOutputBytes = settings.MaxOutputBytes,
-            MaxTmpBytes = settings.MaxTmpBytes,
-            MaxTmpEntries = settings.MaxTmpEntries,
-            CriticalFreeBytes = settings.CriticalFreeBytes,
-            DiskLimitAction = settings.DiskLimitAction,
-            TakeoverMs = settings.GuardTakeoverMs,
-            HeartbeatPath = AttemptFiles.HeartbeatPath(_dataRoot),
-            Preemptible = spec.Resources?.Preemptible == true,
-            Pausable = false,
-        }.ToJson());
-        var (launchSteps, endSteps) = _steps?.StepsFor(spec, files) ?? ([], []);
-        var handle = platform.Launch(new AttemptLaunch
-        {
-            NodeName = NodeName,
-            Files = files,
-            Command = prepared,
-            Environment = [.. environment.Select(pair => pair.Key + "=" + pair.Value)],
-            WorkingDirectory = spec.WorkingDirectory,
-            Stdin = stdinKind,
-            StdinPath = stdinPath,
-            Limits = new ContainerLimits
-            {
-                CpuWeight = ExecutionSettings.Weight(row.Priority),
-                CommitLimitBytes = (long)(settings.CommitFactor * admitted.Ceiling),
-                CommitNotificationBytes = admitted.Ceiling,
-
-                // Linux (03 section 5.2): MemoryHigh = 1.25 x mem_expected, MemoryMax = mem_ceiling, MemorySwapMax = swap_allowance.
-                MemoryHighBytes = attempt.MemoryHighBytes = Math.Min((long)(1.25 * admitted.Expected), admitted.Ceiling),
-                MemoryMaxBytes = admitted.Ceiling,
-                SwapMaxBytes = settings.SwapAllowance,
-            },
-            KillWithNode = attempt.KillWithNode,
-            DiscardOutput = attempt.DiscardOutput,
-            LaunchSteps = launchSteps,
-            EndSteps = endSteps,
-        });
-        attempt.Handle = handle;
-        handle.Changed += () => _loopWake.Pulse();
-        attempt.OpenTail();
-        lock (attempt)
-        {
-            if (attempt.StopReason is { } stop && !attempt.Forced)
-            {
-                // Cancelled while it was being launched: there is no root to signal yet, so the forced phase applies.
-                ForceWhenStarted(attempt, handle, stop);
-            }
-        }
-
-        _log.Info("execution.launched", new LogField("attempt", attempt.Name), new LogField("container", handle.ContainerName),
-            new LogField("killWithNode", attempt.KillWithNode), new LogField("launchSteps", launchSteps.Count), new LogField("endSteps", endSteps.Count));
-        _ = handle.Started.ContinueWith(started => OnStartedAsync(attempt, started.IsCompletedSuccessfully ? started.Result : null), TaskScheduler.Default).Unwrap();
-    }
+    // ---------------------------------------------------------------------------------------------------------------- recovered starts
 
     private async Task OnStartedAsync(RunningAttempt attempt, RootProcess? root, DateTimeOffset? recoveredStart = null)
     {
@@ -2246,29 +2201,6 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         }
 
         return environment;
-    }
-
-    private Dictionary<string, string> ResolveEnvironment(TaskSpec spec, TaskRow row, RunningAttempt attempt, IExecutionPlatform platform)
-    {
-        var environment = ValidationEnvironment(spec, platform.EnvironmentNames);
-        AddArcForgesVariables(environment, row, attempt);
-        return environment;
-    }
-
-    private void AddArcForgesVariables(Dictionary<string, string> environment, TaskRow row, RunningAttempt attempt)
-    {
-        environment["ARCFORGES_TASK_ID"] = IdText.Format(row.TaskId);
-        environment["ARCFORGES_ATTEMPT_ID"] = attempt.Name;
-        environment["ARCFORGES_NODE_ID"] = NodeName;
-        if (row.Owner.SessionId is { Value.Length: 16 } session)
-        {
-            environment["ARCFORGES_SESSION"] = IdText.Format(session);
-        }
-
-        // 06 section 4: TMP, TEMP and TMPDIR point to the attempt's temporary directory.
-        environment["TMP"] = attempt.Files.TempDirectory;
-        environment["TEMP"] = attempt.Files.TempDirectory;
-        environment["TMPDIR"] = attempt.Files.TempDirectory;
     }
 
     // ------------------------------------------------------------------------------------------------------------- finalization
@@ -2364,7 +2296,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
                 throw new NotSupportedException("test fault finalize-throw");
             }
 
-            var exit = ExitRecord.TryRead(attempt.Files.ExitPath);
+            var exit = attempt.RecoveredExit ?? ExitRecord.TryRead(attempt.Files.ExitPath);
             var launch = LaunchRecord.TryRead(attempt.Files.LaunchPath);
             var guard = GuardEvent.ReadAll(attempt.Files.GuardEventsPath);
             var handle = attempt.Handle;
@@ -2492,8 +2424,6 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         {
             _log.Warning("execution.finalize.cleanup_failed", new LogField("attempt", attempt.Name), new LogField("errorType", exception.GetType().Name));
         }
-
-        Kick();
     }
 
     /// <summary>
@@ -2739,33 +2669,6 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         return 0;
     }
 
-    private async Task SpawnFailedAsync(RunningAttempt? attempt, string detail)
-    {
-        if (attempt is null)
-        {
-            return;
-        }
-
-        attempt.Finalizing = true;
-        try
-        {
-            await RecordFinalizingAsync(attempt).ConfigureAwait(false);
-            var reason = attempt.StopReason ?? TerminationReason.SpawnFailed;
-            var outcome = new AttemptOutcome(reason,
-                reason == TerminationReason.SpawnFailed ? EffectCertainty.DidNotHappen : EffectCertainty.Happened, null, detail, null);
-            await _processor.ExecuteAsync(context => RecordFinished(context, attempt, null, null, outcome, [], Settings, attempt.Handle?.Root))
-                .ConfigureAwait(false);
-        }
-        finally
-        {
-            _running.TryRemove(attempt.Name, out _);
-            attempt.Dispose();
-            TaskPulse(attempt.TaskId).Pulse();
-            CleanupTemp(attempt);
-            Kick();
-        }
-    }
-
     private async Task RecordLostAsync(AttemptRow row, string evidence, string reason)
     {
         await _processor.ExecuteAsync(context =>
@@ -2948,8 +2851,6 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
 
     private sealed record RecoveredAccounting(string Pool, string? Session, string? Workspace, long Cpu, long Expected, long Ceiling, long Accounted, bool Ready,
         List<Scheduling.HeldKey> Keys);
-
-    private sealed record Admitted(TaskRow Row, int Number, long Expected, long Ceiling);
 
     private sealed record AttemptOutcome(TerminationReason Reason, EffectCertainty Effect, int? ExitCode, string? Detail, string? LimitEnforcedBy,
         int? Signal = null, bool? CoreDumped = null);

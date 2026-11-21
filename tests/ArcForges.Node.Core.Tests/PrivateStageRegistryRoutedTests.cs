@@ -6,7 +6,6 @@ using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Contracts.Relay.V1;
-using ArcForges.Node.Api;
 using ArcForges.Node.Core.Files;
 using ArcForges.Node.Core.Platform;
 using ArcForges.Node.Core.Security;
@@ -17,8 +16,7 @@ using NodeFilePath = ArcForges.Contracts.Node.V1.FilePath;
 namespace ArcForges.Node.Core.Tests;
 
 /// <summary>
-/// Real SQLite, Node dispatcher and native named-stage producer. The caller is synthetic; this does not establish
-/// approval, power-loss durability or a real center.
+/// Real SQLite, Node dispatcher and native file identity for retained named-stage protection. The caller is synthetic.
 /// </summary>
 public sealed class PrivateStageRegistryRoutedTests
 {
@@ -36,8 +34,8 @@ public sealed class PrivateStageRegistryRoutedTests
         File.WriteAllText(Path.Combine(rootA, "public.txt"), "ordinary");
         File.WriteAllText(Path.Combine(rootB, "visible.txt"), "public");
         var workspaces = new RegisteredWorkspaces(node.Runtime.Store);
-        var workspaceA = workspaces.RegisterFromVerifiedHuman(rootA, cancellationToken: ct);
-        var workspaceB = workspaces.RegisterFromVerifiedHuman(rootB, cancellationToken: ct);
+        var workspaceA = ExistingWorkspaceReadFixture.Seed(node, rootA, cancellationToken: ct);
+        var workspaceB = ExistingWorkspaceReadFixture.Seed(node, rootB, cancellationToken: ct);
         var body = Encoding.UTF8.GetBytes("private-approval-stage-35fb2");
         var request = new FileServiceWriteFileRequest
         {
@@ -48,26 +46,27 @@ public sealed class PrivateStageRegistryRoutedTests
         };
         var raw = request.ToByteArray();
         var budget = new FileStageBudget();
-        async Task<FileServicePlanRemovalResponse> Plan(RoutedCalls routed, byte[] workspace, string relative)
+        async Task<FileServiceReadFileResponse> Read(RoutedCalls routed, byte[] workspace, string relative)
         {
-            var plan = new FileServicePlanRemovalRequest
+            var read = new FileServiceReadFileRequest
             {
-                Meta = Tasks.Meta(),
-                WorkspacePath = new NodeFilePath { WorkspaceId = new Id { Value = ByteString.CopyFrom(workspace) }, Path = relative },
+                Meta = new RequestMeta { CorrelationId = CommandIds.New() },
+                Path = new NodeFilePath { WorkspaceId = new Id { Value = ByteString.CopyFrom(workspace) }, Path = relative },
+                Offset = 0,
+                Length = 128,
             };
-            var result = await routed.CallAsync(routed.Relay(Origin.Agent), RoutedMethod.PlanNodeRemoval,
-                plan.ToByteArray(), plan.Meta.CommandId);
-            return FileServicePlanRemovalResponse.Parser.ParseFrom(result.Answer!.Response);
+            var result = await routed.CallAsync(routed.Relay(Origin.Agent), RoutedMethod.ReadNodeFile, read.ToByteArray());
+            Assert.Equal(RoutedOutcome.Executed, result.Answer!.Outcome);
+            var response = FileServiceReadFileResponse.Parser.ParseFrom(result.Answer.Response);
+            Assert.Equal(read.Meta.CorrelationId, response.Meta.CorrelationId);
+            return response;
         }
-        async Task CheckOrdinaryPlan(RoutedCalls routed, byte[] workspace, string relative, ulong bytes)
+        async Task CheckOrdinaryRead(RoutedCalls routed, byte[] workspace, string relative, string expected)
         {
-            var response = await Plan(routed, workspace, relative);
+            var response = await Read(routed, workspace, relative);
             Assert.Null(response.Error);
-            var plan = response.Value.Plan;
-            Assert.Equal(bytes, plan.TotalBytes);
-            Assert.False(Assert.Single(plan.Items).OwnerVerified);
-            Assert.True(plan.RequiresApproval);
-            Assert.True(plan.QuarantineAvailable);
+            Assert.Equal(expected, response.Value.Data.ToStringUtf8());
+            Assert.Equal(ByteString.CopyFrom(SHA256.HashData(Encoding.UTF8.GetBytes(expected))), response.Value.Sha256);
         }
         using (var workspaceRoot = WorkspacePath.OpenRoot(rootA))
         using (var stageDir = WorkspacePath.OpenRoot(privateDir))
@@ -86,10 +85,6 @@ public sealed class PrivateStageRegistryRoutedTests
             Assert.Equal((1, (long)body.Length), node.Runtime.Store.Read(PrivateStageRegistry.Usage));
             Assert.Empty(node.Runtime.Store.Read(PrivateStageRegistry.LoadIdentities));
             Assert.False(File.Exists(emptyPath));
-            var unknownStage = await Plan(calls, workspaceA.Id, "public.txt");
-            Assert.Null(unknownStage.Value);
-            Assert.Equal("file_access_denied", unknownStage.Error.Code);
-            Assert.Equal(0L, node.Runtime.Store.Read(r => r.Scalar("SELECT count(*) FROM file_removal_plan;")));
             using var empty = stageDir.CreateEmptyPrivateNamedStage("stage.tmp", ct);
             Assert.Equal(0, empty.Guard.ObserveLength(ct));
             if (OperatingSystem.IsLinux()) Assert.Equal(NamedStageDurabilityEvidence.LinuxFileAndDirectoryFsync, empty.DurabilityEvidence);
@@ -105,21 +100,10 @@ public sealed class PrivateStageRegistryRoutedTests
             Assert.Throws<RegisteredWorkspaceException>(() => workspaces.UnregisterFromVerifiedHuman(workspaceA.Id, ct)).Reason);
         async Task CheckPrivate(RoutedCalls routed, byte[] workspace, string relative, string directory, bool expectVisible)
         {
-            var privatePlan = await Plan(routed, workspace, relative);
-            Assert.Null(privatePlan.Value);
-            Assert.Equal("file_access_denied", privatePlan.Error.Code);
-            var caller = routed.Relay(Origin.Agent);
-            var read = new FileServiceReadFileRequest
-            {
-                Meta = new RequestMeta { CorrelationId = CommandIds.New() },
-                Path = new NodeFilePath { WorkspaceId = new Id { Value = ByteString.CopyFrom(workspace) }, Path = relative },
-                Offset = 0,
-                Length = 128,
-            };
-            var readCall = await routed.CallAsync(caller, RoutedMethod.ReadNodeFile, read.ToByteArray());
-            var readResponse = FileServiceReadFileResponse.Parser.ParseFrom(readCall.Answer!.Response);
+            var readResponse = await Read(routed, workspace, relative);
             Assert.Null(readResponse.Value);
-            Assert.NotNull(readResponse.Error);
+            Assert.Equal("file_access_denied", readResponse.Error.Code);
+            var caller = routed.Relay(Origin.Agent);
             var search = new FileServiceSearchFilesRequest
             {
                 Meta = new RequestMeta { CorrelationId = CommandIds.New() },
@@ -144,12 +128,8 @@ public sealed class PrivateStageRegistryRoutedTests
         }
 
         await CheckPrivate(calls, workspaceA.Id, "private/stage.tmp", "private", expectVisible: false);
-        var privateTree = await Plan(calls, workspaceA.Id, "private");
-        Assert.Null(privateTree.Value);
-        Assert.Equal("file_access_denied", privateTree.Error.Code);
-        Assert.Equal(0L, node.Runtime.Store.Read(r => r.Scalar("SELECT count(*) FROM file_removal_plan;")));
-        await CheckOrdinaryPlan(calls, workspaceA.Id, "public.txt", 8);
-        await CheckOrdinaryPlan(calls, workspaceB.Id, "visible.txt", 6);
+        await CheckOrdinaryRead(calls, workspaceA.Id, "public.txt", "ordinary");
+        await CheckOrdinaryRead(calls, workspaceB.Id, "visible.txt", "public");
         var commandId = request.Meta.CommandId.Value.ToByteArray();
         var requestDigest = SHA256.HashData(raw);
         Assert.Throws<InvalidOperationException>(() => node.Runtime.Store.Read(r =>
@@ -218,9 +198,8 @@ public sealed class PrivateStageRegistryRoutedTests
             PrivateStageRegistry.ReopenReadyStage(r, commandId, 2, actor, requestDigest, ct)));
         await CheckPrivate(calls, workspaceB.Id, "moved.tmp", "", expectVisible: true);
         await CheckPrivate(calls, workspaceB.Id, "alias.tmp", "", expectVisible: true);
-        await CheckOrdinaryPlan(calls, workspaceA.Id, "public.txt", 8);
-        await CheckOrdinaryPlan(calls, workspaceB.Id, "visible.txt", 6);
-        Assert.Equal(4L, node.Runtime.Store.Read(r => r.Scalar("SELECT count(*) FROM file_removal_plan;")));
+        await CheckOrdinaryRead(calls, workspaceA.Id, "public.txt", "ordinary");
+        await CheckOrdinaryRead(calls, workspaceB.Id, "visible.txt", "public");
         Assert.Equal(body, File.ReadAllBytes(moved));
 
         foreach (var file in new[] { node.Runtime.Store.DatabasePath, node.Runtime.Store.DatabasePath + "-wal" })

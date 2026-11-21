@@ -20,6 +20,11 @@ internal static partial class RoutedFileResponseValidation
         WorkspaceServiceRegisterWorkspaceResponse inner;
         try { inner = WorkspaceServiceRegisterWorkspaceResponse.Parser.ParseFrom(value.Response); }
         catch (InvalidProtocolBufferException) { return false; }
+        return WorkspaceRegistrationOutcome(inner, request);
+    }
+
+    internal static bool WorkspaceRegistrationOutcome(WorkspaceServiceRegisterWorkspaceResponse inner, WorkspaceServiceRegisterWorkspaceRequest request)
+    {
         if (!NodeShapes.IsValid(inner) || !FileMetaMatches(inner.Meta, null, inner.Error)) return false;
         if (inner.Error is { } error)
             return WorkspaceError(error, WorkspaceMethod.Register) && WorkspaceLimit(error, request) && inner.Audit is null;

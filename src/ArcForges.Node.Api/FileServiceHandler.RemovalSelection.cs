@@ -189,45 +189,60 @@ internal sealed partial class FileServiceHandler
         return details;
     }
 
-    internal async Task<byte[]?> ExecuteApprovedRemovalReferenceAsync(byte[] reference, Caller caller)
+    internal Task<byte[]?> ExecuteApprovedRemovalReferenceAsync(byte[] reference, Caller caller)
     {
         if (reference.Length != 17 || reference[0] != 2 || !caller.Approved || caller.Routed is not null ||
-            caller.ApprovalId is null || caller.CenterCaller is null || caller.RemoteCommandId?.Value.Span.SequenceEqual(reference.AsSpan(1)) != true)
-            return null;
-        var binding = node.Store.Read<(FileServiceExecuteRemovalRequest Request, byte[] Digest)?>(reader =>
-        {
-            var approval = Approvals.Get(reader, caller.ApprovalId);
-            if (approval is null || approval.State != ApprovalState.Approved || approval.View.Operation != "FileService.ExecuteRemoval" ||
-                !approval.Request.AsSpan().SequenceEqual(reference) || !CenterRouting.SameFileCaller(approval.View.Requester.CenterCaller, caller.CenterCaller))
-                return null;
-            using var sql = reader.CreateCommand("SELECT plan_id, digest FROM cleanup_plan WHERE approval_id = $approval;");
-            sql.Parameters.AddWithValue("$approval", caller.ApprovalId);
-            using var row = sql.ExecuteReader();
-            if (!row.Read()) return null;
-            var correlation = approval.View.Details.Single(item => item.Name == "correlation_id").Value;
-            var request = new FileServiceExecuteRemovalRequest
-            {
-                Meta = new RequestMeta
-                {
-                    CommandId = caller.RemoteCommandId.Clone(),
-                    CorrelationId = new Id { Value = ByteString.CopyFrom(Convert.FromHexString(correlation)) }
-                },
-                PlanId = new Id { Value = ByteString.CopyFrom((byte[])row.GetValue(0)) },
-                PlanDigest = ByteString.CopyFrom((byte[])row.GetValue(1)),
-                DeleteWithoutQuarantine = approval.View.Details.Single(item => item.Name == "delete_without_quarantine").Value == "true",
-            };
-            return (Request: request, Digest: approval.RequestDigest);
-        });
-        if (binding is null) return null;
+            caller.ApprovalId is not { } approvalId || caller.CenterCaller is not { } center ||
+            caller.RemoteCommandId?.Value.Span.SequenceEqual(reference.AsSpan(1)) != true || node.Stopping.IsCancellationRequested)
+            return Task.FromResult<byte[]?>(null);
+
         try
         {
-            var response = await ExecuteCoordinatedRemovalAsync(caller, binding.Value.Request, node.Stopping, binding.Value.Digest).ConfigureAwait(false);
-            return response.ToByteArray();
+            return Task.FromResult(node.Store.Read(reader => ReadApprovedRemovalOutcome(reader, caller.RemoteCommandId, approvalId, center)));
         }
         catch (Exception failure) when (failure is not OutOfMemoryException and not StackOverflowException)
         {
             node.Log.Error("api.file.removal.approval_deferred");
-            return null;
+            return Task.FromResult<byte[]?>(null);
         }
+    }
+
+    private static byte[]? ReadApprovedRemovalOutcome(StoreReader reader, Id command, byte[] approvalId, CenterCaller center)
+    {
+        var id = command.Value.ToByteArray();
+        var approval = Approvals.ByCommand(reader, id);
+        if (approval is not { State: ApprovalState.Approved } ||
+            !approval.Id.AsSpan().SequenceEqual(approvalId) ||
+            !MatchesRemovalApproval(approval, id, center))
+            return null;
+        var receipt = CommandDeduplication.ReadRetained(reader, id, RemovalExecutionMethod, approval.RequestDigest, reader.NowMicroseconds);
+        if (receipt is not { Status: DedupStatus.Replay, Outcome: { } bytes } ||
+            !RemovalCallerMayUse(reader, id, center, retained: true))
+            return null;
+
+        string Detail(string name) => approval.View.Details.Single(item => item.Name == name).Value;
+        var planId = Convert.FromHexString(Detail("plan_id"));
+        var planDigest = Convert.FromHexString(Detail("plan_digest"));
+        var correlation = new Id { Value = ByteString.CopyFrom(Convert.FromHexString(Detail("correlation_id"))) };
+        var strict = Detail("delete_without_quarantine");
+        if (planId.Length != 16 || planDigest.Length != 32 || strict is not ("true" or "false") ||
+            reader.Scalar("SELECT 1 FROM cleanup_plan WHERE plan_id = $plan AND approval_id = $approval;",
+                ("$plan", planId), ("$approval", approvalId)) is null ||
+            ReadRemovalExecutionPlan(reader, planId, center) is not { } plan ||
+            !CryptographicOperations.FixedTimeEquals(plan.Digest, planDigest))
+            return null;
+
+        var request = new FileServiceExecuteRemovalRequest
+        {
+            Meta = new RequestMeta { CommandId = command.Clone(), CorrelationId = correlation },
+            PlanId = new Id { Value = ByteString.CopyFrom(planId) },
+            PlanDigest = ByteString.CopyFrom(planDigest),
+            DeleteWithoutQuarantine = strict == "true",
+        };
+        if (ParseRemovalOutcome(request, bytes) is not { } replay ||
+            replay.Error is { Effect: EffectCertainty.Unknown } or { Code: "approval_required" })
+            return null;
+
+        return RemovalOutcomeMatchesCustody(reader, id, center, approval.RequestDigest, replay.Error) ? bytes.ToArray() : null;
     }
 }

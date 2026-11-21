@@ -12,13 +12,11 @@ using NodeFilePath = ArcForges.Contracts.Node.V1.FilePath;
 
 namespace ArcForges.Node.Core.Tests;
 
-/// <summary>In-process refusal never establishes a producer reservation to recover.
-/// PrivateStageTerminalTests separately exercises the real FULL writer/producer fence and retained-slot capacity;
-/// FileStageProducerHostTests covers actual Host producer restart and approval.</summary>
+/// <summary>Retired routed writes cannot introduce producer reservations for recovery to adopt.</summary>
 public sealed class RoutedFileApprovalRecoveryTests
 {
     [Fact(Timeout = 120_000)]
-    public async Task InProcessRefusalLeavesNoProducerReservationForRecoveryToAdopt()
+    public async Task RetiredRouteRefusalLeavesNoProducerReservationForRecoveryToAdopt()
     {
         var ct = TestContext.Current.CancellationToken;
         await using var node = await InProcessNode.Create().StartAsync();
@@ -32,11 +30,11 @@ public sealed class RoutedFileApprovalRecoveryTests
         handler.AfterApprovalReservationForTests = () =>
         {
             reachedReservation = true;
-            return Task.FromException(new IOException("an in-process request must not reserve a Host producer"));
+            return Task.FromException(new IOException("the draining route must not reserve a new producer"));
         };
         try
         {
-            var error = await Refusal(calls, caller, request);
+            var error = await Refusal(calls, caller, request, ct);
             Assert.False(reachedReservation);
             Assert.Equal(0, node.Runtime.Store.Write(PrivateStageTerminal.RecoverUnraised, CommitDurability.Full));
             Assert.Equal((0, 0L), node.Runtime.Store.Read(PrivateStageRegistry.Usage));
@@ -45,10 +43,10 @@ public sealed class RoutedFileApprovalRecoveryTests
             Assert.Equal(0L, node.Runtime.Store.Read(r => r.Scalar("SELECT count(*) FROM approval;")));
             Assert.Null(node.Runtime.Store.Read(r => FileMutationJournal.GetForCaller(r, request.Meta.CommandId.Value.Span, caller)));
             Assert.Empty(Directory.EnumerateFileSystemEntries(directory));
-            Assert.Equal(error, await Refusal(calls, caller, request));
+            Assert.Equal(error, await Refusal(calls, caller, request, ct));
             Assert.Equal(0, await node.StopAsync());
             await node.StartAsync();
-            Assert.Equal(error, await Refusal(new RoutedCalls(node), caller, request));
+            Assert.Equal(error, await Refusal(new RoutedCalls(node), caller, request, ct));
             Assert.Equal((0, 0L), node.Runtime.Store.Read(PrivateStageRegistry.Usage));
             Assert.Empty(Directory.EnumerateFileSystemEntries(directory));
         }
@@ -56,7 +54,7 @@ public sealed class RoutedFileApprovalRecoveryTests
     }
 
     [Fact(Timeout = 180_000)]
-    public async Task SixtyFiveNonHostRefusalsConsumeNoProducerSlotsOrRetainedBytes()
+    public async Task SixtyFiveRetiredRouteRefusalsConsumeNoProducerSlotsOrRetainedBytes()
     {
         var ct = TestContext.Current.CancellationToken;
         await using var node = await InProcessNode.Create().StartAsync();
@@ -65,28 +63,31 @@ public sealed class RoutedFileApprovalRecoveryTests
         var directory = Directory.CreateDirectory(Path.Combine(node.Root, "routed-failure-capacity")).FullName;
         var workspace = new RegisteredWorkspaces(node.Runtime.Store).RegisterFromVerifiedHuman(directory, cancellationToken: ct);
         for (var index = 0; index < 65; index++)
-            _ = await Refusal(calls, caller, Request(workspace.Id));
+            _ = await Refusal(calls, caller, Request(workspace.Id), ct);
         Assert.Equal((0, 0L), node.Runtime.Store.Read(PrivateStageRegistry.Usage));
         foreach (var table in new[] { "file_private_stage_reservation", "file_private_stage_object", "file_private_stage_terminal", "file_operation_journal", "approval", "command_dedup" })
             Assert.Equal(0L, node.Runtime.Store.Read(r => r.Scalar("SELECT count(*) FROM " + table + ";")));
         Assert.Empty(Directory.EnumerateFileSystemEntries(directory));
         Assert.Equal(0, await node.StopAsync());
         await node.StartAsync();
-        _ = await Refusal(new RoutedCalls(node), caller, Request(workspace.Id));
+        _ = await Refusal(new RoutedCalls(node), caller, Request(workspace.Id), ct);
         Assert.Equal((0, 0L), node.Runtime.Store.Read(PrivateStageRegistry.Usage));
         Assert.Empty(Directory.EnumerateFileSystemEntries(directory));
     }
 
-    private static async Task<ArcError> Refusal(RoutedCalls calls, CenterCaller caller, FileServiceWriteFileRequest request)
+    private static async Task<ArcError> Refusal(RoutedCalls calls, CenterCaller caller, FileServiceWriteFileRequest request,
+        CancellationToken cancellationToken)
     {
-        var dispatched = await calls.CallAsync(caller, RoutedMethod.WriteNodeFile, request.ToByteArray(), request.Meta.CommandId);
+        var dispatched = await calls.CallAsync(caller, RoutedMethod.WriteNodeFile, request.ToByteArray(), request.Meta.CommandId,
+            cancellationToken: cancellationToken);
         Assert.NotNull(dispatched.Answer);
         Assert.Equal(RoutedOutcome.Executed, dispatched.Answer.Outcome);
         var response = FileServiceWriteFileResponse.Parser.ParseFrom(dispatched.Answer.Response);
-        Assert.Equal("enforcement_unavailable", response.Error.Code);
-        Assert.Equal("file_guard_unavailable", response.Error.Details.State.Reason);
-        Assert.Equal(EffectCertainty.DidNotHappen, response.Error.Effect);
+        Assert.Equal((ErrorCategory.Execution, "operation_failed", "file", "file_outcome_unknown", EffectCertainty.Unknown, RetryMode.Never),
+            (response.Error.Category, response.Error.Code, response.Error.Details.State.State, response.Error.Details.State.Reason,
+             response.Error.Effect, response.Error.Retry.Mode));
         Assert.Equal(request.Meta.CorrelationId, response.Error.CorrelationId);
+        Assert.Null(response.Value);
         return response.Error;
     }
 
