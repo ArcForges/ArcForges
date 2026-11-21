@@ -4,7 +4,9 @@ using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Node.Core.Events;
+using ArcForges.Node.Core.Platform;
 using ArcForges.Node.Platform;
+using ArcForges.Node.Store;
 using ArcForges.Tests;
 using CsCheck;
 
@@ -159,7 +161,19 @@ public sealed class TaskLifecycleModelTests
             model.Add(new Modelled(LegacyTaskHistoryFixture.SeedQueued(transaction, owner), TaskState.Queued, 0));
         });
         var (succeeded, _) = LegacyTaskHistoryFixture.Seed(node, AttemptState.Finished);
-        var (lost, _) = LegacyTaskHistoryFixture.Seed(node, AttemptState.Running);
+        var (lost, lostAttempt) = LegacyTaskHistoryFixture.Seed(node, AttemptState.Finished, stateReason: "container_missing");
+        // This model starts after the old node settled the lost attempt. It needs no native scope to recover.
+        using (var store = NodeStore.Open(new NodeStoreOptions { DataRoot = node.DataRoot, BootIdentity = BootIdentity.Read(), Clock = node.Clock }))
+        {
+            store.Write(transaction =>
+            {
+                transaction.Execute("UPDATE task SET state = $lost WHERE task_id = $id;",
+                    ("$lost", (int)TaskState.Lost), ("$id", lost.Value.ToByteArray()));
+                transaction.Execute("UPDATE attempt SET termination_reason = $lost, effect = $unknown, exit_code = NULL WHERE attempt_id = $id;",
+                    ("$lost", (int)TerminationReason.Lost), ("$unknown", (int)EffectCertainty.Unknown), ("$id", lostAttempt.Value.ToByteArray()));
+            }, CommitDurability.Full);
+        }
+
         model.Add(new Modelled(succeeded, TaskState.Succeeded, 1));
         model.Add(new Modelled(lost, TaskState.Lost, 1));
         await node.StartAsync();
@@ -179,6 +193,10 @@ public sealed class TaskLifecycleModelTests
         var cursor = await StartCursorAsync(channel);
         await AssertModelAsync(channel, model);
         var baseline = await Task.WhenAll(model.Select(task => Tasks.GetAsync(channel, task.Id)));
+        var historicalLoss = Assert.Single(baseline, task => task.State == TaskState.Lost).CurrentAttempt;
+        Assert.Equal(AttemptState.Finished, historicalLoss.State);
+        Assert.Equal((TerminationReason.Lost, EffectCertainty.Unknown), (historicalLoss.Result.TerminationReason, historicalLoss.Result.Effect));
+        Assert.False(historicalLoss.Result.HasExitCode);
         foreach (var operation in operations)
         {
             switch (operation)
@@ -216,6 +234,7 @@ public sealed class TaskLifecycleModelTests
         var events = await EventsSinceAsync(channel, cursor);
         Assert.DoesNotContain(events, item => item.Attempt is not null);
         AssertStateMachines(events, baseline);
+        Assert.Equal(historicalLoss, (await Tasks.GetAsync(channel, historicalLoss.TaskId)).CurrentAttempt);
     }
 
     private static void AssertLegacyAdmissionRefused(ArcError error)
