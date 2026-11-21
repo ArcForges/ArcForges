@@ -9,7 +9,6 @@ using ArcForges.Contracts.Sandbox.V2;
 using ArcForges.LocalRpc;
 using ArcForges.Node.Api;
 using ArcForges.Node.CloudLink;
-using ArcForges.Node.Core;
 using ArcForges.Node.Core.Platform;
 using ArcForges.Node.Core.Sandboxes;
 using ArcForges.Node.Core.Security;
@@ -332,7 +331,6 @@ public sealed partial class MxcRunServiceTests
             TestMode = true,
             SecretStore = NodeSecretStores.ForTestDataRoot,
             NodeKeys = NodeKeyStores.ForTestDataRoot,
-            HelperExecutable = InstalledCliHost,
             SandboxMxcInstallationRoot = Path.Combine(Path.GetDirectoryName(InstalledCliHost)!, "mxc"),
             BeforeReady = runtime =>
             {
@@ -520,7 +518,6 @@ public sealed partial class MxcRunServiceTests
 
     private static void PrepareInstalledCliFixture(TestNode fixture)
     {
-        fixture.Environment[LocalSubmission.Variable] = null;
         fixture.Environment["ARCFORGES_TEST_CLIENT_IMAGES"] = null;
         PrepareDataRoot(fixture.DataRoot);
     }

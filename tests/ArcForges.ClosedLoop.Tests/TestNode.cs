@@ -61,9 +61,8 @@ internal sealed class TestNode : IAsyncDisposable
         // The isolated test hook admits these exact peer images. A CLI without a terminal remains a SCRIPT caller.
         Environment[ClientImages.TestVariable] = System.Environment.ProcessPath;
 
-        // AD-0021 section 5 (Plan decision Q8, CTR5-NODE-14; N2-23): the closed-loop suites submit through local SCRIPT CLIs and connections,
-        // which a --test-mode node admits only with this allowance; tests of the local bound clear it.
-        Environment[ArcForges.Node.Core.LocalSubmission.Variable] = "1";
+        // Do not pass a pre-cutover script submission override from the parent test process.
+        Environment["ARCFORGES_TEST_ALLOW_LOCAL_SCRIPT_SUBMIT"] = null;
 
         if (!OperatingSystem.IsWindows())
         {

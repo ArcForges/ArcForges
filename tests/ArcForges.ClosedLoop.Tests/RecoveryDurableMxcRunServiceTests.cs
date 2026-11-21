@@ -130,7 +130,6 @@ public sealed partial class MxcRunServiceTests
             TestMode = true,
             SecretStore = NodeSecretStores.ForTestDataRoot,
             NodeKeys = NodeKeyStores.ForTestDataRoot,
-            HelperExecutable = TestNode.Host,
             SandboxMxcInstallationRoot = Path.Combine(Path.GetDirectoryName(TestNode.Host)!, "mxc"),
             BeforeReady = runtime =>
             {
