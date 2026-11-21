@@ -11,16 +11,16 @@ namespace ArcForges.Node.Store.Tests;
 public sealed partial class StoreCreationTests
 {
     [Fact]
-    public void ANewStoreHasEveryTableOfEveryReleasedStep()
+    public void ANewExpandedStoreHasEveryTableOfTheOriginalExpansion()
     {
         using var root = new TemporaryDataRoot();
-        using (var store = root.Open(new ManualClock()))
+        using (var store = root.Open(new ManualClock(), StoreMigrations.Expanded))
         {
             Assert.True(store.Opening.Created);
-            Assert.Equal(StoreMigrations.SupportedSchemaVersion, store.Opening.SchemaVersion);
+            Assert.Equal(StoreMigrations.ExpandedSchemaVersion, store.Opening.SchemaVersion);
         }
 
-        var expected = StoreMigrations.Released.Steps.SelectMany(step => CreateTable().Matches(step.Sql)).Select(match => match.Groups[1].Value)
+        var expected = StoreMigrations.Expanded.Steps.SelectMany(step => CreateTable().Matches(step.Sql)).Select(match => match.Groups[1].Value)
             .Order(StringComparer.Ordinal).ToList();
         using var connection = Open(root.Database);
         var tables = Query(connection, "SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name;");
@@ -36,7 +36,7 @@ public sealed partial class StoreCreationTests
     public void TheStoreIsWalWithForeignKeysNormalSyncAndBusyTimeout()
     {
         using var root = new TemporaryDataRoot();
-        using var store = root.Open(new ManualClock());
+        using var store = root.Open(new ManualClock(), StoreMigrations.Released);
 
         Assert.Equal(StorePaths.Database(root.Path), store.DatabasePath);
         store.Write(transaction =>
@@ -60,7 +60,7 @@ public sealed partial class StoreCreationTests
         using var root = new TemporaryDataRoot();
         var clock = new ManualClock();
         byte[] nodeId;
-        using (var store = root.Open(clock, boot: "boot-a"))
+        using (var store = root.Open(clock, StoreMigrations.Released, boot: "boot-a"))
         {
             nodeId = store.Metadata.NodeId.ToArray();
             Assert.Equal(16, nodeId.Length);
@@ -74,7 +74,7 @@ public sealed partial class StoreCreationTests
         }
 
         clock.Advance(TimeSpan.FromMinutes(5));
-        using (var store = root.Open(clock, boot: "boot-b"))
+        using (var store = root.Open(clock, StoreMigrations.Released, boot: "boot-b"))
         {
             Assert.Equal(nodeId, store.Metadata.NodeId.ToArray());
             Assert.False(store.Opening.Created);
@@ -96,25 +96,61 @@ public sealed partial class StoreCreationTests
         using (var created = NodeStore.OpenForV2Runtime(options))
         {
             Assert.True(created.Opening.Created);
+            Assert.Equal(20, created.Metadata.SchemaVersion);
+            Assert.Equal(20, created.Metadata.MinReaderVersion);
             nodeId = created.Metadata.NodeId.ToArray();
         }
+
+        var before = File.ReadAllBytes(root.Database);
+        var refused = Assert.Throws<StoreIncompatibleException>(() =>
+        {
+            using var previous = root.Open(new ManualClock(), StoreMigrations.Expanded);
+        });
+        Assert.Contains("reader of schema version 20", refused.Message, StringComparison.Ordinal);
+        Assert.Equal(before, File.ReadAllBytes(root.Database));
 
         using var reopened = NodeStore.OpenForV2Runtime(new NodeStoreOptions { DataRoot = root.Path, BootIdentity = "second" });
         Assert.False(reopened.Opening.Created);
         Assert.Equal(nodeId, reopened.Metadata.NodeId.ToArray());
         Assert.Equal("first", reopened.Metadata.PreviousBootIdentity);
+        reopened.Read(reader =>
+        {
+            using (var tables = reader.CreateCommand("SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name;"))
+            using (var rows = tables.ExecuteReader())
+            {
+                foreach (var table in SchemaExpandOnlyTests.ExpectedContractedTables)
+                {
+                    Assert.True(rows.Read());
+                    Assert.Equal(table, rows.GetString(0));
+                }
+
+                Assert.False(rows.Read());
+            }
+
+            Assert.Equal(1L, reader.Scalar("""
+                SELECT count(*) FROM migration_checkpoint WHERE migration_id = 'AFV2-MIG-02/schema20'
+                AND source_schema = 0 AND target_schema = 20 AND backup_identity = 'fresh:no-predecessor' AND state = 'CONTRACTED_FRESH'
+                AND source_database_sha256 IS NULL AND history_archive_sha256 IS NULL AND restore_database_sha256 IS NULL
+                AND scope_receipt_sha256 IS NULL AND unresolved_count = 0;
+                """));
+            Assert.Equal(1L, reader.Scalar("SELECT count(*) FROM schema_version WHERE singleton = 1 AND version = 20 AND min_reader = 20;"));
+            Assert.Equal("ok", reader.Scalar("PRAGMA integrity_check;"));
+            Assert.Null(reader.Scalar("SELECT 1 FROM pragma_foreign_key_check LIMIT 1;"));
+            return 0;
+        });
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void V2RuntimeRefusesOriginalStoresBeforeChangingDatabaseBytes(bool expanded)
+    [InlineData(15, false)]
+    [InlineData(19, false)]
+    [InlineData(19, true)]
+    public void V2RuntimeRefusesOriginalStoresBeforeChangingDatabaseBytes(int version, bool containsTask)
     {
         using var root = new TemporaryDataRoot();
-        var plan = expanded ? StoreMigrations.Released : new MigrationPlan(StoreMigrations.Released.Steps.Take(15));
+        var plan = new MigrationPlan(StoreMigrations.Expanded.Steps.Take(version));
         using (var original = root.Open(new ManualClock(), plan))
         {
-            if (expanded)
+            if (containsTask)
             {
                 original.Write(transaction => transaction.Execute("""
                     INSERT INTO task(task_id,state,kind,title,command_summary,spec,spec_digest,owner,owner_origin,pool,
@@ -138,7 +174,7 @@ public sealed partial class StoreCreationTests
         using var fixture = new TemporaryDataRoot();
         var original = new NodeStoreOptions { DataRoot = Path.Combine(fixture.Path, "100%61 # 私有"), BootIdentity = "original" };
         var sibling = new NodeStoreOptions { DataRoot = Path.Combine(fixture.Path, "100a # 私有"), BootIdentity = "sibling" };
-        using (var legacy = NodeStore.Open(original, new MigrationPlan(StoreMigrations.Released.Steps.Take(15))))
+        using (var legacy = NodeStore.Open(original, new MigrationPlan(StoreMigrations.Expanded.Steps.Take(15))))
         using (var current = NodeStore.OpenForV2Runtime(sibling))
         {
             Assert.Equal(15, legacy.Opening.SchemaVersion);
@@ -156,7 +192,7 @@ public sealed partial class StoreCreationTests
     public void V2RuntimeRefusesUnsettledLegacyApprovalWithoutCreatingAnOutcome()
     {
         using var root = new TemporaryDataRoot();
-        using (var original = root.Open(new ManualClock()))
+        using (var original = root.Open(new ManualClock(), StoreMigrations.Expanded))
         {
             original.Write(transaction => transaction.Execute("""
                 INSERT INTO approval(approval_id,state,operation,summary,details_json,risk,requester,command_id,request,
@@ -177,7 +213,7 @@ public sealed partial class StoreCreationTests
     public void V2RuntimeRefusesRetiredTaskCommittedOnlyInWalWithoutChangingOriginalFiles()
     {
         using var crashed = new TemporaryDataRoot();
-        CopyCommittedWal(crashed, transaction => { _ = Rows.InsertTask(transaction); });
+        CopyCommittedWal(crashed, StoreMigrations.Expanded, transaction => { _ = Rows.InsertTask(transaction); });
         var files = Directory.GetFiles(crashed.Path, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal).ToArray();
         Assert.Equal([crashed.Database, crashed.Database + "-wal"], files);
         var before = files.ToDictionary(path => path, File.ReadAllBytes, StringComparer.Ordinal);
@@ -198,7 +234,7 @@ public sealed partial class StoreCreationTests
     {
         const string displayNameJson = "\"wal-only display name\"";
         using var crashed = new TemporaryDataRoot();
-        CopyCommittedWal(crashed, transaction =>
+        CopyCommittedWal(crashed, StoreMigrations.Released, transaction =>
         {
             Assert.Equal(1, transaction.Execute("""
                 INSERT INTO node_setting(name, value_json, updated_at, rev) VALUES ('node.name', $name, 17, 0);
@@ -214,18 +250,20 @@ public sealed partial class StoreCreationTests
         Assert.Equal(17L, opened.Read(reader => reader.Scalar("SELECT updated_at FROM node_setting WHERE name='node.name';")));
     }
 
-    private static void CopyCommittedWal(TemporaryDataRoot crashed, Action<StoreTransaction> write)
+    private static void CopyCommittedWal(TemporaryDataRoot crashed, MigrationPlan plan, Action<StoreTransaction> write)
     {
         using var seed = new TemporaryDataRoot();
         var clock = new ManualClock();
-        using (var initialized = seed.Open(clock))
+        using (var initialized = seed.Open(clock, plan))
         {
-            Assert.Equal(0L, initialized.Read(reader => reader.Scalar("SELECT count(*) FROM task;")));
+            if (plan.LatestVersion == StoreMigrations.ExpandedSchemaVersion)
+                Assert.Equal(0L, initialized.Read(reader => reader.Scalar("SELECT count(*) FROM task;")));
+
             Assert.Null(initialized.Read(reader => reader.Scalar("SELECT value_json FROM node_setting WHERE name='node.name';")));
         }
 
         var checkpointed = File.ReadAllBytes(seed.Database);
-        using var writer = seed.Open(clock, boot: "wal-writer");
+        using var writer = seed.Open(clock, plan, boot: "wal-writer");
         writer.Write(transaction => Assert.Equal(0L, transaction.Scalar("PRAGMA wal_autocheckpoint=0;")));
         writer.Write(write, CommitDurability.Full);
 

@@ -20,7 +20,7 @@ public sealed partial class DurableCommandStoreTests
         var clock = new ManualClock();
         var backupSecrets = NodeSecretStores.ForTestDataRoot(backup.Path);
         DurableIntent original;
-        using (var store = source.Open(clock))
+        using (var store = source.Open(clock, StoreMigrations.Released))
         using (var commands = Commands(store, source.Path))
         {
             original = Intent(commands);
@@ -37,23 +37,26 @@ public sealed partial class DurableCommandStoreTests
         File.Copy(backup.Database, source.Database, overwrite: true);
         DurableCommandStore.RestoreBackup(backup.Path, backupSecrets, source.Path, NodeSecretStores.ForTestDataRoot(source.Path),
             destination.Path, NodeSecretStores.ForTestDataRoot(destination.Path));
-        using var restored = destination.Open(clock);
+        using var restored = destination.Open(clock, StoreMigrations.Released);
         using var owner = Commands(restored, destination.Path);
         Assert.Equal(DurableDecision.Replay, owner.Admit(original).Decision);
         Assert.Equal(1, owner.Inspect(original.CommandId)!.Effect);
     }
 
-    [Fact]
-    public void CompleteBackupPreservesEveryOwnerAndProtectedEpochKey()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void CompleteBackupPreservesEveryOwnerAndProtectedEpochKey(bool contracted)
     {
         using var source = new TemporaryDataRoot();
         using var backup = new TemporaryDataRoot();
         using var destination = new TemporaryDataRoot();
         var clock = new ManualClock();
+        var plan = contracted ? StoreMigrations.Released : StoreMigrations.Expanded;
         var backupSecrets = NodeSecretStores.ForTestDataRoot(backup.Path);
         DurableIntent first;
         DurableIntent second;
-        using (var store = source.Open(clock))
+        using (var store = source.Open(clock, plan))
         using (var owner = Commands(store, source.Path))
         {
             first = Intent(owner);
@@ -72,7 +75,9 @@ public sealed partial class DurableCommandStoreTests
         }
         DurableCommandStore.RestoreBackup(backup.Path, backupSecrets, source.Path, NodeSecretStores.ForTestDataRoot(source.Path),
             destination.Path, NodeSecretStores.ForTestDataRoot(destination.Path));
-        using var restored = destination.Open(clock);
+        using var restored = destination.Open(clock, plan);
+        Assert.Equal(plan.LatestVersion, restored.Metadata.SchemaVersion);
+        Assert.Equal(plan.LatestVersion, restored.Metadata.MinReaderVersion);
         using var restoredFirst = Commands(restored, destination.Path);
         using var restoredSecond = new DurableCommandStore(restored, "second-owner", NodeSecretStores.ForTestDataRoot(destination.Path), Capacity);
         Assert.Equal(DurableDecision.Replay, restoredFirst.Admit(first).Decision);
@@ -91,7 +96,7 @@ public sealed partial class DurableCommandStoreTests
         var sourceSecrets = NodeSecretStores.ForTestDataRoot(source.Path);
         var backupSecrets = NodeSecretStores.ForTestDataRoot(backup.Path);
         var destinationSecrets = NodeSecretStores.ForTestDataRoot(destination.Path);
-        var oldPlan = new MigrationPlan(StoreMigrations.Released.Steps.Take(15));
+        var oldPlan = new MigrationPlan(StoreMigrations.Expanded.Steps.Take(15));
         const string retryMethod = "arcforges.node.v1.TaskService/RetryTask";
         const string fileMethod = "arcforges.node.v1.FileService/WriteFile";
         Id NewId() => new() { Value = ByteString.CopyFrom(StoreIds.NewUuid7(clock)) };
@@ -198,10 +203,12 @@ public sealed partial class DurableCommandStoreTests
         DurableIntent uncertain;
         DurableReceipt knownReceipt;
         DurableReceipt uncertainReceipt;
-        using (var expanded = source.Open(clock))
+        using (var expanded = source.Open(clock, StoreMigrations.Expanded))
         using (var owner = Commands(expanded, source.Path))
         {
             Assert.Equal(15, expanded.Opening.MigratedFrom);
+            Assert.Equal(19, expanded.Metadata.SchemaVersion);
+            Assert.Equal(19, expanded.Metadata.MinReaderVersion);
             frozenBackup = Assert.IsType<string>(expanded.Opening.BackupPath);
             frozenBytes = File.ReadAllBytes(frozenBackup);
             using (var snapshot = StoreCreationTests.Open(frozenBackup))
@@ -253,7 +260,9 @@ public sealed partial class DurableCommandStoreTests
                 Assert.Equal(digest, SHA256.HashData(File.ReadAllBytes(file)));
         }
 
-        using var restored = destination.Open(clock);
+        using var restored = destination.Open(clock, StoreMigrations.Expanded);
+        Assert.Equal(19, restored.Metadata.SchemaVersion);
+        Assert.Equal(19, restored.Metadata.MinReaderVersion);
         using var restoredOwner = Commands(restored, destination.Path);
         Assert.Equal(known.OwnerEpoch, restoredOwner.OwnerEpoch.ToArray());
         Assert.Equal(new DurableAdmission(DurableDecision.Replay, knownReceipt), restoredOwner.Admit(known));
@@ -277,7 +286,7 @@ public sealed partial class DurableCommandStoreTests
         using var destination = new TemporaryDataRoot();
         var clock = new ManualClock();
         var backupSecrets = NodeSecretStores.ForTestDataRoot(backup.Path);
-        using (var store = source.Open(clock))
+        using (var store = source.Open(clock, StoreMigrations.Released))
         {
             using (var owner = Commands(store, source.Path))
             {
@@ -302,7 +311,7 @@ public sealed partial class DurableCommandStoreTests
         using var destination = new TemporaryDataRoot();
         var clock = new ManualClock();
         var backupSecrets = NodeSecretStores.ForTestDataRoot(backup.Path);
-        using (var store = source.Open(clock))
+        using (var store = source.Open(clock, StoreMigrations.Released))
         using (var commands = Commands(store, source.Path))
         {
             var intent = Intent(commands);

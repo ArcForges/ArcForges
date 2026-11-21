@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using ArcForges.Node.Store.Migrations;
 using Microsoft.Data.Sqlite;
@@ -6,14 +8,23 @@ using Microsoft.Data.Sqlite;
 namespace ArcForges.Node.Store.Tests;
 
 /// <summary>
-/// The expand-only schema diff check (13-distribution-updates sections 6 and 9), run in CI as the step "Check the node store
-/// schema is expand-only" (suite store-schema): released migrations are immutable, and each one only expands the schema.
+/// Checks the immutable expansion through schema 19 and the separately qualified schema 20 contraction.
 /// </summary>
 [Trait("check", "schema")]
 public sealed class SchemaExpandOnlyTests
 {
     /// <summary>ArcForges-Design docs/data/node-store.sql at 78f0f5a (schema version 1).</summary>
     private const string DesignSchemaV1Sha256 = "8f56a161a3c73c18a455dc01d6061fa34bde6341a6eb130900daac336205a649";
+
+    internal static IReadOnlyList<string> ExpectedContractedTables { get; } =
+    [
+        "approval", "audit", "audit_log", "command_dedup", "command_receipt", "contracted_command_hold",
+        "deletion_journal", "event", "event_eviction", "event_journal", "finding", "job", "limit_application",
+        "migration_checkpoint", "node_setting", "notification", "output_segment", "owner_epoch", "owner_epoch_capacity",
+        "policy_document", "remote_command_binding", "remote_grant", "resource_policy", "run", "run_recovery",
+        "run_stop_intent", "sandbox", "sandbox_config", "schema_version", "store_meta", "supervisor_identity", "transfer",
+        "v2_resource_sample",
+    ];
 
     [Fact]
     public void Version1IsTheDesignSchemaVerbatim()
@@ -48,6 +59,9 @@ public sealed class SchemaExpandOnlyTests
 
         // Every recorded step is still released unchanged; new steps are recorded in the same change.
         Assert.Equal(recorded, released);
+        var expansionHistory = string.Join("\n", StoreMigrations.Expanded.Steps.Select(step => step.Sha256));
+        Assert.Equal("a266ad2d89fa5bb91eb77b80ef570e4f795fc1569d9f0f436a5c6786f985dd4c",
+            Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(expansionHistory))));
         foreach (var step in StoreMigrations.Released.Steps)
         {
             var file = File.ReadAllText(Repository.PathOf("src/ArcForges.Node.Store/Schema/" + step.Name));
@@ -56,9 +70,10 @@ public sealed class SchemaExpandOnlyTests
     }
 
     [Fact]
-    public void EveryReleasedMigrationIsExpandOnly()
+    public void EveryOriginalExpansionStepIsExpandOnly()
     {
-        var steps = StoreMigrations.Released.Steps;
+        var steps = StoreMigrations.Expanded.Steps;
+        Assert.Equal(19, steps.Count);
         var previous = Snapshot([]);
         for (var count = 1; count <= steps.Count; count++)
         {
@@ -75,6 +90,71 @@ public sealed class SchemaExpandOnlyTests
         Assert.True(previous.Tables.Count >= 60);
     }
 
+    [Fact]
+    public void Schema20ContractsOnlyTheReviewedInventoryAndRaisesTheReaderFloor()
+    {
+        var contraction = StoreMigrations.Released.Steps[^1];
+        Assert.Equal(20, contraction.Version);
+        Assert.Equal(20, contraction.MinReaderVersion);
+        Assert.Equal("0020-v2-contract.sql", contraction.Name);
+        Assert.Equal("58fd86eb6a31fc6e9dc6027ab3d4d2bd28323e16ac9b18bb11076f060aee7dd6", contraction.Sha256);
+        Assert.Equal(94, SchemaDiff.ContractStatements(contraction.Sql).Count);
+
+        var expanded = Snapshot(StoreMigrations.Expanded.Steps);
+        var contracted = Snapshot(StoreMigrations.Released.Steps);
+        Assert.Equal(ExpectedContractedTables, contracted.Tables.Keys);
+        Assert.Equal(81, expanded.Tables.Keys.Except(contracted.Tables.Keys, StringComparer.Ordinal).Count());
+
+        foreach (var name in ExpectedContractedTables.Where(name => name != "contracted_command_hold"))
+        {
+            var before = expanded.Tables[name];
+            var after = contracted.Tables[name];
+            if (name == "migration_checkpoint")
+            {
+                Assert.True(SchemaDiff.IsAppendOnly(before, after));
+                Assert.Equal(before.Columns, after.Columns.Take(before.Columns.Count));
+                Assert.Equal(
+                    ["source_database_sha256", "history_archive_sha256", "restore_database_sha256", "scope_receipt_sha256"],
+                    after.Columns.Skip(before.Columns.Count).Select(column => column.Name));
+            }
+            else
+            {
+                Assert.Equal(before.Sql, after.Sql);
+                Assert.Equal(before.Columns, after.Columns);
+            }
+        }
+
+        string[] retiredSharedTriggers =
+        [
+            "trigger:tr_file_audit_retention_guard_delete",
+            "trigger:tr_file_audit_retention_release",
+            "trigger:tr_file_command_retention_guard_delete",
+            "trigger:tr_file_command_retention_guard_insert",
+            "trigger:tr_file_command_retention_guard_update",
+            "trigger:tr_file_command_retention_insert",
+            "trigger:tr_file_command_retention_release",
+            "trigger:tr_file_operation_journal__guard_command_delete",
+            "trigger:tr_file_owner_audit_retention_insert",
+            "trigger:tr_file_private_stage_guard_command_delete",
+        ];
+        Assert.Equal(retiredSharedTriggers, expanded.Indexes
+            .Where(objectEntry => contracted.Tables.ContainsKey(objectEntry.Value.Table) && !contracted.Indexes.ContainsKey(objectEntry.Key))
+            .Select(objectEntry => objectEntry.Key));
+        foreach (var (name, definition) in contracted.Indexes)
+        {
+            if (expanded.Indexes.TryGetValue(name, out var original))
+                Assert.Equal(original, definition);
+        }
+
+        Assert.Equal(
+            ["trigger:contracted_command_hold_command_update", "trigger:contracted_command_hold_immutable_delete", "trigger:contracted_command_hold_immutable_update"],
+            contracted.Indexes.Keys.Except(expanded.Indexes.Keys, StringComparer.Ordinal));
+        Assert.Equal(
+            ["view:file_stage_capacity_totals", "view:file_stage_capacity_totals_v15", "view:file_stage_reserved_identity"],
+            expanded.Indexes.Keys.Where(name => name.StartsWith("view:", StringComparison.Ordinal)));
+        Assert.DoesNotContain(contracted.Indexes.Keys, name => name.StartsWith("view:", StringComparison.Ordinal));
+    }
+
     [Theory]
     [InlineData("DROP TABLE notification;", "table notification was dropped or renamed")]
     [InlineData("ALTER TABLE notification RENAME TO notice;", "table notification was dropped or renamed")]
@@ -86,8 +166,8 @@ public sealed class SchemaExpandOnlyTests
         "table notification changed its definition beyond added columns")]
     public void ContractStepsAreViolations(string sql, string violation)
     {
-        var before = Snapshot(StoreMigrations.Released.Steps);
-        var after = Snapshot([.. StoreMigrations.Released.Steps, new StoreMigration(StoreMigrations.Released.LatestVersion + 1, 1, "0003-contract.sql", sql)]);
+        var before = Snapshot(StoreMigrations.Expanded.Steps);
+        var after = Snapshot([.. StoreMigrations.Expanded.Steps, new StoreMigration(StoreMigrations.ExpandedSchemaVersion + 1, 1, "0003-contract.sql", sql)]);
 
         Assert.Contains(violation, SchemaDiff.ExpandOnlyViolations(before, after));
         Assert.NotEmpty(SchemaDiff.ContractStatements(sql));
@@ -104,8 +184,8 @@ public sealed class SchemaExpandOnlyTests
             CREATE INDEX ix_notification__read ON notification (read_at) WHERE read_at IS NULL;
             UPDATE node_setting SET rev = rev WHERE name = 'never "DROP" here';
             """;
-        var before = Snapshot(StoreMigrations.Released.Steps);
-        var after = Snapshot([.. StoreMigrations.Released.Steps, new StoreMigration(StoreMigrations.Released.LatestVersion + 1, 1, "0003-expand.sql", sql)]);
+        var before = Snapshot(StoreMigrations.Expanded.Steps);
+        var after = Snapshot([.. StoreMigrations.Expanded.Steps, new StoreMigration(StoreMigrations.ExpandedSchemaVersion + 1, 1, "0003-expand.sql", sql)]);
 
         Assert.Empty(SchemaDiff.ExpandOnlyViolations(before, after));
         Assert.Empty(SchemaDiff.ContractStatements(sql));
@@ -152,8 +232,8 @@ public sealed class SchemaExpandOnlyTests
     [Fact]
     public void ANotNullColumnWithoutDefaultIsAViolation()
     {
-        var before = Snapshot(StoreMigrations.Released.Steps);
-        var rebuilt = Snapshot([.. StoreMigrations.Released.Steps, new StoreMigration(StoreMigrations.Released.LatestVersion + 1, 1, "0003-x.sql",
+        var before = Snapshot(StoreMigrations.Expanded.Steps);
+        var rebuilt = Snapshot([.. StoreMigrations.Expanded.Steps, new StoreMigration(StoreMigrations.ExpandedSchemaVersion + 1, 1, "0003-x.sql",
             "CREATE TABLE t2 (a INTEGER) STRICT; DROP TABLE toolchain; CREATE TABLE toolchain (kind TEXT NOT NULL, path TEXT NOT NULL, version TEXT NOT NULL, identity_json TEXT NOT NULL CHECK (json_valid(identity_json)), detected_at INTEGER NOT NULL, missing INTEGER NOT NULL DEFAULT 0 CHECK (missing IN (0, 1)), owner TEXT NOT NULL, PRIMARY KEY (kind, path)) STRICT, WITHOUT ROWID;")]);
 
         Assert.Contains("column toolchain.owner was added NOT NULL without a default", SchemaDiff.ExpandOnlyViolations(before, rebuilt));

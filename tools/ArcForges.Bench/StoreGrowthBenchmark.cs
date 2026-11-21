@@ -7,6 +7,7 @@ using System.Text.Json;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Node.Store;
+using ArcForges.Node.Store.Migrations;
 using Google.Protobuf;
 
 namespace ArcForges.Bench;
@@ -109,7 +110,8 @@ internal static class StoreGrowthBenchmark
         var watch = Stopwatch.StartNew();
         try
         {
-            var store = NodeStore.Open(new NodeStoreOptions { DataRoot = dataRoot, BootIdentity = "store-growth-benchmark", Clock = clock });
+            var store = NodeStore.Open(new NodeStoreOptions { DataRoot = dataRoot, BootIdentity = "store-growth-benchmark", Clock = clock },
+                StoreMigrations.Expanded);
             store.Checkpoint();
             var baselineBytes = new FileInfo(StorePaths.Database(dataRoot)).Length;
             using var keys = new NodeDataKeyRing(store, NodeSecretStores.ForTestDataRoot(dataRoot));
