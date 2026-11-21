@@ -267,7 +267,8 @@ public sealed class ApprovalServiceHandler : ApprovalService.ApprovalServiceBase
     /// </summary>
     private async Task ExecuteAsync(StoredApproval approval)
     {
-        if (_executors.Find(approval.View.Operation) is not { } executor || approval.View.Requester?.CenterCaller is not null)
+        if (_executors.Find(approval.View.Operation) is not { } executor ||
+            approval.View.Requester is not { CenterCaller: null, Origin: Origin.Human or Origin.Script or Origin.Agent } requester)
         {
             return;
         }
@@ -276,7 +277,7 @@ public sealed class ApprovalServiceHandler : ApprovalService.ApprovalServiceBase
         try
         {
             outcome = await executor.Run(approval.Request,
-                Caller.OfApproval(approval.View.Requester, approval.Id)).ConfigureAwait(false);
+                Caller.OfApproval(requester, approval.Id)).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
         {

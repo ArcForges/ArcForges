@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using ArcForges.Contracts.Foundation.V1;
 using ArcForges.LocalRpc;
 using ArcForges.Node.Core;
 
