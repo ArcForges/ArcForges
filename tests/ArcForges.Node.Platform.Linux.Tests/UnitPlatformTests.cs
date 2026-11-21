@@ -965,7 +965,8 @@ public sealed class LegacyLinuxLaunchRefusalTests
 
             var error = Assert.Throws<InvalidOperationException>(() => platform.Launch(launch));
             Assert.Equal("Cannot start a legacy Linux attempt: no systemd user manager is connected.", error.Message);
-            Assert.Null(platform.Reopen(launch.NodeName, files, null));
+            var custody = Assert.Throws<LegacyCustodyUnavailableException>(() => platform.Reopen(launch.NodeName, files, null));
+            Assert.Contains("systemd user manager", custody.Message, StringComparison.Ordinal);
             Assert.Empty(Directory.EnumerateFileSystemEntries(root));
         }
         finally
