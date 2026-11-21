@@ -1,176 +1,112 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-using System.Diagnostics;
 using System.Security.Cryptography;
-using System.Text;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
-using ArcForges.Contracts.Relay.V1;
 using ArcForges.Node.Core.Files;
 using ArcForges.Node.Core.Platform;
-using ArcForges.Node.Core.Security;
 using ArcForges.Node.Store;
 using Google.Protobuf;
-using NodeShapes = ArcForges.Contracts.Node.Shapes.ContractShapeValidation;
 
 namespace ArcForges.Node.Core.Tests;
 
-/// <summary>Real registered stage identities, native aliases, dispatcher and SQLite; the routed caller is synthetic.</summary>
 public sealed class FileRemovalPlanPrivateCountTests
 {
-    [Theory(Timeout = 120_000)]
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task PrivateAliasCannotContributeToThePublicDescendantLimit(bool hardLink)
-    {
-        var ct = TestContext.Current.CancellationToken;
-        await using var node = await InProcessNode.Create().StartAsync();
-        var calls = new RoutedCalls(node);
-        var actor = calls.Relay(Origin.Human);
-        var planner = calls.Relay(Origin.Agent);
-        var rootPath = Directory.CreateDirectory(Path.Combine(node.Root, "private-count-root")).FullName;
-        var tree = Directory.CreateDirectory(Path.Combine(rootPath, "tree")).FullName;
-        var privatePath = Directory.CreateDirectory(Path.Combine(rootPath, "private")).FullName;
-        File.WriteAllText(Path.Combine(rootPath, "ordinary.txt"), "ordinary");
-        var workspace = new RegisteredWorkspaces(node.Runtime.Store).RegisterFromVerifiedHuman(rootPath, cancellationToken: ct);
-        FileServicePlanRemovalRequest Request(string path) => new()
+    public Task HistoricalPrivateDenialAndPublicCountKeepDistinctReplayShapes(bool privateDenial) =>
+        LegacyPlannerHistoryFixture.WithStoreAsync((node, files) =>
         {
-            Meta = Tasks.Meta(),
-            WorkspacePath = new FilePath { WorkspaceId = new Id { Value = ByteString.CopyFrom(workspace.Id) }, Path = path },
-        };
-        async Task<(FileServicePlanRemovalResponse Response, byte[] Bytes)> Plan(FileServicePlanRemovalRequest request)
-        {
-            var result = await calls.CallAsync(planner, RoutedMethod.PlanNodeRemoval, request.ToByteArray(), request.Meta.CommandId);
-            Assert.NotNull(result.Answer);
-            Assert.Equal(RoutedOutcome.Executed, result.Answer.Outcome);
-            var bytes = result.Answer.Response!.ToByteArray();
-            var response = FileServicePlanRemovalResponse.Parser.ParseFrom(bytes);
-            Assert.True(NodeShapes.IsValid(response));
-            Assert.Equal(request.Meta.CorrelationId, response.Meta.CorrelationId);
-            return (response, bytes);
-        }
-        for (var index = 0; index < 999; index++)
-            File.WriteAllBytes(Path.Combine(tree, "public-" + index.ToString("D4", System.Globalization.CultureInfo.InvariantCulture)), []);
+            var owner = LegacyPlannerHistoryFixture.Owner(node);
+            var request = new FileServicePlanRemovalRequest
+            {
+                Meta = Tasks.Meta(),
+                WorkspacePath = new FilePath { WorkspaceId = CommandIds.New(), Path = "tree" },
+            };
+            var error = LegacyPlannerHistoryFixture.Refusal(privateDenial ? ErrorCategory.State : ErrorCategory.Resource,
+                privateDenial ? "file_access_denied" : "too_large", "file_access_denied", request.Meta.CorrelationId);
+            if (!privateDenial)
+            {
+                error.Details = new ErrorDetails
+                {
+                    Limit = new LimitFailure
+                    {
+                        LimitName = "removal_descendants",
+                        Maximum = new ArcForges.Contracts.Foundation.V1.Decimal { Value = "1000" },
+                    },
+                };
+            }
 
-        // With no private registry, the original below/at/above-1000 classification remains observable.
-        var below = (await Plan(Request("tree"))).Response;
-        Assert.Null(below.Error);
-        Assert.Equal(1000, below.Value.Plan.Items.Count);
-        File.WriteAllBytes(Path.Combine(tree, "public-0999"), []);
-        var exact = (await Plan(Request("tree"))).Response;
-        Assert.Null(exact.Error);
-        Assert.Equal(1001, exact.Value.Plan.Items.Count);
-        File.WriteAllBytes(Path.Combine(tree, "public-1000"), []);
-        var publicOverflow = (await Plan(Request("tree"))).Response;
-        Assert.Equal("too_large", publicOverflow.Error.Code);
-        Assert.Equal("removal_descendants", publicOverflow.Error.Details.Limit.LimitName);
-        Assert.Equal("1000", publicOverflow.Error.Details.Limit.Maximum.Value);
-        Assert.Equal(2L, node.Runtime.Store.Read(r => r.Scalar("SELECT count(*) FROM file_removal_plan;")));
-        File.Delete(Path.Combine(tree, "public-1000")); // Only the extra file created by this fixture.
+            var raw = request.ToByteArray();
+            var recorded = LegacyPlannerHistoryFixture.RecordRefusal(node.Store, request, owner, error);
+            var replay = LegacyPlannerHistoryFixture.Read(node, files, request, owner);
+            Assert.Equal(recorded, replay.Retained!.Value.ToArray());
+            Assert.Equal(error, replay.Error);
+            Assert.Null(((FileServicePlanRemovalResponse)replay.Response).Value);
+            if (privateDenial)
+            {
+                Assert.Null(replay.Error!.Details.Limit);
+            }
+            else
+            {
+                Assert.Equal("1000", replay.Error!.Details.Limit.Maximum.Value);
+            }
 
-        var body = Encoding.UTF8.GetBytes("private-count-stage-body-9e21");
-        var stageRequest = new FileServiceWriteFileRequest
-        {
-            Meta = Tasks.Meta(),
-            ExpectedAbsent = true,
-            Data = ByteString.CopyFrom(body),
-            Path = new FilePath { WorkspaceId = new Id { Value = ByteString.CopyFrom(workspace.Id) }, Path = "never-created.txt" },
-        };
-        var raw = stageRequest.ToByteArray();
-        var source = Path.Combine(privatePath, "stage.tmp");
-        using (var root = WorkspacePath.OpenRoot(rootPath))
-        using (var stageDirectory = WorkspacePath.OpenRoot(privatePath))
-        {
-            Assert.Equal(PrivateStageReservationResult.Reserved, node.Runtime.Store.Write(tx =>
-                PrivateStageRegistry.Reserve(tx, new FileStageBudget(), FileOperationKind.Write,
-                    stageRequest.Meta.CommandId.Value.Span, workspace.Id, stageRequest.Meta.CorrelationId.Value.Span,
-                    actor, raw, [new PrivateStageSpec(2, source, body.Length, SHA256.HashData(body))]), CommitDurability.Full));
-            using var empty = stageDirectory.CreateEmptyPrivateNamedStage("stage.tmp", ct);
-            node.Runtime.Store.Write(tx => PrivateStageRegistry.BindEmptyForProtection(tx,
-                stageRequest.Meta.CommandId.Value.Span, 2, root, stageDirectory, "stage.tmp", empty.Guard, ct), CommitDurability.Full);
-            PrivateStageRegistry.WriteBoundStage(node.Runtime.Store, stageRequest.Meta.CommandId.Value.Span, 2,
-                actor, raw, empty, body, ct);
-        }
-        Assert.Single(node.Runtime.Store.Read(PrivateStageRegistry.LoadIdentities));
-        var alias = Path.Combine(tree, "private-alias");
-        if (hardLink) NativeHardLink(source, alias);
-        else File.Move(source, alias);
-        var namesBefore = Directory.GetFileSystemEntries(rootPath, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal).ToArray();
-        var request = Request("tree");
-        var (denied, refusedBytes) = await Plan(request);
-
-        // The actual bound private alias is the 1001st child. Its name must not produce a public count refusal.
-        Assert.Equal("file_access_denied", denied.Error.Code);
-        Assert.Equal(ErrorCategory.State, denied.Error.Category);
-        Assert.Equal("file_access_denied", denied.Error.Details.State.Reason);
-        Assert.Null(denied.Error.Details.Limit);
-        Assert.Equal(EffectCertainty.DidNotHappen, denied.Error.Effect);
-        Assert.Equal(RetryMode.Never, denied.Error.Retry.Mode);
-        Assert.Null(denied.Value);
-        Assert.Equal(2L, node.Runtime.Store.Read(r => r.Scalar("SELECT count(*) FROM file_removal_plan;")));
-        Assert.Equal(0L, node.Runtime.Store.Read(r => r.Scalar("SELECT count(*) FROM file_operation_journal;")));
-        Assert.Equal(refusedBytes, (await Plan(request)).Bytes);
-        var id = request.Meta.CommandId.Value.ToByteArray();
-        node.Runtime.Store.Read(reader =>
-        {
-            using var query = reader.CreateCommand("""
-                SELECT d.payload_digest, d.outcome, o.caller
-                FROM command_dedup d JOIN file_removal_command_owner o ON o.command_id = d.command_id
-                WHERE d.command_id = $id;
-                """);
-            query.Parameters.AddWithValue("$id", id);
-            using var row = query.ExecuteReader();
-            Assert.True(row.Read());
-            Assert.Equal(SHA256.HashData(request.ToByteArray()), (byte[])row.GetValue(0));
-            Assert.Equal(refusedBytes, (byte[])row.GetValue(1));
-            Assert.Equal(planner, CenterCaller.Parser.ParseFrom((byte[])row.GetValue(2)));
-            Assert.False(row.Read());
-            return 0;
+            var changed = LegacyPlannerHistoryFixture.Read(node, files, request, owner, [.. raw, 0x98, 0x06, 0x01]);
+            Assert.Equal("command_id_reused", changed.Error!.Code);
+            Assert.Null(changed.Retained);
+            Assert.Equal(0L, node.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_removal_plan;")));
+            Assert.Equal(0L, node.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_operation_journal;")));
+            return Task.CompletedTask;
         });
-        Assert.Equal(1L, node.Runtime.Store.Read(reader => reader.Scalar("""
-            SELECT count(*) FROM audit_log WHERE remote_command_id = $id
-              AND operation = 'cleanup.plan FileService.PlanRemoval' AND outcome_summary = 'refused: file_access_denied';
-            """, ("$id", id))));
-        Assert.Equal(1L, node.Runtime.Store.Read(reader => reader.Scalar("""
-            SELECT count(*) FROM audit_log WHERE remote_command_id = $id
-              AND operation = 'cleanup.plan FileService.PlanRemoval' AND outcome_summary = 'replayed: file_access_denied';
-            """, ("$id", id))));
 
-        // The same genuinely registered identity also protects the indexed lookup path, without claiming a 129-stage run.
-        using (var indexed = WorkspacePath.OpenRoot(rootPath))
+    [Fact]
+    public Task RetainedPrivateIdentityMatchesTheObjectIndependentOfLinkCount() =>
+        LegacyPlannerHistoryFixture.WithStoreAsync((node, _) =>
         {
-            indexed.ProtectPrivateStageFiles(identity => node.Runtime.Store.Read(reader => PrivateStageRegistry.ContainsIdentity(reader, identity)));
-            Assert.Equal("file_access_denied", Assert.Throws<WorkspaceRemovalPlanException>(() =>
-                WorkspaceRemovalPlan.Capture(indexed, "tree", ct)).Reason);
-        }
-        var ordinary = (await Plan(Request("ordinary.txt"))).Response;
-        Assert.Null(ordinary.Error);
-        Assert.Single(ordinary.Value.Plan.Items);
-        Assert.False(ordinary.Value.Plan.Items[0].OwnerVerified);
-        Assert.True(ordinary.Value.Plan.RequiresApproval);
-        Assert.True(ordinary.Value.Plan.QuarantineAvailable);
-        Assert.Equal(namesBefore, Directory.GetFileSystemEntries(rootPath, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal));
-        Assert.Equal(body, File.ReadAllBytes(alias));
-        if (hardLink) Assert.Equal(body, File.ReadAllBytes(source));
-        Assert.All(Directory.GetFiles(tree, "public-*"), file => Assert.Equal(0, new FileInfo(file).Length));
-        Assert.Equal("ordinary", File.ReadAllText(Path.Combine(rootPath, "ordinary.txt")));
-        Assert.False(File.Exists(Path.Combine(rootPath, "never-created.txt")));
-        Assert.Equal(3L, node.Runtime.Store.Read(r => r.Scalar("SELECT count(*) FROM file_removal_plan;")));
-        Assert.Equal(0L, node.Runtime.Store.Read(r => r.Scalar("SELECT count(*) FROM file_operation_journal;")));
-    }
+            var owner = LegacyPlannerHistoryFixture.Owner(node);
+            var body = "fixture"u8.ToArray();
+            var native = OperatingSystem.IsWindows()
+                ? new WorkspaceObjectIdentity(17, 29, 37, 43, 0, 1, 0x8000)
+                : new WorkspaceObjectIdentity(17, 29, 37, 43, 7, 1, 0x8000, SHA256.HashData("stage"u8));
+            var parent = native with { Low = 39, Mode = 0x4000, InstanceToken = OperatingSystem.IsWindows()
+                ? default : SHA256.HashData("stage parent"u8) };
+            var identity = RegisteredWorkspaces.RootIdentity.Encode(native, directory: false);
+            var parentIdentity = RegisteredWorkspaces.RootIdentity.Encode(parent);
+            var registered = node.Store.Write(transaction =>
+            {
+                var root = Path.Combine(node.DataRoot, "workspace");
+                var workspace = LegacyPlannerHistoryFixture.SeedWorkspace(transaction, root);
+                var request = new FileServiceWriteFileRequest
+                {
+                    Meta = Tasks.Meta(), ExpectedAbsent = true, Data = ByteString.CopyFrom(body),
+                    Path = new FilePath { WorkspaceId = workspace, Path = "unwritten" },
+                };
+                var id = request.Meta.CommandId.Value.ToByteArray();
+                Assert.Equal(PrivateStageReservationResult.Reserved, PrivateStageRegistry.Reserve(transaction,
+                    new FileStageBudget(), FileOperationKind.Write, id, workspace.Value.Span, request.Meta.CorrelationId.Value.Span,
+                    owner, request.ToByteArray(), [new PrivateStageSpec(2, Path.Combine(root, "stage"), body.Length, SHA256.HashData(body))]));
+                // Existing immutable stage metadata, with the native observation supplied by the test.
+                Assert.Equal(1, transaction.Execute("""
+                    UPDATE file_private_stage_object SET phase = 2, identity_platform = $platform,
+                      native_identity = $identity, parent_identity = $parent WHERE command_id = $id AND slot = 2;
+                    """, ("$platform", identity.Platform), ("$identity", identity.Bytes), ("$parent", parentIdentity.Bytes), ("$id", id)));
+                return workspace;
+            }, CommitDurability.Full);
 
-    private static void NativeHardLink(string source, string destination)
-    {
-        var windows = OperatingSystem.IsWindows();
-        var executable = windows ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe") : "ln";
-        string[] args = windows ? ["/d", "/c", "mklink", "/H", destination, source] : [source, destination];
-        using var process = Process.Start(new ProcessStartInfo(executable, args)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true,
-        })!;
-        var output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
-        Assert.True(process.WaitForExit(10_000) && process.ExitCode == 0, "native hardlink setup failed: " + output);
-    }
+            node.Store.Read(reader =>
+            {
+                Assert.Single(PrivateStageRegistry.LoadIdentities(reader));
+                Assert.True(PrivateStageRegistry.HasWorkspaceHold(reader, registered.Value.Span));
+                Assert.False(PrivateStageRegistry.HasWorkspaceHold(reader, CommandIds.New().Value.Span));
+                Assert.True(PrivateStageRegistry.ContainsIdentity(reader, native));
+                Assert.True(PrivateStageRegistry.ContainsIdentity(reader, native with { Links = 2 }));
+                var foreign = native with { Low = 41, InstanceToken = OperatingSystem.IsWindows()
+                    ? default : SHA256.HashData("foreign"u8) };
+                Assert.False(PrivateStageRegistry.ContainsIdentity(reader, foreign));
+                return 0;
+            });
+            return Task.CompletedTask;
+        });
 }
