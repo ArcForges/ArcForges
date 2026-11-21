@@ -10,6 +10,7 @@ using ArcForges.Node.Core.Sandboxes;
 using ArcForges.Node.Platform.Capabilities;
 using ArcForges.Node.Store;
 using Google.Protobuf;
+using V1 = ArcForges.Contracts.Node.V1;
 
 namespace ArcForges.Node.Core.Tests;
 
@@ -485,6 +486,60 @@ public sealed partial class SandboxRegistryTests
         finally
         {
             RemoveLocalOwnerKey(fixture, epoch);
+        }
+    }
+
+    [Fact(Timeout = 60_000)]
+    public async Task HealthReflectsAnObservedMissingV2InstallationWithoutChangingLegacyReadiness()
+    {
+        AssertNativePlatform();
+        var ct = TestContext.Current.CancellationToken;
+        await using var fixture = InProcessNode.Create();
+        var absent = Path.Combine(fixture.Root, "mxc-not-installed");
+        fixture.SandboxMxcInstallationRoot = absent;
+        Assert.False(Path.Exists(absent));
+        CreateOwnerOnlyDataRoot(fixture.DataRoot);
+        await fixture.StartAsync();
+        await using var channel = await fixture.ChannelAsync();
+
+        var before = await channel.Node.GetHealthAsync(new V1.NodeServiceGetHealthRequest(),
+            deadline: DateTime.UtcNow.AddSeconds(10), cancellationToken: ct);
+        Assert.Null(before.Error);
+        Assert.Equal(InProcessNode.ExpectedState, before.Value.State);
+        var initial = Assert.Single(before.Value.Checks, check => check.CheckId == "node.v2_run_profile");
+        var legacy = Assert.Single(before.Value.Checks, check => check.CheckId == "node.enforcement");
+        Assert.Equal(V1.CheckStatus.Warn, initial.Status);
+        Assert.Contains("run_profile_not_observed", initial.Summary, StringComparison.Ordinal);
+
+        var node = new NodeService.NodeServiceClient(channel.CallInvoker);
+        var request = new NodeServiceHandshakeRequest { Meta = Query() };
+        var handshake = await node.HandshakeAsync(request, deadline: DateTime.UtcNow.AddSeconds(10), cancellationToken: ct);
+        try
+        {
+            Assert.Null(handshake.Error);
+            Assert.Equal(request.Meta.CorrelationId, handshake.Meta.CorrelationId);
+            Assert.Equal("2.0", handshake.Value.ContractVersion);
+            Assert.Equal(16, handshake.Value.OwnerEpoch.Value.Length);
+            var profile = Assert.Single(handshake.Value.Capabilities, capability => capability.Key == "mxc.profile");
+            Assert.Equal(CapabilityState.Unverified, profile.State);
+            Assert.Equal("official_mxc_installation_missing", profile.Reason);
+            Assert.False(profile.HasEvidenceId);
+
+            var after = await channel.Node.GetHealthAsync(new V1.NodeServiceGetHealthRequest(),
+                deadline: DateTime.UtcNow.AddSeconds(10), cancellationToken: ct);
+            Assert.Null(after.Error);
+            Assert.Equal(before.Value.State, after.Value.State);
+            Assert.Equal(legacy, Assert.Single(after.Value.Checks, check => check.CheckId == "node.enforcement"));
+            var observed = Assert.Single(after.Value.Checks, check => check.CheckId == "node.v2_run_profile");
+            Assert.Equal(V1.CheckStatus.Warn, observed.Status);
+            Assert.Contains(profile.Reason, observed.Summary, StringComparison.Ordinal);
+            Assert.DoesNotContain("run_profile_not_observed", observed.Summary, StringComparison.Ordinal);
+            Assert.False(Path.Exists(absent));
+        }
+        finally
+        {
+            if (handshake.Value?.OwnerEpoch is { } epoch)
+                RemoveLocalOwnerKey(fixture, epoch);
         }
     }
 
