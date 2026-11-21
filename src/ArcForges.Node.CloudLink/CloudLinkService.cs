@@ -9,7 +9,6 @@ using ArcForges.Node.Core;
 using ArcForges.Node.Store;
 using ArcForges.Security.Secrets;
 using Google.Protobuf;
-using Grpc.Core;
 
 namespace ArcForges.Node.CloudLink;
 
@@ -102,17 +101,8 @@ internal sealed record CloudLinkOptions
     /// <summary>The browser opener of the sign-in flows (part N2); <see langword="null"/> opens nothing.</summary>
     public IBrowserOpener? Opener { get; init; }
 
-    /// <summary>
-    /// The store of <c>routed_call_log</c> (AF-CTR-05 N1; the host passes its command processor). Without it the node channel does not run
-    /// (the relay state is DISABLED, <c>channel_not_configured</c>), as in the link's unit tests that do not exercise the channel.
-    /// </summary>
-    public IRoutedCallStore? RoutedCalls { get; init; }
-
-    /// <summary>The routed dispatch (part N2b, the host's <c>RoutedDispatcher</c>); without one every verified call is refused (<see cref="RefusingDispatcher"/>).</summary>
-    public IRoutedDispatcher? Dispatcher { get; init; }
-
-    /// <summary>The test hook of <see cref="ChannelLoop.StepHook"/> (AF-CTR-05 decisions B-3); never set by the host.</summary>
-    internal Func<string, Task>? ChannelStepHook { get; init; }
+    /// <summary>The host link runs a channel when its credentials and channel selection allow it.</summary>
+    public bool ChannelEnabled { get; init; }
 
     /// <summary>The node's version as its hello states it.</summary>
     public string Version { get; init; } = "0.1.0-dev";
@@ -238,13 +228,10 @@ internal sealed partial class CloudLinkService : ICloudLinkView, IChannelHost, I
         _store = new CloudCredentialStore(options.DataRoot, options.Secrets);
         _nodeHex = Convert.ToHexStringLower(options.NodeId.Span);
         SignIn = new SignInOrchestrator(this, options);
-        if (options.RoutedCalls is { } routed)
+        if (options.ChannelEnabled)
         {
-            _channel = new ChannelLoop(this, new RoutedCallLog(routed, options.Clock), options.Dispatcher ?? new RefusingDispatcher(options.Clock), options.Log,
-                options.Clock, options.ConnectLog, options.Version, options.ContractVersion, options.ChannelRandom)
-            {
-                StepHook = options.ChannelStepHook,
-            };
+            _channel = new ChannelLoop(this, options.Log, options.Clock, options.ConnectLog, options.Version, options.ContractVersion,
+                options.ChannelRandom);
             _features = [SignInFeature, ChannelFeature];
         }
         else
@@ -253,7 +240,7 @@ internal sealed partial class CloudLinkService : ICloudLinkView, IChannelHost, I
         }
     }
 
-    /// <summary>The node channel (<see langword="null"/> when the link was built without its store).</summary>
+    /// <summary>The node channel (<see langword="null"/> when the channel is disabled at composition).</summary>
     internal ChannelLoop? Channel => _channel;
 
     /// <summary>The sign-in flows (part N2: BeginSignIn, GetSignInFlow, CancelSignIn).</summary>
@@ -284,9 +271,7 @@ internal sealed partial class CloudLinkService : ICloudLinkView, IChannelHost, I
     public const string ChannelFeature = "center.channel.v1";
 
     /// <inheritdoc />
-    public IReadOnlyList<string> Features => _options.RoutedCalls is not null && _options.Dispatcher?.SupportsFiles == true
-        ? [.. _features, ChannelLoop.FilesCapability]
-        : _features;
+    public IReadOnlyList<string> Features => _features;
 
     /// <summary>Incremented at every rotation (the single-flight gate's generation, node-9 item 1).</summary>
     public long Generation => Interlocked.Read(ref _generation);
@@ -1158,58 +1143,6 @@ internal sealed partial class CloudLinkService : ICloudLinkView, IChannelHost, I
         }
 
         return true;
-    }
-
-    /// <summary>
-    /// Signs a relay assertion for a local caller over a fresh center-sent relay nonce of the open channel (Plan addendum D0-B1, C-N2; part N3's
-    /// local proxy relays with it); <see langword="null"/> without a connected channel.
-    /// </summary>
-    internal async Task<ArcForges.Contracts.Relay.V1.RelayAssertion?> SignRelayAssertionAsync(Origin localOrigin, Id localSessionId,
-        ArcForges.Contracts.Relay.V1.RoutedMethod method, ReadOnlyMemory<byte> requestSha256, Id? targetNodeId, Id? commandId, CancellationToken cancellationToken) =>
-        (await SignBoundRelayAssertionAsync(localOrigin, localSessionId, method, requestSha256, targetNodeId, commandId, cancellationToken)
-            .ConfigureAwait(false))?.Assertion;
-
-    /// <summary>Signs with the channel and retains its canonical center for the subsequent forwarding check.</summary>
-    internal Task<BoundRelayAssertion?> SignBoundRelayAssertionAsync(Origin localOrigin, Id localSessionId,
-        ArcForges.Contracts.Relay.V1.RoutedMethod method, ReadOnlyMemory<byte> requestSha256, Id? targetNodeId, Id? commandId, CancellationToken cancellationToken) =>
-        _channel is { } channel
-            ? channel.SignRelayAssertionAsync(localOrigin, localSessionId, method, requestSha256, targetNodeId, commandId, cancellationToken)
-            : Task.FromResult<BoundRelayAssertion?>(null);
-
-    /// <summary>In-process test hook after the ticket is captured and before the relay HTTP send; never set by the host.</summary>
-    internal Func<CancellationToken, Task>? BeforeRelayForward { get; set; }
-
-    /// <summary>
-    /// Sends one already-signed fleet request through the guarded center transport using this link's bound credential. The operation owns
-    /// its channel so a concurrent sign-out or center change cannot dispose an in-flight request's transport. The node never exposes the
-    /// credential to its local caller. A changed center or installation is refused before sending; the center verifies the nonce against the connection.
-    /// </summary>
-    internal async Task<CenterReply<T>> ForwardRelayAsync<T>(BoundRelayAssertion signed,
-        Func<FleetService.FleetServiceClient, CallOptions, Task<T>> call, TimeSpan deadline, CancellationToken cancellationToken)
-        where T : class
-    {
-        var (ticket, reason) = ((IChannelHost)this).Ticket();
-        var assertion = signed.Assertion;
-        if (Stopping || ticket is null || ticket.UseV2 || !signed.Center.Equals(ticket.Center) || assertion.RelayingNodeId is null || assertion.RelayingInstallationId is null
-            || !assertion.RelayingNodeId.Value.Span.SequenceEqual(ticket.NodeId.Span)
-            || !assertion.RelayingInstallationId.Value.Span.SequenceEqual(ticket.InstallationId.Span))
-        {
-            return new CenterReply<T>(CenterOutcome.Unreachable, null, null, null, false, reason);
-        }
-
-        if (BeforeRelayForward is { } beforeForward)
-        {
-            await beforeForward(cancellationToken).ConfigureAwait(false);
-        }
-
-        var current = ((IChannelHost)this).Ticket().Ticket;
-        if (Stopping || current is null || current.UseV2 || current.Generation != ticket.Generation || !current.Center.Equals(ticket.Center))
-        {
-            return new CenterReply<T>(CenterOutcome.Unreachable, null, null, null, false, ChannelReasons.CredentialUnusable);
-        }
-
-        using var transport = new CenterHttpClient(ticket.Center, _options.ConnectLog);
-        return await new CenterClient(transport, _options.Clock).RelayAsync(call, deadline, ticket.AccessToken, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />

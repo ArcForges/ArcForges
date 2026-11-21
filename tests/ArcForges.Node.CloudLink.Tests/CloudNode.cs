@@ -51,9 +51,6 @@ internal sealed class CloudNode : IAsyncDisposable
     /// <summary>The wall clock for this node (the real clock unless a test supplies a controllable one).</summary>
     public TimeProvider Clock { get; set; } = TimeProvider.System;
 
-    /// <summary>Wraps the real routed dispatcher for fault injection in an in-process test.</summary>
-    public Func<IRoutedDispatcher, IRoutedDispatcher>? WrapRoutedDispatcher { get; set; }
-
     public LocalRpcEndpoint Endpoint { get; }
 
     /// <summary>The <c>arcforges</c> executable whose helper roles the node starts: <c>ARCFORGES_HOST_PATH</c> or the build next to the tests.</summary>
@@ -61,12 +58,9 @@ internal sealed class CloudNode : IAsyncDisposable
         ? configured
         : Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "arcforges.exe" : "arcforges");
 
-    public static string LegacyCliExecutable => Path.Combine(AppContext.BaseDirectory,
-        OperatingSystem.IsWindows() ? "ArcForges.LegacyCliFixture.exe" : "ArcForges.LegacyCliFixture");
-
-    public void BindLegacyCli(ProcessStartInfo start, string? endpoint = null)
+    public void BindCli(ProcessStartInfo start)
     {
-        start.Environment[NodeLocations.EndpointVariable] = endpoint ?? Endpoint.Address;
+        start.Environment[NodeLocations.EndpointVariable] = Endpoint.Address;
         start.Environment[NodeLocations.ConfigDirectoryVariable] = Path.GetDirectoryName(ConfigPath)!;
         start.Environment.Remove("ARCFORGES_OS_SECRET_STORE_TESTS");
     }
@@ -111,7 +105,6 @@ internal sealed class CloudNode : IAsyncDisposable
             ConfigPath = ConfigPath,
             TestMode = TestMode,
             Clock = Clock,
-            WrapRoutedDispatcher = WrapRoutedDispatcher,
             Endpoint = Endpoint,
 
             // AD-0021 section 5 (Plan decision Q8): the node's own tests submit through local SCRIPT connections (CTR5-NODE-14); never an AGENT.
@@ -125,7 +118,6 @@ internal sealed class CloudNode : IAsyncDisposable
             LinuxSlice = Slice,
             IsolatedFromMachineLoad = true,
 
-            // AF-CTR-05 N2b: routed runs execute (RoutedNodeTests), with the helper roles of the arcforges executable built next to the tests.
             HelperExecutable = HelperExecutable,
         };
         var stop = _stop.Token;

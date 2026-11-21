@@ -47,7 +47,6 @@ internal sealed class CenterHttpClient : IDisposable
             HttpVersionPolicy = HttpVersionPolicy.RequestVersionExact,
         });
         Fleet = new NodeEnrollmentService.NodeEnrollmentServiceClient(_channel);
-        RoutedFleet = new FleetService.FleetServiceClient(_channel);
     }
 
     /// <summary>The center this client may reach.</summary>
@@ -55,9 +54,6 @@ internal sealed class CenterHttpClient : IDisposable
 
     /// <summary>The generated fleet client over this channel.</summary>
     public NodeEnrollmentService.NodeEnrollmentServiceClient Fleet { get; }
-
-    /// <summary>The center-routed fleet client on the same guarded transport.</summary>
-    public FleetService.FleetServiceClient RoutedFleet { get; }
 
     /// <inheritdoc />
     public void Dispose() => _channel.Dispose();

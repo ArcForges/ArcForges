@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-using System.Collections.Concurrent;
 using System.Net.WebSockets;
-using System.Security.Cryptography;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Relay.V1;
@@ -23,9 +21,6 @@ internal sealed record ChannelTicket(CenterEndpoint Center, string AccessToken, 
 
     internal ReadOnlyMemory<byte> AccountId { get; init; }
 }
-
-/// <summary>An assertion and the immutable canonical center of the channel that issued its nonce and signed it.</summary>
-internal sealed record BoundRelayAssertion(RelayAssertion Assertion, CenterEndpoint Center);
 
 /// <summary>The link as the channel sees it (implemented by <see cref="CloudLinkService"/>).</summary>
 internal interface IChannelHost
@@ -71,24 +66,12 @@ internal interface IChannelHost
 /// The node channel's SM-RELAY loop (AF-CTR-05 CTR5-NODE-02..07; Design state machine SM-RELAY). While the link holds a usable credential and
 /// the cloud link is on, it connects (<see cref="CenterChannelClient"/>), answers the center's challenge with the hello proof signed by the
 /// node key over that connection's nonce (PB-4, D0-B2), waits for the acceptance, then answers heartbeats, sends <c>TokenRefresh</c> after
-/// each credential refresh, verifies every call before anything else (<see cref="CallVerifier"/>) and answers each with a result signed by
-/// the node key (<see cref="ResultSigner"/>). States: DISABLED, CONNECTING, CONNECTED, BACKOFF (1 s doubling to 60 s, full jitter, reset
+/// each credential refresh and serves typed V2 control and data. The V1 channel carries connection management only. States: DISABLED, CONNECTING, CONNECTED, BACKOFF (1 s doubling to 60 s, full jitter, reset
 /// after 60 s connected), REFUSED (retried after 1 h or at a credential refresh). Nothing of a frame, a token or a payload is logged.
 /// </summary>
 internal sealed partial class ChannelLoop : IAsyncDisposable
 {
-    /// <summary>The capability the node announces in its hello.</summary>
-    public const string Capability = "routed.v1";
-
-    /// <summary>The additional method capability announced only by an available file dispatcher.</summary>
-    public const string FilesCapability = "files.v1";
-
-    private static readonly TimeSpan NonceTimeout = TimeSpan.FromSeconds(10);
-
     private readonly IChannelHost _host;
-    private readonly CallVerifier _verifier;
-    private readonly RoutedCallLog _log;
-    private readonly IRoutedDispatcher _dispatcher;
     private readonly NodeLog _nodeLog;
     private readonly TimeProvider _clock;
     private readonly string? _connectLog;
@@ -97,7 +80,6 @@ internal sealed partial class ChannelLoop : IAsyncDisposable
     private readonly Func<double> _random;
     private readonly Lock _gate = new();
     private readonly CancellationTokenSource _stop = new();
-    private readonly ConcurrentDictionary<ByteString, TaskCompletionSource<RelayNonce>> _nonces = new();
     private TaskCompletionSource _wake = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private TaskCompletionSource _rotated = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private ChannelStatus _status = new(Contracts.Node.V1.RelayState.Disabled, ChannelReasons.SignedOut);
@@ -108,27 +90,17 @@ internal sealed partial class ChannelLoop : IAsyncDisposable
     private long? _keysRefreshAt;
 
     /// <summary>Creates the loop (nothing runs until <see cref="Start"/>).</summary>
-    public ChannelLoop(IChannelHost host, RoutedCallLog log, IRoutedDispatcher dispatcher, NodeLog nodeLog, TimeProvider clock, string? connectLog,
+    public ChannelLoop(IChannelHost host, NodeLog nodeLog, TimeProvider clock, string? connectLog,
         string version, string contractVersion, Func<double>? random = null)
     {
         _host = host ?? throw new ArgumentNullException(nameof(host));
-        _log = log ?? throw new ArgumentNullException(nameof(log));
-        _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
         _nodeLog = nodeLog ?? throw new ArgumentNullException(nameof(nodeLog));
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
-        _verifier = new CallVerifier(log, clock);
         _connectLog = connectLog;
         _version = version;
         _contractVersion = contractVersion;
         _random = random ?? Random.Shared.NextDouble;
     }
-
-    /// <summary>
-    /// A test hook awaited at the named steps of a call's answer (<c>verified</c>: after the verification and its pending row; <c>dispatch</c>:
-    /// immediately before the dispatcher), after a call's key refresh (<c>refresh.completed</c>), before sending a verification refusal
-    /// (<c>refusal.send</c>), or before registering a relay signing operation (<c>relay.before_register</c>). Never set by the host.
-    /// </summary>
-    internal Func<string, Task>? StepHook { get; init; }
 
     /// <summary>The SM-RELAY state and reason now.</summary>
     public ChannelStatus Status
@@ -247,137 +219,6 @@ internal sealed partial class ChannelLoop : IAsyncDisposable
         {
             _nodeLog.Warning("cloud.channel.refresh_failed", new LogField("errorType", exception.GetType().Name));
         }
-    }
-
-    /// <summary>
-    /// A one-use relay nonce from the center on this node's open channel (Plan addendum C-N2), or <see langword="null"/> when the channel is
-    /// not connected or the center does not answer within 10 s. Part N3's local proxy asks for one per relayed call.
-    /// </summary>
-    public Task<RelayNonce?> RequestRelayNonceAsync(CancellationToken cancellationToken)
-    {
-        Session? session;
-        lock (_gate)
-        {
-            session = _session;
-        }
-
-        return session is { Accepted: true, Ticket.UseV2: false }
-            ? RequestRelayNonceAsync(session, cancellationToken)
-            : Task.FromResult<RelayNonce?>(null);
-    }
-
-    /// <summary>A relay nonce of <paramref name="session"/>'s connection only (review A N-7); null when that connection is no longer the live one.</summary>
-    private async Task<RelayNonce?> RequestRelayNonceAsync(Session session, CancellationToken cancellationToken)
-    {
-
-        var requestId = new Id { Value = ByteString.CopyFrom(RandomNumberGenerator.GetBytes(16)) };
-        var waiter = new TaskCompletionSource<RelayNonce>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _nonces[requestId.Value] = waiter;
-        try
-        {
-            await session.Client.SendAsync(new RelayFrame { RelayNonceRequest = new RelayNonceRequest { RequestId = requestId } }, cancellationToken).ConfigureAwait(false);
-            var nonce = await waiter.Task.WaitAsync(NonceTimeout, _clock, cancellationToken).ConfigureAwait(false);
-            lock (_gate)
-            {
-                if (_session != session)
-                {
-                    return null;
-                }
-            }
-
-            var now = _clock.GetUtcNow();
-            return ProtoTime.ToDateTimeOffset(nonce.ExpiresAt) is { } expires && expires > now && expires <= now + RelaySignatures.AssertionLifetime + CallVerifier.Skew
-                ? nonce
-                : null;
-        }
-        catch (Exception exception) when (exception is TimeoutException or WebSocketException or ObjectDisposedException or InvalidOperationException
-            || (exception is OperationCanceledException && !cancellationToken.IsCancellationRequested))
-        {
-            return null;
-        }
-        finally
-        {
-            _nonces.TryRemove(requestId.Value, out _);
-        }
-    }
-
-    /// <summary>
-    /// Signs a relay assertion for a local caller with the node key over a fresh relay nonce of this node's open channel (Plan addendum
-    /// D0-B1; the relaying itself is part N3's); <see langword="null"/> without an open channel or with fields of another layout.
-    /// </summary>
-    public async Task<BoundRelayAssertion?> SignRelayAssertionAsync(Contracts.Node.V1.Origin localOrigin, Id localSessionId, RoutedMethod method,
-        ReadOnlyMemory<byte> requestSha256, Id? targetNodeId, Id? commandId, CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(localSessionId);
-        Session? session;
-        lock (_gate)
-        {
-            session = _session;
-        }
-
-        if (session is not { Accepted: true, Ticket.UseV2: false })
-        {
-            return null;
-        }
-
-        // Register before starting the signing task: a closing session refuses new work, while an accepted operation keeps the session key
-        // alive through its completion. In particular, there is no already-started task to abandon if registration is refused (N1 C-N2).
-        if (StepHook is { } beforeRegister)
-        {
-            await beforeRegister("relay.before_register").ConfigureAwait(false);
-        }
-
-        var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        if (!session.Calls.Add(finished.Task))
-        {
-            return null;
-        }
-
-        try
-        {
-            var assertion = await SignRelayAssertionAsync(session, localOrigin, localSessionId, method, requestSha256, targetNodeId, commandId, cancellationToken)
-                .ConfigureAwait(false);
-            return assertion is null ? null : new BoundRelayAssertion(assertion, session.Ticket.Center);
-        }
-        finally
-        {
-            finished.TrySetResult();
-        }
-    }
-
-    private async Task<RelayAssertion?> SignRelayAssertionAsync(Session session, Contracts.Node.V1.Origin localOrigin, Id localSessionId, RoutedMethod method,
-        ReadOnlyMemory<byte> requestSha256, Id? targetNodeId, Id? commandId, CancellationToken cancellationToken)
-    {
-        await Task.Yield();
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, session.Token);
-        RelayNonce? nonce;
-        try
-        {
-            nonce = await RequestRelayNonceAsync(session, linked.Token).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (session.Token.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
-        {
-            // Session loss is unavailable; a cancellation requested by the local caller must still propagate.
-            return null;
-        }
-
-        if (nonce is null)
-        {
-            return null;
-        }
-
-        var fields = new RelayAssertionFields
-        {
-            RelayingNodeId = new Id { Value = ByteString.CopyFrom(session.Ticket.NodeId.Span) },
-            RelayingInstallationId = new Id { Value = ByteString.CopyFrom(session.Ticket.InstallationId.Span) },
-            LocalOrigin = localOrigin,
-            LocalSessionId = localSessionId,
-            Method = method,
-            RequestSha256 = requestSha256,
-            TargetNodeId = targetNodeId,
-            CommandId = commandId,
-        };
-        return RelayAssertions.Sign(session.Key, session.Ticket.Center, fields, nonce, _clock.GetUtcNow());
     }
 
     /// <inheritdoc />
@@ -650,8 +491,6 @@ internal sealed partial class ChannelLoop : IAsyncDisposable
             ContractVersion = _contractVersion,
             HelloSignature = ByteString.CopyFrom(session.Key.Sign(input)),
         };
-        hello.Capabilities.Add(Capability);
-        if (_dispatcher.SupportsFiles) hello.Capabilities.Add(FilesCapability);
         await session.Client.SendAsync(new RelayFrame { NodeHello = hello }, timeout.Token).ConfigureAwait(false);
 
         var second = await ReceiveFrameAsync(session, timeout.Token).ConfigureAwait(false);
@@ -669,11 +508,10 @@ internal sealed partial class ChannelLoop : IAsyncDisposable
         var accepted = acceptedFrame.Accepted;
         session.Limits = accepted.Limits;
 
-        // Plan PN-14: a signing kid the node does not hold makes it refresh its session once before it accepts calls.
+        // Plan PN-14: refresh the credential once if the peer advertises an unknown signing key.
         if (_host.Binding() is { } binding && accepted.SigningKids.Any(kid => binding.Keys?.CommandKeys.All(key => key.Kid != kid) ?? true)
             && TakeKeysRefresh(session.Generation))
         {
-            session.RefreshedForKeys = true;
             await RefreshKeysAsync(session).ConfigureAwait(false);
         }
 
@@ -684,12 +522,11 @@ internal sealed partial class ChannelLoop : IAsyncDisposable
         return null;
     }
 
-    /// <summary>The accepted connection: heartbeats, calls and relay nonces until it ends.</summary>
+    /// <summary>The accepted V1 connection carries heartbeat and credential lifecycle messages.</summary>
     private async Task<ChannelEnd> ServeAsync(Session session)
     {
         var limits = session.Limits!;
         var deadline = TimeSpan.FromMilliseconds(limits.HeartbeatDeadlineMs);
-        var calls = new SemaphoreSlim((int)limits.MaxInFlightCalls, (int)limits.MaxInFlightCalls);
         session.Heard = _clock.GetTimestamp();
         using var watchdog = CancellationTokenSource.CreateLinkedTokenSource(session.Token);
         var silent = WatchAsync(session, deadline, watchdog.Token);
@@ -706,7 +543,7 @@ internal sealed partial class ChannelLoop : IAsyncDisposable
                     return new ChannelEnd(Contracts.Node.V1.RelayState.Backoff, ChannelReasons.HeartbeatTimeout);
                 }
 
-                var (frame, bytes, end) = await receive.ConfigureAwait(false);
+                var (frame, end) = await receive.ConfigureAwait(false);
                 if (end is not null)
                 {
                     if (end.Reason == ChannelReasons.Replaced)
@@ -726,31 +563,9 @@ internal sealed partial class ChannelLoop : IAsyncDisposable
                             Heartbeat = new ChannelHeartbeat { SentAt = ProtoTime.ToInstant(_clock.GetUtcNow()), Seq = frame.Heartbeat.Seq },
                         }, session.Token).ConfigureAwait(false);
                         break;
-                    case RelayFrame.FrameOneofCase.Call:
-                        // The monotonic wait budget starts at receipt, including queueing and key refresh.
-                        var receivedAt = session.Heard;
-                        await calls.WaitAsync(session.Token).ConfigureAwait(false);
-                        _ = session.Calls.Add(Task.Run(async () =>
-                        {
-                            try
-                            {
-                                await AnswerAsync(session, bytes!, frame.Call, receivedAt).ConfigureAwait(false);
-                            }
-                            finally
-                            {
-                                calls.Release();
-                            }
-                        }, CancellationToken.None));
-                        break;
-                    case RelayFrame.FrameOneofCase.RelayNonce when RelayShapes.IsValid(frame.RelayNonce):
-                        if (_nonces.TryGetValue(frame.RelayNonce.RequestId.Value, out var waiter))
-                        {
-                            waiter.TrySetResult(frame.RelayNonce);
-                        }
-
-                        break;
-                    case RelayFrame.FrameOneofCase.Challenge or RelayFrame.FrameOneofCase.Accepted or RelayFrame.FrameOneofCase.Heartbeat
-                        or RelayFrame.FrameOneofCase.RelayNonce:
+                    case RelayFrame.FrameOneofCase.Call or RelayFrame.FrameOneofCase.RelayNonce or RelayFrame.FrameOneofCase.RelayNonceRequest:
+                        return await ProtocolErrorAsync(session, "legacy_routed_operation_retired").ConfigureAwait(false);
+                    case RelayFrame.FrameOneofCase.Challenge or RelayFrame.FrameOneofCase.Accepted or RelayFrame.FrameOneofCase.Heartbeat:
                         return await ProtocolErrorAsync(session, "unexpected_frame").ConfigureAwait(false);
                     default:
                         // The members of the retired FleetHub relay (command 15 included) are neither sent nor accepted on this channel.
@@ -772,7 +587,7 @@ internal sealed partial class ChannelLoop : IAsyncDisposable
         }
     }
 
-    /// <summary>Completes when the center has been silent for <paramref name="deadline"/> (no heartbeat, call or other frame).</summary>
+    /// <summary>Completes when the center has been silent for <paramref name="deadline"/>.</summary>
     private async Task WatchAsync(Session session, TimeSpan deadline, CancellationToken cancellationToken)
     {
         while (true)
@@ -787,199 +602,8 @@ internal sealed partial class ChannelLoop : IAsyncDisposable
         }
     }
 
-    /// <summary>Verifies a call, dispatches a verified one, and answers with a signed result.</summary>
-    private async Task AnswerAsync(Session session, byte[] frame, ChannelCall call, long receivedAt)
-    {
-        try
-        {
-            if (_host.Binding() is not { } binding)
-            {
-                return;
-            }
-
-            // Plan PN-14 (review A N-3): only a call whose shape and algorithm passed and whose kid is unknown makes the node refresh its
-            // key set, once per connection and within the bound of TakeKeysRefresh, before it refuses.
-            async Task<CallBinding?> RefreshKeysForCallAsync()
-            {
-                if (session.RefreshedForKeys || !TakeKeysRefresh(session.Generation))
-                {
-                    return null;
-                }
-
-                session.RefreshedForKeys = true;
-                await RefreshKeysAsync(session).ConfigureAwait(false);
-                if (StepHook is { } refreshHook)
-                {
-                    await refreshHook("refresh.completed").ConfigureAwait(false);
-                }
-
-                return _host.Binding();
-            }
-
-            var signer = new ResultSigner(session.Key, session.Ticket.NodeId, _clock);
-            var (verified, refusal) = await _verifier.VerifyAsync(frame, call, binding, RefreshKeysForCallAsync).ConfigureAwait(false);
-            if (refusal is not null)
-            {
-                _nodeLog.Warning("cloud.channel.call_refused", new LogField("step", refusal.Step), new LogField("code", refusal.LogCode));
-                if (refusal.CallId is not null)
-                {
-                    // Verification may have waited on a key refresh while the link was switched off. A missing binding must drop the
-                    // refusal just as it drops a verified call: the old session is no longer allowed to answer.
-                    var refusalLink = new SessionLink(this, session);
-                    if (!refusalLink.Usable)
-                    {
-                        return;
-                    }
-
-                    if (StepHook is { } refusalHook)
-                    {
-                        await refusalHook("refusal.send").ConfigureAwait(false);
-                    }
-
-                    if (!refusalLink.Usable)
-                    {
-                        return;
-                    }
-
-                    await session.Client.SendAsync(new RelayFrame { CallResult = signer.RefusedVerification(refusal) }, session.Token).ConfigureAwait(false);
-                }
-
-                return;
-            }
-
-            if (verified is null)
-            {
-                // A file/workspace validation clock discontinuity was durably audited. Do not sign an invented outcome.
-                _nodeLog.Warning("cloud.channel.call_dropped", new LogField("step", "clock_unavailable"));
-                return;
-            }
-
-            verified = verified with { ReceivedAt = receivedAt };
-
-            // Decisions B-3 (N1 review A C-N1, B N-12): the verification may have waited on a key refresh, so the link's state is read again
-            // after it and immediately before the dispatch; a link switched off, signed out or ending drops the call (its row stays pending:
-            // verified, no outcome, nothing executed). The dispatcher reads it a third time immediately before the effect.
-            var link = new SessionLink(this, session);
-            if (StepHook is { } verifiedHook)
-            {
-                await verifiedHook("verified").ConfigureAwait(false);
-            }
-
-            if (!link.Usable)
-            {
-                _nodeLog.Info("cloud.channel.call_dropped", new LogField("step", "verified"));
-                return;
-            }
-
-            if (StepHook is { } dispatchHook)
-            {
-                await dispatchHook("dispatch").ConfigureAwait(false);
-            }
-
-            if (!link.Usable)
-            {
-                _nodeLog.Info("cloud.channel.call_dropped", new LogField("step", "dispatch"));
-                return;
-            }
-
-            if (await _dispatcher.DispatchAsync(verified!, link, session.Token).ConfigureAwait(false) is not { } answer)
-            {
-                _nodeLog.Info("cloud.channel.call_dropped", new LogField("step", "effect"));
-                return;
-            }
-
-            ChannelResult result;
-            RoutedCallDecision decision;
-            switch (answer.Outcome)
-            {
-                case RoutedOutcome.Executed when answer.Response is { } response:
-                    result = signer.Executed(verified!.Header, response);
-                    decision = RoutedCallDecision.Executed;
-                    break;
-                case RoutedOutcome.Expired when answer.Error is { } expired:
-                    result = signer.Refused(verified!.Header, RoutedOutcome.Expired, expired);
-                    decision = RoutedCallDecision.Expired;
-                    break;
-                case RoutedOutcome.RefusedByPolicy when answer.Error is { } denied:
-                    result = signer.Refused(verified!.Header, RoutedOutcome.RefusedByPolicy, denied);
-                    decision = RoutedCallDecision.RefusedByPolicy;
-                    break;
-                default:
-                    throw new InvalidOperationException("A dispatcher answers EXECUTED with a response, or a refusal with its error.");
-            }
-
-            var code = answer.Error is { } error ? error.Category.ToString().ToUpperInvariant() + "/" + error.Code : answer.HandlerCode;
-            var responseHash = decision == RoutedCallDecision.Executed ? SHA256.HashData(answer.Response!.Span) : null;
-            var responseSize = decision == RoutedCallDecision.Executed ? answer.Response!.Length : (int?)null;
-            if (verified!.Header.Method is RoutedMethod.ReadNodeFile or RoutedMethod.WriteNodeFile or RoutedMethod.EditNodeFile or RoutedMethod.SearchNodeFiles or RoutedMethod.ListNodeDirectory or RoutedMethod.GetNodeFileOperation or RoutedMethod.PlanNodeRemoval or RoutedMethod.ExecuteNodeRemoval)
-            {
-                // A result-log wait consumes the same monotonic budget as the read. A late queued log update must not
-                // turn an unreturned result into a completed call, and a late result must not be sent after that wait.
-                var lifetime = ProtoTime.ToDateTimeOffset(verified.Header.Deadline)!.Value - ProtoTime.ToDateTimeOffset(verified.Header.IssuedAt)!.Value;
-                var budget = lifetime < TimeSpan.FromSeconds(10) ? lifetime : TimeSpan.FromSeconds(10);
-                var remaining = budget - _clock.GetElapsedTime(receivedAt);
-                if (remaining <= TimeSpan.Zero)
-                {
-                    return;
-                }
-
-                using var deadline = new CancellationTokenSource(remaining, _clock);
-                using var linked = CancellationTokenSource.CreateLinkedTokenSource(session.Token, deadline.Token);
-                var token = linked.Token;
-                var completion = _log.CompleteAsync(verified.LogId, decision, code, answer.TaskId, answer.Risk,
-                    responseHash, responseSize, fileWorkspace: true, workspaceId: answer.WorkspaceId,
-                    beforeCommit: () => !token.IsCancellationRequested && _clock.GetElapsedTime(receivedAt) < budget);
-                try
-                {
-                    var updated = await completion.WaitAsync(token).ConfigureAwait(false);
-                    if (updated != 1 || token.IsCancellationRequested || _clock.GetElapsedTime(receivedAt) >= budget)
-                    {
-                        return;
-                    }
-
-                    await session.Client.SendAsync(new RelayFrame { CallResult = result }, token).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                    _ = ObserveReadCompletionAsync(completion);
-                    throw;
-                }
-            }
-            else
-            {
-                await _log.CompleteAsync(verified.LogId, decision, code, answer.TaskId, answer.Risk,
-                    responseHash, responseSize, fileWorkspace: (int)verified.Header.Method is >= 9 and <= 20,
-                    workspaceId: answer.WorkspaceId).ConfigureAwait(false);
-                await session.Client.SendAsync(new RelayFrame { CallResult = result }, session.Token).ConfigureAwait(false);
-            }
-
-            _nodeLog.Info("cloud.channel.call_answered", new LogField("method", (int)verified.Header.Method), new LogField("decision", (int)decision));
-        }
-        catch (Exception exception) when (exception is OperationCanceledException or WebSocketException or ObjectDisposedException or IOException)
-        {
-            // The connection ended; the center's deadline and the node's command deduplication decide what follows.
-        }
-        catch (Exception exception) when (exception is not OutOfMemoryException)
-        {
-            _nodeLog.Error("cloud.channel.call_failed", exception);
-        }
-    }
-
-    private async Task ObserveReadCompletionAsync(Task<long> completion)
-    {
-        try
-        {
-            _ = await completion.ConfigureAwait(false);
-        }
-        catch (Exception exception) when (exception is not OutOfMemoryException)
-        {
-            // Do not log sensitive path, file, or exception text from the abandoned result.
-            _nodeLog.Error("cloud.channel.file_read_settlement_failed");
-        }
-    }
-
     /// <summary>One frame, or how the channel ended (a close frame, the socket's close, a frame too large or malformed).</summary>
-    private async Task<(RelayFrame? Frame, byte[]? Bytes, ChannelEnd? End)> ReceiveFrameAsync(Session session, CancellationToken cancellationToken)
+    private async Task<(RelayFrame? Frame, ChannelEnd? End)> ReceiveFrameAsync(Session session, CancellationToken cancellationToken)
     {
         byte[]? bytes;
         try
@@ -988,12 +612,12 @@ internal sealed partial class ChannelLoop : IAsyncDisposable
         }
         catch (WebSocketException) when (session.Client.CloseStatus is null && !cancellationToken.IsCancellationRequested)
         {
-            return (null, null, new ChannelEnd(Contracts.Node.V1.RelayState.Backoff, ChannelReasons.NetworkFailure));
+            return (null, new ChannelEnd(Contracts.Node.V1.RelayState.Backoff, ChannelReasons.NetworkFailure));
         }
 
         if (bytes is null)
         {
-            return (null, null, ChannelPolicy.Closed((int?)session.Client.CloseStatus ?? 1006, null));
+            return (null, ChannelPolicy.Closed((int?)session.Client.CloseStatus ?? 1006, null));
         }
 
         RelayFrame frame;
@@ -1003,21 +627,21 @@ internal sealed partial class ChannelLoop : IAsyncDisposable
         }
         catch (InvalidProtocolBufferException)
         {
-            return (null, null, await ProtocolErrorAsync(session, "frame_unparsable").ConfigureAwait(false));
+            return (null, await ProtocolErrorAsync(session, "frame_unparsable").ConfigureAwait(false));
         }
 
         if (frame.FrameVersion != 1)
         {
-            return (null, null, await ProtocolErrorAsync(session, "frame_version").ConfigureAwait(false));
+            return (null, await ProtocolErrorAsync(session, "frame_version").ConfigureAwait(false));
         }
 
         if (frame.FrameCase == RelayFrame.FrameOneofCase.Close)
         {
             var close = frame.Close;
-            return (null, null, ChannelPolicy.Closed((int)close.Code, close.HasReconnectAfterMs && close.Code == 4500 ? close.ReconnectAfterMs : null));
+            return (null, ChannelPolicy.Closed((int)close.Code, close.HasReconnectAfterMs && close.Code == 4500 ? close.ReconnectAfterMs : null));
         }
 
-        return (frame, bytes, null);
+        return (frame, null);
     }
 
     private async Task<ChannelEnd> ProtocolErrorAsync(Session session, string what)
@@ -1033,7 +657,7 @@ internal sealed partial class ChannelLoop : IAsyncDisposable
     /// </summary>
     private async Task EndSessionAsync(Session session)
     {
-        // N1 review A C-N1: a call that arrives while the close is sent is not dispatched.
+        // Fence V2 operations before sending the close.
         session.Ending = true;
         if (session.Ticket.UseV2)
         {
@@ -1107,8 +731,6 @@ internal sealed partial class ChannelLoop : IAsyncDisposable
 
         private bool _accepted;
 
-        public bool RefreshedForKeys { get; set; }
-
         public bool SentClose { get; set; }
 
         /// <summary>Set before the node's own close is sent: no call of this session is dispatched any more.</summary>
@@ -1169,16 +791,6 @@ internal sealed partial class ChannelLoop : IAsyncDisposable
             _effectsEnding.Dispose();
             cancel.Dispose();
         }
-    }
-
-    /// <summary>The link of one session's call (decisions B-3): usable while the session is not ending or cancelled and the link gives a binding.</summary>
-    private sealed class SessionLink(ChannelLoop loop, Session session) : IRoutedLink
-    {
-        public bool Usable => !session.Ending && !session.Token.IsCancellationRequested && loop._host.Binding() is not null;
-
-        public bool Stopping => loop._host.Stopping;
-
-        public CancellationToken EffectEnding => session.EffectsEnding;
     }
 
     /// <summary>The call tasks of one connection (awaited before the connection's key is disposed).</summary>

@@ -15,10 +15,8 @@
     <Compile Include="../Shared/Leftovers.cs" Link="Shared/Leftovers.cs" />
     <ProjectReference Include="../../src/ArcForges.Node.Api/ArcForges.Node.Api.csproj" />
     <ProjectReference Include="../../src/ArcForges.Client/ArcForges.Client.csproj" />
-    <!-- AF-CTR-05 N2b (RoutedNodeTests, N2-22): a routed run executes, so the node starts its helper roles from the arcforges executable and
-         attempts run the deterministic arcforges-testload workloads, as in ArcForges.Node.Core.Tests. -->
+    <!-- The local PTY authentication fixture runs the current CLI executable. -->
     <ProjectReference Include="../../src/ArcForges.Host/ArcForges.Host.csproj" />
-    <ProjectReference Include="../Shared/LegacyCliFixture/ArcForges.LegacyCliFixture.csproj" />
     <ProjectReference Include="../../tools/ArcForges.TestLoad/ArcForges.TestLoad.csproj" />
     <!-- The node's graph carries the DesktopPlatform 1.0.0-ci.141.1 exact Contracts.Foundation constraints (NU1608; recorded). -->
     <PackageReference Include="ArcForges.Contracts.Foundation" NoWarn="NU1608" />

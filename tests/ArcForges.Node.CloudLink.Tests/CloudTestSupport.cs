@@ -228,20 +228,11 @@ internal sealed class LinkFixture : IAsyncDisposable
 
     public List<CloudLinkPublication> Publications { get; } = [];
 
-    /// <summary>Runs the node channel (AF-CTR-05 N1) with a real node store of the data root for <c>routed_call_log</c>.</summary>
+    /// <summary>Runs the channel against the local fixture peer.</summary>
     public bool Channel { get; set; }
-
-    /// <summary>The routed dispatch of the channel (<see langword="null"/>: part N1's refusing dispatcher).</summary>
-    public IRoutedDispatcher? Dispatcher { get; set; }
-
-    /// <summary>The channel's step hook (AF-CTR-05 decisions B-3).</summary>
-    public Func<string, Task>? StepHook { get; set; }
 
     /// <summary>The channel backoff's random draw.</summary>
     public Func<double>? ChannelRandom { get; set; }
-
-    /// <summary>The node store while the link runs with <see cref="Channel"/> (closed at <see cref="StopAsync"/>, reopened at the next start).</summary>
-    public NodeStore? Store { get; private set; }
 
     public CloudLinkService Service => _service ?? throw new InvalidOperationException("Start the link first.");
 
@@ -257,17 +248,9 @@ internal sealed class LinkFixture : IAsyncDisposable
     /// <summary>Builds and starts a link (again, after <see cref="StopAsync"/>: a node restart over the same files and secret store).</summary>
     public async Task<CloudLinkService> StartAsync()
     {
-        if (Channel)
-        {
-            Store ??= NodeStore.Open(new NodeStoreOptions { DataRoot = DataRoot, BootIdentity = "boot-1", Clock = Clock });
-        }
-
-        var store = Store;
         _service = new CloudLinkService(new CloudLinkOptions
         {
-            RoutedCalls = store is null ? null : new DirectRoutedCallStore(store),
-            Dispatcher = Dispatcher,
-            ChannelStepHook = StepHook,
+            ChannelEnabled = Channel,
             ChannelRandom = ChannelRandom,
             DataRoot = DataRoot,
             NodeId = NodeId,
@@ -318,10 +301,6 @@ internal sealed class LinkFixture : IAsyncDisposable
             await _service.DisposeAsync();
             _service = null;
         }
-
-        Store?.Dispose();
-        Store = null;
-        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
     }
 
     /// <summary>
@@ -348,24 +327,6 @@ internal sealed class LinkFixture : IAsyncDisposable
 
     /// <summary>The node key's public half (after <see cref="SignInWithChannelAsync"/>).</summary>
     public byte[] NodePublicKey { get; private set; } = [];
-
-    /// <summary>The rows of <c>routed_call_log</c> (decision, refusal step, refusal code, call ID present).</summary>
-    public List<(long Decision, string? Step, string? Code, bool CallId)> RoutedLog()
-    {
-        var store = Store ?? throw new InvalidOperationException("The link runs without its store.");
-        return store.Read(reader =>
-        {
-            var rows = new List<(long, string?, string?, bool)>();
-            using var command = reader.CreateCommand("SELECT decision, refusal_step, refusal_code, call_id IS NOT NULL FROM routed_call_log ORDER BY log_id;");
-            using var result = command.ExecuteReader();
-            while (result.Read())
-            {
-                rows.Add((result.GetInt64(0), result.IsDBNull(1) ? null : result.GetString(1), result.IsDBNull(2) ? null : result.GetString(2), result.GetInt64(3) == 1));
-            }
-
-            return rows;
-        });
-    }
 
     /// <summary>The stored credential record (test verification; the node reads it only through the link).</summary>
     public CloudCredentialRecord? StoredRecord()

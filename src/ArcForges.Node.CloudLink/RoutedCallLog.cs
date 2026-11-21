@@ -213,14 +213,3 @@ internal sealed class RoutedCallLog(IRoutedCallStore store, TimeProvider clock)
             VALUES ($at, $frame, 3, $step, $code);
             """, ("$at", now), ("$frame", frameSha256), ("$step", step), ("$code", code));
 }
-
-/// <summary>The host's store: one write through the node's command processor.</summary>
-internal sealed class ProcessorRoutedCallStore(ArcForges.Node.Core.CommandProcessor processor) : IRoutedCallStore
-{
-    /// <inheritdoc />
-    public Task<long> WriteAsync(Func<StoreTransaction, long> write, CommitDurability durability = CommitDurability.Normal)
-    {
-        ArgumentNullException.ThrowIfNull(write);
-        return processor.ExecuteAsync(context => write(context.Transaction), durability);
-    }
-}
