@@ -381,11 +381,12 @@ public sealed class GateAndReplayTests
                 (marker.Operation, marker.Outcome, marker.Actor.Origin));
             Assert.Equal(owner, marker.Actor.CenterCaller);
             Assert.Null(marker.TargetId);
-            var refused = Assert.Single(audit, entry => entry.Operation == PermissionMatrix.TaskSubmit + " TaskService.SubmitTask"
+            var refused = Assert.Single(audit, entry => entry.Operation == PermissionMatrix.TaskSubmit + " FleetService.SubmitTask"
                 && entry.Decision == D && entry.Actor.RemoteCommandId?.Equals(fresh.Meta.CommandId) == true);
             Assert.Equal(("denied: permission_override", Origin.Remote, ClientKind.Unspecified),
                 (refused.Outcome, refused.Actor.Origin, refused.Actor.ClientKind));
             Assert.Equal(relayedAgent, refused.Actor.CenterCaller);
+            Assert.Equal("task", refused.TargetKind);
             Assert.Null(refused.TargetId);
             return 0;
         });

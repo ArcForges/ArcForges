@@ -110,7 +110,7 @@ internal sealed class LinuxHarness : IDisposable
         var env = environment ?? DefaultEnvironment();
         var cwd = workingDirectory ?? Root;
         var dictionary = env.Select(entry => entry.Split('=', 2)).ToDictionary(parts => parts[0], parts => parts.Length > 1 ? parts[1] : string.Empty, StringComparer.Ordinal);
-        var prepared = (platform ?? Platform).Prepare(new CommandRequest { Argv = argv, WorkingDirectory = cwd, Environment = dictionary, TempDirectory = files.TempDirectory });
+        var prepared = LinuxCommands.Prepare(new CommandRequest { Argv = argv, WorkingDirectory = cwd, Environment = dictionary, TempDirectory = files.TempDirectory });
         return Track((platform ?? Platform).Launch(new AttemptLaunch
         {
             NodeName = NodeName,
