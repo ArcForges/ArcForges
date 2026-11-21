@@ -868,7 +868,15 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
                 return new RoutedAnswer(RoutedOutcome.Executed, ByteString.CopyFrom(outcome), null, null, risk, Code(mutationError), WorkspaceIdOf(request));
             }
 
-            var (response, error) = await RunAsync(tasks, workspaces, files, method, caller, request, registration, cancellationToken).ConfigureAwait(false);
+            var removal = method is RoutedMethod.PlanNodeRemoval or RoutedMethod.ExecuteNodeRemoval
+                ? files!.ReadRoutedRemoval(caller, request, cancellationToken) : null;
+            if (removal?.Retained is { } retainedRemoval)
+                return new RoutedAnswer(RoutedOutcome.Executed, ByteString.CopyFrom(retainedRemoval.Span), null, null, risk,
+                    Code(removal.Error), WorkspaceIdOf(request));
+
+            var (response, error) = removal is null
+                ? await RunAsync(tasks, workspaces, files, method, caller, request, registration, cancellationToken).ConfigureAwait(false)
+                : (removal.Response, removal.Error);
             if (response.CalculateSize() > ResultSigner.MaxPayloadBytes)
             {
                 // A valid FULL view can exceed the wire limit. Report an existing bounded internal failure, never a truncated success.
@@ -1020,12 +1028,6 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
             case RoutedMethod.ListNodeDirectory:
                 var directory = await files!.ListDirectoryAsync(caller, (FileServiceListDirectoryRequest)request, cancellationToken).ConfigureAwait(false);
                 return (directory, directory.Error);
-            case RoutedMethod.ExecuteNodeRemoval:
-                var removal = await files!.ExecuteRemovalAsync(caller, (FileServiceExecuteRemovalRequest)request, cancellationToken).ConfigureAwait(false);
-                return (removal, removal.Error);
-            case RoutedMethod.PlanNodeRemoval:
-                var plan = await files!.PlanRemovalAsync(caller, (FileServicePlanRemovalRequest)request, cancellationToken).ConfigureAwait(false);
-                return (plan, plan.Error);
             case RoutedMethod.SearchNodeFiles:
                 var search = await files!.SearchAsync(caller, (FileServiceSearchFilesRequest)request, cancellationToken).ConfigureAwait(false);
                 return (search, search.Error);
