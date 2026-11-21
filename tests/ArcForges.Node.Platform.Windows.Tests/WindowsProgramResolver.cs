@@ -2,12 +2,12 @@
 namespace ArcForges.Node.Platform.Windows;
 
 /// <summary>
-/// Windows program lookup (architecture 04 section 2): a program named with a directory part resolves against the working directory;
-/// a bare name searches the <c>PATH</c> of the resolved environment, never the current directory (as with
+/// Historical Windows program lookup used to find tools for the legacy platform fixtures. A program named with a directory part
+/// resolves against the fixture working directory. A bare name searches the fixture's <c>PATH</c> (as with
 /// <c>NoDefaultCurrentDirectoryInExePath</c>). In each place the name is tried as given when it has an extension, then with every
 /// <c>PATHEXT</c> extension in order (default <c>.COM;.EXE;.BAT;.CMD</c>).
 /// </summary>
-public static class WindowsProgramResolver
+internal static class WindowsProgramResolver
 {
     /// <summary>PATHEXT when the environment has none.</summary>
     public const string DefaultPathExt = ".COM;.EXE;.BAT;.CMD";
