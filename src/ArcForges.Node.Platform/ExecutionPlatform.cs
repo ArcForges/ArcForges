@@ -365,9 +365,6 @@ public interface IExecutionPlatform : IDisposable
     /// <summary>The platform's name for logs.</summary>
     string Name { get; }
 
-    /// <summary>How environment variable names compare (case-insensitive on Windows).</summary>
-    StringComparer EnvironmentNames { get; }
-
     /// <summary>The machine's capacity.</summary>
     MachineCapacity Capacity { get; }
 
@@ -399,9 +396,6 @@ public interface IExecutionPlatform : IDisposable
     /// <c>tcp_listen_port</c> readiness condition of 04 section 8; only the service's own processes count).
     /// </summary>
     bool Listens(int port, IReadOnlyCollection<int> processIds) => false;
-    /// <summary>The container name of an attempt (the Windows job name; the Linux unit name), recorded with the attempt.</summary>
-    string ContainerName(string nodeName, string attemptName) => @"Local\ArcForges." + nodeName + "." + attemptName;
-
     /// <summary>Re-opens a recorded adoption container by name after a node restart, or returns <see langword="null"/> when it is gone.</summary>
     IAdoptedContainer? ReopenAdopted(string containerName) => null;
 

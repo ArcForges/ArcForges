@@ -207,7 +207,6 @@ public sealed class RecoveredLegacyTaskControlsTests
         public List<(string Operation, long Value)> Calls { get; } = [];
         public int ReopenCalls { get; private set; }
         public string Name => "reopened-fixture";
-        public StringComparer EnvironmentNames => StringComparer.Ordinal;
         public MachineCapacity Capacity => new(4, 1L << 30);
         public string ContainerName => "retained-fixture";
         public RootProcess? Root => root;

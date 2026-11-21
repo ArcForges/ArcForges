@@ -64,9 +64,6 @@ public sealed class WindowsExecutionPlatform : IExecutionPlatform
     public string Name => "windows-jobs";
 
     /// <inheritdoc />
-    public StringComparer EnvironmentNames => StringComparer.OrdinalIgnoreCase;
-
-    /// <inheritdoc />
     public MachineCapacity Capacity { get; }
 
     /// <summary>The root job's name.</summary>

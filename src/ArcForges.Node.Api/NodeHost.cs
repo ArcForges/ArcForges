@@ -1051,8 +1051,8 @@ public static class NodeHost
     }
 
     /// <summary>
-    /// The Linux platform (AD-0005 Linux): transient units of the user manager in the slice, or plain child processes without a user
-    /// manager (observe only). Test mode takes the slice, the manager's address and simulated delegation from <see cref="LinuxTestHooks"/>.
+    /// Recovers legacy transient units through the Linux user manager. Without the manager, resource reporting is observe-only.
+    /// Test mode takes the slice, manager address and simulated delegation from <see cref="LinuxTestHooks"/>.
     /// </summary>
     [System.Runtime.Versioning.SupportedOSPlatform("linux")]
     private static ArcForges.Node.Platform.Linux.LinuxExecutionPlatform StartLinuxPlatform(NodeHostOptions options, NodeStore store, NodeLog log)

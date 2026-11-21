@@ -123,9 +123,6 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
     public string Name => UnitMode ? "linux-systemd" : "linux-unavailable";
 
     /// <inheritdoc />
-    public StringComparer EnvironmentNames => StringComparer.Ordinal;
-
-    /// <inheritdoc />
     public MachineCapacity Capacity { get; }
 
     /// <summary>The root slice.</summary>
@@ -815,9 +812,6 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
 
     /// <inheritdoc />
     public bool Listens(int port, IReadOnlyCollection<int> processIds) => ListeningSockets.Listens(port, processIds);
-
-    /// <inheritdoc />
-    public string ContainerName(string nodeName, string attemptName) => UnitName(attemptName);
 
     /// <summary>Starts a new legacy attempt for the Linux platform fixtures.</summary>
     public IAttemptHandle Launch(AttemptLaunch launch)
