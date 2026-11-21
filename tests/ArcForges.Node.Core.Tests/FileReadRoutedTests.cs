@@ -26,7 +26,7 @@ public sealed class FileReadRoutedTests
         await using var node = await InProcessNode.Create().StartAsync();
         var calls = new RoutedCalls(node);
         var root = Directory.CreateDirectory(Path.Combine(node.Root, "read-root")).FullName;
-        var workspace = new RegisteredWorkspaces(node.Runtime.Store).RegisterFromVerifiedHuman(root, cancellationToken: ct);
+        var workspace = ExistingWorkspaceReadFixture.Seed(node, root, cancellationToken: ct);
         var marker = Encoding.UTF8.GetBytes("FILE_BODY_MUST_NEVER_BE_PERSISTED_4ae833");
         var data = Enumerable.Repeat((byte)'x', 70_010).ToArray();
         marker.CopyTo(data, 0);
@@ -187,7 +187,7 @@ public sealed class FileReadRoutedTests
         await using var node = await InProcessNode.Create().StartAsync();
         var calls = new RoutedCalls(node);
         var root = Directory.CreateDirectory(Path.Combine(node.Root, "errors-root")).FullName;
-        var workspace = new RegisteredWorkspaces(node.Runtime.Store).RegisterFromVerifiedHuman(root, cancellationToken: ct);
+        var workspace = ExistingWorkspaceReadFixture.Seed(node, root, cancellationToken: ct);
         File.WriteAllBytes(Path.Combine(root, "regular"), [1, 2, 3]);
         var correlation = CommandIds.New();
         var meta = new RequestMeta { CorrelationId = correlation };
@@ -277,7 +277,7 @@ public sealed class FileReadRoutedTests
         await using var node = await InProcessNode.Create().StartAsync();
         var calls = new RoutedCalls(node);
         var root = Directory.CreateDirectory(Path.Combine(node.Root, "budget-root")).FullName;
-        var workspace = new RegisteredWorkspaces(node.Runtime.Store).RegisterFromVerifiedHuman(root, cancellationToken: ct);
+        var workspace = ExistingWorkspaceReadFixture.Seed(node, root, cancellationToken: ct);
         var content = Encoding.UTF8.GetBytes("ACTUAL_BYTES_OBSERVED_BEFORE_AUDIT_DELAY_7c922");
         File.WriteAllBytes(Path.Combine(root, "budget.txt"), content);
         var request = Read(workspace.Id, "budget.txt", new RequestMeta { CorrelationId = CommandIds.New() }, 0, (ulong)content.Length);
@@ -356,7 +356,7 @@ public sealed class FileReadRoutedTests
         await using var node = await InProcessNode.Create().StartAsync();
         var calls = new RoutedCalls(node);
         var root = Directory.CreateDirectory(Path.Combine(node.Root, "queue-budget-root")).FullName;
-        var workspace = new RegisteredWorkspaces(node.Runtime.Store).RegisterFromVerifiedHuman(root, cancellationToken: ct);
+        var workspace = ExistingWorkspaceReadFixture.Seed(node, root, cancellationToken: ct);
         File.WriteAllText(Path.Combine(root, "queued.txt"), "MUST_NOT_BE_READ_AFTER_QUEUE_TIMEOUT_849c");
         var request = Read(workspace.Id, "queued.txt", new RequestMeta { CorrelationId = CommandIds.New() }, 0, 64);
         var handler = calls.Dispatcher.FileHandlerForTests!;
@@ -428,7 +428,7 @@ public sealed class FileReadRoutedTests
         await using var node = await InProcessNode.Create().StartAsync();
         var calls = new RoutedCalls(node);
         var root = Directory.CreateDirectory(Path.Combine(node.Root, "partial-root")).FullName;
-        var workspace = new RegisteredWorkspaces(node.Runtime.Store).RegisterFromVerifiedHuman(root, cancellationToken: ct);
+        var workspace = ExistingWorkspaceReadFixture.Seed(node, root, cancellationToken: ct);
         var content = Enumerable.Range(0, 50_000).Select(i => (byte)(i % 251)).ToArray();
         File.WriteAllBytes(Path.Combine(root, "partial.bin"), content);
         var request = Read(workspace.Id, "partial.bin", new RequestMeta { CorrelationId = CommandIds.New() }, 0, (ulong)content.Length);
@@ -469,7 +469,7 @@ public sealed class FileReadRoutedTests
         await using var node = await InProcessNode.Create().StartAsync();
         var calls = new RoutedCalls(node);
         var root = Directory.CreateDirectory(Path.Combine(node.Root, "full-queue-root")).FullName;
-        var workspace = new RegisteredWorkspaces(node.Runtime.Store).RegisterFromVerifiedHuman(root, cancellationToken: ct);
+        var workspace = ExistingWorkspaceReadFixture.Seed(node, root, cancellationToken: ct);
         File.WriteAllText(Path.Combine(root, "queued.txt"), "QUEUE_FULL_MUST_NOT_READ_203f");
         var request = Read(workspace.Id, "queued.txt", new RequestMeta { CorrelationId = CommandIds.New() }, 0, 64);
         var reads = 0;

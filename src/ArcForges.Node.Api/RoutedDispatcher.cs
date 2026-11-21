@@ -727,10 +727,47 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
         }
 
         var raw = call.Payload.ToByteArray();
-        var digest = PayloadDigest.Compute(raw);
+        var caller = new Caller(Origin.Remote, ClientKind.Unspecified, null, centerCaller: center.Clone())
+        {
+            CellsOrigin = CenterRouting.CellsOrigin(center, node.NodeId.Span),
+            RemoteCommandId = mutation ? header.CommandId!.Clone() : null,
+            RawRequest = raw,
+            Routed = context,
+        };
+        WorkspaceServiceRegisterWorkspaceResponse? registration = null;
+        if (method == RoutedMethod.RegisterNodeWorkspace)
+        {
+            // Registration has no writer. Only an exact historical result or still-pending record precedes today's policy gates.
+            try
+            {
+                var lookup = workspaces!.ReadRegistration(caller, (WorkspaceServiceRegisterWorkspaceRequest)request);
+                if (lookup.Retained is { } retained)
+                {
+                    context.BeforeReplay();
+                    return Replayed(method, retained.ToArray(), request, risk);
+                }
+
+                if (lookup.Response.Error is { Details.State: { State: "command_dedup", Reason: "command_in_progress" } } pending)
+                {
+                    context.BeforeReplay();
+                    return ExecutedHere(method, meta, pending, TaskIdOf(request), risk);
+                }
+
+                registration = lookup.Response;
+            }
+            catch (RoutedAbortException abort)
+            {
+                return abort.Kind == RoutedAbort.Stopping
+                    ? ExecutedHere(method, meta, NodeErrors.NodeStopping(node.Clock.GetUtcNow()), TaskIdOf(request), risk)
+                    : null;
+            }
+        }
+
         // New file mutations use the journal's original-caller and SHA-256-of-exact-raw-bytes binding, not the
         // legacy PayloadDigest or its in-flight caller-class shortcut. Their writer serializes the journal/effect.
-        var key = mutation && !IsFileMutation(method) && method is not (RoutedMethod.PlanNodeRemoval or RoutedMethod.ExecuteNodeRemoval) ? Convert.ToHexString(header.CommandId!.Value.Span) : null;
+        var key = mutation && !IsFileMutation(method) &&
+            method is not (RoutedMethod.PlanNodeRemoval or RoutedMethod.ExecuteNodeRemoval or RoutedMethod.RegisterNodeWorkspace)
+            ? Convert.ToHexString(header.CommandId!.Value.Span) : null;
 
         // Decisions B-2: the same caller's duplicate is answered before anything that would assert DID_NOT_HAPPEN.
         if (key is not null)
@@ -747,6 +784,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
                     : ExecutedHere(method, meta, NodeErrors.CommandInProgress(), TaskIdOf(request), risk);
             }
 
+            var digest = PayloadDigest.Compute(raw);
             var recorded = node.Store.Read(reader => Recorded(reader, header.CommandId!.Value.Span, ServiceOf(method), MethodName(method), digest, center));
             if (recorded is not null)
             {
@@ -780,13 +818,6 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
             return new RoutedAnswer(RoutedOutcome.Expired, null, RoutedRefusals.ExpiredBeforeEffect(Correlation()), TaskIdOf(request), risk,
                 WorkspaceId: WorkspaceIdOf(request));
         }
-        var caller = new Caller(Origin.Remote, ClientKind.Unspecified, null, centerCaller: center.Clone())
-        {
-            CellsOrigin = CenterRouting.CellsOrigin(center, node.NodeId.Span),
-            RemoteCommandId = mutation ? header.CommandId!.Clone() : null,
-            RawRequest = raw,
-            Routed = context,
-        };
         if (!IsFileMutation(method) && method is not (RoutedMethod.PlanNodeRemoval or RoutedMethod.ExecuteNodeRemoval))
         {
             var policy = node.Store.Read(PolicyRules.Current).Document;
@@ -837,7 +868,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
                 return new RoutedAnswer(RoutedOutcome.Executed, ByteString.CopyFrom(outcome), null, null, risk, Code(mutationError), WorkspaceIdOf(request));
             }
 
-            var (response, error) = await RunAsync(tasks, workspaces, files, method, caller, request, cancellationToken).ConfigureAwait(false);
+            var (response, error) = await RunAsync(tasks, workspaces, files, method, caller, request, registration, cancellationToken).ConfigureAwait(false);
             if (response.CalculateSize() > ResultSigner.MaxPayloadBytes)
             {
                 // A valid FULL view can exceed the wire limit. Report an existing bounded internal failure, never a truncated success.
@@ -975,7 +1006,7 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
         where T : IMessage => (request, meta(request));
 
     private static async Task<(IMessage Response, ArcError? Error)> RunAsync(TaskServiceHandler tasks, WorkspaceServiceHandler? workspaces, FileServiceHandler? files,
-        RoutedMethod method, Caller caller, IMessage request,
+        RoutedMethod method, Caller caller, IMessage request, WorkspaceServiceRegisterWorkspaceResponse? registration,
         CancellationToken cancellationToken)
     {
         switch (method)
@@ -1017,7 +1048,8 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
                 var cancelled = await tasks.CancelTask(caller, (TaskServiceCancelTaskRequest)request, cancellationToken).ConfigureAwait(false);
                 return (cancelled, cancelled.Error);
             case RoutedMethod.RegisterNodeWorkspace:
-                var registered = await workspaces!.RegisterAsync(caller, (WorkspaceServiceRegisterWorkspaceRequest)request, cancellationToken).ConfigureAwait(false);
+                var registered = await workspaces!.RegisterAsync(caller, (WorkspaceServiceRegisterWorkspaceRequest)request, registration!, cancellationToken)
+                    .ConfigureAwait(false);
                 return (registered, registered.Error);
             case RoutedMethod.UnregisterNodeWorkspace:
                 var unregistered = await workspaces!.UnregisterAsync(caller, (WorkspaceServiceUnregisterWorkspaceRequest)request, cancellationToken).ConfigureAwait(false);
