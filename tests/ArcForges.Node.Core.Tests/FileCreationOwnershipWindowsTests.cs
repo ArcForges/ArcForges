@@ -1,176 +1,122 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Security.Cryptography;
-using System.Text;
-using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
-using ArcForges.Node.Api;
 using ArcForges.Node.Core.Files;
 using ArcForges.Node.Core.Platform;
-using ArcForges.Node.Core.Security;
+using ArcForges.Node.Store;
 using Google.Protobuf;
-using NodeFilePath = ArcForges.Contracts.Node.V1.FilePath;
+using static ArcForges.Node.Core.Tests.FileCreateCandidateTests;
 
 namespace ArcForges.Node.Core.Tests;
 
-/// <summary>Windows native creation and SQLite through the existing in-process routed seam; caller fixture is synthetic.</summary>
+/// <summary>
+/// Real markers on test-owned Windows objects and the retained SQLite ledger. Fresh routed creation and native update
+/// assertions remain at eaaccb8380a2bd265aaad0a67d62c8fab2a8a29a.
+/// </summary>
 public sealed class FileCreationOwnershipWindowsTests
 {
-    [Fact(Timeout = 120_000)]
+    [Fact(Timeout = 30_000)]
     [Trait("env", "windows-real")]
-    public async Task CreatedEvidenceSurvivesRestartAndOnlyTheSameCallerCanAdvanceIt()
+    public async Task RetainedCreationMarkerSurvivesRestartAndBindsTheOriginalOwnerAndObject()
     {
-        if (!OperatingSystem.IsWindows()) { Assert.Skip("Windows native exclusive-create settlement."); return; }
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows native marker readback.");
+        var ct = TestContext.Current.CancellationToken;
+        await using var node = await InProcessNode.Create().StartAsync();
+        var calls = new RoutedCalls(node);
+        // Synthetic AGENT provenance exercises the retained ownership observer only.
+        var owner = calls.Relay(Origin.Agent);
+        var rootPath = Directory.CreateDirectory(Path.Combine(node.Root, "retained-ownership")).FullName;
+        var workspace = new RegisteredWorkspaces(node.Runtime.Store).RegisterFromVerifiedHuman(rootPath, cancellationToken: ct);
+        var content = "historical-owner-created-body"u8.ToArray();
+        var request = Request(workspace.Id, "created.txt", content);
+        var path = Path.Combine(rootPath, request.Path.Path);
+        var evidence = CreateOwnedMarkerFixture(path, content);
+        var raw = node.Runtime.Store.Write(transaction =>
+        {
+            using var root = WorkspacePath.OpenRoot(rootPath);
+            SeedPrepared(transaction, owner, root, request);
+            return FileMutationJournal.CompleteVerifiedEffect(transaction, request.Meta.CommandId.Value.Span, request.ToByteArray(),
+                content.Length, SHA256.HashData(content), replacements: null, createdOwnership: evidence);
+        }, CommitDurability.Full);
+
+        bool IsOwned(CenterCaller caller)
+        {
+            using var root = WorkspacePath.OpenRoot(rootPath);
+            var selected = Assert.Single(WorkspaceRemovalPlan.Capture(root, request.Path.Path, ct).Entries);
+            return node.Runtime.Store.Read(reader => FileCreationOwnership.IsVerifiedAgent(reader, caller, workspace.Id, root, selected, ct));
+        }
+
+        Assert.True(IsOwned(owner));
+        Assert.False(IsOwned(calls.Relay(Origin.Agent)));
+        Assert.Equal(0, await node.StopAsync());
+        await node.StartAsync();
+        calls = new RoutedCalls(node);
+        Assert.True(IsOwned(owner));
+        Assert.Equal(raw, await ReplayAsync(calls, owner, request, ct));
+        using (var root = WorkspacePath.OpenRoot(rootPath))
+        using (var file = root.OpenReadForOwnership(request.Path.Path))
+            Assert.Equal(evidence.Marker, WorkspaceCreationMarker.Read(file));
+
+        var external = (byte[])content.Clone();
+        external[0] ^= 1;
+        File.WriteAllBytes(path, external);
+        Assert.False(IsOwned(owner));
+        Assert.Equal(raw, await ReplayAsync(calls, owner, request, ct));
+        Assert.Equal(external, File.ReadAllBytes(path));
+        Assert.Equal(SHA256.HashData(content), node.Runtime.Store.Read(reader =>
+            reader.Scalar("SELECT last_written_sha256 FROM file_creation_ownership;")) as byte[]);
+    }
+
+    [Fact(Timeout = 30_000)]
+    [Trait("env", "windows-real")]
+    public async Task RolledBackHistoricalSettlementLeavesOnlyTheHeldIntentAndNoClaimableMarkerRecord()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows native marker readback.");
         var ct = TestContext.Current.CancellationToken;
         await using var node = await InProcessNode.Create().StartAsync();
         var calls = new RoutedCalls(node);
         var owner = calls.Relay(Origin.Human);
-        var root = Directory.CreateDirectory(Path.Combine(node.Root, "owner-created")).FullName;
-        var nestedRoot = Directory.CreateDirectory(Path.Combine(root, "nested")).FullName;
-        var manager = new RegisteredWorkspaces(node.Runtime.Store);
-        var workspace = manager.RegisterFromVerifiedHuman(root, cancellationToken: ct);
-        var nestedWorkspace = manager.RegisterFromVerifiedHuman(nestedRoot, cancellationToken: ct);
-        var firstBody = Encoding.UTF8.GetBytes("new-created-owner-fixture-1aa1");
-        var nextBody = Encoding.UTF8.GetBytes("same-owner-updated-fixture-2bb2");
+        var rootPath = Directory.CreateDirectory(Path.Combine(node.Root, "retained-rollback")).FullName;
+        var workspace = new RegisteredWorkspaces(node.Runtime.Store).RegisterFromVerifiedHuman(rootPath, cancellationToken: ct);
+        var content = "rolled-back-historical-created-body"u8.ToArray();
+        var request = Request(workspace.Id, "created.txt", content);
+        var path = Path.Combine(rootPath, request.Path.Path);
+        var evidence = CreateOwnedMarkerFixture(path, content);
+        using (var root = WorkspacePath.OpenRoot(rootPath))
+            node.Runtime.Store.Write(transaction => SeedPrepared(transaction, owner, root, request), CommitDurability.Full);
 
-        FileServiceWriteFileRequest Create(string path, byte[] body) => new()
+        Assert.Throws<IOException>(() => node.Runtime.Store.Write<int>(transaction =>
         {
-            Meta = Tasks.Meta(),
-            Path = new NodeFilePath { WorkspaceId = new Id { Value = ByteString.CopyFrom(workspace.Id) }, Path = path },
-            ExpectedAbsent = true,
-            Data = ByteString.CopyFrom(body),
-        };
-        FileServiceWriteFileRequest Update(string path, byte[] expected, byte[] body, byte[]? selectedWorkspace = null) => new()
-        {
-            Meta = Tasks.Meta(),
-            Path = new NodeFilePath { WorkspaceId = new Id { Value = ByteString.CopyFrom(selectedWorkspace ?? workspace.Id) }, Path = path },
-            ExpectedSha256 = ByteString.CopyFrom(SHA256.HashData(expected)),
-            Data = ByteString.CopyFrom(body),
-        };
-        async Task<FileServiceWriteFileResponse> Invoke(CenterCaller actor, FileServiceWriteFileRequest request)
-        {
-            var now = node.Runtime.Clock.GetUtcNow();
-            var routed = new RoutedContext(calls.Link, node.Runtime.Lifecycle, now.AddSeconds(30), TimeSpan.FromSeconds(15),
-                node.Runtime.Clock, node.Runtime.Clock.GetTimestamp(), CommandIds.New(), fileWorkspace: true);
-            var caller = new Caller(Origin.Remote, ClientKind.Unspecified, null, centerCaller: actor.Clone())
-            {
-                CellsOrigin = CenterRouting.CellsOrigin(actor, node.Runtime.NodeId.Span),
-                RemoteCommandId = request.Meta.CommandId.Clone(),
-                RawRequest = request.ToByteArray(),
-                Routed = routed,
-            };
-            var raw = await calls.Dispatcher.FileHandlerForTests!.WriteExistingCandidateAsync(caller, ct);
-            return FileServiceWriteFileResponse.Parser.ParseFrom(raw);
-        }
-        (byte[] Marker, byte[] Hash, CenterCaller Caller, byte[] Command)? Record(string path) =>
-            node.Runtime.Store.Read<(byte[] Marker, byte[] Hash, CenterCaller Caller, byte[] Command)?>(reader =>
-            {
-                using var sql = reader.CreateCommand("""
-                    SELECT c.creation_marker, c.last_written_sha256, c.caller, c.creation_command_id
-                    FROM file_creation_ownership c
-                    JOIN file_ownership_generation g ON g.singleton = 1 AND g.generation = c.global_generation
-                    JOIN file_ownership_object_generation o ON o.object_platform = c.object_platform AND o.object_key = c.object_key
-                                                              AND o.generation = c.object_generation
-                    WHERE c.workspace_id = $id AND c.relative_path = $path;
-                    """);
-                sql.Parameters.AddWithValue("$id", workspace.Id);
-                sql.Parameters.AddWithValue("$path", path);
-                using var row = sql.ExecuteReader();
-                return !row.Read() ? null : ((byte[])row.GetValue(0), (byte[])row.GetValue(1),
-                    CenterCaller.Parser.ParseFrom((byte[])row.GetValue(2)), (byte[])row.GetValue(3));
-            });
-
-        var create = Create("nested/created.txt", firstBody);
-        Assert.Null((await Invoke(owner, create)).Error);
-        var initial = Assert.IsType<(byte[] Marker, byte[] Hash, CenterCaller Caller, byte[] Command)>(Record("nested/created.txt"));
-        Assert.Equal(create.Meta.CommandId.Value.ToByteArray(), initial.Command);
-        Assert.Equal(SHA256.HashData(firstBody), initial.Hash);
-        Assert.True(CenterRouting.SameFileCaller(owner, initial.Caller));
-        using (var anchor = WorkspacePath.OpenRoot(root))
-        using (var opened = anchor.OpenReadForOwnership("nested/created.txt"))
-            Assert.Equal(initial.Marker, WorkspaceCreationMarker.Read(opened));
+            FileMutationJournal.CompleteVerifiedEffect(transaction, request.Meta.CommandId.Value.Span, request.ToByteArray(),
+                content.Length, SHA256.HashData(content), replacements: null, createdOwnership: evidence);
+            Assert.Equal(1L, transaction.Scalar("SELECT count(*) FROM file_creation_ownership;"));
+            throw new IOException("Synthetic rollback after writing the historical settlement.");
+        }, CommitDurability.Full));
+        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_creation_ownership;")));
+        var prepared = node.Runtime.Store.Read(reader => FileMutationJournal.GetForCaller(reader, request.Meta.CommandId.Value.Span, owner));
+        Assert.Equal(FileOperationState.Prepared, prepared!.State);
+        Assert.True(prepared.Held);
 
         Assert.Equal(0, await node.StopAsync());
         await node.StartAsync();
-        calls = new RoutedCalls(node);
-        Assert.Equal(initial.Marker, Record("nested/created.txt")!.Value.Marker);
-        Assert.Null((await Invoke(owner, Update("nested/created.txt", firstBody, nextBody))).Error);
-        var advanced = Record("nested/created.txt")!.Value;
-        Assert.Equal(initial.Marker, advanced.Marker);
-        Assert.Equal(initial.Command, advanced.Command);
-        Assert.Equal(SHA256.HashData(nextBody), advanced.Hash);
-        Assert.Equal(nextBody, File.ReadAllBytes(Path.Combine(nestedRoot, "created.txt")));
-
-        var foreign = calls.Relay(Origin.Human);
-        Assert.False(CenterRouting.SameFileCaller(owner, foreign));
-        // The same native object is addressed via another registered root. An identical foreign write still
-        // invalidates the original root's evidence; path-only invalidation would leave it falsely claimable.
-        Assert.Null((await Invoke(foreign, Update("created.txt", nextBody, nextBody, nestedWorkspace.Id))).Error);
-        Assert.Null(Record("nested/created.txt"));
-        Assert.Equal(1L, node.Runtime.Store.Read(r => r.Scalar(
-            "SELECT count(*) FROM file_creation_ownership WHERE workspace_id = $id AND relative_path = 'nested/created.txt';",
-            ("$id", workspace.Id)))); // stale row remains, but its object generation no longer matches
-
-        var changed = Create("external.txt", firstBody);
-        Assert.Null((await Invoke(owner, changed)).Error);
-        Assert.NotNull(Record("external.txt"));
-        var external = Encoding.UTF8.GetBytes("outside-owner-content-change");
-        File.WriteAllBytes(Path.Combine(root, "external.txt"), external);
-        Assert.Null((await Invoke(owner, Update("external.txt", external, nextBody))).Error);
-        Assert.Null(Record("external.txt"));
-
-        File.WriteAllBytes(Path.Combine(root, "occupied.txt"), firstBody);
-        var collision = await Invoke(owner, Create("occupied.txt", nextBody));
-        Assert.Equal("expected_absent_conflict", collision.Error.Details.State.Reason);
-        Assert.Null(Record("occupied.txt"));
-        Assert.Equal(firstBody, File.ReadAllBytes(Path.Combine(root, "occupied.txt")));
-    }
-
-    [Fact(Timeout = 120_000)]
-    [Trait("env", "windows-real")]
-    public async Task RolledBackSettlementCannotLeaveClaimableCreationEvidence()
-    {
-        if (!OperatingSystem.IsWindows()) { Assert.Skip("Windows native exclusive-create settlement."); return; }
-        var ct = TestContext.Current.CancellationToken;
-        await using var node = await InProcessNode.Create().StartAsync();
-        var calls = new RoutedCalls(node);
-        var actor = calls.Relay(Origin.Human);
-        var root = Directory.CreateDirectory(Path.Combine(node.Root, "owner-rollback")).FullName;
-        var workspace = new RegisteredWorkspaces(node.Runtime.Store).RegisterFromVerifiedHuman(root, cancellationToken: ct);
-        var body = Encoding.UTF8.GetBytes("rolled-back-owned-create-fixture-925d");
-        var request = new FileServiceWriteFileRequest
-        {
-            Meta = Tasks.Meta(),
-            Path = new NodeFilePath { WorkspaceId = new Id { Value = ByteString.CopyFrom(workspace.Id) }, Path = "created.txt" },
-            ExpectedAbsent = true,
-            Data = ByteString.CopyFrom(body),
-        };
-        var now = node.Runtime.Clock.GetUtcNow();
-        var routed = new RoutedContext(calls.Link, node.Runtime.Lifecycle, now.AddSeconds(30), TimeSpan.FromSeconds(15),
-            node.Runtime.Clock, node.Runtime.Clock.GetTimestamp(), CommandIds.New(), fileWorkspace: true);
-        var caller = new Caller(Origin.Remote, ClientKind.Unspecified, null, centerCaller: actor.Clone())
-        {
-            CellsOrigin = CenterRouting.CellsOrigin(actor, node.Runtime.NodeId.Span),
-            RemoteCommandId = request.Meta.CommandId.Clone(),
-            RawRequest = request.ToByteArray(),
-            Routed = routed,
-        };
-        var handler = calls.Dispatcher.FileHandlerForTests!;
-        handler.AfterCreationSettlementForTests = () => throw new IOException("owned fixture rollback");
-        try { await Assert.ThrowsAsync<IOException>(() => handler.WriteExistingCandidateAsync(caller, ct)); }
-        finally { handler.AfterCreationSettlementForTests = null; }
-        Assert.Equal(body, File.ReadAllBytes(Path.Combine(root, "created.txt")));
-        Assert.Equal(0L, node.Runtime.Store.Read(r => r.Scalar("SELECT count(*) FROM file_creation_ownership;")));
-        var pending = node.Runtime.Store.Read(r => FileMutationJournal.GetForCaller(r, request.Meta.CommandId.Value.Span, actor));
-        Assert.Equal(FileOperationState.Prepared, pending!.State);
-        Assert.True(pending.Held);
-
-        Assert.Equal(0, await node.StopAsync());
-        await node.StartAsync();
-        var recovered = node.Runtime.Store.Read(r => FileMutationJournal.GetForCaller(r, request.Meta.CommandId.Value.Span, actor));
+        var recovered = node.Runtime.Store.Read(reader => FileMutationJournal.GetForCaller(reader, request.Meta.CommandId.Value.Span, owner));
         Assert.Equal(FileOperationState.Unknown, recovered!.State);
         Assert.True(recovered.Held);
-        Assert.Equal(0L, node.Runtime.Store.Read(r => r.Scalar("SELECT count(*) FROM file_creation_ownership;")));
-        Assert.Equal(body, File.ReadAllBytes(Path.Combine(root, "created.txt")));
+        Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_creation_ownership;")));
+        Assert.Equal(content, File.ReadAllBytes(path));
+        using var anchor = WorkspacePath.OpenRoot(rootPath);
+        using var file = anchor.OpenReadForOwnership(request.Path.Path);
+        Assert.Equal(evidence.Marker, WorkspaceCreationMarker.Read(file));
+    }
+
+    private static WorkspaceCreatedOwnership CreateOwnedMarkerFixture(string path, byte[] content)
+    {
+        using var file = new FileStream(path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None);
+        file.Write(content);
+        file.Flush(flushToDisk: true);
+        var marker = Assert.IsType<byte[]>(WorkspaceCreationMarker.TryWriteNew(file.SafeFileHandle));
+        var identity = RegisteredWorkspaces.RootIdentity.Encode(WorkspacePath.Identity(file.SafeFileHandle), directory: false);
+        return new WorkspaceCreatedOwnership(identity, marker);
     }
 }
