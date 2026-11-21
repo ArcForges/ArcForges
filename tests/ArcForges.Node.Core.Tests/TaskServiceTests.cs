@@ -37,6 +37,7 @@ public sealed class TaskServiceTests
     [InlineData(1, false, true)]
     public async Task RetainedTaskReturnsExactArgumentsDirectoryAndTerminalResult(int code, bool hasWindowsStatus, bool cancelled)
     {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         await using var files = InProcessNode.Create();
         var (taskId, attemptId) = LegacyTaskHistoryFixture.Seed(files, AttemptState.Finished);
         var directory = Path.Combine(files.Root, "retained work dir ä");
@@ -81,6 +82,7 @@ public sealed class TaskServiceTests
     [Fact(Timeout = 60_000)]
     public async Task RetainedOutputKeepsExactBytesOffsetsTerminalFramesAndTail()
     {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         await using var files = InProcessNode.Create();
         var (taskId, attemptId) = LegacyTaskHistoryFixture.Seed(files, AttemptState.Finished);
         var stdout = Enumerable.Range(0, 150_000).Select(index => (byte)(index % 251)).ToArray();
@@ -168,6 +170,7 @@ public sealed class TaskServiceTests
     [Fact(Timeout = 60_000)]
     public async Task RetainedTaskShowsSealedSecretNamesWithoutExposingValues()
     {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         const string secret = "historical-test-only-secret-value";
         var secrets = new SecretEnvironment
         {
@@ -200,6 +203,7 @@ public sealed class TaskServiceTests
     [Fact(Timeout = 60_000)]
     public async Task RetainedSubmitReplaysAndListsHistoricalTasksNewestFirst()
     {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         await using var files = InProcessNode.Create();
         var (older, _) = LegacyTaskHistoryFixture.Seed(files, AttemptState.Finished);
         var (newer, _) = LegacyTaskHistoryFixture.Seed(files, AttemptState.Finished);
@@ -252,6 +256,7 @@ public sealed class TaskServiceTests
     [Fact(Timeout = 60_000)]
     public async Task RetainedRetryDoesNotCreateAnAttemptAndExistingRecordsCanBePinnedAndPurged()
     {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         await using var files = InProcessNode.Create();
         var (taskId, attemptId) = LegacyTaskHistoryFixture.Seed(files, AttemptState.Finished);
         var directory = Tasks.Files(files, attemptId).Directory;
