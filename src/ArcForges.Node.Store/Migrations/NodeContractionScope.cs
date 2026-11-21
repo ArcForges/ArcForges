@@ -113,6 +113,8 @@ internal sealed partial class NodeContractionScope : IDisposable
         }
 
         var attempts = ObserveAttempts(sqlite, nodeId, boot);
+        if (OperatingSystem.IsLinux())
+            ObserveLinuxInventory(attempts);
         ObserveFileWorkers(sqlite, boot);
         RequireOwnedAttemptDirectories(attempts);
         RequireNamedDatabase(path);
@@ -320,18 +322,119 @@ internal sealed partial class NodeContractionScope : IDisposable
             throw Refused("linux_pid_namespace_unavailable");
     }
 
-    private static void ObserveLinuxUnit(string unit)
+    private static void ObserveLinuxInventory(HashSet<string> attempts)
+    {
+        // These are the complete predecessor names, including the old test slice and capability probes.
+        // Do not ask the manager for an unfiltered unit list or include the current V2 Run families.
+        var (output, exit) = QueryLinuxManager([
+            "list-units", "--all", "--plain", "--no-legend", "--full", "--type=service,scope,slice", "--",
+            "arcforges-a-*.service", "arcforges-x-*.scope", "arcforges-probe-*.service", "arcforges.slice", "arcforges-test-*.slice",
+        ]);
+        if (exit != 0)
+            throw Refused("systemd_inventory_unconfirmed");
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (string line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            int separator = line.IndexOfAny([' ', '\t']);
+            if (separator <= 0 || !seen.Add(line[..separator]) || seen.Count > 4096)
+                throw Refused("systemd_inventory_unconfirmed");
+            string unit = line[..separator];
+            if (unit == "arcforges.slice" || unit.StartsWith("arcforges-test-", StringComparison.Ordinal) && unit.EndsWith(".slice", StringComparison.Ordinal))
+            {
+                ObserveLinuxUnit(unit, slice: true);
+                continue;
+            }
+
+            string? attempt = UnitMiddle(unit, "arcforges-a-", ".service") ?? UnitMiddle(unit, "arcforges-x-", ".scope");
+            if (attempt is not null)
+            {
+                if (!attempts.Contains(attempt) && !line.AsSpan(separator).TrimStart().StartsWith("not-found ", StringComparison.Ordinal))
+                    throw Refused("legacy_unit_without_attempt_record");
+                ObserveLinuxUnit(unit);
+            }
+            else if (UnitMiddle(unit, "arcforges-probe-", ".service") is not null)
+            {
+                ObserveLinuxUnit(unit);
+            }
+            else
+            {
+                throw Refused("systemd_inventory_unconfirmed");
+            }
+        }
+
+        // A still-populated old slice can outlive registration in its user manager.
+        // Look only beneath that manager's own cgroup, where the retired default slice was rooted.
+        var (managerGroup, managerExit) = QueryLinuxManager(["show", "--property=ControlGroup", "--value"]);
+        managerGroup = managerGroup.TrimEnd('\n', '\r');
+        if (managerExit != 0 || !ValidLinuxCgroupPath(managerGroup))
+            throw Refused("systemd_manager_cgroup_unconfirmed");
+        _ = ObserveEmptyLinuxCgroup(Path.Combine("/sys/fs/cgroup", managerGroup[1..], "arcforges.slice"));
+    }
+
+    private static string? UnitMiddle(string unit, string prefix, string suffix) =>
+        unit.Length >= prefix.Length + suffix.Length && unit.StartsWith(prefix, StringComparison.Ordinal) && unit.EndsWith(suffix, StringComparison.Ordinal)
+            ? unit[prefix.Length..^suffix.Length] : null;
+
+    private static void ObserveLinuxUnit(string unit, bool slice = false)
+    {
+        var (output, exit) = QueryLinuxManager([
+            "show", "--property=Id,LoadState,ActiveState,MainPID,ControlGroup", "--", unit,
+        ]);
+        var fields = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (string line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            int split = line.IndexOf('=');
+            if (split <= 0 || !fields.TryAdd(line[..split], line[(split + 1)..]))
+                throw Refused("systemd_observation_unconfirmed");
+        }
+
+        string? active = fields.GetValueOrDefault("ActiveState");
+        string? cgroup = fields.GetValueOrDefault("ControlGroup");
+        if (fields.GetValueOrDefault("Id") != unit || fields.GetValueOrDefault("MainPID") is not (null or "0") ||
+            !(active is "inactive" or "failed" || slice && active == "active" && !string.IsNullOrEmpty(cgroup)))
+            throw Refused("legacy_unit_live_or_unconfirmed");
+        if (fields.GetValueOrDefault("LoadState") == "not-found" && string.IsNullOrEmpty(cgroup))
+            return;
+        if (exit != 0 || fields.GetValueOrDefault("LoadState") != "loaded")
+            throw Refused("systemd_observation_unconfirmed");
+        if (string.IsNullOrEmpty(cgroup))
+            return;
+        if (!ValidLinuxCgroupPath(cgroup) || Path.GetFileName(cgroup) != unit)
+            throw Refused("legacy_cgroup_identity_unconfirmed");
+
+        string scope = Path.Combine("/sys/fs/cgroup", cgroup[1..]);
+        if (!ObserveEmptyLinuxCgroup(scope) && slice && active == "active")
+            throw Refused("legacy_cgroup_identity_unconfirmed");
+    }
+
+    private static bool ValidLinuxCgroupPath(string path) => path.StartsWith('/') && path.Length > 1 &&
+        path[1..].Split('/').All(part => part.Length != 0 && part is not ("." or "..") && !part.Any(char.IsControl));
+
+    private static bool ObserveEmptyLinuxCgroup(string path)
+    {
+        if (TryAttributes(path) is not { } attributes)
+            return false;
+        if ((attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != FileAttributes.Directory)
+            throw Refused("legacy_cgroup_identity_unconfirmed");
+        if (!File.ReadLines(Path.Combine(path, "cgroup.events")).Contains("populated 0", StringComparer.Ordinal))
+            throw Refused("legacy_cgroup_still_populated");
+        return true;
+    }
+
+    private static (string Output, int Exit) QueryLinuxManager(string[] arguments)
     {
         var start = new ProcessStartInfo("/usr/bin/systemctl") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
-        foreach (string argument in new[] { "--user", "--no-pager", "show", "--property=Id,LoadState,ActiveState,MainPID,ControlGroup", "--", unit })
+        foreach (string argument in new[] { "--user", "--no-pager" }.Concat(arguments))
             start.ArgumentList.Add(argument);
         string runtime = "/run/user/" + GetEffectiveUid().ToString(CultureInfo.InvariantCulture);
         start.Environment["XDG_RUNTIME_DIR"] = runtime;
         start.Environment["DBUS_SESSION_BUS_ADDRESS"] = "unix:path=" + runtime + "/bus";
         start.Environment["LC_ALL"] = "C";
+        start.Environment["SYSTEMD_COLORS"] = "0";
         using var child = Process.Start(start) ?? throw Refused("systemd_observation_unavailable");
-        var output = child.StandardOutput.ReadToEndAsync();
-        var error = child.StandardError.ReadToEndAsync();
+        var output = ReadBoundedAsync(child.StandardOutput);
+        var error = ReadBoundedAsync(child.StandardError);
         if (!child.WaitForExit(5_000))
         {
             if (!child.HasExited)
@@ -342,30 +445,22 @@ internal sealed partial class NodeContractionScope : IDisposable
             throw Refused("systemd_observation_timed_out");
         }
         _ = error.GetAwaiter().GetResult();
-        var fields = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (string line in output.GetAwaiter().GetResult().Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        return (output.GetAwaiter().GetResult(), child.ExitCode);
+    }
+
+    private static async Task<string> ReadBoundedAsync(StreamReader reader)
+    {
+        const int maximum = 512 * 1024;
+        var result = new StringBuilder();
+        var buffer = new char[4096];
+        int read;
+        while ((read = await reader.ReadAsync(buffer.AsMemory()).ConfigureAwait(false)) > 0)
         {
-            int split = line.IndexOf('=');
-            if (split <= 0 || !fields.TryAdd(line[..split], line[(split + 1)..]))
-                throw Refused("systemd_observation_unconfirmed");
+            if (result.Length + read > maximum)
+                throw Refused("systemd_observation_limit");
+            result.Append(buffer, 0, read);
         }
-
-        string? cgroup = fields.GetValueOrDefault("ControlGroup");
-        if (fields.GetValueOrDefault("Id") != unit || fields.GetValueOrDefault("ActiveState") is not ("inactive" or "failed") ||
-            fields.GetValueOrDefault("MainPID") is not (null or "0"))
-            throw Refused("legacy_unit_live_or_unconfirmed");
-        if (fields.GetValueOrDefault("LoadState") == "not-found" && string.IsNullOrEmpty(cgroup))
-            return;
-        if (child.ExitCode != 0 || fields.GetValueOrDefault("LoadState") != "loaded")
-            throw Refused("systemd_observation_unconfirmed");
-        if (string.IsNullOrEmpty(cgroup))
-            return;
-        if (!cgroup.StartsWith('/') || cgroup.Split('/').Any(part => part is "." or "..") || Path.GetFileName(cgroup) != unit)
-            throw Refused("legacy_cgroup_identity_unconfirmed");
-
-        string scope = Path.Combine("/sys/fs/cgroup", cgroup[1..]);
-        if (TryAttributes(scope) is not null && !File.ReadLines(Path.Combine(scope, "cgroup.events")).Contains("populated 0", StringComparer.Ordinal))
-            throw Refused("legacy_cgroup_still_populated");
+        return result.ToString();
     }
 
     private void RequireOwnedAttemptDirectories(HashSet<string> ids)

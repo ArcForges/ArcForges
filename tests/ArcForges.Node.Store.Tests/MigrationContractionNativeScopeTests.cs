@@ -67,16 +67,19 @@ public sealed class MigrationContractionNativeScopeTests
         RequireReleasedScope(root, before);
     }
 
-    [Fact(Timeout = 120_000, DisableParallelization = true)]
+    [Theory(Timeout = 120_000, DisableParallelization = true)]
+    [InlineData(true)]
+    [InlineData(false)]
     [Trait("isolation", "exclusive")]
     [Trait("env", "linux-real")]
-    public async Task AFinishedAttemptWithALiveLinuxUnitCannotBeContracted()
+    public async Task ALiveLegacyLinuxUnitPreventsContractionWhetherOrNotItHasAnAttemptRecord(bool recorded)
     {
         if (!OperatingSystem.IsLinux()) { Assert.Skip("Requires the Linux systemd user manager."); return; }
         string? skip = SystemdTestEnvironment.SkipReason;
         Assert.SkipWhen(skip is not null, skip ?? string.Empty);
         using var root = new TemporaryDataRoot();
-        string unit = SeedFinishedAttempt(root, windows: false);
+        string recordedUnit = SeedFinishedAttempt(root, windows: false);
+        string unit = recorded ? recordedUnit : "arcforges-a-" + LegacyId(StoreIds.NewUuid7(TimeProvider.System)) + ".service";
         using (var lease = new FileStream(Path.Combine(root.Path, "node.lock"), new FileStreamOptions
         {
             Mode = FileMode.CreateNew,
@@ -102,7 +105,7 @@ public sealed class MigrationContractionNativeScopeTests
             string cgroup = Assert.IsType<string>(SystemdTestEnvironment.CgroupDirectory(unit));
             Assert.EndsWith("/" + unit, cgroup, StringComparison.Ordinal);
             Assert.Contains(pid.ToString(CultureInfo.InvariantCulture), File.ReadLines(Path.Combine(cgroup, "cgroup.procs")));
-            RequireRefusal(root, before, "legacy_unit_live_or_unconfirmed");
+            RequireRefusal(root, before, recorded ? "legacy_unit_live_or_unconfirmed" : "legacy_unit_without_attempt_record");
             Assert.True(identity.Value.IsRunning());
         }
         finally
@@ -170,7 +173,7 @@ public sealed class MigrationContractionNativeScopeTests
     {
         var start = new ProcessStartInfo("/usr/bin/systemd-run",
         [
-            "--user", "--quiet", "--service-type=exec", "--unit=" + name, "--description=" + description,
+            "--user", "--quiet", "--collect", "--service-type=exec", "--unit=" + name, "--description=" + description,
             "--property=Restart=no", "--property=KillMode=control-group", "--", "/usr/bin/sleep", "60",
         ]) { UseShellExecute = false, RedirectStandardError = true };
         using var child = Process.Start(start)!;
