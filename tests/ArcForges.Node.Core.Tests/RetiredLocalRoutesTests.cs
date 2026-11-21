@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Security.AccessControl;
+using System.Security.Principal;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
@@ -15,7 +17,20 @@ public sealed class RetiredLocalRoutesTests
     public async Task TheCurrentOwnerEndpointServesV2AndHasNoLegacyExecutionOrWorkspaceSurface()
     {
         var ct = TestContext.Current.CancellationToken;
-        await using var node = await InProcessNode.Create().StartAsync();
+        await using var node = InProcessNode.Create();
+        if (OperatingSystem.IsWindows())
+        {
+            using var principal = WindowsIdentity.GetCurrent();
+            var user = principal.User ?? throw new InvalidOperationException("The test principal has no user SID.");
+            var access = new DirectorySecurity();
+            access.SetOwner(user);
+            access.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+            access.AddAccessRule(new FileSystemAccessRule(user, FileSystemRights.FullControl,
+                InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
+            new DirectoryInfo(node.DataRoot).Create(access);
+        }
+
+        await node.StartAsync();
         string? ownerKey = null;
         try
         {
