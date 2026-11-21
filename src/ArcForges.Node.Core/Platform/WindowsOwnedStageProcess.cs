@@ -53,7 +53,6 @@ internal sealed partial class WindowsOwnedStageProcess : IDisposable
         _identity = new WindowsOwnedStageIdentity(BootIdentity.Read(), process.Id, CreationTimeOf(native));
     }
 
-    internal int ProcessId => _identity.ProcessId;
     internal SafeProcessHandle Handle => _process.SafeHandle;
 
     internal WindowsOwnedStageIdentity SealedIdentity()

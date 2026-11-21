@@ -66,28 +66,6 @@ internal sealed partial class WindowsPrivateStageTransaction : IDisposable
         }
     }
 
-    /// <summary>Adopts a duplicate of the exact kernel transaction after the pipe's process identity was verified.</summary>
-    internal static WindowsPrivateStageTransaction AdoptDuplicate(SafeFileHandle handle, Guid expectedId,
-        long originalDeadline, long expiryMicroseconds, uint timeoutMilliseconds)
-    {
-        ArgumentNullException.ThrowIfNull(handle);
-        WindowsPrivateStageTransaction? result = null;
-        try
-        {
-            if (handle.IsInvalid || timeoutMilliseconds is < 1 or > 10_000) throw Unavailable();
-            result = new WindowsPrivateStageTransaction(handle, originalDeadline, expiryMicroseconds, timeoutMilliseconds);
-            if (result.Id != expectedId) throw Unavailable();
-            result.RequireActive();
-            return result;
-        }
-        catch
-        {
-            if (result is not null) result.Dispose();
-            else handle.Dispose();
-            throw;
-        }
-    }
-
     internal void RequireActive()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
