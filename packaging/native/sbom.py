@@ -16,6 +16,7 @@ from xml.etree import ElementTree
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.dont_write_bytecode = True
 sys.path.insert(0, str(ROOT / "eng" / "mxc"))
 from stage import LICENSE, NATIVE, PACKAGE, RELEASE, SBOM, SCHEMA, SOURCE, VERSION
 
