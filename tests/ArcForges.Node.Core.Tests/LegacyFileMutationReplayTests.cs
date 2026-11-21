@@ -5,6 +5,7 @@ using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Contracts.Relay.V1;
 using ArcForges.Node.Api;
+using ArcForges.Node.Core.Events;
 using ArcForges.Node.Core.Files;
 using ArcForges.Node.Core.Security;
 using ArcForges.Node.Store;
@@ -165,19 +166,35 @@ public sealed class LegacyFileMutationReplayTests
     public async Task AnApprovedWriteCanOnlyReplayASettledJournalWithoutStartingOrChangingIt(FileOperationState? history)
     {
         var ct = TestContext.Current.CancellationToken;
-        await using var node = await InProcessNode.Create().StartAsync();
-        var calls = new RoutedCalls(node);
-        var caller = calls.Relay(Origin.Script);
+        await using var fixture = InProcessNode.Create();
+        using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = fixture.DataRoot, BootIdentity = "legacy-write-replay-fixture", Clock = fixture.Clock });
+        using var log = new NodeLog(Path.Combine(fixture.DataRoot, "logs", "node"), LogLevel.Info, fixture.Clock);
+        var journal = EventJournal.Open(store);
+        var hub = new StreamHub();
+        await using var processor = new CommandProcessor(store, journal, hub);
+        // The production handler shares the real writer without the host's asynchronous approval resumption.
+        using var runtime = new NodeRuntime(store, journal, hub, processor, log,
+            new NodeSettingsManager(fixture.ConfigPath, fixture.DataRoot, log), fixture.DataRoot, "offline-fixture", fixture.Clock,
+            new RecoveryReport(false, false, null, store.Opening), new CapabilityReport());
+        using var files = new FileServiceHandler(runtime);
+        var caller = new CenterCaller
+        {
+            Kind = CenterCallerKind.NodeRelay,
+            AccountId = RoutedCalls.Account.Clone(),
+            RelayingNodeId = new Id { Value = ByteString.CopyFrom(runtime.NodeId.Span) },
+            LocalOrigin = Origin.Script,
+            LocalSessionId = CommandIds.New(),
+        };
         var workspace = CommandIds.New();
         var meta = Tasks.Meta();
         var raw = Request(edit: false, meta, workspace);
         var id = meta.CommandId.Value.ToByteArray();
         byte[] reference = [1, .. id];
         var actor = new ActorRef { Origin = Origin.Remote, CenterCaller = caller, RemoteCommandId = meta.CommandId.Clone() };
-        var approvalId = await node.Runtime.Processor.ExecuteAsync(command =>
+        var (approvalId, recorded) = await processor.ExecuteAsync(command =>
         {
             var transaction = command.Transaction;
-            SeedStage(transaction, workspace, node.Root, meta, FileOperationKind.Write, caller, raw);
+            SeedStage(transaction, workspace, fixture.Root, meta, FileOperationKind.Write, caller, raw);
             var raised = Approvals.Raise(command, new ApprovalCapture
             {
                 Operation = "FileService.WriteFile",
@@ -199,7 +216,7 @@ public sealed class LegacyFileMutationReplayTests
                 INSERT INTO file_private_stage_object
                   (command_id, slot, stage_path, expected_size, expected_sha256, phase, identity_platform, native_identity, parent_identity)
                 VALUES ($id, 2, $path, 1, $hash, 3, $platform, $identity, $identity);
-                """, ("$id", id), ("$path", Path.Combine(node.Root, "retained-stage")), ("$hash", SHA256.HashData("x"u8)),
+                """, ("$id", id), ("$path", Path.Combine(fixture.Root, "retained-stage")), ("$hash", SHA256.HashData("x"u8)),
                 ("$platform", platform), ("$identity", identity));
             transaction.Execute("""
                 INSERT INTO file_private_approval_binding
@@ -208,33 +225,35 @@ public sealed class LegacyFileMutationReplayTests
                 """, ("$id", id), ("$approval", approval.Id), ("$platform", platform), ("$identity", identity));
             var approved = Approvals.Decide(command, approval.Id, approve: true,
                 new ActorRef { Origin = Origin.Human, ClientKind = ClientKind.Cli }, comment: null);
+            byte[]? completedBytes = null;
             if (history is not null)
             {
                 SeedPreparedWrite(transaction, workspace, meta, caller, raw);
                 if (history == FileOperationState.Completed)
-                    FileMutationJournal.CompleteVerifiedEffect(transaction, id, raw, 1, SHA256.HashData("x"u8), replacements: null);
+                    completedBytes = FileMutationJournal.CompleteVerifiedEffect(transaction, id, raw, 1, SHA256.HashData("x"u8), replacements: null);
                 if (history == FileOperationState.Unknown)
                     FileMutationJournal.MarkUnknown(transaction, id);
             }
-            return approved.Id;
+            return (approved.Id, completedBytes);
         }, CommitDurability.Full).WaitAsync(ct);
 
-        Assert.NotNull(node.Runtime.Store.Read(reader => PrivateStageApprovedPlans.Read(reader, approvalId)));
-        var original = node.Runtime.Store.Read(reader => FileMutationJournal.GetForCaller(reader, id, caller));
+        Assert.NotNull(store.Read(reader => PrivateStageApprovedPlans.Read(reader, approvalId)));
+        var original = store.Read(reader => FileMutationJournal.GetForCaller(reader, id, caller));
         Assert.Equal(history, original?.State);
-        var retained = node.Runtime.Store.Read(reader => FileMutationJournal.ReplayApproved(reader, approvalId));
-        var approved = Caller.OfApproval(actor, approvalId, node.Runtime.NodeId.Span, reference);
-        var result = await calls.Dispatcher.FileHandlerForTests!.ExecuteApprovedReferenceAsync(reference, approved);
+        var retained = store.Read(reader => FileMutationJournal.ReplayApproved(reader, approvalId));
+        var approved = Caller.OfApproval(actor, approvalId, runtime.NodeId.Span, reference);
+        var result = await files.ExecuteApprovedReferenceAsync(reference, approved).WaitAsync(ct);
         if (history == FileOperationState.Completed)
         {
             Assert.NotNull(retained);
+            Assert.Equal(recorded, retained);
             Assert.Equal(retained, result);
         }
         else
         {
             Assert.Null(result);
         }
-        node.Runtime.Store.Read(reader =>
+        store.Read(reader =>
         {
             Assert.Equal(ApprovalState.Approved, Approvals.Get(reader, approvalId)!.State);
             Assert.Null(Approvals.Get(reader, approvalId)!.Outcome);
@@ -246,6 +265,8 @@ public sealed class LegacyFileMutationReplayTests
             Assert.Equal(0L, reader.Scalar("SELECT count(*) FROM file_stage_worker;"));
             return 0;
         });
+        Assert.False(File.Exists(Path.Combine(fixture.Root, "retained-stage")));
+        Assert.False(Directory.Exists(Path.Combine(fixture.Root, "unopened-workspace")));
     }
 
     private static void SeedPreparedWrite(StoreTransaction transaction, Id workspace, RequestMeta meta, CenterCaller caller, byte[] raw)
