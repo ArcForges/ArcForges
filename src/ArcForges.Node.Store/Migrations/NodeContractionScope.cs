@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Buffers.Binary;
-using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
@@ -19,7 +18,7 @@ internal sealed partial class NodeContractionScope : IDisposable
 {
     private readonly IDisposable _owner;
     private readonly FileStream _database;
-    private readonly FileIdentity _identity;
+    private readonly ContractionPaths.NativeIdentity _identity;
     private readonly bool _prepareSchema15;
     private readonly byte[] _databaseDigest;
     private bool _disposed;
@@ -29,7 +28,7 @@ internal sealed partial class NodeContractionScope : IDisposable
         DataRoot = root;
         _owner = owner;
         _database = database;
-        _identity = Identity(database.SafeFileHandle);
+        _identity = ContractionPaths.Identity(database.SafeFileHandle);
         _prepareSchema15 = prepareSchema15;
         (ReceiptSha256, _databaseDigest) = Observe();
     }
@@ -49,14 +48,13 @@ internal sealed partial class NodeContractionScope : IDisposable
         string root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(dataRoot));
         if (OperatingSystem.IsWindows() && new DriveInfo(Path.GetPathRoot(root)!).DriveType != DriveType.Fixed)
             throw Refused("local_fixed_windows_store_required");
-        RequireDirectoryChain(Path.Combine(root, "store"));
+        ContractionPaths.RequireDirectoryChain(Path.Combine(root, "store"));
         IDisposable owner = OperatingSystem.IsWindows() ? new WindowsOwnerLease() : new LinuxOwnerLease(root);
         FileStream? database = null;
         try
         {
             string path = StorePaths.Database(root);
-            RequireRegular(path);
-            database = File.OpenRead(path);
+            database = ContractionPaths.OpenRegularRead(path);
             return new NodeContractionScope(root, owner, database, prepareSchema15);
         }
         catch
@@ -129,10 +127,8 @@ internal sealed partial class NodeContractionScope : IDisposable
 
     private void RequireNamedDatabase(string path)
     {
-        RequireDirectoryChain(Path.GetDirectoryName(path)!);
-        RequireRegular(path);
-        using var named = File.OpenRead(path);
-        if (Identity(named.SafeFileHandle) != _identity)
+        ContractionPaths.RequireDirectoryChain(Path.GetDirectoryName(path)!);
+        if (ContractionPaths.NamedRegularIdentity(path) != _identity)
             throw Refused("original_database_identity_changed");
 
         foreach (string suffix in new[] { "-wal", "-shm", "-journal" })
@@ -510,7 +506,7 @@ internal sealed partial class NodeContractionScope : IDisposable
         string logs = Path.Combine(DataRoot, "logs");
         if (TryAttributes(logs) is null)
             return;
-        RequireDirectoryChain(logs);
+        ContractionPaths.RequireDirectoryChain(logs);
         foreach (string entry in Directory.EnumerateDirectories(logs))
         {
             string name = Path.GetFileName(entry);
@@ -536,36 +532,22 @@ internal sealed partial class NodeContractionScope : IDisposable
         catch (Exception failure) when (failure is FileNotFoundException or DirectoryNotFoundException) { return null; }
     }
 
-    private static void RequireDirectoryChain(string path)
-    {
-        for (DirectoryInfo? entry = new(path); entry is not null; entry = entry.Parent)
-            if ((File.GetAttributes(entry.FullName) & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != FileAttributes.Directory)
-                throw Refused("source_directory_alias_or_type");
-    }
-
-    private static void RequireRegular(string path)
-    {
-        if ((File.GetAttributes(path) & (FileAttributes.Directory | FileAttributes.ReparsePoint | FileAttributes.Device)) != 0)
-            throw Refused("source_file_alias_or_type");
-    }
-
     private static StoreIncompatibleException Refused(string reason) => new("node_contraction_native_scope_refused: " + reason);
 
     private sealed class LinuxOwnerLease : IDisposable
     {
         private readonly string _path;
-        private readonly SafeFileHandle _file;
-        private readonly FileIdentity _identity;
+        private readonly FileStream _file;
+        private readonly ContractionPaths.NativeIdentity _identity;
 
         internal LinuxOwnerLease(string root)
         {
             _path = Path.Combine(root, "node.lock");
-            RequireRegular(_path);
-            _file = File.OpenHandle(_path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            _file = ContractionPaths.OpenRegularRead(_path);
             try
             {
-                _identity = Identity(_file);
-                if (Flock(_file.DangerousGetHandle().ToInt32(), 2 | 4) != 0) // LOCK_EX | LOCK_NB, matching the predecessor
+                _identity = ContractionPaths.Identity(_file.SafeFileHandle);
+                if (Flock(_file.SafeFileHandle.DangerousGetHandle().ToInt32(), 2 | 4) != 0) // LOCK_EX | LOCK_NB, matching the predecessor
                     throw Refused("original_node_lock_held");
                 VerifyHeld();
             }
@@ -578,8 +560,7 @@ internal sealed partial class NodeContractionScope : IDisposable
 
         internal void VerifyHeld()
         {
-            RequireRegular(_path);
-            if (Statx(-100, _path, 0x100, 0x10b, out var status) != 0 || LinuxIdentity(status) != _identity)
+            if (ContractionPaths.NamedRegularIdentity(_path) != _identity)
                 throw Refused("original_node_lock_identity_changed");
         }
 
@@ -711,48 +692,6 @@ internal sealed partial class NodeContractionScope : IDisposable
             throw Refused("legacy_windows_holder_live_or_unconfirmed");
     }
 
-    private static FileIdentity Identity(SafeFileHandle file)
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            if (!GetFileInformationByHandleEx(file, 18, out var info, 24)) // FileIdInfo
-                throw new Win32Exception(Marshal.GetLastPInvokeError());
-            return new(info.Volume, info.High, info.Low);
-        }
-
-        if (Statx(file.DangerousGetHandle().ToInt32(), "", 0x1000 | 0x100, 0x10b, out var status) != 0)
-            throw Refused("linux_file_identity_unavailable");
-        return LinuxIdentity(status);
-    }
-
-    private static FileIdentity LinuxIdentity(LinuxFileStatus info)
-    {
-        if ((info.Mask & 0x10b) != 0x10b || (info.Mode & 0xf000) != 0x8000 || info.Owner != GetEffectiveUid())
-            throw Refused("linux_file_identity_unavailable");
-        return new(info.DeviceMajor, info.DeviceMinor, info.Inode);
-    }
-
-    private readonly record struct FileIdentity(ulong A, ulong B, ulong C);
-
-    [StructLayout(LayoutKind.Explicit, Size = 256)]
-    private struct LinuxFileStatus
-    {
-        [FieldOffset(0)] internal uint Mask;
-        [FieldOffset(20)] internal uint Owner;
-        [FieldOffset(28)] internal ushort Mode;
-        [FieldOffset(32)] internal ulong Inode;
-        [FieldOffset(136)] internal uint DeviceMajor;
-        [FieldOffset(140)] internal uint DeviceMinor;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct WindowsFileId
-    {
-        internal ulong Volume;
-        internal ulong Low;
-        internal ulong High;
-    }
-
     [StructLayout(LayoutKind.Explicit, Size = 48)]
     private struct WindowsBootInfo
     {
@@ -770,9 +709,6 @@ internal sealed partial class NodeContractionScope : IDisposable
 
     [LibraryImport("libc", EntryPoint = "flock", SetLastError = true)]
     private static partial int Flock(int descriptor, int operation);
-
-    [LibraryImport("libc", EntryPoint = "statx", StringMarshalling = StringMarshalling.Utf8, SetLastError = true)]
-    private static partial int Statx(int descriptor, string path, int flags, uint mask, out LinuxFileStatus status);
 
     [LibraryImport("libc", EntryPoint = "geteuid")]
     private static partial uint GetEffectiveUid();
@@ -795,10 +731,6 @@ internal sealed partial class NodeContractionScope : IDisposable
     [LibraryImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool GetProcessTimes(SafeProcessHandle process, out long creation, out long exit, out long kernel, out long user);
-
-    [LibraryImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static partial bool GetFileInformationByHandleEx(SafeFileHandle handle, int infoClass, out WindowsFileId info, uint size);
 
     [LibraryImport("ntdll.dll")]
     private static partial int NtQuerySystemInformation(int infoClass, out WindowsBootInfo info, uint size, out uint returned);
