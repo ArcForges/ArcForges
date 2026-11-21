@@ -5,6 +5,7 @@ using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Node.CloudLink;
 using ArcForges.Node.Core;
 using ArcForges.Node.Core.Sandboxes;
+using ArcForges.Node.Core.Security;
 using Google.Protobuf;
 using V2 = ArcForges.Contracts.Sandbox.V2;
 using V2Shapes = ArcForges.Contracts.Sandbox.V2.Shapes.ContractShapeValidation;
