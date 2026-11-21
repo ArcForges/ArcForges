@@ -204,15 +204,55 @@ public sealed class ResourceServiceHandler : ResourceService.ResourceServiceBase
 
         var retained = _api.ReadRetained(request, request.Meta, caller, "AdoptProcess", ResourceServiceAdoptProcessResponse.Parser,
             Failed, NodeErrors.LegacyAdoptionUnknown());
-        return retained.Retained && !ValidAdoptionOutcome(retained.Response, request.Meta.CommandId)
+        return retained.Retained && !ValidAdoptionOutcome(retained.Response, request.Meta.CommandId, allowLegacyCorrelation: !caller.Approved)
             ? (Failed(NodeErrors.LegacyAdoptionUnknown()), false)
             : retained;
     }
 
-    private static bool ValidAdoptionOutcome(ResourceServiceAdoptProcessResponse response, Id commandId) =>
-        NodeShapes.IsValid(response) && (response.Value is { TaskId.Value.Length: 16, Receipt: { HasEffect: true, Effect: EffectCertainty.Happened } receipt }
+    private static bool ValidAdoptionOutcome(ResourceServiceAdoptProcessResponse response, Id commandId, bool allowLegacyCorrelation)
+    {
+        var checkedResponse = response;
+        if (allowLegacyCorrelation && response is { Error: { CorrelationId: null }, Meta.CorrelationId: not null })
+        {
+            // The old approval executor stored typed refusals with correlation only in ResponseMeta.
+            // Keep those original bytes. A generic executor failure has no ResponseMeta and remains unconfirmed.
+            checkedResponse = response.Clone();
+            checkedResponse.Error.CorrelationId = checkedResponse.Meta.CorrelationId;
+            CompleteLegacyAdoptionRefusal(checkedResponse.Error);
+        }
+
+        return NodeShapes.IsValid(checkedResponse) && (response.Value is { TaskId.Value.Length: 16, Receipt: { HasEffect: true, Effect: EffectCertainty.Happened } receipt }
             && commandId.Equals(receipt.CommandId) || response.Error is
             { Code.Length: > 0, HasEffect: true, Effect: EffectCertainty.Happened or EffectCertainty.DidNotHappen or EffectCertainty.Unknown });
+    }
+
+    private static void CompleteLegacyAdoptionRefusal(ArcError error)
+    {
+        if (error is not { Effect: EffectCertainty.DidNotHappen, Retry.Mode: RetryMode.Never, Details.State: { } state })
+        {
+            return;
+        }
+
+        // Old process refusals identified an OS process by kind/text; they had no aggregate ID.
+        var processOnly = state.Resource is { Kind: "process", Id: null };
+        switch (error.Category, error.Code)
+        {
+            case (ErrorCategory.State, "not_found") when processOnly && !state.HasState && state.HasReason:
+                state.State = error.Code;
+                state.Resource = null;
+                break;
+            case (ErrorCategory.Conflict, "already_exists") when processOnly && !state.HasReason &&
+                int.TryParse(state.State, NumberStyles.None, CultureInfo.InvariantCulture, out var pid) && pid > 0:
+                state.Reason = error.Code;
+                state.Resource = null;
+                break;
+            case (ErrorCategory.Execution, "adopt_not_permitted") or (ErrorCategory.Resource, "enforcement_unavailable")
+                or (ErrorCategory.Authorization, "permission_denied") or (ErrorCategory.Validation, "invalid_argument")
+                when state.Resource is null && !state.HasState && state.HasReason:
+                state.State = error.Code;
+                break;
+        }
+    }
 
     /// <inheritdoc />
     public override Task<ResourceServiceTerminateProcessResponse> TerminateProcess(ResourceServiceTerminateProcessRequest request, ServerCallContext context) =>

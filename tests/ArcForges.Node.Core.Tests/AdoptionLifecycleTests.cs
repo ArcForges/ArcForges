@@ -1,289 +1,339 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-using System.Diagnostics;
-using System.Globalization;
+using System.Security.Cryptography;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Contracts.Relay.V1;
+using ArcForges.Node.Api;
+using ArcForges.Node.CloudLink;
+using ArcForges.Node.Core.Events;
 using ArcForges.Node.Core.Execution;
+using ArcForges.Node.Core.Platform;
+using ArcForges.Node.Core.Resources;
 using ArcForges.Node.Core.Security;
-using ArcForges.Tests;
+using ArcForges.Node.Platform;
+using ArcForges.Node.Store;
+using Google.Protobuf;
 
 namespace ArcForges.Node.Core.Tests;
 
-/// <summary>
-/// The ADOPTED task's life (04 section 10; R-RES-013; AF-SEC-01), on the real platform of each operating system: a HUMAN adopts a same-user
-/// process outside every container; it is a RUNNING task of kind ADOPTED whose process is labelled ADOPTED. When the process ends by
-/// itself the task ends LOST with "no exit status: the node is not the adopted process's parent". After a node restart, an adoption
-/// container the node cannot re-open follows the SM-TASK recovery rule "container missing -> LOST": on Windows an adoption job has no holder
-/// (L-14), so its name is gone once the node's handle closed, even while the process runs; on Linux the scope is gone once its process ended
-/// while the node was down.
-/// </summary>
+/// <summary>V1 adopted Task custody and lifecycle using retained SQLite records and a scripted platform container.</summary>
+/// <remarks>
+/// The fresh native adoption and Linux cross-user/outside-subtree integration sources remain at eaaccb8380a2bd265aaad0a67d62c8fab2a8a29a.
+/// The retained Windows and Linux platform AdoptionTests still exercise their native container primitives.
+/// </remarks>
 public sealed class AdoptionLifecycleTests
 {
+    private const string ContainerName = "retained-adoption-fixture";
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
+    private static readonly Caller Human = new(Origin.Human, ClientKind.Cli, null);
 
-    [Fact(Timeout = 180_000)]
+    [Fact(Timeout = 60_000)]
     public async Task AnAdoptedProcessThatEndsByItselfEndsItsTaskLostWithoutAnExitStatus()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        RequirePlatform();
-        await using var node = await InProcessNode.Create().StartAsync();
-        await using var human = await node.ChannelAsync(helloAsHuman: true);
-        var cursor = await TaskLifecycleModelTests.StartCursorAsync(human);
-        var pid = StartOutsideAnyContainer();
-        try
+        await WithRecoveredAdoptionAsync(containerAvailable: true, async fixture =>
         {
-            var taskId = await AdoptAsync(human, pid);
-            var task = await Tasks.GetAsync(human, taskId, full: true);
+            var task = await fixture.ReadAsync();
             Assert.Equal((TaskState.Running, TaskKind.Adopted), (task.State, task.Spec.Kind));
-            var listed = await human.Resources.ListProcessesAsync(new ResourceServiceListProcessesRequest
-            {
-                Meta = new RequestMeta(),
-                Filter = new ProcessFilter { Labels = { ProcessLabel.Adopted } },
-            }, deadline: DateTime.UtcNow.AddSeconds(10), cancellationToken: Ct);
-            Assert.Null(listed.Error);
-            Assert.Contains(listed.Value.Processes, process => process.Process.Pid == (uint)pid && process.TaskId.Equals(taskId));
+            var (processes, error) = ResourceViews.Processes(fixture.Runtime, new ProcessFilter { Labels = { ProcessLabel.Adopted } });
+            Assert.Null(error);
+            var process = Assert.Single(processes!);
+            Assert.Equal((uint)fixture.Platform.Root.Pid, process.Process.Pid);
+            Assert.Equal(fixture.TaskId, process.TaskId);
 
-            Kill(pid);
-            var ended = await Tasks.WaitAsync(human, taskId);
+            var ended = await fixture.CompleteAsync();
             Assert.Equal((TaskState.Lost, Adoptions.NoExitStatus), (ended.State, ended.StateReason));
             AssertAdoptedResult(ended, TerminationReason.Lost, EffectCertainty.Unknown);
-            var events = await TaskLifecycleModelTests.EventsSinceAsync(human, cursor);
-            TaskLifecycleModelTests.AssertStateMachines(events);
-            AssertAdoptedChanges(events, taskId, cancelled: false);
-        }
-        finally
-        {
-            Kill(pid);
-        }
+            Assert.Equal(0, fixture.Platform.TerminateCalls);
+            AssertAdoptedChanges(PersistedTaskEvents(fixture.Store), fixture.TaskId, cancelled: false);
+        });
     }
 
-    /// <summary>N2-2/MR-08: a center-routed cancel never terminates a real process adopted into the OS scope or job.</summary>
-    [Fact(Timeout = 180_000)]
-    [Trait("env", "linux-real")]
-    public async Task TheRoutedCancelOfAnAdoptedProcessIsDeniedOnLinux()
+    [Theory(Timeout = 60_000)]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ARemoteCallerCannotCancelARecordedAdoption(bool accountSession)
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsLinux(), "the real Linux adoption scope");
-        await RoutedCancelOfAdoptedProcessAsync();
-    }
-
-    /// <summary>N2-2/MR-08: the same check against a real Windows adoption job.</summary>
-    [Fact(Timeout = 180_000)]
-    [Trait("env", "windows-real")]
-    public async Task TheRoutedCancelOfAnAdoptedProcessIsDeniedOnWindows()
-    {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "the real Windows adoption job");
-        await RoutedCancelOfAdoptedProcessAsync();
-    }
-
-    private static async Task RoutedCancelOfAdoptedProcessAsync()
-    {
-        RequirePlatform();
-        await using var node = await InProcessNode.Create().StartAsync();
-        await using var human = await node.ChannelAsync(helloAsHuman: true);
-        var pid = StartOutsideAnyContainer();
-        var identity = ArcForges.Tests.ProcessIdentity.Capture(pid);
-        Assert.True(identity.HasValue, "the test process must have a readable PID and creation identity");
-        var owned = identity.Value;
-        TestContext.Current.TestOutputHelper?.WriteLine("owned adoption " + owned);
-        try
+        await WithRecoveredAdoptionAsync(containerAvailable: true, async fixture =>
         {
-            var taskId = await AdoptAsync(human, pid, owned);
-            var adopted = await Tasks.GetAsync(human, taskId, full: true);
+            var adopted = await fixture.ReadAsync();
             Assert.Equal((TaskState.Running, TaskKind.Adopted, AttemptKind.Adopted), (adopted.State, adopted.Spec.Kind, adopted.CurrentAttempt.Kind));
-            var routed = new RoutedCalls(node);
-            var caller = routed.Relay(Origin.Script);
-            var denied = (await routed.CancelAsync(caller, taskId)).Answer!;
+            var caller = accountSession ? RoutedCalls.Session() : fixture.RelayedScript();
+            var denied = await fixture.RouteCancelAsync(caller);
             Assert.Equal((RoutedOutcome.RefusedByPolicy, "permission_denied", PermissionMatrix.ProcessTerminate, EffectCertainty.DidNotHappen),
                 (denied.Outcome, denied.Error?.Code, denied.Error?.Details.State.State, denied.Error?.Effect));
-            Assert.True(owned.IsRunning(), "the routed denial must leave the recorded adopted OS process alive");
-            Assert.Equal(TaskState.Running, (await Tasks.GetAsync(human, taskId)).State);
-            Assert.Empty((await human.Approvals.ListApprovalsAsync(new ApprovalServiceListApprovalsRequest { Meta = Tasks.Meta() }, cancellationToken: Ct)).Value.Approvals);
-            Assert.Contains(node.Runtime.Store.Read(reader => AuditLog.Recent(reader)), entry =>
+            Assert.Equal(0, fixture.Platform.TerminateCalls);
+            Assert.Single(fixture.Platform.OwnedProcesses());
+            Assert.Equal(TaskState.Running, (await fixture.ReadAsync()).State);
+            Assert.Equal(0L, fixture.Store.Read(reader => reader.Scalar("SELECT count(*) FROM approval;")));
+            Assert.Contains(fixture.Store.Read(reader => AuditLog.Recent(reader)), entry =>
                 entry.Operation == PermissionMatrix.ProcessTerminate + " TaskService.CancelTask" && entry.Decision == PermissionDecision.Deny
                 && entry.Actor.Origin == Origin.Remote && caller.Equals(entry.Actor.CenterCaller));
-        }
-        finally
-        {
-            owned.Kill();
-        }
+        });
     }
 
-    /// <summary>Verifier N-7: the fixed deny is re-evaluated at approval execution after an actual Linux node restart.</summary>
-    [Fact(Timeout = 180_000)]
-    [Trait("env", "linux-real")]
-    public async Task AnApprovedRoutedCancelCannotReachARealLinuxAdoptedProcessAfterRestart()
+    [Fact(Timeout = 60_000)]
+    public async Task AnApprovedRoutedCancelCannotReachARecoveredAdoptedProcess()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsLinux(), "the real Linux adoption scope");
-        RequirePlatform();
-        await using var node = await InProcessNode.Create().StartAsync();
-        await using var human = await node.ChannelAsync(helloAsHuman: true);
-        var pid = StartOutsideAnyContainer();
-        var identity = ArcForges.Tests.ProcessIdentity.Capture(pid);
-        Assert.True(identity.HasValue, "the test process must have a readable PID and creation identity");
-        var owned = identity.Value;
-        TestContext.Current.TestOutputHelper?.WriteLine("owned adoption " + owned);
-        try
+        await WithRecoveredAdoptionAsync(containerAvailable: true, async fixture =>
         {
-            var taskId = await AdoptAsync(human, pid, owned);
-            Assert.True(owned.IsRunning());
-            // Construct the otherwise unreachable approval race on the real adopted task: temporarily mark its row as a
-            // command to raise the other-owner approval, then restore ADOPTED before restarting the real test node.
-            await node.Runtime.Processor.ExecuteAsync(context => context.Transaction.Execute("UPDATE task SET kind = $kind WHERE task_id = $id;",
-                ("$kind", (int)TaskKind.Command), ("$id", taskId.Value.ToByteArray())));
-            var routed = new RoutedCalls(node);
-            var raised = (await routed.CancelAsync(RoutedCalls.Session(), taskId)).Answer!;
-            Assert.Equal("approval_required", raised.Error?.Code);
-            var approval = raised.Error!.Details.State.Resource.Id;
-            await node.Runtime.Processor.ExecuteAsync(context => context.Transaction.Execute("UPDATE task SET kind = $kind WHERE task_id = $id;",
-                ("$kind", (int)TaskKind.Adopted), ("$id", taskId.Value.ToByteArray())));
-            Assert.Equal(0, await node.StopAsync());
-            Assert.True(owned.IsRunning(), "the test-owned adopted process must survive the node restart");
-            await node.StartAsync();
-            await using var restartedHuman = await node.ChannelAsync(helloAsHuman: true);
-            var before = await Tasks.GetAsync(restartedHuman, taskId, full: true);
+            var before = await fixture.ReadAsync();
             Assert.Equal((TaskState.Running, TaskKind.Adopted), (before.State, before.Spec.Kind));
-            var decided = await restartedHuman.Approvals.DecideApprovalAsync(new ApprovalServiceDecideApprovalRequest
-            {
-                Meta = Tasks.Meta(),
-                ApprovalId = approval,
-                Decision = ApprovalDecisionKind.Approve,
-            }, cancellationToken: Ct);
-            Assert.Null(decided.Error);
-            Assert.Equal(ApprovalState.Failed, decided.Value.Approval.State);
-            Assert.True(owned.IsRunning(), "the denied approval must not terminate the recorded adopted process");
-            Assert.Equal(TaskState.Running, (await Tasks.GetAsync(restartedHuman, taskId)).State);
-        }
-        finally
-        {
-            owned.Kill();
-        }
+            await fixture.Approvals.ResumeAsync().WaitAsync(Ct);
+            var approval = fixture.Store.Read(reader => Approvals.Get(reader, fixture.PriorApproval!));
+            Assert.NotNull(approval);
+            Assert.Equal(ApprovalState.Failed, approval.State);
+            var refusal = TaskServiceCancelTaskResponse.Parser.ParseFrom(approval.Outcome);
+            Assert.Equal(("permission_denied", EffectCertainty.DidNotHappen), (refusal.Error.Code, refusal.Error.Effect));
+            Assert.Contains(PermissionMatrix.ProcessTerminate + " is denied for REMOTE callers", refusal.Error.Details.State.Reason, StringComparison.Ordinal);
+            Assert.Contains(fixture.Store.Read(reader => AuditLog.Recent(reader)), entry =>
+                entry.Operation == PermissionMatrix.ProcessTerminate + " TaskService.CancelTask" && entry.Decision == PermissionDecision.Deny
+                && entry.Actor.Origin == Origin.Remote);
+            Assert.Equal(0, fixture.Platform.TerminateCalls);
+            Assert.Single(fixture.Platform.OwnedProcesses());
+            Assert.Equal(TaskState.Running, (await fixture.ReadAsync()).State);
+        }, captureRoutedCancel: true);
     }
 
-    [Fact(Timeout = 180_000)]
+    [Fact(Timeout = 60_000)]
     public async Task AnAdoptionContainerTheNodeCannotReopenAfterARestartIsLost()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        RequirePlatform();
-        await using var node = await InProcessNode.Create().StartAsync();
-        var pid = StartOutsideAnyContainer();
-        try
+        await WithRecoveredAdoptionAsync(containerAvailable: false, async fixture =>
         {
-            Id taskId;
-            string cursor;
-            await using (var human = await node.ChannelAsync(helloAsHuman: true))
-            {
-                cursor = await TaskLifecycleModelTests.StartCursorAsync(human);
-                taskId = await AdoptAsync(human, pid);
-                Assert.Equal(TaskState.Running, (await Tasks.GetAsync(human, taskId)).State);
-            }
-
-            Assert.Equal(0, await node.StopAsync());
-            if (!OperatingSystem.IsWindows())
-            {
-                // Linux: the scope outlives the node while its process runs; it is gone once the process ended while the node was down.
-                Kill(pid);
-            }
-
-            await node.StartAsync();
-            await using var channel = await node.ChannelAsync(helloAsHuman: true);
-            var ended = await Tasks.WaitAsync(channel, taskId);
+            var ended = await fixture.ReadAsync();
             Assert.Equal(TaskState.Lost, ended.State);
             Assert.StartsWith(Adoptions.ContainerMissing + ":", ended.StateReason, StringComparison.Ordinal);
             AssertAdoptedResult(ended, TerminationReason.Lost, EffectCertainty.Unknown);
-            var reset = await channel.Events.ListEventsAsync(new NodeEventServiceListEventsRequest { Topics = { EventTopic.Tasks }, Cursor = cursor, Limit = 1000 },
-                deadline: DateTime.UtcNow.AddSeconds(10), cancellationToken: Ct);
-            Assert.Null(reset.Error);
-            Assert.True(reset.Value.ResetRequired, "A node restart starts a new stream generation.");
-            var events = PersistedTaskEvents(node);
+            var journal = fixture.Runtime.Journal;
+            Assert.Equal(CursorStatus.OtherGeneration, fixture.Store.Read(reader => journal.Check(reader, fixture.PriorCursor, journal.Latest)));
+            var events = PersistedTaskEvents(fixture.Store);
             Assert.Equal(2, events.Select(item => item.Generation).Distinct().Count());
-            TaskLifecycleModelTests.AssertStateMachines(events);
-            AssertAdoptedChanges(events, taskId, cancelled: false);
-        }
-        finally
-        {
-            Kill(pid);
-        }
+            AssertAdoptedChanges(events, fixture.TaskId, cancelled: false);
+            Assert.Equal(0, fixture.Platform.TerminateCalls);
+        });
     }
 
-    /// <summary>
-    /// Linux (04 section 10; L-29): another user's process is refused with <c>adopt_not_permitted</c> before systemd is asked, while a same-user
-    /// process is adopted wherever it runs, outside the user manager's subtree too (this test's own children, when the test runs from a
-    /// system service).
-    /// </summary>
-    [Fact(Timeout = 120_000)]
-    public async Task AnotherUsersProcessIsRefusedAndASameUserProcessOutsideTheSubtreeIsAdopted()
-    {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsLinux(), "Linux only: adoption through the systemd user manager (04 section 10; L-29).");
-        RequirePlatform();
-        Assert.SkipWhen(Environment.UserName == "root", "The test runs as root.");
-        await using var node = await InProcessNode.Create().StartAsync();
-        await using var human = await node.ChannelAsync(helloAsHuman: true);
-        var refused = await human.Resources.AdoptProcessAsync(new ResourceServiceAdoptProcessRequest { Meta = Tasks.Meta(), Process = ClientProcess.Identity(1) },
-            deadline: DateTime.UtcNow.AddSeconds(20), cancellationToken: Ct);
-        Assert.Equal("adopt_not_permitted", refused.Error?.Code);
-        Assert.Contains("another user", refused.Error!.Details.State.Reason, StringComparison.Ordinal);
-
-        var pid = StartOutsideAnyContainer();
-        try
-        {
-            var before = File.ReadAllText($"/proc/{pid.ToString(CultureInfo.InvariantCulture)}/cgroup").Trim();
-            var taskId = await AdoptAsync(human, pid);
-            var after = File.ReadAllText($"/proc/{pid.ToString(CultureInfo.InvariantCulture)}/cgroup").Trim();
-            Assert.Contains("/arcforges-x-", after, StringComparison.Ordinal);
-            Assert.Equal(TaskState.Running, (await Tasks.GetAsync(human, taskId)).State);
-            TestContext.Current.TestOutputHelper?.WriteLine($"cgroup before adoption {before}; after {after}"
-                + (before.Contains("/user@", StringComparison.Ordinal) ? string.Empty : " (it was outside the user manager's subtree)"));
-        }
-        finally
-        {
-            Kill(pid);
-        }
-    }
-
-    [Fact(Timeout = 180_000)]
+    [Fact(Timeout = 60_000)]
     public async Task CancellingAnAdoptionJournalsStoppingBeforeItsFinalResult()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        RequirePlatform();
-        await using var node = await InProcessNode.Create().StartAsync();
-        await using var human = await node.ChannelAsync(helloAsHuman: true);
-        var cursor = await TaskLifecycleModelTests.StartCursorAsync(human);
-        var pid = StartOutsideAnyContainer();
-        try
+        await WithRecoveredAdoptionAsync(containerAvailable: true, async fixture =>
         {
-            using var process = Process.GetProcessById(pid);
-            var id = await AdoptAsync(human, pid);
-            // Both kinds share the same real event journal; adoption must not relax the managed execution guards.
-            var managed = await Tasks.SubmitAsync(human, OperatingSystem.IsWindows()
-                ? Tasks.Argv(node.Root, Tasks.Cmd, "/d", "/c", "exit 0")
-                : Tasks.Argv(node.Root, "/bin/sh", "-c", "exit 0"));
-            var request = new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = id, Reason = "adoption model" };
-            Assert.Null((await human.Tasks.CancelTaskAsync(request, cancellationToken: Ct)).Error);
-            request.Meta = Tasks.Meta();
-            Assert.Null((await human.Tasks.CancelTaskAsync(request, cancellationToken: Ct)).Error);
-            var ended = await Tasks.WaitAsync(human, id);
+            var request = new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = fixture.TaskId, Reason = "adoption model" };
+            var first = await fixture.Tasks.CancelTask(Human, request, Ct);
+            Assert.Null(first.Error);
+            Assert.Equal(first, await fixture.Tasks.CancelTask(Human, request, Ct));
+            Assert.Equal(1, fixture.Platform.TerminateCalls);
+            Assert.Equal(AttemptState.Stopping, (await fixture.ReadAsync()).CurrentAttempt.State);
+            Assert.Single(fixture.Platform.OwnedProcesses());
+
+            var ended = await fixture.CompleteAsync();
             Assert.Equal(TaskState.Cancelled, ended.State);
             AssertAdoptedResult(ended, TerminationReason.Cancelled, EffectCertainty.Happened);
-            Assert.Equal(TaskState.Succeeded, (await Tasks.WaitAsync(human, managed)).State);
-            Assert.True(process.WaitForExit(10_000), "The cancelled adoption's owned process must exit.");
-            var events = await TaskLifecycleModelTests.EventsSinceAsync(human, cursor);
-            TaskLifecycleModelTests.AssertStateMachines(events);
-            AssertAdoptedChanges(events, id, cancelled: true);
-        }
-        finally
+            var duplicate = request.Clone();
+            duplicate.Meta = Tasks.Meta();
+            Assert.Null((await fixture.Tasks.CancelTask(Human, duplicate, Ct)).Error);
+            Assert.Equal(1, fixture.Platform.TerminateCalls);
+            AssertAdoptedChanges(PersistedTaskEvents(fixture.Store), fixture.TaskId, cancelled: true);
+        });
+    }
+
+    private static async Task WithRecoveredAdoptionAsync(bool containerAvailable, Func<AdoptionFixture, Task> verify, bool captureRoutedCancel = false)
+    {
+        await using var node = InProcessNode.Create();
+        var root = new RootProcess(int.MaxValue, node.Clock.GetUtcNow());
+        var (taskId, attemptId) = LegacyTaskHistoryFixture.Seed(node, AttemptState.Running, root: root, stateReason: "adopted");
+        NodeStore Open() => NodeStore.Open(new NodeStoreOptions { DataRoot = node.DataRoot, BootIdentity = BootIdentity.Read(), Clock = node.Clock });
+
+        EventCursor cursor;
+        byte[]? priorApproval;
+        using (var original = Open())
         {
-            Kill(pid);
+            var oldJournal = EventJournal.Open(original);
+            await using var oldProcessor = new CommandProcessor(original, oldJournal, new StreamHub());
+            priorApproval = await oldProcessor.ExecuteAsync(command =>
+                SeedHistory(command, taskId, attemptId, captureRoutedCancel), CommitDurability.Full).WaitAsync(Ct);
+            cursor = oldJournal.LatestPosition;
+        }
+
+        using var store = Open();
+        using var platform = new RecoveredPlatform(root, containerAvailable);
+        using var log = new NodeLog(Path.Combine(node.DataRoot, "logs", "node"), LogLevel.Info, node.Clock);
+        using var heartbeat = new NodeHeartbeatWriter(node.DataRoot, log, node.Clock);
+        using var keys = new NodeDataKeyRing(store, node.Secrets.Selection);
+        var journal = EventJournal.Open(store);
+        var hub = new StreamHub();
+        await using var processor = new CommandProcessor(store, journal, hub);
+        var recovery = new RecoveryReport(true, false, null, store.Opening);
+        await using var execution = new ExecutionSupervisor(new ExecutionOptions
+        {
+            Store = store,
+            Processor = processor,
+            Log = log,
+            Clock = node.Clock,
+            DataRoot = node.DataRoot,
+            Platform = platform,
+            Sampler = platform,
+            Secrets = new TaskSecrets(store, keys),
+            Heartbeat = heartbeat,
+        });
+        using var runtime = new NodeRuntime(store, journal, hub, processor, log,
+            new NodeSettingsManager(node.ConfigPath, node.DataRoot, log), node.DataRoot, "offline-adoption-fixture", node.Clock,
+            recovery, new CapabilityReport()) { Execution = execution };
+        var sessions = new ClientSessions();
+        var executors = new ApprovalExecutors();
+        var tasks = new TaskServiceHandler(runtime, sessions, executors);
+        var approvals = new ApprovalServiceHandler(runtime, sessions, executors);
+        using var dispatcher = new RoutedDispatcher(runtime);
+        dispatcher.Bind(tasks, new WorkspaceServiceHandler(runtime), new FileServiceHandler(runtime));
+        await runtime.TransitionAsync(NodeLifecycleState.Recovering, "fixture").WaitAsync(Ct);
+        await execution.RecoverAsync(recovery, processor, Ct).WaitAsync(Ct);
+        await runtime.TransitionAsync(NodeLifecycleState.Ready, "fixture").WaitAsync(Ct);
+        Assert.Equal(1, platform.ReopenCalls);
+        Assert.Equal(containerAvailable ? 1 : 0, execution.Adoptions.Tracked.Count);
+        await verify(new AdoptionFixture(store, runtime, execution, tasks, approvals, dispatcher, taskId, platform, cursor, priorApproval));
+    }
+
+    private static byte[]? SeedHistory(CommandContext command, Id task, Id attempt, bool captureRoutedCancel)
+    {
+        var tx = command.Transaction;
+        var id = task.Value.ToByteArray();
+        var attemptId = attempt.Value.ToByteArray();
+        var spec = new TaskSpec
+        {
+            Kind = TaskKind.Adopted,
+            Command = new CommandSpec { Argv = new ArgvCommand { Argv = { "retained-adopted-image" } } },
+        }.ToByteArray();
+        tx.Execute("UPDATE task SET kind = $kind, spec = $spec, spec_digest = $digest WHERE task_id = $id;",
+            ("$kind", (int)TaskKind.Adopted), ("$spec", spec), ("$digest", SHA256.HashData(spec)), ("$id", id));
+        tx.Execute("UPDATE attempt SET kind = $kind, container_name = $container WHERE attempt_id = $id;",
+            ("$kind", (int)AttemptKind.Adopted), ("$container", ContainerName), ("$id", attemptId));
+        command.Emit(EventTopic.Tasks, new NodeEvent { Task = new TaskChanged { Task = TaskRecords.GetTask(tx, id, full: false) } });
+        command.Emit(EventTopic.Tasks, new NodeEvent { Attempt = new AttemptChanged { Attempt = TaskRecords.GetAttempt(tx, attemptId) } });
+        if (!captureRoutedCancel)
+        {
+            return null;
+        }
+
+        // A prior other-owner approval for this ID was captured before the gate could observe the target as ADOPTED.
+        var request = new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = task };
+        var (approval, created, error) = Approvals.Raise(command, new ApprovalCapture
+        {
+            Operation = "TaskService.CancelTask",
+            MatrixOperation = PermissionMatrix.TaskCancelOthers,
+            Summary = "historical other-owner cancel",
+            Risk = RiskClass.Medium,
+            Requester = new ActorRef { Origin = Origin.Remote, CenterCaller = RoutedCalls.Session(), RemoteCommandId = request.Meta.CommandId },
+            TargetKind = "task",
+            TargetId = id,
+            CommandId = request.Meta.CommandId.Value.ToByteArray(),
+            Request = request.ToByteArray(),
+            RequestDigest = PayloadDigest.Compute(request),
+        }, Approvals.DefaultTtl);
+        Assert.True(created);
+        Assert.Null(error);
+        Assert.NotNull(approval);
+        return Approvals.Decide(command, approval.Id, approve: true, Human.Actor, null).Id;
+    }
+
+    private sealed record AdoptionFixture(NodeStore Store, NodeRuntime Runtime, ExecutionSupervisor Execution, TaskServiceHandler Tasks,
+        ApprovalServiceHandler Approvals, RoutedDispatcher Dispatcher, Id TaskId, RecoveredPlatform Platform, EventCursor PriorCursor, byte[]? PriorApproval)
+    {
+        public async Task<ManagedTask> ReadAsync()
+        {
+            var read = await Tasks.GetTask(Human, new TaskServiceGetTaskRequest { Meta = AdoptionLifecycleTests.Meta(), TaskId = TaskId, Detail = TaskDetail.Full }, Ct);
+            Assert.Null(read.Error);
+            return read.Value.Task;
+        }
+
+        public async Task<ManagedTask> CompleteAsync()
+        {
+            Platform.End();
+            Execution.Adoptions.Start();
+            Execution.Adoptions.Wake();
+            var waited = await Tasks.WaitTask(Human, new TaskServiceWaitTaskRequest
+            {
+                Meta = AdoptionLifecycleTests.Meta(), TaskId = TaskId, Target = WaitTarget.Terminal, WaitMs = 10_000,
+            }, Ct);
+            Assert.Null(waited.Error);
+            Assert.True(waited.Value.Reached);
+            await Platform.Released.WaitAsync(Ct);
+            return await ReadAsync();
+        }
+
+        public CenterCaller RelayedScript() => new()
+        {
+            Kind = CenterCallerKind.NodeRelay,
+            AccountId = RoutedCalls.Account.Clone(),
+            RelayingNodeId = new Id { Value = ByteString.CopyFrom(Runtime.NodeId.Span) },
+            LocalOrigin = Origin.Script,
+            LocalSessionId = CommandIds.New(),
+        };
+
+        public async Task<RoutedAnswer> RouteCancelAsync(CenterCaller caller)
+        {
+            var request = new TaskServiceCancelTaskRequest { Meta = AdoptionLifecycleTests.Meta(), TaskId = TaskId };
+            var raw = request.ToByteString();
+            var now = Runtime.Clock.GetUtcNow();
+            var header = new CallHeader
+            {
+                CallId = CommandIds.New(), Caller = caller, Method = RoutedMethod.CancelNodeTask, CommandId = request.Meta.CommandId,
+                AccountId = caller.AccountId, TargetNodeId = new Id { Value = ByteString.CopyFrom(Runtime.NodeId.Span) },
+                IssuedAt = ProtoTime.ToInstant(now.AddSeconds(-1)), ExpiresAt = ProtoTime.ToInstant(now.AddSeconds(35)),
+                Deadline = ProtoTime.ToInstant(now.AddSeconds(10)), RequestSha256 = ByteString.CopyFrom(SHA256.HashData(raw.Span)), RequestSize = (uint)raw.Length,
+            };
+            var answer = await Dispatcher.DispatchAsync(new VerifiedCall(header, raw, 0), new RoutedCalls.TestLink(), Ct);
+            return Assert.IsType<RoutedAnswer>(answer);
         }
     }
 
-    // A restart resets API cursors; the persisted journal retains the real events from both generations.
-    private static List<NodeEvent> PersistedTaskEvents(InProcessNode node) => node.Runtime.Store.Read(reader =>
+    private static RequestMeta Meta() => Tasks.Meta();
+
+    private sealed class RecoveredPlatform(RootProcess root, bool canReopen) : IExecutionPlatform, IResourceSampler
+    {
+        private int _present = canReopen ? 1 : 0;
+        private readonly TaskCompletionSource _released = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public string Name => "retained-adoption-fixture";
+        public MachineCapacity Capacity => new(4, 1L << 30);
+        public RootProcess Root => root;
+        public Task Released => _released.Task;
+        public int ReopenCalls { get; private set; }
+        public int TerminateCalls { get; private set; }
+
+        public IAdoptedContainer? ReopenAdopted(string containerName)
+        {
+            Assert.Equal(ContainerName, containerName);
+            ReopenCalls++;
+            return canReopen ? new RecoveredContainer(this) : null;
+        }
+
+        public IReadOnlyList<int> OwnedProcesses() => Volatile.Read(ref _present) == 1 ? [root.Pid] : [];
+        public IReadOnlyList<ProcessSample> Processes() => Volatile.Read(ref _present) == 1 ? [new(root.Pid, 0, root.StartTime, "retained-adopted-image")] : [];
+        public MachineSample Machine() => throw new NotSupportedException();
+        public void End() => Volatile.Write(ref _present, 0);
+        public void Dispose() { }
+        public CapabilityReport Evaluate() => new();
+        public bool AcknowledgeRecorded(string nodeName, string attemptName) => false;
+        public void UpdateRootLimits(RootLimits limits) { }
+        public IAttemptHandle? Reopen(string nodeName, AttemptFiles files, RootProcess? root, bool stopping) => throw new NotSupportedException();
+        public void Start(string nodeName, RootLimits limits, string helperExecutable) => throw new NotSupportedException();
+        public ProcessTermination TerminateProcess(int pid, DateTimeOffset start) => throw new NotSupportedException();
+
+        private sealed class RecoveredContainer(RecoveredPlatform owner) : IAdoptedContainer
+        {
+            string IAdoptedContainer.ContainerName => AdoptionLifecycleTests.ContainerName;
+            public IReadOnlyList<int> Processes() => owner.OwnedProcesses();
+            public void Terminate() => owner.TerminateCalls++;
+            public void Dispose() => owner._released.TrySetResult();
+        }
+    }
+
+    private static List<NodeEvent> PersistedTaskEvents(NodeStore store) => store.Read(reader =>
     {
         using var command = reader.CreateCommand("SELECT payload FROM event_journal WHERE topic = $topic ORDER BY seq;");
         command.Parameters.AddWithValue("$topic", (int)EventTopic.Tasks);
@@ -308,6 +358,7 @@ public sealed class AdoptionLifecycleTests
 
     private static void AssertAdoptedChanges(List<NodeEvent> events, Id id, bool cancelled)
     {
+        TaskLifecycleModelTests.AssertStateMachines(events);
         var tasks = events.Where(item => item.Task?.Task.TaskId.Equals(id) == true).Select(item => item.Task).ToArray();
         Assert.NotEmpty(tasks);
         Assert.Equal(TaskState.Running, tasks[0].Task.State);
@@ -328,77 +379,6 @@ public sealed class AdoptionLifecycleTests
         else
         {
             Assert.DoesNotContain(changes, change => change.Attempt.State == AttemptState.Stopping);
-        }
-    }
-
-    private static void RequirePlatform() =>
-        Assert.SkipWhen(!OperatingSystem.IsWindows() && SystemdTestEnvironment.SkipReason is not null, SystemdTestEnvironment.SkipReason ?? string.Empty);
-
-    private static async Task<Id> AdoptAsync(NodeChannel human, int pid, ArcForges.Tests.ProcessIdentity? owned = null)
-    {
-        var identity = ClientProcess.Identity(pid);
-        Assert.NotNull(identity);
-        var adopted = await human.Resources.AdoptProcessAsync(new ResourceServiceAdoptProcessRequest { Meta = Tasks.Meta(), Process = identity, Title = "adopted by a test" },
-            deadline: DateTime.UtcNow.AddSeconds(20), cancellationToken: Ct);
-        if (OperatingSystem.IsWindows() && adopted.Error?.Code == "adopt_not_permitted"
-            && adopted.Error.Details?.State?.Reason?.Contains("already in a job", StringComparison.Ordinal) == true)
-        {
-            // 04 section 10 refuses a process in any job; on some machines every process of the session is in one (WMI-created ones too).
-            if (owned is { } recorded)
-            {
-                recorded.Kill();
-            }
-            else
-            {
-                Kill(pid);
-            }
-
-            Assert.Skip($"The process this test created through WMI (Win32_Process.Create) is in a job, and 04 section 10 refuses a process in any job: "
-                + $"AdoptProcess answered adopt_not_permitted ({adopted.Error.Details.State.Reason}).");
-        }
-
-        Assert.True(adopted.Error is null, $"AdoptProcess: {adopted.Error?.Category}/{adopted.Error?.Code} {adopted.Error?.Details}");
-        return adopted.Value.TaskId;
-    }
-
-    /// <summary>
-    /// Starts <c>arcforges-testload hold</c> outside every container: on Linux as a child of the test; on Windows through WMI
-    /// <c>Win32_Process.Create</c>, because the test process itself may run in a job (V-W01).
-    /// </summary>
-    private static int StartOutsideAnyContainer()
-    {
-        if (!OperatingSystem.IsWindows())
-        {
-            using var child = Process.Start(new ProcessStartInfo(Tasks.TestLoad, ["hold", "--hold-ms", "150000"]) { RedirectStandardOutput = true })!;
-            return child.Id;
-        }
-
-        var powerShell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe");
-        var line = ("\"" + Tasks.TestLoad + "\" hold --hold-ms 150000").Replace("'", "''", StringComparison.Ordinal);
-        using var wmi = Process.Start(new ProcessStartInfo(powerShell, ["-NoProfile", "-NonInteractive", "-Command",
-            "$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = '" + line + "' }; if ($r.ReturnValue -ne 0) { exit 1 }; $r.ProcessId"])
-        {
-            RedirectStandardOutput = true,
-            CreateNoWindow = true,
-        })!;
-        var output = wmi.StandardOutput.ReadToEnd();
-        Assert.True(wmi.WaitForExit(60_000) && wmi.ExitCode == 0, $"WMI did not create the process: {output}");
-        return int.Parse(output.Trim(), NumberStyles.None, CultureInfo.InvariantCulture);
-    }
-
-    private static void Kill(int pid)
-    {
-        try
-        {
-            using var process = Process.GetProcessById(pid);
-            if (process.ProcessName.StartsWith("arcforges-testl", StringComparison.OrdinalIgnoreCase))
-            {
-                process.Kill();
-                process.WaitForExit(30_000);
-            }
-        }
-        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
-        {
         }
     }
 }

@@ -150,7 +150,7 @@ public sealed class LegacyAdmissionDrainTests
             Value = new() { Receipt = OriginalReceipt(prior.Meta.CommandId), TaskId = CommandIds.New(), AdoptedChildren = 2 },
         };
         byte[] Approve(CommandContext command, Id commandId, IMessage request, string method = "ResourceService.AdoptProcess",
-            string permission = PermissionMatrix.ProcessAdopt, byte[]? captured = null)
+            string permission = PermissionMatrix.ProcessAdopt, byte[]? captured = null, ActorRef? requester = null)
         {
             var (approval, created, error) = Approvals.Raise(command, new ApprovalCapture
             {
@@ -158,7 +158,7 @@ public sealed class LegacyAdmissionDrainTests
                 MatrixOperation = permission,
                 Summary = "historical approval fixture",
                 Risk = PermissionMatrix.Find(permission)!.Risk,
-                Requester = caller.Actor,
+                Requester = requester ?? caller.Actor,
                 CommandId = commandId.Value.ToByteArray(),
                 Request = captured ?? request.ToByteArray(),
                 RequestDigest = PayloadDigest.Compute(request),
@@ -171,6 +171,16 @@ public sealed class LegacyAdmissionDrainTests
 
         var malformed = Request();
         var wrongReceipt = Request();
+        var typedRefusal = Request();
+        var executorFailure = Request();
+        // A Human could configure a Script approval gate for adoption. The old executor saved its raw response in approval.outcome.
+        var script = new Caller(Origin.Script, ClientKind.Cli, null);
+        var refusalResponse = new ResourceServiceAdoptProcessResponse
+        {
+            Meta = new() { CorrelationId = typedRefusal.Meta.CorrelationId },
+            Error = NodeErrors.ProcessNotFound("the requested process no longer exists"),
+        };
+        var genericFailure = new ResourceServiceAdoptProcessResponse { Error = NodeErrors.Internal(fixture.Clock.GetUtcNow()) };
         var expiredRetry = new TaskServiceRetryTaskRequest { Meta = Tasks.Meta(), TaskId = original.Value.TaskId };
         var retryReceipt = new TaskServiceRetryTaskResponse
         {
@@ -184,7 +194,12 @@ public sealed class LegacyAdmissionDrainTests
             SeedCommand(command.Transaction, TaskService + "RetryTask", expiredRetry.Meta.CommandId, expiredRetry, retryReceipt);
             command.Transaction.Execute("UPDATE command_dedup SET created_at = created_at - $age, expires_at = expires_at - $age WHERE command_id = $id;",
                 ("$id", expiredRetry.Meta.CommandId.Value.ToByteArray()), ("$age", 2 * CommandDeduplication.Window.Ticks / TimeSpan.TicksPerMicrosecond));
-            return (Unresolved: Approve(command, approved.Meta.CommandId, approved), Known: Approve(command, prior.Meta.CommandId, prior),
+            var typedId = Approve(command, typedRefusal.Meta.CommandId, typedRefusal, requester: script.Actor);
+            var genericId = Approve(command, executorFailure.Meta.CommandId, executorFailure, requester: script.Actor);
+            Approvals.Executed(command, typedId, refusalResponse.ToByteArray(), refusalResponse.Error, PermissionMatrix.ProcessAdopt);
+            Approvals.Executed(command, genericId, genericFailure.ToByteArray(), genericFailure.Error, PermissionMatrix.ProcessAdopt);
+            return (TypedFailure: typedId, GenericFailure: genericId,
+                Unresolved: Approve(command, approved.Meta.CommandId, approved), Known: Approve(command, prior.Meta.CommandId, prior),
                 Malformed: Approve(command, malformed.Meta.CommandId, malformed, captured: [0x80]),
                 WrongReceipt: Approve(command, wrongReceipt.Meta.CommandId, wrongReceipt),
                 ExpiredRetry: Approve(command, expiredRetry.Meta.CommandId, expiredRetry, "TaskService.RetryTask", PermissionMatrix.TaskRetry));
@@ -207,6 +222,12 @@ public sealed class LegacyAdmissionDrainTests
         AssertAdoptionUnknown((await Reconcile(Request())).Error);
         AssertAdoptionUnknown((await Reconcile(approved)).Error);
         AssertAdoptionUnknown((await Reconcile(wrongReceipt)).Error);
+        var refusalReplay = typedRefusal.Clone();
+        refusalReplay.Meta.CorrelationId = CommandIds.New();
+        var refusal = await Reconcile(refusalReplay, script);
+        Assert.Equal(refusalResponse, refusal);
+        Assert.Null(refusal.Error.CorrelationId);
+        AssertAdoptionUnknown((await Reconcile(executorFailure, script)).Error);
 
         await approvals.ResumeAsync().WaitAsync(ct);
         store.Read(reader =>
@@ -225,6 +246,14 @@ public sealed class LegacyAdmissionDrainTests
             Assert.NotNull(known);
             Assert.Equal(ApprovalState.Executed, known.State);
             Assert.Equal(original.ToByteArray(), known.Outcome);
+            var historicalRefusal = Approvals.Get(reader, approvalIds.TypedFailure);
+            Assert.NotNull(historicalRefusal);
+            Assert.Equal(ApprovalState.Failed, historicalRefusal.State);
+            Assert.Equal(refusalResponse.ToByteArray(), historicalRefusal.Outcome);
+            var historicalFailure = Approvals.Get(reader, approvalIds.GenericFailure);
+            Assert.NotNull(historicalFailure);
+            Assert.Equal(ApprovalState.Failed, historicalFailure.State);
+            Assert.Equal(genericFailure.ToByteArray(), historicalFailure.Outcome);
             Assert.Equal(ApprovalState.Approved, Approvals.Get(reader, approvalIds.ExpiredRetry)?.State);
             Assert.Null(Approvals.Get(reader, approvalIds.ExpiredRetry)?.Outcome);
             Assert.Equal(4L, reader.Scalar("SELECT count(*) FROM command_dedup;"));
