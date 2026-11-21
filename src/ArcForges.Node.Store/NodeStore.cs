@@ -458,9 +458,15 @@ public sealed class NodeStore : IDisposable
             SqliteConnection? writer = null;
             try
             {
-                var existing = File.Exists(path) ? Inspect(path, plan, requireV2Runtime) : null;
+                ExistingStore? existing = null;
+                if (requireV2Runtime ? HasFileEntry(path) : File.Exists(path))
+                {
+                    existing = requireV2Runtime
+                        ? InspectRuntimeStore(path, plan)
+                        : Inspect(path, path, plan, requireV2Runtime: false);
+                }
                 if (existing is null && requireV2Runtime &&
-                    (HasOwnerFence(path) || File.Exists(path + "-wal") || File.Exists(path + "-journal")))
+                    (HasOwnerFence(path) || HasFileEntry(path + "-wal") || HasFileEntry(path + "-journal")))
                 {
                     throw new StoreIncompatibleException("A V2 data root with existing owner or journal state requires its original database.");
                 }
@@ -522,9 +528,55 @@ public sealed class NodeStore : IDisposable
         }
     }
 
-    private static ExistingStore? Inspect(string path, MigrationPlan plan, bool requireV2Runtime)
+    private static ExistingStore? InspectRuntimeStore(string path, MigrationPlan plan)
     {
-        using var connection = new SqliteConnection(StorePaths.ConnectionString(path, SqliteOpenMode.ReadOnly));
+        if (HasFileEntry(path + "-journal"))
+            throw new StoreIncompatibleException("The node store has a rollback journal and requires offline recovery; it was not changed.");
+
+        // The host holds the node-instance guard. An immutable connection leaves a checkpointed store alone.
+        // It would skip pending WAL frames, so inspect those on a private copy with the normal SQLite reader.
+        string wal = path + "-wal";
+        if (!HasFileEntry(wal))
+            return Inspect(path, new Uri(path, UriKind.Absolute).AbsoluteUri + "?immutable=1", plan, requireV2Runtime: true);
+
+        string work = Path.Combine(Path.GetDirectoryName(path)!, $".inspect-{Guid.NewGuid():N}");
+        StorePaths.CreatePrivateDirectory(work);
+        try
+        {
+            string copy = Path.Combine(work, Path.GetFileName(path));
+            CopyInspectionFile(path, copy);
+            CopyInspectionFile(wal, copy + "-wal");
+            return Inspect(path, copy, plan, requireV2Runtime: true);
+        }
+        finally
+        {
+            Directory.Delete(work, recursive: true);
+        }
+    }
+
+    private static bool HasFileEntry(string path)
+    {
+        try
+        {
+            _ = File.GetAttributes(path);
+            return true;
+        }
+        catch (FileNotFoundException)
+        {
+            return false;
+        }
+    }
+
+    private static void CopyInspectionFile(string source, string destination)
+    {
+        using var input = File.OpenRead(source);
+        using var output = DurableEpochFence.OpenPrivate(destination, FileMode.CreateNew);
+        input.CopyTo(output);
+    }
+
+    private static ExistingStore? Inspect(string path, string source, MigrationPlan plan, bool requireV2Runtime)
+    {
+        using var connection = new SqliteConnection(StorePaths.ConnectionString(source, SqliteOpenMode.ReadOnly));
         connection.Open();
         Pragma(connection, string.Create(CultureInfo.InvariantCulture, $"PRAGMA busy_timeout={BusyTimeoutMilliseconds};"));
         var objects = Convert.ToInt64(Scalar(connection, "SELECT count(*) FROM sqlite_schema;"), CultureInfo.InvariantCulture);
