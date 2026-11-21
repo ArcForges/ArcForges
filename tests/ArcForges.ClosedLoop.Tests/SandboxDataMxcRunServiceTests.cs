@@ -253,8 +253,9 @@ public sealed partial class MxcRunServiceTests
                 await Assert.ThrowsAnyAsync<RpcException>(() => pending.ResponseAsync.WaitAsync(NativeBound, token));
             }
 
+            Assert.True(interrupted.HasExited);
             var diskStamp = await RequireFileCommitDiskBoundaryAsync(fixture, commit, atCheckpoint, destination, published,
-                bothNamesRemain, content, token);
+                bothNamesRemain, content, token, crashCheckpoint: checkpoint);
             fixture.Environment.Remove(ExecutionFaults.Variable);
             restarted = await fixture.StartNodeAsync();
             await using var recovered = OpenChannel(fixture);
@@ -305,7 +306,8 @@ public sealed partial class MxcRunServiceTests
         Path.Combine(FileCommitStageDirectory(fixture), Hex(transfer));
 
     private static async Task<WorkspaceFileStamp> RequireFileCommitDiskBoundaryAsync(TestNode fixture, DataServiceCommitImportRequest commit,
-        StoredTransfer observed, string destination, bool published, bool bothNamesRemain, byte[] expected, CancellationToken token)
+        StoredTransfer observed, string destination, bool published, bool bothNamesRemain, byte[] expected, CancellationToken token,
+        string? crashCheckpoint = null)
     {
         var stagePath = FileCommitStagePath(fixture, commit.TransferId);
         Assert.Equal(published, File.Exists(destination));
@@ -336,7 +338,7 @@ public sealed partial class MxcRunServiceTests
 
         var parent = published ? Path.GetDirectoryName(destination)! : FileCommitStageDirectory(fixture);
         using var workspace = WorkspacePath.OpenRoot(parent);
-        using var file = published ? workspace.OpenRead(Path.GetFileName(destination))
+        using var file = published ? await OpenFileCommitDestinationAsync(workspace, Path.GetFileName(destination), crashCheckpoint, token)
             : workspace.OpenSandboxDataStage(Hex(commit.TransferId), observed.StagingIdentity, writable: false);
         if (published)
         {
@@ -346,6 +348,44 @@ public sealed partial class MxcRunServiceTests
         var observedStamp = WorkspacePath.FileStamp(file);
         await RequireFileCommitBytesAsync(file, expected, token);
         return observedStamp;
+    }
+
+    private static async Task<SafeFileHandle> OpenFileCommitDestinationAsync(WorkspacePath workspace, string name,
+        string? crashCheckpoint, CancellationToken token)
+    {
+        if (!OperatingSystem.IsWindows() || crashCheckpoint is null)
+        {
+            return workspace.OpenRead(name);
+        }
+
+        // Observe the held file after the original process exits and before recovery can modify it.
+        var limit = TimeSpan.FromSeconds(3);
+        var interval = TimeSpan.FromMilliseconds(50);
+        var elapsed = Stopwatch.StartNew();
+        WorkspacePathException sharing;
+        do
+        {
+            token.ThrowIfCancellationRequested();
+            try
+            {
+                return workspace.OpenRead(name);
+            }
+            catch (WorkspacePathException failure) when (failure.Reason == "native_32")
+            {
+                sharing = failure;
+            }
+
+            if (elapsed.Elapsed + interval >= limit)
+            {
+                break;
+            }
+
+            await Task.Delay(interval, token);
+        }
+        while (elapsed.Elapsed < limit);
+
+        throw new TimeoutException($"Published file '{name}' still reports {sharing.Reason} after the original Node exited at {crashCheckpoint}.",
+            sharing);
     }
 
     private static async Task RequireFileCommitBytesAsync(SafeFileHandle file, byte[] expected, CancellationToken token)

@@ -272,6 +272,11 @@ public sealed partial class MxcRunServiceTests
         var first = await package.CreateScopeAsync("Lower weight Sandbox", firstPolicy, cancellation);
         var second = await package.CreateScopeAsync("Higher weight Sandbox", secondPolicy, cancellation);
         var lighter = await package.StartRunningAsync(BuildAdmissionCpu(package, first, perScope), cancellation);
+        var beforeSecondStart = await ReadInstalledBudgetAsync(package.Resources, "node", null, cancellation);
+        var secondHeadroom = await WaitForResourceBudgetAsync(package.Resources, "node", null, sample => sample.SampleSequence > beforeSecondStart.SampleSequence
+            && sample.Pressure == "normal" && sample.ReservedCpuMillicores == reserve && sample.BudgetCpuMillicores >= combined);
+        TestContext.Current.TestOutputHelper?.WriteLine(FormattableString.Invariant(
+            $"Before the second Start, host sample {secondHeadroom.SampleSequence} had {secondHeadroom.BudgetCpuMillicores}m for {combined}m of grants."));
         var heavier = await package.StartRunningAsync(BuildAdmissionCpu(package, second, perScope), cancellation);
         var lightOwner = ReadSupervisor(package.Fixture.DataRoot, lighter);
         var heavyOwner = ReadSupervisor(package.Fixture.DataRoot, heavier);
@@ -313,7 +318,7 @@ public sealed partial class MxcRunServiceTests
             var responsiveness = await TestNode.CompleteAsync(probe, NativeBound);
             latency.Stop();
             Assert.Equal(0, responsiveness.ExitCode);
-            await RequireWeightedRunDemandAsync(package, lighter, heavier, shared.Light, shared.Heavy, cancellation);
+            await RequireWeightedRunDemandAsync(package, lighter, heavier, shared, heldBudget, cancellation);
             Assert.False(load.HasExited);
             TestContext.Current.TestOutputHelper?.WriteLine(FormattableString.Invariant(
                 $"Native CPU budget dropped to {reduced.BudgetCpuMillicores}m with reserve {reserve}m. Weighted readbacks were {shared.Light.ReadbackValue}m and {shared.Heavy.ReadbackValue}m; independent host probe completed in {latency.ElapsedMilliseconds}ms."));
@@ -340,54 +345,96 @@ public sealed partial class MxcRunServiceTests
             limit.Dimension == "cpu" && limit.Status == LimitStatus.Effective && limit.ReadbackValue == original.ReadbackValue);
     }
 
-    private static async Task<(LimitState Light, LimitState Heavy)> AwaitWeightedReadbackAsync(ResourcePackage package,
+    private static async Task<WeightedRunFrame> AwaitWeightedReadbackAsync(ResourcePackage package,
         Run lighter, Run heavier, uint latestBudget, CancellationToken cancellation)
     {
-        (LimitState Light, LimitState Heavy) reduced = default;
+        WeightedRunFrame? reduced = null;
         await TestNode.WaitAsync(async () =>
         {
-            var light = await ReadInstalledBudgetAsync(package.Resources, "run", lighter.RunId, cancellation);
-            var heavy = await ReadInstalledBudgetAsync(package.Resources, "run", heavier.RunId, cancellation);
-            var host = await ReadInstalledBudgetAsync(package.Resources, "node", null, cancellation);
-            if (light.Stale || heavy.Stale || host.Stale || !host.HasBudgetCpuMillicores || host.BudgetCpuMillicores > latestBudget
-                || !light.HasManagedCpuMillicores || !heavy.HasManagedCpuMillicores) return false;
-
-            var lightLimit = Assert.Single(light.Limits, entry => entry.Dimension == "cpu");
-            var heavyLimit = Assert.Single(heavy.Limits, entry => entry.Dimension == "cpu");
-            if (lightLimit.Status != LimitStatus.Effective || heavyLimit.Status != LimitStatus.Effective) return false;
-            ulong lightReadback = ReadNumericLimit(lightLimit.ReadbackValue);
-            ulong heavyReadback = ReadNumericLimit(heavyLimit.ReadbackValue);
-            ulong total = lightReadback + heavyReadback;
-            ulong weightedTarget = 3 * lightReadback;
-            ulong weightDifference = Math.Max(heavyReadback, weightedTarget) - Math.Min(heavyReadback, weightedTarget);
-            uint granularity = OperatingSystem.IsWindows() ? (host.HostCpuMillicores + 9999) / 10_000 : 1;
-            if (lightReadback == 0 || weightDifference > 4 * granularity || total > host.BudgetCpuMillicores
-                || light.ManagedCpuMillicores == 0 || heavy.ManagedCpuMillicores == 0) return false;
-            Assert.Equal(lightLimit.AppliedValue, lightLimit.ReadbackValue);
-            Assert.Equal(heavyLimit.AppliedValue, heavyLimit.ReadbackValue);
-            reduced = (lightLimit, heavyLimit);
-            return true;
+            reduced = await ReadWeightedRunFrameAsync(package, lighter, heavier, latestBudget, cancellation);
+            return reduced is not null;
         }, NativeBound, "both contending Run scopes to read back weighted native CPU shares under the same host budget");
-        return reduced;
+        return Assert.IsType<WeightedRunFrame>(reduced);
+    }
+
+    private static async Task<WeightedRunFrame?> ReadWeightedRunFrameAsync(ResourcePackage package, Run lighter, Run heavier,
+        uint latestBudget, CancellationToken cancellation)
+    {
+        var light = await ReadInstalledBudgetAsync(package.Resources, "run", lighter.RunId, cancellation);
+        var heavy = await ReadInstalledBudgetAsync(package.Resources, "run", heavier.RunId, cancellation);
+        var host = await ReadInstalledBudgetAsync(package.Resources, "node", null, cancellation);
+        if (light.Stale || heavy.Stale || host.Stale || light.SampleEpoch != heavy.SampleEpoch || light.SampleEpoch != host.SampleEpoch
+            || light.SampleSequence != heavy.SampleSequence || light.SampleSequence != host.SampleSequence
+            || !host.HasBudgetCpuMillicores || host.BudgetCpuMillicores > latestBudget
+            || !light.HasManagedCpuMillicores || !heavy.HasManagedCpuMillicores) return null;
+
+        var lightLimit = Assert.Single(light.Limits, entry => entry.Dimension == "cpu");
+        var heavyLimit = Assert.Single(heavy.Limits, entry => entry.Dimension == "cpu");
+        if (lightLimit.Status != LimitStatus.Effective || heavyLimit.Status != LimitStatus.Effective) return null;
+        ulong lightReadback = ReadNumericLimit(lightLimit.ReadbackValue);
+        ulong heavyReadback = ReadNumericLimit(heavyLimit.ReadbackValue);
+        ulong total = lightReadback + heavyReadback;
+        ulong weightedTarget = 3 * lightReadback;
+        ulong weightDifference = Math.Max(heavyReadback, weightedTarget) - Math.Min(heavyReadback, weightedTarget);
+        uint granularity = OperatingSystem.IsWindows() ? (host.HostCpuMillicores + 9999) / 10_000 : 1;
+        if (lightReadback == 0 || weightDifference > 4 * granularity || total > host.BudgetCpuMillicores
+            || light.ManagedCpuMillicores == 0 || heavy.ManagedCpuMillicores == 0) return null;
+        Assert.Equal(lightLimit.AppliedValue, lightLimit.ReadbackValue);
+        Assert.Equal(heavyLimit.AppliedValue, heavyLimit.ReadbackValue);
+        return new(light, heavy, lightLimit, heavyLimit, host.BudgetCpuMillicores);
     }
 
     private static async Task RequireWeightedRunDemandAsync(ResourcePackage package, Run lighter, Run heavier,
-        LimitState lightLimit, LimitState heavyLimit, CancellationToken cancellation)
+        WeightedRunFrame shared, uint latestBudget, CancellationToken cancellation)
     {
-        var firstLight = await ReadInstalledBudgetAsync(package.Resources, "run", lighter.RunId, cancellation);
-        var firstHeavy = await ReadInstalledBudgetAsync(package.Resources, "run", heavier.RunId, cancellation);
-        var afterLight = await WaitForResourceBudgetAsync(package.Resources, "run", lighter.RunId,
-            sample => sample.HasCumulativeCpuUsec && sample.SampleSequence >= firstLight.SampleSequence + 2);
-        var afterHeavy = await WaitForResourceBudgetAsync(package.Resources, "run", heavier.RunId,
-            sample => sample.HasCumulativeCpuUsec && sample.SampleSequence >= firstHeavy.SampleSequence + 2);
+        WeightedRunFrame? baseline = null;
+        WeightedRunFrame? observed = null;
+        await TestNode.WaitAsync(async () =>
+        {
+            var current = await ReadWeightedRunFrameAsync(package, lighter, heavier, latestBudget, cancellation);
+            if (current is null || !current.LightSnapshot.HasCumulativeCpuUsec || !current.HeavySnapshot.HasCumulativeCpuUsec) return false;
+            Assert.Equal(shared.Light.Scope, current.Light.Scope);
+            Assert.Equal(shared.Heavy.Scope, current.Heavy.Scope);
 
-        double light = CpuDemand(firstLight, afterLight);
-        double heavy = CpuDemand(firstHeavy, afterHeavy);
-        ulong lightCap = ReadNumericLimit(lightLimit.ReadbackValue);
-        ulong heavyCap = ReadNumericLimit(heavyLimit.ReadbackValue);
+            // The CPU counters are sampled before the controller applies limits for that frame.
+            // Never use a frame from before either native grant as the start of the usage interval.
+            if (ProtoTime.ToDateTimeOffset(current.LightSnapshot.SampledAt) is not { } sampledAt
+                || sampledAt <= RequireAppliedAt(current.Light) || sampledAt <= RequireAppliedAt(current.Heavy)) return false;
+            if (baseline is null || baseline.LightSnapshot.SampleEpoch != current.LightSnapshot.SampleEpoch
+                || !SameGrant(baseline.Light, current.Light) || !SameGrant(baseline.Heavy, current.Heavy))
+            {
+                baseline = current;
+                return false;
+            }
+
+            if (current.LightSnapshot.SampleSequence < baseline.LightSnapshot.SampleSequence + 2) return false;
+            observed = current;
+            return true;
+        }, NativeBound, "two fresh native CPU samples under the same weighted grants");
+
+        var start = Assert.IsType<WeightedRunFrame>(baseline);
+        var end = Assert.IsType<WeightedRunFrame>(observed);
+        TestContext.Current.TestOutputHelper?.WriteLine("Weighted CPU start " + DescribeFrame(start));
+        TestContext.Current.TestOutputHelper?.WriteLine("Weighted CPU end " + DescribeFrame(end));
+        double light = CpuDemand(start.LightSnapshot, end.LightSnapshot);
+        double heavy = CpuDemand(start.HeavySnapshot, end.HeavySnapshot);
+        ulong lightCap = ReadNumericLimit(start.Light.ReadbackValue);
+        ulong heavyCap = ReadNumericLimit(start.Heavy.ReadbackValue);
+        TestContext.Current.TestOutputHelper?.WriteLine(FormattableString.Invariant(
+            $"Weighted CPU demand was {light:F3}m under {lightCap}m for the light Run and {heavy:F3}m under {heavyCap}m for the heavy Run."));
         Assert.InRange(light, lightCap * 0.55, lightCap + 135.0);
         Assert.InRange(heavy, heavyCap * 0.55, heavyCap + 135.0);
         Assert.True(heavy > light * 1.5, $"Sampled native CPU demand was {light:F0}m and {heavy:F0}m.");
+
+        static bool SameGrant(LimitState before, LimitState after) => before.Scope == after.Scope
+            && before.ReadbackValue == after.ReadbackValue && Equals(before.AppliedAt, after.AppliedAt)
+            && Equals(before.DesiredRevision, after.DesiredRevision);
+
+        static string DescribeFrame(WeightedRunFrame frame) => FormattableString.Invariant($"""
+            epoch {frame.LightSnapshot.SampleEpoch}, sequence {frame.LightSnapshot.SampleSequence}, sampled {ProtoTime.ToDateTimeOffset(frame.LightSnapshot.SampledAt):O}, budget {frame.Budget}m
+            light {frame.Light.Scope}: {frame.LightSnapshot.CumulativeCpuUsec}us at {frame.Light.ReadbackValue}m, applied {RequireAppliedAt(frame.Light):O}
+            heavy {frame.Heavy.Scope}: {frame.HeavySnapshot.CumulativeCpuUsec}us at {frame.Heavy.ReadbackValue}m, applied {RequireAppliedAt(frame.Heavy):O}
+            """);
 
         static double CpuDemand(ResourceSnapshot before, ResourceSnapshot after)
         {
@@ -398,6 +445,9 @@ public sealed partial class MxcRunServiceTests
             return (after.CumulativeCpuUsec - before.CumulativeCpuUsec) / (end - start).TotalMilliseconds;
         }
     }
+
+    private sealed record WeightedRunFrame(ResourceSnapshot LightSnapshot, ResourceSnapshot HeavySnapshot,
+        LimitState Light, LimitState Heavy, uint Budget);
 
     private static DateTimeOffset RequireAppliedAt(LimitState limit) =>
         Assert.IsType<DateTimeOffset>(ProtoTime.ToDateTimeOffset(limit.AppliedAt));
