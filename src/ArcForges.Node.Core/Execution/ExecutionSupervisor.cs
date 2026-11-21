@@ -43,9 +43,6 @@ public sealed class ExecutionOptions
     /// </summary>
     public bool Unenforced { get; init; }
 
-    /// <summary>Completes once the node data key is loaded (or failed to load).</summary>
-    public Task KeysReady { get; init; } = Task.CompletedTask;
-
     /// <summary>Controlled faults (test mode).</summary>
     public ExecutionFaults Faults { get; init; } = ExecutionFaults.None;
 
@@ -54,9 +51,6 @@ public sealed class ExecutionOptions
 
     /// <summary>The platform's observation sources (03 section 1), or <see langword="null"/> for a node that observes nothing.</summary>
     public IResourceSampler? Sampler { get; init; }
-
-    /// <summary>The tool-level concurrency hook of the adapters (03 section 5.3), or <see langword="null"/>.</summary>
-    public Scheduling.IToolConcurrency? Tools { get; init; }
 
     /// <summary>Test seam: the resource monitor evaluates as if this node were alone on the machine (<see cref="MachineIsolation"/>).</summary>
     internal bool IsolatedFromMachineLoad { get; init; }
@@ -131,7 +125,6 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
     private readonly NodeLog _log;
     private readonly TimeProvider _clock;
     private readonly string _dataRoot;
-    private readonly Task _keysReady;
     private readonly ExecutionFaults _faults;
     private readonly Action<IAttemptHandle>? _forcedBeforeStart;
     private readonly Action<IAttemptHandle, bool>? _startObserved;
@@ -166,7 +159,6 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         _clock = options.Clock;
         _dataRoot = options.DataRoot;
         Platform = options.Platform;
-        _keysReady = options.KeysReady;
         _faults = options.Faults;
         _forcedBeforeStart = options.ForcedBeforeStart;
         _startObserved = options.StartObserved;
@@ -180,7 +172,6 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         _settings = new ExecutionSettings(initialPolicy.Document, capacity.LogicalProcessors, capacity.PhysicalMemoryBytes) { PolicyRevision = initialPolicy.Revision };
         _lastSettingsRead = _clock.GetTimestamp();
         _tailerMonitor = Heartbeat.AddMonitor("output-tailer", TimeSpan.FromSeconds(5));
-        Tools = options.Tools;
         PlatformCalls = new SerialWork(_log);
         Adoptions = new Adoptions(this, _store, _processor, _log);
         if (options.Sampler is { } sampler)
@@ -264,9 +255,6 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
 
     /// <summary>The pulse of a task: state changes and output of its current attempt.</summary>
     public AsyncPulse TaskPulse(ReadOnlySpan<byte> taskId) => _taskPulses.GetOrAdd(IdText.Format(taskId), _ => new AsyncPulse());
-
-    /// <summary>Completes once the node data key finished loading.</summary>
-    public Task KeysReady => _keysReady;
 
     // ------------------------------------------------------------------------------------------------------------------- recovery
 

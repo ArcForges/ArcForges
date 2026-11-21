@@ -250,26 +250,4 @@ internal static class Sched
             }
         }).Where(element => element.ValueKind == JsonValueKind.Object && element.TryGetProperty("event", out var value) && value.GetString() == name)];
     }
-
-    /// <summary>A synthetic adapter for <c>arcforges-testload cpu</c>: it sets <c>--threads</c> from the CPU grant (03 section 5.3), keeping the caller's.</summary>
-    public sealed class TestLoadCpuAdapter : IToolConcurrency
-    {
-        public ToolInvocation? Apply(TaskSpec spec, long cpuGrantMillicores)
-        {
-            var argv = spec.Command.Argv.Argv;
-            if (argv.Count < 2 || !Path.GetFileNameWithoutExtension(argv[0]).Equals("arcforges-testload", StringComparison.OrdinalIgnoreCase) || argv[1] != "cpu")
-            {
-                return null;
-            }
-
-            var given = argv.IndexOf("--threads");
-            if (given > 0)
-            {
-                return new ToolInvocation("testload", "testload.cpu", [.. argv], int.Parse(argv[given + 1], CultureInfo.InvariantCulture), CallerFlag: true);
-            }
-
-            var parallelism = ToolParallelism.For(cpuGrantMillicores, 64);
-            return new ToolInvocation("testload", "testload.cpu", [.. argv, "--threads", parallelism.ToString(CultureInfo.InvariantCulture)], parallelism, CallerFlag: false);
-        }
-    }
 }

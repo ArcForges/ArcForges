@@ -90,9 +90,6 @@ public sealed partial class ExecutionSupervisor
     /// <summary>Called on the platform-call queue after new root limits were applied (the node refreshes its capability report's facts).</summary>
     public Action<RootLimits>? RootLimitsApplied { get; set; }
 
-    /// <summary>The tool-level concurrency hook (03 section 5.3), or <see langword="null"/> without adapters.</summary>
-    public IToolConcurrency? Tools { get; }
-
     /// <summary>The platform calls posted by the pressure hooks (tests wait for them).</summary>
     internal SerialWork PlatformCalls { get; }
 
@@ -306,30 +303,6 @@ public sealed partial class ExecutionSupervisor
                 return 0;
             });
         }
-    }
-
-    /// <summary>
-    /// Early release of keys (03 section 4 "Lifetime"): an adapter's phase detector calls this when a run operation's program started
-    /// (<c>dotnet run</c>, <c>cargo run</c>, <c>npm start</c>), so a long-running program does not block other work. Returns false when the
-    /// attempt is not running.
-    /// </summary>
-    public bool ReleaseKeysAtProgramStart(string attemptName)
-    {
-        if (!_running.TryGetValue(attemptName, out var attempt))
-        {
-            return false;
-        }
-
-        var released = ReleaseKeys(attempt, _ => true);
-        _log.Info("execution.keys.released", new LogField("attempt", attemptName), new LogField("keys", string.Join(", ", released.Select(key => key.Key.Text))),
-            new LogField("why", "the run operation's program started"));
-        _ = RecordAsync(context =>
-        {
-            MarkReleased(context, attempt, released);
-            EmitTask(context, attempt.TaskId, null);
-            return 0;
-        });
-        return true;
     }
 
     private static List<HeldKey> ReleaseKeys(RunningAttempt attempt, Func<HeldKey, bool> which)
