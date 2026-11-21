@@ -94,32 +94,40 @@ public sealed partial class MxcRunServiceTests
         int sustainedChanges = TestNode.LogEvents(package.Fixture.NodeLog, PressureChangeEvent).Count;
         await using (var sustained = new InstalledPressurePulse(package.Fixture, "sustained", critical))
         {
-            _ = await sustained.WaitForCriticalAsync(cancellation);
-            var crossed = DateTimeOffset.UtcNow;
-            TestContext.Current.TestOutputHelper?.WriteLine(FormattableString.Invariant(
-                $"Independent native available-memory crossing at {crossed:O}; waiting up to 3s for Node raw Critical."));
-            var firstRaw = await WaitForPressureChangeAsync(package.Fixture, sustainedChanges,
-                entry => PressureState(entry, "raw") == "critical", TimeSpan.FromSeconds(3));
-            var detected = PressureEventTime(firstRaw) - crossed;
-            TestContext.Current.TestOutputHelper?.WriteLine(FormattableString.Invariant(
-                $"Node first observed raw Critical at sample {PressureSampleSequence(firstRaw)}, {detected.TotalMilliseconds:F0}ms after the independent crossing."));
-            Assert.True(detected <= TimeSpan.FromSeconds(3), "The first coherent Node raw Critical observation exceeded the 3s diagnostic bound.");
-            Assert.NotEqual("critical", PressureState(firstRaw, "effective"));
-
-            JsonElement decision = default;
-            await TestNode.WaitAsync(async () =>
+            try
             {
-                sustained.RequireAvailableHeadroom();
-                var stops = TestNode.LogEvents(package.Fixture.NodeLog, PressureStopEvent);
-                if (stops.Count == 0) return false;
-                decision = Assert.Single(stops);
-                Assert.Equal(Hex(newest.RunId), PressureState(decision, "runId"));
-                return (await InspectAsync(package.Runs, newest.RunId, cancellation)).State
-                    is RunState.Stopping or RunState.Draining or RunState.Exited;
-            }, TimeSpan.FromSeconds(12), "one authorized native pressure stop");
-            await sustained.ReleaseAsync(cancellation);
-            lowestAvailable = Math.Min(lowestAvailable, sustained.LowestAvailable);
-            RequirePressureDecisionTiming(package.Fixture, sustainedChanges, crossed, decision);
+                _ = await sustained.WaitForCriticalAsync(cancellation);
+                var crossed = DateTimeOffset.UtcNow;
+                TestContext.Current.TestOutputHelper?.WriteLine(FormattableString.Invariant(
+                    $"Independent native available-memory crossing at {crossed:O}; waiting up to 3s for Node raw Critical."));
+                var firstRaw = await WaitForPressureChangeAsync(package.Fixture, sustainedChanges,
+                    entry => PressureState(entry, "raw") == "critical", TimeSpan.FromSeconds(3));
+                var detected = PressureEventTime(firstRaw) - crossed;
+                TestContext.Current.TestOutputHelper?.WriteLine(FormattableString.Invariant(
+                    $"Node first observed raw Critical at sample {PressureSampleSequence(firstRaw)}, {detected.TotalMilliseconds:F0}ms after the independent crossing."));
+                Assert.True(detected <= TimeSpan.FromSeconds(3), "The first coherent Node raw Critical observation exceeded the 3s diagnostic bound.");
+                Assert.NotEqual("critical", PressureState(firstRaw, "effective"));
+
+                JsonElement decision = default;
+                await TestNode.WaitAsync(async () =>
+                {
+                    sustained.RequireAvailableHeadroom();
+                    var stops = TestNode.LogEvents(package.Fixture.NodeLog, PressureStopEvent);
+                    if (stops.Count == 0) return false;
+                    decision = Assert.Single(stops);
+                    Assert.Equal(Hex(newest.RunId), PressureState(decision, "runId"));
+                    return (await InspectAsync(package.Runs, newest.RunId, cancellation)).State
+                        is RunState.Stopping or RunState.Draining or RunState.Exited;
+                }, TimeSpan.FromSeconds(12), "one authorized native pressure stop");
+                await sustained.ReleaseAsync(cancellation);
+                lowestAvailable = Math.Min(lowestAvailable, sustained.LowestAvailable);
+                RequirePressureDecisionTiming(package.Fixture, sustainedChanges, crossed, decision);
+            }
+            catch
+            {
+                ReportSustainedPressureFailure(package.Fixture, sustainedChanges, sustained);
+                throw;
+            }
         }
 
         // The observed effective level retains Critical after the physical release. Even interactive admissions are refused.
@@ -179,6 +187,30 @@ public sealed partial class MxcRunServiceTests
         Assert.True((await package.DrainAsync(protectedRun.RunId, cancellation)).Exit.GroupEmptyVerified);
         TestContext.Current.TestOutputHelper?.WriteLine(FormattableString.Invariant(
             $"Native available memory bottomed at {lowestAvailable >> 20} MiB under a fixture Critical threshold of {critical >> 20} MiB. One verified pressure stop completed; both peer Runs survived."));
+    }
+
+    private static void ReportSustainedPressureFailure(TestNode fixture, int transitionOffset, InstalledPressurePulse pulse)
+    {
+        try
+        {
+            var output = TestContext.Current.TestOutputHelper;
+            if (output is null) return;
+
+            output.WriteLine(pulse.DescribeAvailableMemory());
+            foreach (var name in new[] { PressureChangeEvent, PressureStopEvent, "sandbox.resources.pressure_unrelieved",
+                         "sandbox.resources.control_unavailable", "sandbox.resources.availability" })
+            {
+                var offset = name == PressureChangeEvent ? transitionOffset : 0;
+                foreach (var entry in TestNode.LogEvents(fixture.NodeLog, name).Skip(offset).TakeLast(16))
+                {
+                    output.WriteLine(entry.GetRawText());
+                }
+            }
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException)
+        {
+            // A missing or partially written fixture log cannot replace the test failure.
+        }
     }
 
     private static string? PressureState(JsonElement entry, string field) =>
@@ -241,6 +273,9 @@ public sealed partial class MxcRunServiceTests
         private readonly Process _process;
         private readonly string _release;
         private readonly ulong _critical;
+        private ulong _highestAvailableAfterCrossing;
+        private int _samplesAfterCrossing;
+        private int _samplesAtOrAboveCritical;
 
         internal InstalledPressurePulse(TestNode fixture, string phase, ulong critical)
         {
@@ -270,8 +305,25 @@ public sealed partial class MxcRunServiceTests
         {
             var available = Assert.IsType<ulong>(ReadFreshResourceHost().PhysicalAvailableBytes);
             LowestAvailable = Math.Min(LowestAvailable, available);
+            if (available < _critical || _samplesAfterCrossing > 0)
+            {
+                _samplesAfterCrossing++;
+                _highestAvailableAfterCrossing = Math.Max(_highestAvailableAfterCrossing, available);
+                if (available >= _critical) _samplesAtOrAboveCritical++;
+            }
+
             Assert.True(available >= ResourceBytes(1536), $"The native host has only {available >> 20} MiB available; release the fixture allocator.");
             return available;
+        }
+
+        internal string DescribeAvailableMemory()
+        {
+            if (_samplesAfterCrossing == 0)
+            {
+                return FormattableString.Invariant($"Sustained allocator observed no crossing of the Critical threshold ({_critical} bytes).");
+            }
+
+            return FormattableString.Invariant($"Sustained allocator available memory from first crossing: {LowestAvailable}–{_highestAvailableAfterCrossing} bytes. {_samplesAtOrAboveCritical}/{_samplesAfterCrossing} samples were at or above the Critical threshold ({_critical} bytes).");
         }
 
         internal async Task ReleaseAsync(CancellationToken cancellation)
