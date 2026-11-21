@@ -68,7 +68,7 @@ internal sealed partial class PlatformHarness : IDisposable
         return new AttemptFiles(DataRoot, name);
     }
 
-    /// <summary>Launches <paramref name="argv"/> (resolved like the node does) in a new attempt.</summary>
+    /// <summary>Launches <paramref name="argv"/> with an explicit fixture program in a new attempt.</summary>
     public WindowsAttemptHandle Launch(IReadOnlyList<string> argv, ContainerLimits? limits = null, IReadOnlyList<StepSpec>? launchSteps = null,
         IReadOnlyList<StepSpec>? endSteps = null, bool killWithNode = false, string? workingDirectory = null, int leftoverGraceMs = 5_000,
         IReadOnlyDictionary<string, string>? environment = null)
@@ -77,7 +77,30 @@ internal sealed partial class PlatformHarness : IDisposable
         var env = environment ?? Environment.GetEnvironmentVariables().Cast<System.Collections.DictionaryEntry>()
             .ToDictionary(entry => (string)entry.Key, entry => (string?)entry.Value ?? string.Empty, StringComparer.OrdinalIgnoreCase);
         var cwd = workingDirectory ?? Root;
-        var prepared = WindowsCommands.Prepare(new CommandRequest { Argv = argv, WorkingDirectory = cwd, Environment = env, TempDirectory = files.TempDirectory });
+        if (argv.Count == 0 || !Path.IsPathFullyQualified(argv[0]))
+        {
+            throw new ArgumentException("The fixture program must have an absolute path.", nameof(argv));
+        }
+
+        var program = argv[0];
+        var application = program;
+        var batch = WindowsProgramResolver.IsBatch(program);
+        if (batch)
+        {
+            var shell = WindowsProgramResolver.Value(env, "ComSpec");
+            application = shell is not null && File.Exists(shell)
+                ? shell
+                : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe");
+        }
+
+        var prepared = new PreparedCommand
+        {
+            Application = application,
+            CommandLine = batch ? WindowsCommandLine.BuildBatch(application, program, argv) : WindowsCommandLine.Build(argv),
+            Argv = argv,
+            Program = program,
+            ViaBatch = batch,
+        };
         var handle = (WindowsAttemptHandle)Platform.Launch(new AttemptLaunch
         {
             NodeName = NodeName,
