@@ -123,6 +123,8 @@ public sealed class RetainedQueueServiceTests
         Assert.Null(terminal.Error);
         Assert.Equal(TaskState.Cancelled, terminal.Value.Explanation.State);
         Assert.False(terminal.Value.Explanation.HasBlockingReason);
+        Assert.True(terminal.Value.Explanation.HasFeasibility);
+        Assert.False(terminal.Value.Explanation.LargeReservationActive);
         Assert.Null(execution.Platform);
         Assert.Empty(execution.RunningAttempts);
         Assert.Equal(0L, store.Read(reader => reader.Scalar("SELECT count(*) FROM attempt;")));

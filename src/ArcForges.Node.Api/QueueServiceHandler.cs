@@ -551,9 +551,8 @@ public sealed class QueueServiceHandler : QueueService.QueueServiceBase
         explanation.AvailableMemBytes = (ulong)Math.Max(0, availableMemory);
         explanation.AvailableCpuMillicores = (uint)Math.Clamp(cpuLimit - running.Sum(attempt => attempt.CpuGrant), 0, uint.MaxValue);
         explanation.PoolRunning = (uint)running.Count(attempt => attempt.Pool == row.Pool && !attempt.Light);
-        explanation.PoolMaxParallel = (uint)(snapshot.Pools.FirstOrDefault(pool => pool.Name == row.Pool)?.MaxParallel
-            ?? ExecutionSettings.MaxParallel(ParallelismMode.Auto, 0, snapshot.BudgetCpu));
-        explanation.LargeReservationActive = snapshot.Result.Reservation is not null;
+        explanation.PoolMaxParallel = (uint)ExecutionSettings.MaxParallel(ParallelismMode.Auto, 0, snapshot.BudgetCpu);
+        explanation.LargeReservationActive = false;
         var feasibility = AdmissionEngine.Classify((long)explanation.Request.MemExpectedBytes, settings.MaxShareMemory,
             settings.CapacityMemory - settings.ReserveMemory - (Execution.Resources?.Current?.UnmanagedMemory ?? 0), settings.MaxTaskMemory);
         explanation.Feasibility = ExecutionSupervisor.Word(feasibility);
@@ -593,8 +592,12 @@ public sealed class QueueServiceHandler : QueueService.QueueServiceBase
     private QueueSnapshot Snapshot()
     {
         var settings = Execution.Settings;
-        return QueueSnapshot.Empty(_node.Clock.GetUtcNow(), Execution.Resources?.Current?.BudgetCpu ?? settings.BudgetCpu,
-            Execution.Resources?.Current?.BudgetMemory ?? settings.MaxShareMemory, settings.GlobalMaxRunning, Execution.Resources?.Current?.Pressure ?? PressureLevel.Normal);
+        return new QueueSnapshot
+        {
+            BudgetCpu = Execution.Resources?.Current?.BudgetCpu ?? settings.BudgetCpu,
+            BudgetMemory = Execution.Resources?.Current?.BudgetMemory ?? settings.MaxShareMemory,
+            Pressure = Execution.Resources?.Current?.Pressure ?? PressureLevel.Normal,
+        };
     }
 
     private BudgetSummary Budget(QueueSnapshot snapshot, ExecutionSettings settings)
@@ -646,8 +649,8 @@ public sealed class QueueServiceHandler : QueueService.QueueServiceBase
             BuiltIn = pool.BuiltIn || DefaultPolicy.BuiltInPools.Contains(pool.Name),
             Weight = pool.HasWeight ? pool.Weight : 1,
             MaxParallelMode = pool.HasMaxParallelMode ? pool.MaxParallelMode : ParallelismMode.Auto,
-            EffectiveMaxParallel = (uint)(snapshot?.Pools.FirstOrDefault(limits => limits.Name == pool.Name)?.MaxParallel
-                ?? ExecutionSettings.MaxParallel(pool.HasMaxParallelMode ? pool.MaxParallelMode : ParallelismMode.Auto, pool.MaxParallelFixed, budgetCpu)),
+            EffectiveMaxParallel = (uint)ExecutionSettings.MaxParallel(
+                pool.HasMaxParallelMode ? pool.MaxParallelMode : ParallelismMode.Auto, pool.MaxParallelFixed, budgetCpu),
             DefaultPriority = pool.HasDefaultPriority ? pool.DefaultPriority : Priority.Normal,
             Paused = paused.Contains("*") || paused.Contains(pool.Name),
         };

@@ -12,34 +12,9 @@ using Google.Protobuf;
 
 namespace ArcForges.Node.Core.Execution;
 
-/// <summary>A queued task as the last admission pass saw it (<c>QueueService.GetQueue</c> and <c>ExplainTask</c>).</summary>
-/// <param name="TaskId">The task ID.</param>
-/// <param name="Title">Its title.</param>
-/// <param name="Pool">Its pool.</param>
-/// <param name="Effective">Its effective class after aging.</param>
-/// <param name="Owner">Its owner.</param>
-/// <param name="QueuedAt">When it was queued (microseconds).</param>
-/// <param name="Request">Its request.</param>
-/// <param name="Aged">Aging raised its class.</param>
-/// <param name="Keys">The effective keys it asks for.</param>
-public sealed record QueuedView(byte[] TaskId, string Title, string Pool, Priority Effective, ActorRef Owner, long QueuedAt, ResourceDemand Request, bool Aged,
-    IReadOnlyList<HeldKey> Keys);
-
-/// <summary>What the last admission pass computed (03 section 4), for the queue views.</summary>
+/// <summary>The resource and pool settings used by retained queue views.</summary>
 public sealed class QueueSnapshot
 {
-    /// <summary>When the pass ran.</summary>
-    public required DateTimeOffset At { get; init; }
-
-    /// <summary>The pass's outcome.</summary>
-    public required AdmissionResult Result { get; init; }
-
-    /// <summary>The queued tasks the pass considered, by base32 ID.</summary>
-    public required IReadOnlyDictionary<string, QueuedView> Tasks { get; init; }
-
-    /// <summary>The pools with their effective limits.</summary>
-    public required IReadOnlyList<PoolLimits> Pools { get; init; }
-
     /// <summary><c>B_cpu</c>.</summary>
     public long BudgetCpu { get; init; }
 
@@ -48,22 +23,6 @@ public sealed class QueueSnapshot
 
     /// <summary>The pressure level in force.</summary>
     public PressureLevel Pressure { get; init; } = PressureLevel.Normal;
-
-    /// <summary><c>global_max_running</c>.</summary>
-    public int GlobalMaxRunning { get; init; }
-
-    /// <summary>The empty snapshot.</summary>
-    public static QueueSnapshot Empty(DateTimeOffset at, long budgetCpu, long budgetMemory, int globalMax, PressureLevel pressure) => new()
-    {
-        At = at,
-        Result = new AdmissionResult(),
-        Tasks = new Dictionary<string, QueuedView>(StringComparer.Ordinal),
-        Pools = [],
-        BudgetCpu = budgetCpu,
-        BudgetMemory = budgetMemory,
-        GlobalMaxRunning = globalMax,
-        Pressure = pressure,
-    };
 }
 
 /// <summary>Controls recovered Task attempts, pressure, root limits and persisted pool settings.</summary>
