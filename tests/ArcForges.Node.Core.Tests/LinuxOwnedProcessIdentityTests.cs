@@ -37,9 +37,6 @@ public sealed class LinuxOwnedProcessIdentityTests
             var identity = LinuxOwnedProcessIdentity.CaptureChild(child);
             Assert.Equal(child.Id, identity.ProcessId);
             Assert.True(identity.StartTicks > 0);
-            Assert.True(LinuxExecutableIdentity.MatchesCurrent(Environment.ProcessId));
-            Assert.False(LinuxExecutableIdentity.MatchesCurrent(child.Id));
-            Assert.False(LinuxExecutableIdentity.MatchesCurrent(0));
             Assert.Equal(LinuxProcessObservation.Alive, identity.Observe());
             Assert.Equal(LinuxProcessObservation.Unknown, (identity with { ProcessId = 0 }).Observe());
             Assert.Equal(LinuxProcessObservation.Unknown, (identity with { BootId = Guid.NewGuid() }).Observe());

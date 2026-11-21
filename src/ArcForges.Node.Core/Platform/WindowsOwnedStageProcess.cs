@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.ComponentModel;
-using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using Microsoft.Win32.SafeHandles;
@@ -46,63 +45,10 @@ internal sealed record WindowsOwnedStageIdentity(string BootIdentity, int Proces
     }
 }
 
-/// <summary>The actual process created for a private producer. Exit checks and termination use its retained native handle.</summary>
+/// <summary>Read-only native process observations for persisted worker identities.</summary>
 [SupportedOSPlatform("windows")]
-internal sealed partial class WindowsOwnedStageProcess : IDisposable
+internal static partial class WindowsOwnedStageProcess
 {
-    private readonly Process _process;
-    private readonly WindowsOwnedStageIdentity _identity;
-    private bool _disposed;
-
-    internal WindowsOwnedStageProcess(Process process)
-    {
-        ArgumentNullException.ThrowIfNull(process);
-        _process = process;
-        var native = process.SafeHandle;
-        if (native.IsInvalid || ObserveHandle(native) != WindowsStageProcessObservation.Running)
-            throw new IOException("The owned Windows stage process is unavailable.");
-        _identity = new WindowsOwnedStageIdentity(BootIdentity.Read(), process.Id, CreationTimeOf(native));
-    }
-
-    internal SafeProcessHandle Handle => _process.SafeHandle;
-
-    internal WindowsOwnedStageIdentity SealedIdentity()
-    {
-        RequireLive();
-        return _identity;
-    }
-
-    internal void RequireLive()
-    {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        if (ObserveHandle(Handle) != WindowsStageProcessObservation.Running ||
-            CreationTimeOf(Handle) != _identity.CreationTime ||
-            !string.Equals(BootIdentity.Read(), _identity.BootIdentity, StringComparison.Ordinal))
-            throw new IOException("The exact owned Windows stage process is no longer live.");
-    }
-
-    internal bool WaitForActualExit(TimeSpan bound)
-    {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        if (bound < TimeSpan.Zero || bound.TotalMilliseconds > int.MaxValue) throw new ArgumentOutOfRangeException(nameof(bound));
-        return WaitForSingleObject(Handle, checked((uint)Math.Ceiling(bound.TotalMilliseconds))) == 0;
-    }
-
-    /// <summary>Reaper-only wait: no managed exit event substitutes for the actual process becoming signaled.</summary>
-    internal bool WaitForActualExit()
-    {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        return WaitForSingleObject(Handle, uint.MaxValue) == 0;
-    }
-
-    internal void TerminateOwnedProcess()
-    {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        if (ObserveHandle(Handle) == WindowsStageProcessObservation.Ended) return;
-        if (!TerminateProcess(Handle, 125) && ObserveHandle(Handle) != WindowsStageProcessObservation.Ended)
-            throw new IOException("The owned Windows stage process could not be terminated.", new Win32Exception(Marshal.GetLastPInvokeError()));
-    }
-
     internal static WindowsStageProcessObservation ObserveHandle(SafeProcessHandle process) => WaitForSingleObject(process, 0) switch
     {
         0 => WindowsStageProcessObservation.Ended,
@@ -119,13 +65,6 @@ internal sealed partial class WindowsOwnedStageProcess : IDisposable
 
     internal static SafeProcessHandle OpenObservedProcess(int pid) => OpenProcess(0x00101000u, false, checked((uint)pid));
 
-    public void Dispose()
-    {
-        if (_disposed) return;
-        _disposed = true;
-        _process.Dispose();
-    }
-
     [LibraryImport("kernel32.dll", SetLastError = true)]
     private static partial uint WaitForSingleObject(SafeProcessHandle handle, uint milliseconds);
 
@@ -135,8 +74,4 @@ internal sealed partial class WindowsOwnedStageProcess : IDisposable
 
     [LibraryImport("kernel32.dll", SetLastError = true)]
     private static partial SafeProcessHandle OpenProcess(uint access, [MarshalAs(UnmanagedType.Bool)] bool inherit, uint processId);
-
-    [LibraryImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static partial bool TerminateProcess(SafeProcessHandle process, uint exitCode);
 }
