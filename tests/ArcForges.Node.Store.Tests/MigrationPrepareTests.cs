@@ -87,6 +87,11 @@ public sealed class MigrationPrepareTests
             NodeStore.ContractVerifiedCopy(archive, clock);
         }
 
+        if (OperatingSystem.IsWindows())
+            AssertWindowsPrivate(staged.Path);
+        if (OperatingSystem.IsLinux())
+            Assert.Equal(StorePaths.PrivateDirectoryMode, File.GetUnixFileMode(staged.Path));
+
         using var result = NodeStore.OpenForV2Runtime(new NodeStoreOptions { DataRoot = staged.Path, BootIdentity = boot });
         Assert.Equal(20, result.Metadata.SchemaVersion);
         Assert.Equal(originalId, result.Metadata.NodeId.ToArray());

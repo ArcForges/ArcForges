@@ -1,8 +1,10 @@
 # Prepare and stage an offline Node migration
 
 Stop the original Node cleanly on its original host. Run the migration as the
-same local owner, on that same boot, with the verified predecessor's schema 15
-data root. Keep its database, owner lock, records and native custody evidence
+same local owner with the verified predecessor's schema 15 data root. Linux
+requires the original boot. Windows also recognizes settled records from a
+verifiable earlier boot on the same machine and checks the current named
+owners. Keep the database, owner lock, records and native custody evidence
 together. Resolve any reported custody blockers before proceeding.
 
 ```text
