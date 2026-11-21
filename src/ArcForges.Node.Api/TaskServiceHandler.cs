@@ -683,7 +683,6 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
 
         if (!replayed && result.OutcomeCase == TaskServiceCancelTaskResponse.OutcomeOneofCase.Value)
         {
-            Execution.Kick();
             _node.Log.Info("api.task.cancel", new LogField("task", IdText.Format(id)), new LogField("origin", caller.Origin),
                 new LogField("running", stopAttempt is not null));
         }
@@ -782,7 +781,7 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
         }
 
         var id = request.TaskId.Value.ToByteArray();
-        var (result, replayed) = await _api.IdempotentAsync(request, request.Meta, caller, "SetTaskPriority", TaskServiceSetTaskPriorityResponse.Parser,
+        var (result, _) = await _api.IdempotentAsync(request, request.Meta, caller, "SetTaskPriority", TaskServiceSetTaskPriorityResponse.Parser,
             failure => new TaskServiceSetTaskPriorityResponse { Meta = Meta(request.Meta), Error = failure }, command =>
             {
                 EnsureStillSettled(command, id, settled);
@@ -795,10 +794,6 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
                         Value = new TaskServiceSetTaskPriorityValue { Receipt = new Receipt { CommandId = request.Meta.CommandId, Effect = EffectCertainty.Happened }, Queue = queue },
                     };
             }, settled ? null : gate).ConfigureAwait(false);
-        if (!replayed && result.OutcomeCase == TaskServiceSetTaskPriorityResponse.OutcomeOneofCase.Value)
-        {
-            Execution.Kick();
-        }
 
         return result;
     }

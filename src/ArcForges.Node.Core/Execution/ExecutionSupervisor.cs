@@ -193,10 +193,8 @@ public sealed class PreparedSubmitStorage
 public readonly record struct CallerKey(int ProcessId, long StartTicks);
 
 /// <summary>
-/// The execution supervisor (architecture 02 section 1; 04): admission (03 section 4, in <c>ExecutionSupervisor.Scheduling.cs</c>), launch
-/// through the platform, the enforcement loop (output tailer and index, the output limit, timeouts and CPU-time limits, service readiness,
-/// the cancellation sequence, exit detection and the node heartbeat), finalization from the durable exit records with the automatic
-/// retries of AD-0006 section 4, recovery after a node restart or a machine reboot (LOST), and <c>cancel_when_caller_gone</c>.
+/// Recovers and drains existing legacy Task attempts. The supervisor enforces output and time limits, observes readiness and exit,
+/// processes cancellation and caller loss, and records final outcomes from durable evidence.
 /// </summary>
 public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsyncDisposable, IPressureResponse
 {
@@ -238,7 +236,6 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
     private readonly string _dataRoot;
     private readonly TaskSecrets _secrets;
     private readonly Task _keysReady;
-    private readonly ILaunchStepProvider? _steps;
     private readonly ExecutionFaults _faults;
     private readonly Action<IAttemptHandle>? _forcedBeforeStart;
     private readonly Action<IAttemptHandle, bool>? _startObserved;
@@ -247,8 +244,6 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
     private readonly ConcurrentDictionary<string, AsyncPulse> _taskPulses = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, CallerKey> _bindings = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<CallerKey, int> _callerConnections = new();
-    private readonly AsyncPulse _admission = new();
-    private int _kicked;
     private readonly AsyncPulse _loopWake = new();
     private readonly CancellationTokenSource _stop = new();
 
@@ -259,7 +254,6 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
     private Thread? _loop;
     private long _lastSettingsRead;
     private readonly Lock _settingsLock = new();
-    private int _launching;
     private readonly Lock _preemptGate = new();
     private readonly CriticalShedding _shedding = new();
     private RunningAttempt? _lastVictim;
@@ -278,7 +272,6 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         Platform = options.Platform;
         _secrets = options.Secrets;
         _keysReady = options.KeysReady;
-        _steps = options.Steps;
         _faults = options.Faults;
         _forcedBeforeStart = options.ForcedBeforeStart;
         _startObserved = options.StartObserved;
@@ -566,15 +559,8 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         Adoptions.Start();
     }
 
-    /// <summary>Wakes the admission loop; a kick that arrives during a pass runs another pass right after it (a kick is never lost).</summary>
-    public void Kick()
-    {
-        Volatile.Write(ref _kicked, 1);
-        _admission.Pulse();
-    }
-
     /// <summary>
-    /// The node's shutdown (02 section 2): admissions stop; <c>kill_with_node</c> attempts are terminated and recorded
+    /// The node's shutdown (02 section 2): <c>kill_with_node</c> attempts are terminated and recorded
     /// (<c>NODE_SHUTDOWN</c>); every other attempt keeps running under its holder, whose guard takes over the disk limits.
     /// </summary>
     public async Task StopAsync()
@@ -636,8 +622,8 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
     /// a stop is due only while available memory is below the Critical threshold at that evaluation, or once per newly observed OOM kill,
     /// and never before the previous victim has finalized and one more sample was taken. Non-preemptible attempts are never stopped for
     /// pressure; when only they remain while available memory is below the Critical threshold, a critical <c>MEMORY_PRESSURE</c> finding
-    /// leaves the decision to the user. Tight (admission) and the Pressure-level freeze or requeue join with the scheduler (AF-SCHED-01)
-    /// through <see cref="IPressureResponse"/>.
+    /// leaves the decision to the user. The pressure response also adjusts root limits, freezes or requeues affected attempts, and thaws
+    /// those that were pressure-frozen.
     /// </summary>
     void IPressureResponse.Respond(PressureLevel level, PressureLevel previous, ResourceState state)
     {
@@ -831,15 +817,13 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         return value;
     }
 
-    /// <summary>After a submission committed: binds the caller and wakes the admission loop.</summary>
+    /// <summary>Binds a committed Task to its caller when caller tracking applies.</summary>
     public void Submitted(ReadOnlySpan<byte> taskId, CallerKey? caller)
     {
         if (caller is { } key)
         {
             _bindings[IdText.Format(taskId)] = key;
         }
-
-        Kick();
     }
 
     /// <summary>The caller process a task is bound to by <c>cancel_when_caller_gone</c>, or <see langword="null"/> (tests read it).</summary>
@@ -1497,7 +1481,6 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
                     }
 
                     _log.Info("execution.caller_gone", new LogField("task", task), new LogField("cancelled", error is null));
-                    Kick();
                     break;
                 }
                 catch (CommandQueueFullException)
@@ -2017,142 +2000,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         return records;
     }
 
-    // ---------------------------------------------------------------------------------------------------------------- admission
-
-    private async Task LaunchAsync(RunningAttempt attempt, Admitted admitted, IExecutionPlatform platform, ExecutionSettings settings, Scheduling.ToolInvocation? tool)
-    {
-        var row = admitted.Row;
-        var files = attempt.Files;
-        var snapshot = row.EnvDigest is { } digest ? _store.Read(reader => EnvSnapshots.Get(reader, digest)) : null;
-        var unseal = _secrets.Unseal(row.TaskId);
-        if (unseal.Status == UnsealStatus.Unavailable)
-        {
-            throw new InvalidOperationException("the task's sealed environment values are unavailable: " + unseal.UnavailableReason);
-        }
-
-        var spec = SubmittedEnvironment.Restore(row.Spec, snapshot, unseal.Values);
-        if (tool is not null)
-        {
-            // 03 section 5.3: the adapter's invocation carries the tool-level setting for the CPU grant (never called a limit).
-            spec.Command = new CommandSpec { Argv = new ArgvCommand() };
-            spec.Command.Argv.Argv.Add(tool.Argv);
-        }
-        Directory.CreateDirectory(files.Directory);
-        if (OperatingSystem.IsWindows())
-        {
-            // FILE_CREATE returns the exact newly created directory handle. Persist its identity and the real task
-            // owner before exposing it to the attempt. A collision is never adopted as node-created provenance.
-            var temporaryRoot = Path.Combine(_dataRoot, "tmp");
-            StorePaths.CreatePrivateDirectory(temporaryRoot);
-            using var root = WorkspacePath.OpenRoot(temporaryRoot);
-            using var directory = root.CreateWindowsAttemptDirectory(attempt.Name);
-            try
-            {
-                await _processor.ExecuteAsync(context =>
-                {
-                    AttemptTempProvenance.Record(context.Transaction, root, directory, attempt.Name, attempt.AttemptId, attempt.TaskId);
-                    return 0;
-                }, CommitDurability.Full).ConfigureAwait(false);
-            }
-            catch (Microsoft.Data.Sqlite.SqliteException exception)
-            {
-                // A failed or uncertain registration never authorizes cleanup. Leave the directory untouched.
-                throw new InvalidOperationException("The attempt directory provenance could not be committed.", exception);
-            }
-        }
-        else
-        {
-            // Linux mkdir followed by a name-based open does not return an identity for the exact create.
-            // Preserve task execution but make no ownership claim and never auto-clean this unproven directory.
-            Directory.CreateDirectory(files.TempDirectory);
-        }
-        var environment = ResolveEnvironment(spec, row, attempt, platform);
-        var prepared = platform.Prepare(new CommandRequest
-        {
-            Argv = spec.Command.FormCase == CommandSpec.FormOneofCase.Argv ? [.. spec.Command.Argv.Argv] : null,
-            Shell = spec.Command.FormCase == CommandSpec.FormOneofCase.Shell ? spec.Command.Shell.Kind : ShellKind.Unspecified,
-            Script = spec.Command.FormCase == CommandSpec.FormOneofCase.Shell ? spec.Command.Shell.Script : null,
-            ShellPath = spec.Command.FormCase == CommandSpec.FormOneofCase.Shell && spec.Command.Shell.HasShellPath ? spec.Command.Shell.ShellPath : null,
-            WorkingDirectory = spec.WorkingDirectory,
-            Environment = environment,
-            TempDirectory = files.TempDirectory,
-        });
-        var stdinKind = StdinKind.None;
-        string? stdinPath = null;
-        switch (spec.Stdin?.Mode ?? StdinMode.None)
-        {
-            case StdinMode.Bytes:
-                stdinKind = StdinKind.File;
-                stdinPath = Path.Combine(files.TempDirectory, "stdin.bin");
-                File.WriteAllBytes(stdinPath, spec.Stdin!.Data.ToByteArray());
-                break;
-            case StdinMode.File:
-                stdinKind = StdinKind.File;
-                stdinPath = spec.Stdin!.FilePath;
-                break;
-            case StdinMode.Stream:
-                stdinKind = StdinKind.Stream;
-                break;
-        }
-
-        HelperFiles.WriteAtomically(files.GuardPath, new GuardSpec
-        {
-            AttemptId = attempt.Name,
-            OutputFiles = attempt.DiscardOutput ? [] : [files.StdoutPath, files.StderrPath],
-            TempDirectory = files.TempDirectory,
-            Volumes = [.. new[] { spec.WorkingDirectory, files.TempDirectory, files.Directory }.Select(path => Path.GetPathRoot(path) ?? path).Distinct(StringComparer.OrdinalIgnoreCase)],
-            MaxOutputBytes = settings.MaxOutputBytes,
-            MaxTmpBytes = settings.MaxTmpBytes,
-            MaxTmpEntries = settings.MaxTmpEntries,
-            CriticalFreeBytes = settings.CriticalFreeBytes,
-            DiskLimitAction = settings.DiskLimitAction,
-            TakeoverMs = settings.GuardTakeoverMs,
-            HeartbeatPath = AttemptFiles.HeartbeatPath(_dataRoot),
-            Preemptible = spec.Resources?.Preemptible == true,
-            Pausable = false,
-        }.ToJson());
-        var (launchSteps, endSteps) = _steps?.StepsFor(spec, files) ?? ([], []);
-        var handle = platform.Launch(new AttemptLaunch
-        {
-            NodeName = NodeName,
-            Files = files,
-            Command = prepared,
-            Environment = [.. environment.Select(pair => pair.Key + "=" + pair.Value)],
-            WorkingDirectory = spec.WorkingDirectory,
-            Stdin = stdinKind,
-            StdinPath = stdinPath,
-            Limits = new ContainerLimits
-            {
-                CpuWeight = ExecutionSettings.Weight(row.Priority),
-                CommitLimitBytes = (long)(settings.CommitFactor * admitted.Ceiling),
-                CommitNotificationBytes = admitted.Ceiling,
-
-                // Linux (03 section 5.2): MemoryHigh = 1.25 x mem_expected, MemoryMax = mem_ceiling, MemorySwapMax = swap_allowance.
-                MemoryHighBytes = attempt.MemoryHighBytes = Math.Min((long)(1.25 * admitted.Expected), admitted.Ceiling),
-                MemoryMaxBytes = admitted.Ceiling,
-                SwapMaxBytes = settings.SwapAllowance,
-            },
-            KillWithNode = attempt.KillWithNode,
-            DiscardOutput = attempt.DiscardOutput,
-            LaunchSteps = launchSteps,
-            EndSteps = endSteps,
-        });
-        attempt.Handle = handle;
-        handle.Changed += () => _loopWake.Pulse();
-        attempt.OpenTail();
-        lock (attempt)
-        {
-            if (attempt.StopReason is { } stop && !attempt.Forced)
-            {
-                // Cancelled while it was being launched: there is no root to signal yet, so the forced phase applies.
-                ForceWhenStarted(attempt, handle, stop);
-            }
-        }
-
-        _log.Info("execution.launched", new LogField("attempt", attempt.Name), new LogField("container", handle.ContainerName),
-            new LogField("killWithNode", attempt.KillWithNode), new LogField("launchSteps", launchSteps.Count), new LogField("endSteps", endSteps.Count));
-        _ = handle.Started.ContinueWith(started => OnStartedAsync(attempt, started.IsCompletedSuccessfully ? started.Result : null), TaskScheduler.Default).Unwrap();
-    }
+    // ---------------------------------------------------------------------------------------------------------------- recovered starts
 
     private async Task OnStartedAsync(RunningAttempt attempt, RootProcess? root, DateTimeOffset? recoveredStart = null)
     {
@@ -2237,29 +2085,6 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         }
 
         return environment;
-    }
-
-    private Dictionary<string, string> ResolveEnvironment(TaskSpec spec, TaskRow row, RunningAttempt attempt, IExecutionPlatform platform)
-    {
-        var environment = ValidationEnvironment(spec, platform.EnvironmentNames);
-        AddArcForgesVariables(environment, row, attempt);
-        return environment;
-    }
-
-    private void AddArcForgesVariables(Dictionary<string, string> environment, TaskRow row, RunningAttempt attempt)
-    {
-        environment["ARCFORGES_TASK_ID"] = IdText.Format(row.TaskId);
-        environment["ARCFORGES_ATTEMPT_ID"] = attempt.Name;
-        environment["ARCFORGES_NODE_ID"] = NodeName;
-        if (row.Owner.SessionId is { Value.Length: 16 } session)
-        {
-            environment["ARCFORGES_SESSION"] = IdText.Format(session);
-        }
-
-        // 06 section 4: TMP, TEMP and TMPDIR point to the attempt's temporary directory.
-        environment["TMP"] = attempt.Files.TempDirectory;
-        environment["TEMP"] = attempt.Files.TempDirectory;
-        environment["TMPDIR"] = attempt.Files.TempDirectory;
     }
 
     // ------------------------------------------------------------------------------------------------------------- finalization
@@ -2483,8 +2308,6 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         {
             _log.Warning("execution.finalize.cleanup_failed", new LogField("attempt", attempt.Name), new LogField("errorType", exception.GetType().Name));
         }
-
-        Kick();
     }
 
     /// <summary>
@@ -2730,33 +2553,6 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         return 0;
     }
 
-    private async Task SpawnFailedAsync(RunningAttempt? attempt, string detail)
-    {
-        if (attempt is null)
-        {
-            return;
-        }
-
-        attempt.Finalizing = true;
-        try
-        {
-            await RecordFinalizingAsync(attempt).ConfigureAwait(false);
-            var reason = attempt.StopReason ?? TerminationReason.SpawnFailed;
-            var outcome = new AttemptOutcome(reason,
-                reason == TerminationReason.SpawnFailed ? EffectCertainty.DidNotHappen : EffectCertainty.Happened, null, detail, null);
-            await _processor.ExecuteAsync(context => RecordFinished(context, attempt, null, null, outcome, [], Settings, attempt.Handle?.Root))
-                .ConfigureAwait(false);
-        }
-        finally
-        {
-            _running.TryRemove(attempt.Name, out _);
-            attempt.Dispose();
-            TaskPulse(attempt.TaskId).Pulse();
-            CleanupTemp(attempt);
-            Kick();
-        }
-    }
-
     private async Task RecordLostAsync(AttemptRow row, string evidence, string reason)
     {
         await _processor.ExecuteAsync(context =>
@@ -2939,8 +2735,6 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
 
     private sealed record RecoveredAccounting(string Pool, string? Session, string? Workspace, long Cpu, long Expected, long Ceiling, long Accounted, bool Ready,
         List<Scheduling.HeldKey> Keys);
-
-    private sealed record Admitted(TaskRow Row, int Number, long Expected, long Ceiling);
 
     private sealed record AttemptOutcome(TerminationReason Reason, EffectCertainty Effect, int? ExitCode, string? Detail, string? LimitEnforcedBy,
         int? Signal = null, bool? CoreDumped = null);

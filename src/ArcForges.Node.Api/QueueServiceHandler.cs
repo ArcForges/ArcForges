@@ -15,10 +15,7 @@ using Grpc.Core;
 namespace ArcForges.Node.Api;
 
 /// <summary>
-/// <c>arcforges.node.v1.QueueService</c> (queue.proto; architecture 03 section 4): the queue in admission order with the budget summary,
-/// <c>ExplainTask</c> (blocking reason, feasibility, the numbers, keys and their holders, dependencies), pools and their mutations as
-/// policy revisions, pausing pools, and <c>SetParallelism</c> (R-EXE-013). The admission order and the reasons come from the scheduler's
-/// last pass (<see cref="ExecutionSupervisor.Queue"/>); pool, policy and parallelism changes wake admission at once.
+/// Preserves legacy queue queries, task explanations, budgets and pool settings while existing Task attempts drain.
 /// </summary>
 public sealed class QueueServiceHandler : QueueService.QueueServiceBase
 {
@@ -383,7 +380,6 @@ public sealed class QueueServiceHandler : QueueService.QueueServiceBase
             }, gate).ConfigureAwait(false);
         if (!replayed && result.OutcomeCase == QueueServicePausePoolResponse.OutcomeOneofCase.Value)
         {
-            Execution.PoolsChanged();
             _node.Log.Info("api.queue.paused", new LogField("pool", request.All ? "*" : request.Pool), new LogField("origin", caller.Origin));
         }
 
@@ -409,7 +405,7 @@ public sealed class QueueServiceHandler : QueueService.QueueServiceBase
             return response;
         }
 
-        var (result, replayed) = await _api.IdempotentAsync(request, request.Meta, caller, "ResumePool", QueueServiceResumePoolResponse.Parser,
+        var (result, _) = await _api.IdempotentAsync(request, request.Meta, caller, "ResumePool", QueueServiceResumePoolResponse.Parser,
             failure => new QueueServiceResumePoolResponse { Meta = ApiCommands.Meta(request.Meta), Error = failure }, command =>
             {
                 Execution.SetPoolPaused(command, request.All ? null : request.Pool, paused: false);
@@ -419,10 +415,6 @@ public sealed class QueueServiceHandler : QueueService.QueueServiceBase
                     Value = new QueueServiceResumePoolValue { Receipt = new Receipt { CommandId = request.Meta.CommandId, Effect = EffectCertainty.Happened } },
                 };
             }, gate).ConfigureAwait(false);
-        if (!replayed && result.OutcomeCase == QueueServiceResumePoolResponse.OutcomeOneofCase.Value)
-        {
-            Execution.PoolsChanged();
-        }
 
         return result;
     }
@@ -626,7 +618,7 @@ public sealed class QueueServiceHandler : QueueService.QueueServiceBase
     private QueueSnapshot Snapshot()
     {
         var settings = Execution.Settings;
-        return Execution.Queue ?? QueueSnapshot.Empty(_node.Clock.GetUtcNow(), Execution.Resources?.Current?.BudgetCpu ?? settings.BudgetCpu,
+        return QueueSnapshot.Empty(_node.Clock.GetUtcNow(), Execution.Resources?.Current?.BudgetCpu ?? settings.BudgetCpu,
             Execution.Resources?.Current?.BudgetMemory ?? settings.MaxShareMemory, settings.GlobalMaxRunning, Execution.Resources?.Current?.Pressure ?? PressureLevel.Normal);
     }
 
