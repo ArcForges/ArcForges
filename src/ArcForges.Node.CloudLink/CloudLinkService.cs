@@ -859,7 +859,7 @@ internal sealed partial class CloudLinkService : ICloudLinkView, IChannelHost, I
 
         if (changed)
         {
-            await PublishAsync(null).ConfigureAwait(false);
+            await PublishAsync(TakeNotice()).ConfigureAwait(false);
         }
     }
 
