@@ -26,6 +26,36 @@ public static partial class BootIdentity
         return "linux:" + bootId;
     }
 
+    /// <summary>Compares boots only when both identities name the same validated Windows machine.</summary>
+    internal static bool TryCompareWindowsBoot(string? recorded, string? current, out bool sameBoot)
+    {
+        sameBoot = false;
+        if (!TryParseWindowsBoot(recorded, out var recordedMachine, out var recordedTime) ||
+            !TryParseWindowsBoot(current, out var currentMachine, out var currentTime) || recordedMachine != currentMachine)
+        {
+            return false;
+        }
+
+        sameBoot = recordedTime == currentTime;
+        return true;
+    }
+
+    private static bool TryParseWindowsBoot(string? value, out Guid machine, out long time)
+    {
+        machine = Guid.Empty;
+        time = 0;
+        if (value is null || !value.StartsWith("windows:", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var identity = value.AsSpan(8);
+        var separator = identity.IndexOf(':');
+        return separator == 36 && Guid.TryParseExact(identity[..separator], "D", out machine) && machine != Guid.Empty
+            && long.TryParse(identity[(separator + 1)..], NumberStyles.None, CultureInfo.InvariantCulture, out time)
+            && time > 0 && time <= DateTimeOffset.MaxValue.ToFileTime() / TimeSpan.TicksPerSecond;
+    }
+
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     private static unsafe string ReadWindows()
     {

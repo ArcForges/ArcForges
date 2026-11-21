@@ -10,28 +10,39 @@ namespace ArcForges.Node.Core.Platform;
 internal enum WindowsStageProcessObservation { Unknown, Running, Ended }
 
 /// <summary>Persisted process creation identity; an integer HANDLE is never persisted as identity or exit proof.</summary>
-[SupportedOSPlatform("windows")]
 internal sealed record WindowsOwnedStageIdentity(string BootIdentity, int ProcessId, long CreationTime)
 {
-    internal WindowsStageProcessObservation Observe()
+    [SupportedOSPlatform("windows")]
+    internal WindowsStageProcessObservation Observe() =>
+        Observe(global::ArcForges.Node.Core.Platform.BootIdentity.Read, ObserveExactProcess);
+
+    internal WindowsStageProcessObservation Observe(Func<string?> readBoot,
+        Func<int, long, WindowsStageProcessObservation> observeProcess)
     {
         if (ProcessId <= 0 || CreationTime <= 0 || string.IsNullOrEmpty(BootIdentity))
             return WindowsStageProcessObservation.Unknown;
         try
         {
-            if (!string.Equals(BootIdentity, global::ArcForges.Node.Core.Platform.BootIdentity.Read(), StringComparison.Ordinal))
-                return WindowsStageProcessObservation.Ended;
-            using var process = WindowsOwnedStageProcess.OpenObservedProcess(ProcessId);
-            if (process.IsInvalid)
-                return Marshal.GetLastPInvokeError() == 87 ? WindowsStageProcessObservation.Ended : WindowsStageProcessObservation.Unknown;
-            if (WindowsOwnedStageProcess.CreationTimeOf(process) != CreationTime)
-                return WindowsStageProcessObservation.Ended;
-            return WindowsOwnedStageProcess.ObserveHandle(process);
+            if (!global::ArcForges.Node.Core.Platform.BootIdentity.TryCompareWindowsBoot(BootIdentity, readBoot(), out var sameBoot))
+                return WindowsStageProcessObservation.Unknown;
+            return sameBoot ? observeProcess(ProcessId, CreationTime) : WindowsStageProcessObservation.Ended;
         }
-        catch (Exception exception) when (exception is IOException or InvalidOperationException or UnauthorizedAccessException or Win32Exception)
+        catch (Exception exception) when (exception is IOException or InvalidOperationException or UnauthorizedAccessException or
+            Win32Exception or System.Security.SecurityException)
         {
             return WindowsStageProcessObservation.Unknown;
         }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static WindowsStageProcessObservation ObserveExactProcess(int processId, long creationTime)
+    {
+        using var process = WindowsOwnedStageProcess.OpenObservedProcess(processId);
+        if (process.IsInvalid)
+            return Marshal.GetLastPInvokeError() == 87 ? WindowsStageProcessObservation.Ended : WindowsStageProcessObservation.Unknown;
+        if (WindowsOwnedStageProcess.CreationTimeOf(process) != creationTime)
+            return WindowsStageProcessObservation.Ended;
+        return WindowsOwnedStageProcess.ObserveHandle(process);
     }
 }
 

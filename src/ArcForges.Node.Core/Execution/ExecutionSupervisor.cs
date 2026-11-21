@@ -447,11 +447,9 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
     internal LegacyBootProof OriginalBoot(string? recordedBoot)
     {
         var currentBoot = _store.Metadata.BootIdentity;
-        if (TryReadWindowsBoot(recordedBoot, out var recordedMachine, out var recordedTime)
-            && TryReadWindowsBoot(currentBoot, out var currentMachine, out var currentTime)
-            && recordedMachine == currentMachine)
+        if (BootIdentity.TryCompareWindowsBoot(recordedBoot, currentBoot, out var sameBoot))
         {
-            return recordedTime == currentTime ? LegacyBootProof.Current : LegacyBootProof.EndedOnThisHost;
+            return sameBoot ? LegacyBootProof.Current : LegacyBootProof.EndedOnThisHost;
         }
 
         // Linux records only the boot UUID. Different UUIDs cannot establish that the original and current host are the same.
@@ -459,22 +457,6 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             && recordedBoot.StartsWith("linux:", StringComparison.Ordinal)
             && Guid.TryParseExact(recordedBoot.AsSpan(6), "D", out var linuxBoot) && linuxBoot != Guid.Empty
             ? LegacyBootProof.Current : LegacyBootProof.Unknown;
-    }
-
-    private static bool TryReadWindowsBoot(string? value, out Guid machine, out long time)
-    {
-        machine = Guid.Empty;
-        time = 0;
-        if (value is null || !value.StartsWith("windows:", StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        var identity = value.AsSpan(8);
-        var separator = identity.IndexOf(':');
-        return separator == 36 && Guid.TryParseExact(identity[..separator], "D", out machine) && machine != Guid.Empty
-            && long.TryParse(identity[(separator + 1)..], NumberStyles.None, CultureInfo.InvariantCulture, out time)
-            && time > 0 && time <= DateTimeOffset.MaxValue.ToFileTime() / TimeSpan.TicksPerSecond;
     }
 
     /// <summary>
