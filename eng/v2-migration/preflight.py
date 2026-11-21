@@ -57,6 +57,7 @@ def offline_file(path: Path):
     """Hold native read protection without opening a writable handle or creating a lock file."""
     if os.name == "nt":
         import ctypes
+        import msvcrt
         from ctypes import wintypes
 
         kernel = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -69,10 +70,17 @@ def offline_file(path: Path):
         if handle == wintypes.HANDLE(-1).value:
             raise InspectionRefused("snapshot_locked_or_unreadable")
         try:
-            with path.open("rb") as stream:
+            fd = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+        except (OSError, ValueError):
+            kernel.CloseHandle(handle)
+            raise
+        # The descriptor owns the native handle. Keep the lock and the snapshot read
+        # on that same file even if the path is redirected after CreateFileW.
+        try:
+            with os.fdopen(fd, "rb", closefd=False) as stream:
                 yield stream
         finally:
-            kernel.CloseHandle(handle)
+            os.close(fd)
     else:
         import fcntl
 

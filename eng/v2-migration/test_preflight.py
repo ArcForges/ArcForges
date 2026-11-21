@@ -77,6 +77,14 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual([], list(self.root.iterdir()))
         self.assertFalse(result["destructive_contraction_allowed"])
 
+    @unittest.skipUnless(os.name == "nt", "Windows native read protection")
+    def test_windows_reads_the_native_handle_without_reopening_the_path(self):
+        fixture(self.database)
+        content = self.database.read_bytes()
+        with mock.patch.object(Path, "open", side_effect=AssertionError("snapshot path reopened")):
+            with preflight.offline_file(self.database) as stream:
+                self.assertEqual(content, stream.read())
+
     def test_real_schema15_snapshot_is_unchanged_and_cohort_stays_unknown(self):
         fixture(self.database)
         before = {p.name: p.read_bytes() for p in self.root.iterdir()}
