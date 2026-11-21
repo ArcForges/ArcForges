@@ -102,13 +102,6 @@ internal static partial class WindowsStageChannel
         }
     }
 
-    internal static void RequireClient(NamedPipeServerStream pipe, WindowsOwnedStageProcess process)
-    {
-        process.RequireLive();
-        if (!GetNamedPipeClientProcessId(pipe.SafePipeHandle, out var pid) || pid != process.ProcessId) throw Failure();
-        RequireSameExecutable(process.Handle);
-    }
-
     internal static void RequireServer(NamedPipeClientStream pipe, SafeProcessHandle parent, int expectedPid, long creation)
     {
         if (!GetNamedPipeServerProcessId(pipe.SafePipeHandle, out var pid) || pid != expectedPid ||
@@ -146,9 +139,6 @@ internal static partial class WindowsStageChannel
     [return: MarshalAs(UnmanagedType.Bool)]
     private static unsafe partial bool QueryFullProcessImageName(SafeProcessHandle process, uint flags,
         char* path, ref uint size);
-    [LibraryImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static partial bool GetNamedPipeClientProcessId(SafePipeHandle pipe, out uint processId);
     [LibraryImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool GetNamedPipeServerProcessId(SafePipeHandle pipe, out uint processId);

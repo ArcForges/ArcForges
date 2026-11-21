@@ -1,19 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Globalization;
-using ArcForges.Contracts.Node.V1;
-using ArcForges.Node.Platform;
 
 namespace ArcForges.Node.Core.Execution;
-
-/// <summary>
-/// Supplies an attempt's launch and end steps (04 section 3). Toolchain adapters implement it (the per-attempt compiler servers of
-/// AF-TOOL-02); without a provider an attempt has no steps.
-/// </summary>
-public interface ILaunchStepProvider
-{
-    /// <summary>The launch and end steps of an attempt of <paramref name="spec"/>.</summary>
-    (IReadOnlyList<StepSpec> Launch, IReadOnlyList<StepSpec> End) StepsFor(TaskSpec spec, AttemptFiles files);
-}
 
 /// <summary>
 /// Controlled faults for fault-injection tests (16 section 1), honoured only with <c>--test-mode</c> (02 section 4: test hooks), from

@@ -156,12 +156,6 @@ public sealed record NodeHostOptions
     /// </summary>
     internal Action<IAttemptHandle, bool>? ForcedPhase { get; init; }
 
-    /// <summary>Launch and end steps of attempts (toolchain adapters; tests supply synthetic steps).</summary>
-    public ILaunchStepProvider? LaunchSteps { get; init; }
-
-    /// <summary>The tool-level concurrency hook of the adapters (03 section 5.3; synthetic adapters in tests).</summary>
-    public ArcForges.Node.Core.Scheduling.IToolConcurrency? ToolConcurrency { get; init; }
-
     /// <summary>Linux: the root slice (component tests give each node its own; default <c>arcforges.slice</c>, or the test hook in test mode).</summary>
     public string? LinuxSlice { get; init; }
 
@@ -420,10 +414,6 @@ public static class NodeHost
             Clock = clock,
             DataRoot = dataRoot,
             Platform = platform,
-            Secrets = new TaskSecrets(store, keys),
-            KeysReady = keyLoad,
-            Steps = options.LaunchSteps,
-            Tools = options.ToolConcurrency,
             Faults = faults,
             Heartbeat = heartbeat,
             Unenforced = platform is not null && !NodeCapabilities.FullyEnforced(capabilities),
@@ -530,19 +520,24 @@ public static class NodeHost
             log.Info("node.recovering", new LogField("uncleanShutdown", unclean), new LogField("bootChanged", bootChanged),
                 new LogField("storeCreated", store.Opening.Created), new LogField("migratedFrom", store.Opening.MigratedFrom ?? 0),
                 new LogField("generation", journal.Generation));
-            if (execution is not null)
+            try
             {
-                try
+                if (!protectedStorage)
                 {
-                    await RecoverLegacyAsync(options, node, execution, recovery).ConfigureAwait(false);
+                    await RecoverFileCustodyAsync(node).ConfigureAwait(false);
                 }
-                catch (LegacyCustodyUnavailableException exception)
+
+                if (execution is not null)
                 {
-                    log.Error("node.legacy_custody.unavailable", exception);
-                    await options.Error.WriteLineAsync("arcforges: legacy process custody could not be confirmed. Retry when the original platform scope is available."
-                        .AsMemory(), cancellationToken).ConfigureAwait(false);
-                    return NodeExitCodes.Failure;
+                    await RecoverLegacyExecutionAsync(options, node, execution, recovery).ConfigureAwait(false);
                 }
+            }
+            catch (LegacyCustodyUnavailableException exception)
+            {
+                log.Error("node.legacy_custody.unavailable", exception);
+                await options.Error.WriteLineAsync("arcforges: legacy process custody could not be confirmed. Retry when the original platform scope is available."
+                    .AsMemory(), cancellationToken).ConfigureAwait(false);
+                return NodeExitCodes.Failure;
             }
 
             if (node.Sandboxes is { } recoveredSandboxes)
@@ -684,7 +679,7 @@ public static class NodeHost
         }
     }
 
-    private static async Task RecoverLegacyAsync(NodeHostOptions options, NodeRuntime node, ExecutionSupervisor execution, RecoveryReport recovery)
+    private static async Task RecoverFileCustodyAsync(NodeRuntime node)
     {
         // Persist uncertainty before enabling any legacy API that can observe or mutate its target.
         var interruptedFiles = await node.Processor.ExecuteAsync(context =>
@@ -702,7 +697,10 @@ public static class NodeHost
         {
             node.Log.Warning("node.file_recovery.stages_terminal", new LogField("count", recoveredStages));
         }
+    }
 
+    private static async Task RecoverLegacyExecutionAsync(NodeHostOptions options, NodeRuntime node, ExecutionSupervisor execution, RecoveryReport recovery)
+    {
         foreach (var participant in options.Recovery.Prepend(execution))
         {
             await participant.RecoverAsync(recovery, node.Processor, node.Stopping).ConfigureAwait(false);

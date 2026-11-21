@@ -3,69 +3,6 @@ using ArcForges.Contracts.Node.V1;
 
 namespace ArcForges.Node.Platform;
 
-/// <summary>What to run: an argument vector or a shell script, in a working directory, with the resolved environment.</summary>
-public sealed class CommandRequest
-{
-    /// <summary>The argument vector (argv mode), or <see langword="null"/> in shell mode.</summary>
-    public IReadOnlyList<string>? Argv { get; init; }
-
-    /// <summary>The shell kind (shell mode).</summary>
-    public ShellKind Shell { get; init; }
-
-    /// <summary>The script (shell mode).</summary>
-    public string? Script { get; init; }
-
-    /// <summary>An absolute shell executable overriding the detected one (shell mode).</summary>
-    public string? ShellPath { get; init; }
-
-    /// <summary>The absolute working directory.</summary>
-    public required string WorkingDirectory { get; init; }
-
-    /// <summary>The resolved environment (its <c>PATH</c> and <c>PATHEXT</c> drive the program lookup).</summary>
-    public required IReadOnlyDictionary<string, string> Environment { get; init; }
-
-    /// <summary>The attempt's temporary directory, where long scripts are written; <see langword="null"/> while validating.</summary>
-    public string? TempDirectory { get; init; }
-}
-
-/// <summary>A prepared command: what the platform starts.</summary>
-public sealed class PreparedCommand
-{
-    /// <summary>The resolved executable (absolute path).</summary>
-    public required string Application { get; init; }
-
-    /// <summary>The complete command line (Windows), built with the quoting inverse to <c>CommandLineToArgvW</c>.</summary>
-    public required string CommandLine { get; init; }
-
-    /// <summary>The argument vector as the program receives it (Linux; informational on Windows).</summary>
-    public required IReadOnlyList<string> Argv { get; init; }
-
-    /// <summary>The program as the user named it, for summaries.</summary>
-    public required string Program { get; init; }
-
-    /// <summary>A script file the launch writes into the temporary directory first (long shell scripts, 04 section 2).</summary>
-    public string? ScriptFile { get; init; }
-
-    /// <summary>The script file's content.</summary>
-    public string? ScriptContent { get; init; }
-
-    /// <summary>The command runs a batch file through <c>cmd.exe /d /s /c</c>.</summary>
-    public bool ViaBatch { get; init; }
-}
-
-/// <summary>The stdin of an attempt (04 section 3: NUL, a temporary file, a file, or a pipe).</summary>
-public enum StdinKind
-{
-    /// <summary>The null device.</summary>
-    None = 0,
-
-    /// <summary>A file (FILE, or BYTES written to the temporary directory).</summary>
-    File = 1,
-
-    /// <summary>A pipe the node writes (STREAM).</summary>
-    Stream = 2,
-}
-
 /// <summary>The limits of an attempt's container (03 section 5.2).</summary>
 public sealed class ContainerLimits
 {
@@ -115,49 +52,6 @@ public sealed record RootLimits(int CpuRate, long CommitLimitBytes, long Notific
 
     /// <summary>Linux <c>TasksMax</c> of the slice (03 section 5.1: 32768).</summary>
     public int TasksMax { get; init; } = 32_768;
-}
-
-/// <summary>How to start one attempt.</summary>
-public sealed class AttemptLaunch
-{
-    /// <summary>The node ID's text (job names).</summary>
-    public required string NodeName { get; init; }
-
-    /// <summary>The attempt's files.</summary>
-    public required AttemptFiles Files { get; init; }
-
-    /// <summary>The prepared command.</summary>
-    public required PreparedCommand Command { get; init; }
-
-    /// <summary>The exact environment as <c>NAME=value</c> entries.</summary>
-    public required IReadOnlyList<string> Environment { get; init; }
-
-    /// <summary>The working directory.</summary>
-    public required string WorkingDirectory { get; init; }
-
-    /// <summary>The stdin kind.</summary>
-    public StdinKind Stdin { get; init; }
-
-    /// <summary>The stdin file (FILE, or the BYTES file).</summary>
-    public string? StdinPath { get; init; }
-
-    /// <summary>The container limits.</summary>
-    public required ContainerLimits Limits { get; init; }
-
-    /// <summary>Launched by the node itself without a holder, in a container that dies with the node (AD-0005 Windows section 5).</summary>
-    public bool KillWithNode { get; init; }
-
-    /// <summary>Output capture <c>DISCARD</c>: stdout and stderr go to the null device.</summary>
-    public bool DiscardOutput { get; init; }
-
-    /// <summary>Launch steps (04 section 3).</summary>
-    public IReadOnlyList<StepSpec> LaunchSteps { get; init; } = [];
-
-    /// <summary>End steps (04 section 3).</summary>
-    public IReadOnlyList<StepSpec> EndSteps { get; init; } = [];
-
-    /// <summary><c>leftover_grace</c>.</summary>
-    public int LeftoverGraceMs { get; init; } = 5_000;
 }
 
 /// <summary>The root process of an attempt.</summary>
@@ -437,21 +331,6 @@ public enum ProcessTermination
     Failed = 3,
 }
 
-/// <summary>A process to adopt (04 section 10).</summary>
-/// <param name="NodeName">The node ID's text (container names).</param>
-/// <param name="AttemptName">The adoption attempt's ID text (the container's own name).</param>
-/// <param name="Pid">The process ID.</param>
-/// <param name="Start">Its start time, which must match (a process ID alone may have been reused).</param>
-public sealed record AdoptionRequest(string NodeName, string AttemptName, int Pid, DateTimeOffset Start);
-
-/// <summary>The adoption container with how the children that existed at adoption time fared (04 section 10 step 3, best effort).</summary>
-/// <param name="Container">The adoption container.</param>
-/// <param name="Image">The adopted process's image.</param>
-/// <param name="AdoptedChildren">Children placed in the container individually.</param>
-/// <param name="FailedChildren">Children that could not be placed (each recorded in <paramref name="ChildResults"/>).</param>
-/// <param name="ChildResults">One line per child: its image, ID and result.</param>
-public sealed record AdoptionResult(IAdoptedContainer Container, string Image, int AdoptedChildren, int FailedChildren, IReadOnlyList<string> ChildResults);
-
 /// <summary>An adoption container: the adopted process and every process that joined it since (later children follow the container).</summary>
 public interface IAdoptedContainer : IDisposable
 {
@@ -468,32 +347,4 @@ public interface IAdoptedContainer : IDisposable
     /// Gives up an adoption the node could not record, without terminating anything, and says what became of its processes (review round 2).
     /// </summary>
     string Abandon() => "the container was released; its processes keep running, not adopted";
-}
-
-/// <summary>The OS refused to place a process under management, or it is not the node's user's (<c>EXECUTION/adopt_not_permitted</c>).</summary>
-public sealed class AdoptionRefusedException : Exception
-{
-    /// <summary>Creates the exception.</summary>
-    public AdoptionRefusedException()
-        : base("adoption refused")
-    {
-    }
-
-    /// <summary>Creates the exception with the reason (<c>details.state.reason</c>).</summary>
-    public AdoptionRefusedException(string message)
-        : base(message)
-    {
-    }
-
-    /// <summary>Creates the exception.</summary>
-    public AdoptionRefusedException(string message, Exception innerException)
-        : base(message, innerException)
-    {
-    }
-
-    /// <summary>True when the process named does not exist (it exited, or its ID names a process that started later): <c>STATE/not_found</c>.</summary>
-    public bool NotFound { get; init; }
-
-    /// <summary>True when the process is already in one of this node's containers: <c>CONFLICT/already_exists</c>.</summary>
-    public bool AlreadyManaged { get; init; }
 }

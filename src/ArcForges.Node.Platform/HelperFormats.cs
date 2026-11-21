@@ -222,6 +222,12 @@ public sealed class GuardSpec
 
     /// <summary>Reads <paramref name="path"/>, or <see langword="null"/>.</summary>
     public static GuardSpec? TryRead(string path) => HelperFiles.TryRead(path, Parse);
+
+    /// <summary>Reads the persisted guard policy only when it belongs to the named attempt directory.</summary>
+    internal static GuardSpec? TryReadForAttempt(string path, string attemptName) =>
+        TryRead(path) is { } spec && !string.IsNullOrWhiteSpace(spec.AttemptId)
+            && string.Equals(spec.AttemptId, attemptName, StringComparison.Ordinal)
+            ? spec : null;
 }
 
 /// <summary>The kinds of <c>guard-events.jsonl</c> lines.</summary>

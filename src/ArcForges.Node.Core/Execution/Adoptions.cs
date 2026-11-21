@@ -108,10 +108,15 @@ public sealed class Adoptions : IDisposable
         });
         foreach (var row in live)
         {
+            var originalBoot = _execution.OriginalBoot(row.Boot);
+            if (originalBoot == ExecutionSupervisor.LegacyBootProof.Unknown)
+            {
+                throw new LegacyCustodyUnavailableException("The original adoption's boot could not be authenticated on this host.");
+            }
+
             var name = IdText.Format(row.Attempt);
             IAdoptedContainer? container = null;
             string? why = null;
-            var originalBoot = _execution.OriginalBoot(row.Boot);
             if (originalBoot == ExecutionSupervisor.LegacyBootProof.EndedOnThisHost)
             {
                 why = "boot_changed: the machine restarted since the process was adopted";
@@ -134,11 +139,6 @@ public sealed class Adoptions : IDisposable
                         new LogField("errorType", exception.GetType().Name),
                         new LogField("error", exception is Win32Exception native ? native.NativeErrorCode : NodeLog.OneLine(exception.Message)));
                     throw new LegacyCustodyUnavailableException("Legacy adoption custody could not be confirmed.", exception);
-                }
-
-                if (container is null && originalBoot != ExecutionSupervisor.LegacyBootProof.Current)
-                {
-                    throw new LegacyCustodyUnavailableException("The original adoption's boot could not be authenticated on this host.");
                 }
 
                 why = ContainerMissing + ": the adoption container " + row.Container + " no longer exists";

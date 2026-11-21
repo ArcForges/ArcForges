@@ -903,11 +903,6 @@ internal sealed class RoutedDispatcher(NodeRuntime node) : IRoutedDispatcher, ID
 
             return answer;
         }
-        catch (Exception failure) when (failure is RemovalPlanResponseUnavailableException or RemovalExecutionResponseUnavailableException)
-        {
-            // A rolled-back plan that cannot be represented is never signed as a partial success.
-            return null;
-        }
         catch (CommandQueueFullException)
         {
             // A file read cannot claim a recorded refusal while the audit writer cannot admit it. The center observes no verified reply.

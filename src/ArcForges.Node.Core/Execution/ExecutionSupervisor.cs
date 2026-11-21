@@ -43,15 +43,6 @@ public sealed class ExecutionOptions
     /// </summary>
     public bool Unenforced { get; init; }
 
-    /// <summary>The sealed task secrets.</summary>
-    public required TaskSecrets Secrets { get; init; }
-
-    /// <summary>Completes once the node data key is loaded (or failed to load).</summary>
-    public Task KeysReady { get; init; } = Task.CompletedTask;
-
-    /// <summary>Launch and end steps (toolchain adapters).</summary>
-    public ILaunchStepProvider? Steps { get; init; }
-
     /// <summary>Controlled faults (test mode).</summary>
     public ExecutionFaults Faults { get; init; } = ExecutionFaults.None;
 
@@ -60,9 +51,6 @@ public sealed class ExecutionOptions
 
     /// <summary>The platform's observation sources (03 section 1), or <see langword="null"/> for a node that observes nothing.</summary>
     public IResourceSampler? Sampler { get; init; }
-
-    /// <summary>The tool-level concurrency hook of the adapters (03 section 5.3), or <see langword="null"/>.</summary>
-    public Scheduling.IToolConcurrency? Tools { get; init; }
 
     /// <summary>Test seam: the resource monitor evaluates as if this node were alone on the machine (<see cref="MachineIsolation"/>).</summary>
     internal bool IsolatedFromMachineLoad { get; init; }
@@ -88,103 +76,6 @@ public sealed class ExecutionOptions
     /// after the termination (<see langword="true"/>), so a test can let the launch go on exactly there. The executable never sets it.
     /// </summary>
     internal Action<IAttemptHandle, bool>? ForcedPhase { get; init; }
-}
-
-/// <summary>A validated submission, prepared outside the writer (04 section 1; AD-0006 section 1).</summary>
-public sealed class SubmitPlan
-{
-    /// <summary>The spec split into its stored parts.</summary>
-    public required SubmittedEnvironment Parts { get; init; }
-
-    /// <summary>Pre-serialized task metadata and digest, prepared outside the writer.</summary>
-    public required PreparedSubmitStorage Storage { get; init; }
-
-    /// <summary>The owner (set by the node from the connection).</summary>
-    public required ActorRef Owner { get; init; }
-
-    /// <summary>The title.</summary>
-    public required string Title { get; init; }
-
-    /// <summary>The redacted command summary.</summary>
-    public required string Summary { get; init; }
-
-    /// <summary>The command fingerprint.</summary>
-    public required string Fingerprint { get; init; }
-
-    /// <summary>The <c>join_existing</c> identity.</summary>
-    public required byte[] CommandDigest { get; init; }
-
-    /// <summary>The kind.</summary>
-    public TaskKind Kind { get; init; } = TaskKind.Command;
-
-    /// <summary>The pool.</summary>
-    public required string Pool { get; init; }
-
-    /// <summary>The priority.</summary>
-    public Priority Priority { get; init; } = Priority.Normal;
-
-    /// <summary>The effective side-effect class.</summary>
-    public SideEffectClass SideEffect { get; init; } = SideEffectClass.Unknown;
-
-    /// <summary>Who established it.</summary>
-    public SideEffectSource SideEffectSource { get; init; } = SideEffectSource.Default;
-
-    /// <summary>Warnings for the receipt.</summary>
-    public List<string> Warnings { get; init; } = [];
-
-    /// <summary>The meta command ID.</summary>
-    public required Id CommandId { get; init; }
-
-    /// <summary>The dependencies (04 section 8): the task waits in WAITING_DEPENDENCY until each condition holds.</summary>
-    public IReadOnlyList<(byte[] TaskId, DependencyCondition Condition)> Dependencies { get; init; } = [];
-
-    /// <summary>The caller's keys (03 section 4), stored with the task (<c>task_concurrency_key</c>, source caller).</summary>
-    public IReadOnlyList<Scheduling.HeldKey> Keys { get; init; } = [];
-
-    /// <summary>The owner's session (set by the node; sessions arrive with AF-AI-01), or <see langword="null"/>.</summary>
-    public byte[]? SessionId { get; init; }
-
-    /// <summary>A diagnostic local submission (AD-0021 section 5, <c>task.local_diagnostic</c>); a center-routed submission never is one.</summary>
-    public bool LocalDiagnostic { get; init; }
-
-    /// <summary>The routed command ID of a center-routed submission (<c>task.remote_command_id</c>), or <see langword="null"/>.</summary>
-    public byte[]? RemoteCommandId { get; init; }
-
-    /// <summary>The task's workspace (the longest registered root containing the working directory), or <see langword="null"/>.</summary>
-    public byte[]? WorkspaceId { get; init; }
-}
-
-/// <summary>The persisted spec and labels prepared before a submit transaction.</summary>
-public sealed class PreparedSubmitStorage
-{
-    private readonly SubmittedEnvironment _parts;
-
-    private PreparedSubmitStorage(SubmittedEnvironment parts, byte[] spec, byte[] digest, string labels)
-    {
-        _parts = parts;
-        Spec = spec;
-        Digest = digest;
-        Labels = labels;
-    }
-
-    internal byte[] Spec { get; }
-
-    internal byte[] Digest { get; }
-
-    internal string Labels { get; }
-
-    internal bool BelongsTo(SubmittedEnvironment parts) => ReferenceEquals(_parts, parts);
-
-    /// <summary>Serializes and hashes the redacted spec without holding the SQLite writer.</summary>
-    public static PreparedSubmitStorage Create(SubmittedEnvironment parts)
-    {
-        ArgumentNullException.ThrowIfNull(parts);
-        var spec = parts.RedactedSpec;
-        var bytes = spec.ToByteArray();
-        var labels = JsonSerializer.Serialize(new Dictionary<string, string>(spec.Labels, StringComparer.Ordinal),
-            ExecutionJsonContext.Default.DictionaryStringString);
-        return new PreparedSubmitStorage(parts, bytes, System.Security.Cryptography.SHA256.HashData(bytes), labels);
-    }
 }
 
 /// <summary>A caller of <c>cancel_when_caller_gone</c>: the submitting client process.</summary>
@@ -234,8 +125,6 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
     private readonly NodeLog _log;
     private readonly TimeProvider _clock;
     private readonly string _dataRoot;
-    private readonly TaskSecrets _secrets;
-    private readonly Task _keysReady;
     private readonly ExecutionFaults _faults;
     private readonly Action<IAttemptHandle>? _forcedBeforeStart;
     private readonly Action<IAttemptHandle, bool>? _startObserved;
@@ -270,8 +159,6 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         _clock = options.Clock;
         _dataRoot = options.DataRoot;
         Platform = options.Platform;
-        _secrets = options.Secrets;
-        _keysReady = options.KeysReady;
         _faults = options.Faults;
         _forcedBeforeStart = options.ForcedBeforeStart;
         _startObserved = options.StartObserved;
@@ -285,7 +172,6 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         _settings = new ExecutionSettings(initialPolicy.Document, capacity.LogicalProcessors, capacity.PhysicalMemoryBytes) { PolicyRevision = initialPolicy.Revision };
         _lastSettingsRead = _clock.GetTimestamp();
         _tailerMonitor = Heartbeat.AddMonitor("output-tailer", TimeSpan.FromSeconds(5));
-        Tools = options.Tools;
         PlatformCalls = new SerialWork(_log);
         Adoptions = new Adoptions(this, _store, _processor, _log);
         if (options.Sampler is { } sampler)
@@ -370,9 +256,6 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
     /// <summary>The pulse of a task: state changes and output of its current attempt.</summary>
     public AsyncPulse TaskPulse(ReadOnlySpan<byte> taskId) => _taskPulses.GetOrAdd(IdText.Format(taskId), _ => new AsyncPulse());
 
-    /// <summary>Completes once the node data key finished loading.</summary>
-    public Task KeysReady => _keysReady;
-
     // ------------------------------------------------------------------------------------------------------------------- recovery
 
     /// <inheritdoc />
@@ -413,29 +296,32 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
                 continue;
             }
 
-            var root = row.RootPid is { } pid && row.RootStart is { } start ? new RootProcess(pid, StoreTime.FromMicroseconds(start)) : null;
-
             // The node was stopping it: the stop continues below, and a launch the node no longer controls may still start the command, so the
             // platform awaits that start (only then: any other recovered attempt completes its start at once, and a forced phase that stops it
             // later watches such a launch, TerminateEachLaunchProcess).
             var stopping = row.State is AttemptState.Stopping or AttemptState.Finalizing;
             IAttemptHandle? handle = null;
             Exception? custodyError = null;
-            try
+            // Reopening can affect a live container. Its name is only usable after authenticating the original boot.
+            if (originalBoot == LegacyBootProof.Current)
             {
-                if (OperatingSystem.IsLinux() && row.ContainerName?.StartsWith("pgid:", StringComparison.Ordinal) == true)
+                var root = row.RootPid is { } pid && row.RootStart is { } start ? new RootProcess(pid, StoreTime.FromMicroseconds(start)) : null;
+                try
                 {
-                    throw new LegacyCustodyUnavailableException("The retired direct-process scope cannot be reopened through systemd.");
-                }
+                    if (OperatingSystem.IsLinux() && row.ContainerName?.StartsWith("pgid:", StringComparison.Ordinal) == true)
+                    {
+                        throw new LegacyCustodyUnavailableException("The retired direct-process scope cannot be reopened through systemd.");
+                    }
 
-                var platform = Platform ?? throw new LegacyCustodyUnavailableException("The legacy execution platform is unavailable.");
-                handle = platform.Reopen(NodeName, files, root, stopping);
-            }
-            catch (Exception exception) when (exception is Win32Exception or IOException or TimeoutException or InvalidOperationException or UnauthorizedAccessException)
-            {
-                custodyError = exception;
-                _log.Warning("execution.recover.reopen_failed", new LogField("attempt", name), new LogField("errorType", exception.GetType().Name),
-                    new LogField("error", exception is Win32Exception native ? native.NativeErrorCode : NodeLog.OneLine(exception.Message)));
+                    var platform = Platform ?? throw new LegacyCustodyUnavailableException("The legacy execution platform is unavailable.");
+                    handle = platform.Reopen(NodeName, files, root, stopping);
+                }
+                catch (Exception exception) when (exception is Win32Exception or IOException or TimeoutException or InvalidOperationException or UnauthorizedAccessException)
+                {
+                    custodyError = exception;
+                    _log.Warning("execution.recover.reopen_failed", new LogField("attempt", name), new LogField("errorType", exception.GetType().Name),
+                        new LogField("error", exception is Win32Exception native ? native.NativeErrorCode : NodeLog.OneLine(exception.Message)));
+                }
             }
 
             var recoveredExit = handle is null ? ReadRecoveryExit(files) : null;
@@ -459,6 +345,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             {
                 Handle = handle,
                 RecoveredExit = recoveredExit,
+                HasCurrentBootProof = originalBoot == LegacyBootProof.Current,
                 NodeGap = true,
                 ApproximateNext = true,
                 RootRecorded = row.RootPid is not null,
@@ -564,11 +451,9 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
     internal LegacyBootProof OriginalBoot(string? recordedBoot)
     {
         var currentBoot = _store.Metadata.BootIdentity;
-        if (TryReadWindowsBoot(recordedBoot, out var recordedMachine, out var recordedTime)
-            && TryReadWindowsBoot(currentBoot, out var currentMachine, out var currentTime)
-            && recordedMachine == currentMachine)
+        if (BootIdentity.TryCompareWindowsBoot(recordedBoot, currentBoot, out var sameBoot))
         {
-            return recordedTime == currentTime ? LegacyBootProof.Current : LegacyBootProof.EndedOnThisHost;
+            return sameBoot ? LegacyBootProof.Current : LegacyBootProof.EndedOnThisHost;
         }
 
         // Linux records only the boot UUID. Different UUIDs cannot establish that the original and current host are the same.
@@ -576,22 +461,6 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             && recordedBoot.StartsWith("linux:", StringComparison.Ordinal)
             && Guid.TryParseExact(recordedBoot.AsSpan(6), "D", out var linuxBoot) && linuxBoot != Guid.Empty
             ? LegacyBootProof.Current : LegacyBootProof.Unknown;
-    }
-
-    private static bool TryReadWindowsBoot(string? value, out Guid machine, out long time)
-    {
-        machine = Guid.Empty;
-        time = 0;
-        if (value is null || !value.StartsWith("windows:", StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        var identity = value.AsSpan(8);
-        var separator = identity.IndexOf(':');
-        return separator == 36 && Guid.TryParseExact(identity[..separator], "D", out machine) && machine != Guid.Empty
-            && long.TryParse(identity[(separator + 1)..], NumberStyles.None, CultureInfo.InvariantCulture, out time)
-            && time > 0 && time <= DateTimeOffset.MaxValue.ToFileTime() / TimeSpan.TicksPerSecond;
     }
 
     /// <summary>
@@ -839,88 +708,6 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         {
             _log.Warning("execution.pressure.record_failed", new LogField("errorType", exception.GetType().Name));
         }
-    }
-
-    // --------------------------------------------------------------------------------------------------------------------- submit
-
-    /// <summary>
-    /// Test seam: pauses a real SubmitTask after validation but before its transaction, to coordinate a real workspace change.
-    /// Production never sets this callback; it does not supply or replace workspace, task, storage or policy behavior.
-    /// </summary>
-    internal Func<CancellationToken, Task>? BeforeSubmitTransactionForTests { get; set; }
-
-    /// <summary>Tests coordinate after an actual retry-rule match, outside the writer. Production never sets it.</summary>
-    internal Action<int>? AfterRetryMatchForTests { get; set; }
-
-    /// <summary>Tests coordinate immediately before the final routed check and task insertion. Production never sets it.</summary>
-    internal Action? BeforeSubmitEffectForTests { get; set; }
-
-    /// <summary>Persists a submission in the writer (AD-0006 section 1: before the receipt) and journals it.</summary>
-    public TaskServiceSubmitTaskValue Submit(CommandContext context, SubmitPlan plan, Action? beforeEffect = null)
-    {
-        ArgumentNullException.ThrowIfNull(context);
-        ArgumentNullException.ThrowIfNull(plan);
-        if (!plan.Storage.BelongsTo(plan.Parts))
-        {
-            throw new ArgumentException("The prepared metadata must belong to this submission.", nameof(plan));
-        }
-
-        var transaction = context.Transaction;
-        var now = transaction.NowMicroseconds;
-        var taskId = StoreIds.NewUuid7(transaction.Clock);
-        var spec = plan.Parts.RedactedSpec;
-        byte[]? envDigest = plan.Parts.Snapshot is { } snapshot ? EnvSnapshots.Reference(transaction, snapshot) : null;
-        var specBytes = plan.Storage.Spec;
-        var labels = plan.Storage.Labels;
-
-        // 04 section 8: a task with dependencies starts in WAITING_DEPENDENCY; the admission pass queues or cancels it.
-        var waiting = plan.Dependencies.Count > 0;
-        // Any environment reference above is in this same transaction and is rolled back on refusal.
-        // Recheck immediately before the actual task insertion, after all preparation possible here.
-        BeforeSubmitEffectForTests?.Invoke();
-        beforeEffect?.Invoke();
-        transaction.Execute(
-            """
-            INSERT INTO task (task_id, state, state_reason, kind, title, command_summary, spec, env_digest, spec_digest, owner, owner_origin, owner_session_id,
-                              workspace_id, pool, priority, effective_priority, side_effect, side_effect_source, command_fingerprint, command_digest, created_at,
-                              queued_at, pinned, labels_json, local_diagnostic, remote_command_id, rev)
-            VALUES ($id, $state, $reason, $kind, $title, $summary, $spec, $env, $specDigest, $owner, $origin, $session, $workspace, $pool, $priority, $priority,
-                    $sideEffect, $source, $fingerprint, $digest, $now, $now, $pinned, $labels, $localDiagnostic, $remoteCommand, 0);
-            """,
-            ("$id", taskId), ("$state", waiting ? (int)TaskState.WaitingDependency : (int)TaskState.Queued), ("$reason", waiting ? Scheduling.BlockingReasons.Dependency : null),
-            ("$kind", (int)plan.Kind), ("$title", plan.Title), ("$summary", plan.Summary), ("$spec", specBytes), ("$env", envDigest),
-            ("$specDigest", plan.Storage.Digest), ("$owner", plan.Owner.ToByteArray()), ("$origin", (int)plan.Owner.Origin),
-            ("$session", plan.SessionId), ("$workspace", plan.WorkspaceId), ("$pool", plan.Pool), ("$priority", (int)plan.Priority), ("$sideEffect", (int)plan.SideEffect),
-            ("$source", (int)plan.SideEffectSource), ("$fingerprint", plan.Fingerprint), ("$digest", plan.CommandDigest), ("$now", now),
-            ("$pinned", spec.Output?.Pin == true ? 1 : 0), ("$labels", labels), ("$localDiagnostic", plan.LocalDiagnostic ? 1 : 0),
-            ("$remoteCommand", plan.RemoteCommandId));
-        foreach (var (dependsOn, condition) in plan.Dependencies)
-        {
-            transaction.Execute("INSERT INTO task_dependency (task_id, depends_on_task_id, condition) VALUES ($id, $on, $condition);",
-                ("$id", taskId), ("$on", dependsOn), ("$condition", (int)condition));
-        }
-
-        foreach (var key in plan.Keys)
-        {
-            transaction.Execute("INSERT INTO task_concurrency_key (task_id, concurrency_key, mode, source, released_at) VALUES ($id, $key, $mode, $source, NULL);",
-                ("$id", taskId), ("$key", key.Key.Text), ("$mode", (int)key.Mode), ("$source", (int)key.Source));
-        }
-
-        if (plan.Parts.Secrets is { } secrets)
-        {
-            _secrets.Seal(transaction, taskId, secrets);
-        }
-
-        var task = EmitTask(context, taskId, null)!;
-        var value = new TaskServiceSubmitTaskValue
-        {
-            Receipt = new Receipt { CommandId = plan.CommandId, Effect = EffectCertainty.Happened },
-            TaskId = task.TaskId,
-            State = task.State,
-            Queue = task.Queue ?? new QueueInfo(),
-        };
-        value.Warnings.Add(plan.Warnings);
-        return value;
     }
 
     /// <summary>Binds a committed Task to its caller when caller tracking applies.</summary>
@@ -1373,82 +1160,6 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         // Kept before it starts: the root may exit on the signal before the phase records its detail, and finalization waits for it.
         attempt.GracefulPhase = phase;
         phase.Start(TaskScheduler.Default);
-    }
-
-    /// <summary>
-    /// A manual retry (SM-TASK FAILED|CANCELLED|LOST -> QUEUED; AD-0006 section 4 rules shown as warnings). <paramref name="demand"/> replaces
-    /// the fields it sets in the task's hint (a larger memory grant after an OOM kill).
-    /// </summary>
-    public (TaskServiceRetryTaskValue? Value, ArcError? Error) Retry(CommandContext context, ReadOnlySpan<byte> taskId, Id commandId, ResourceDemand? demand = null)
-    {
-        ArgumentNullException.ThrowIfNull(context);
-        var transaction = context.Transaction;
-        var row = TaskRecords.GetRow(transaction, taskId);
-        if (row is null || row.Purged)
-        {
-            return (null, NodeErrors.NotFound("task", taskId));
-        }
-
-        if (row.State is not (TaskState.Failed or TaskState.Cancelled or TaskState.Lost))
-        {
-            return (null, NodeErrors.InvalidState(row.State.ToString().ToUpperInvariant(), "only FAILED, CANCELLED or LOST tasks can be retried"));
-        }
-
-        if (row.Spec.Kind == TaskKind.Adopted)
-        {
-            // 04 section 10: an adopted process was started outside ArcForges; there is nothing to run again.
-            return (null, NodeErrors.InvalidState("ADOPTED", "an adopted task cannot be retried"));
-        }
-
-        var unseal = _secrets.Unseal(transaction, taskId);
-        if (unseal.Status == UnsealStatus.Unavailable)
-        {
-            return (null, unseal.Error);
-        }
-
-        if (demand is not null)
-        {
-            var spec = row.Spec.Clone();
-            spec.Resources ??= new ResourceSpec();
-            spec.Resources.Hint ??= new ResourceDemand();
-            if (demand.HasCpuMillicores)
-            {
-                spec.Resources.Hint.CpuMillicores = demand.CpuMillicores;
-            }
-
-            if (demand.HasMemExpectedBytes)
-            {
-                spec.Resources.Hint.MemExpectedBytes = demand.MemExpectedBytes;
-            }
-
-            if (demand.HasMemCeilingBytes)
-            {
-                spec.Resources.Hint.MemCeilingBytes = demand.MemCeilingBytes;
-            }
-
-            var bytes = spec.ToByteArray();
-            transaction.Execute("UPDATE task SET spec = $spec, spec_digest = $digest WHERE task_id = $id;",
-                ("$spec", bytes), ("$digest", System.Security.Cryptography.SHA256.HashData(bytes)), ("$id", taskId.ToArray()));
-        }
-
-        transaction.Execute(
-            "UPDATE task SET state = 1, state_reason = 'retry', queued_at = $now, finished_at = NULL, retry_at = NULL, effective_priority = priority, aged_at = NULL, rev = rev + 1 WHERE task_id = $id;",
-            ("$now", transaction.NowMicroseconds), ("$id", taskId.ToArray()));
-        transaction.Execute("UPDATE task_secret SET purge_after = NULL WHERE task_id = $id AND key_id <> 'purged';", ("$id", taskId.ToArray()));
-        EmitTask(context, taskId, row.State);
-        var value = new TaskServiceRetryTaskValue
-        {
-            Receipt = new Receipt { CommandId = commandId, Effect = EffectCertainty.Happened },
-            State = TaskState.Queued,
-        };
-        if (row.SideEffect is SideEffectClass.SideEffecting or SideEffectClass.Unknown)
-        {
-            value.Warnings.Add(row.SideEffect == SideEffectClass.SideEffecting
-                ? "The task is side-effecting: running it again repeats its external effects."
-                : "The task's side effects are unknown: running it again may repeat external effects.");
-        }
-
-        return (value, null);
     }
 
     /// <summary>Pins or unpins a task's records and output.</summary>
@@ -2034,7 +1745,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
     /// </summary>
     private void TerminateEscaped(RunningAttempt attempt, TerminationReason reason)
     {
-        if (reason == TerminationReason.NodeShutdown || Platform is not { } platform)
+        if (!attempt.HasCurrentBootProof || reason == TerminationReason.NodeShutdown || Platform is not { } platform)
         {
             return;
         }
@@ -2432,6 +2143,11 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
     /// </summary>
     private void Acknowledge(RunningAttempt attempt, IAttemptHandle? handle)
     {
+        if (!attempt.HasCurrentBootProof)
+        {
+            return;
+        }
+
         try
         {
             if (handle is not null)

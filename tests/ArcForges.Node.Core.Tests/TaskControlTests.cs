@@ -284,7 +284,6 @@ public sealed class TaskControlTests
 
         using var log = new NodeLog(Path.Combine(fixture.DataRoot, "logs", "node"), LogLevel.Info, clock);
         using var heartbeat = new NodeHeartbeatWriter(fixture.DataRoot, log, clock);
-        using var keys = new NodeDataKeyRing(store, fixture.Secrets.Selection);
         var journal = EventJournal.Open(store);
         var hub = new StreamHub();
         await using var processor = new CommandProcessor(store, journal, hub);
@@ -296,7 +295,6 @@ public sealed class TaskControlTests
             Clock = clock,
             DataRoot = fixture.DataRoot,
             Platform = holder,
-            Secrets = new TaskSecrets(store, keys),
             Heartbeat = heartbeat,
         });
         var recovery = new RecoveryReport(true, earlierBoot, null, store.Opening);

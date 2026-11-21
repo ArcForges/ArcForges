@@ -175,7 +175,6 @@ public sealed class RoutedWaitTailReviewTests
         using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = files.DataRoot, BootIdentity = "wait-tail-fixture", Clock = clock });
         using var log = new NodeLog(Path.Combine(files.DataRoot, "logs", "node"), LogLevel.Info, clock);
         using var heartbeat = new NodeHeartbeatWriter(files.DataRoot, log, clock);
-        using var keys = new NodeDataKeyRing(store, files.Secrets.Selection);
         var journal = EventJournal.Open(store);
         var hub = new StreamHub();
         await using var processor = new CommandProcessor(store, journal, hub);
@@ -187,7 +186,6 @@ public sealed class RoutedWaitTailReviewTests
             Log = log,
             Clock = clock,
             DataRoot = files.DataRoot,
-            Secrets = new TaskSecrets(store, keys),
             Heartbeat = heartbeat,
         });
         using var runtime = new NodeRuntime(store, journal, hub, processor, log,

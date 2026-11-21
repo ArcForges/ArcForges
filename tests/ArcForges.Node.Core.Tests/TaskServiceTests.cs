@@ -340,7 +340,6 @@ public sealed class TaskServiceTests
         using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = files.DataRoot, BootIdentity = BootIdentity.Read(), Clock = files.Clock });
         using var log = new NodeLog(Path.Combine(files.DataRoot, "logs", "node"), LogLevel.Info, files.Clock);
         using var heartbeat = new NodeHeartbeatWriter(files.DataRoot, log, files.Clock);
-        using var keys = new NodeDataKeyRing(store, files.Secrets.Selection);
         var journal = EventJournal.Open(store);
         var hub = new StreamHub();
         await using var processor = new CommandProcessor(store, journal, hub);
@@ -351,7 +350,6 @@ public sealed class TaskServiceTests
             Log = log,
             Clock = files.Clock,
             DataRoot = files.DataRoot,
-            Secrets = new TaskSecrets(store, keys),
             Heartbeat = heartbeat,
         });
         using var runtime = new NodeRuntime(store, journal, hub, processor, log,

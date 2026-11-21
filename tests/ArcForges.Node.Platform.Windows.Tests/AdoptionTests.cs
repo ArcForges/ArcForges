@@ -4,13 +4,11 @@ using ArcForges.Contracts.Node.V1;
 
 namespace ArcForges.Node.Platform.Windows.Tests;
 
-/// <summary>
-/// AF-SEC-01 on real Windows jobs (env=windows-real): the documented gap T-23 (11 section 1; R-RES-012; A-W04, F-W04): a child a job member
-/// creates through WMI <c>Win32_Process.Create</c> never joins the job (V-W01) and has no recorded ancestry through a member, so the ancestry
-/// scan reports nothing for it; adoption (04 section 10; R-RES-013): a same-user process outside any job joins the root job and then its own
-/// adoption job with its children, a process already in a job is refused, a stale identity is not found; termination by ID and start time;
-/// and the same-user qualifier at the end of the kill_tree reason (03 section 8).
-/// </summary>
+/// <summary>Native Windows Job observation and process termination by verified identity.</summary>
+/// <remarks>
+/// Fresh V1 adoption and the original native refusal remain executable at eaaccb8380a2bd265aaad0a67d62c8fab2a8a29a
+/// (source blob c587b4ca9dd4729abd8d3862a4f54729e40a4520).
+/// </remarks>
 [Trait("env", "windows-real")]
 [SupportedOSPlatform("windows")]
 public sealed class AdoptionTests
@@ -72,112 +70,22 @@ public sealed class AdoptionTests
     }
 
     [Fact(Timeout = 120_000)]
-    public void AProcessOutsideAnyJobIsAdoptedWithItsChildrenAndTerminated()
-    {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows job objects and WMI.");
-        Assert.SkipUnless(File.Exists(PowerShell), "Windows PowerShell is missing.");
-        using var harness = PlatformHarness.Start();
-        var platform = harness.Platform;
-        var report = platform.Evaluate();
-        Assert.Equal(AdoptSupport.Limited, report.Adopt);
-
-        // 04 section 10, stated honestly: the refusal first, with how many of the user's processes are in a job now.
-        Assert.Matches(@"^a process already in a job is refused \(04 section 10\); \d+ of the user's \d+ processes are in a job now\. ", report.AdoptReason);
-        var watch = System.Diagnostics.Stopwatch.StartNew();
-        var (inJob, total) = WindowsExecutionPlatform.JobMembership();
-        TestContext.Current.TestOutputHelper?.WriteLine($"{report.AdoptReason} (a count of {inJob} of {total} took {watch.Elapsed.TotalMilliseconds:0.0} ms)");
-        Assert.EndsWith("; same-user code can change or end ArcForges' containers (T-22), and work launched outside the recorded ancestry never joins them (T-23)",
-            report.KillTreeReason, StringComparison.Ordinal);
-
-        // A process outside every job (this test may itself run inside a job, so the process is created through WMI) with a child.
-        var marker = Path.Combine(harness.Root, "adopt.txt");
-        LaunchedProcess? wmi = null;
-        IAdoptedContainer? container = null;
-        List<ArcForges.Tests.ProcessIdentity> started = [];
-        try
-        {
-            wmi = ProcessLauncher.Start(new LaunchOptions
-            {
-                Application = PowerShell,
-                CommandLine = WindowsCommandLine.Build([PowerShell, "-NoProfile", "-NonInteractive", "-Command",
-                    Wmi(TestPrograms.TestLoad, "signal", "--child", "same", "--hold-ms", "60000", "--marker", marker)]),
-                Flags = Native.CreateNoWindow,
-            });
-            PlatformHarness.WaitFor(() => PlatformHarness.Marker(marker).Count(line => line.Event == "ready") >= 2, Bound, "the process and its child to run");
-            started = PlatformHarness.MarkerProcesses(marker, "ready");
-            var table = ProcessInfo.Snapshot();
-            var rootPid = started.Single(process => table.Single(entry => entry.Pid == process.Pid).ParentPid is var parent && started.All(other => other.Pid != parent)).Pid;
-            var childPid = started.Single(process => process.Pid != rootPid).Pid;
-            long created;
-            bool inAnyJob;
-            using (var probe = ProcessInfo.Open(rootPid)!)
-            {
-                created = ProcessInfo.CreationFileTime(probe);
-                Assert.True(Native.IsProcessInJob(probe, 0, out inAnyJob));
-            }
-
-            var start = ProcessInfo.FromFileTime(created);
-            if (inAnyJob)
-            {
-                // 04 section 10 refuses a process in any job. Where every process this test can create is in one (the session's processes
-                // run in a job on some machines), the refusal is what can be shown; the adoption itself cannot run here.
-                var refused = Assert.Throws<AdoptionRefusedException>(() => platform.Adopt(new AdoptionRequest(harness.NodeName, "x" + Guid.NewGuid().ToString("N")[..12], rootPid, start)));
-                Assert.Contains("already in a job", refused.Message, StringComparison.Ordinal);
-                Assert.Skip("The process this test created through WMI (Win32_Process.Create) is in a job, and 04 section 10 refuses a process in any job "
-                    + "(the refusal was asserted): adoption of a process outside every job cannot be shown on this machine.");
-            }
-            Assert.True(Assert.Throws<AdoptionRefusedException>(() => platform.Adopt(new AdoptionRequest(harness.NodeName, "x1", rootPid, start.AddSeconds(-30)))).NotFound);
-            var result = platform.Adopt(new AdoptionRequest(harness.NodeName, "x" + Guid.NewGuid().ToString("N")[..12], rootPid, start));
-            container = result.Container;
-            Assert.StartsWith(@"Local\ArcForges." + harness.NodeName + ".x", container.ContainerName, StringComparison.Ordinal);
-            Assert.True(result.AdoptedChildren >= 1, string.Join("; ", result.ChildResults));
-            Assert.Equal(0, result.FailedChildren);
-            Assert.Equal("arcforges-testload.exe", result.Image, ignoreCase: true);
-            Assert.Contains(rootPid, container.Processes());
-            Assert.Contains(childPid, container.Processes());
-            using (var adopted = ProcessInfo.Open(rootPid)!)
-            {
-                Assert.True(platform.RootJob!.Contains(adopted), "The adopted process is in the root job (V-W01: root first).");
-            }
-
-            // Adopting it again is refused as already managed.
-            Assert.True(Assert.Throws<AdoptionRefusedException>(() => platform.Adopt(new AdoptionRequest(harness.NodeName, "x2", rootPid, start))).AlreadyManaged);
-            container.Terminate();
-            PlatformHarness.WaitFor(() => container.Processes().Count == 0, Bound, "the adopted processes to end");
-            Assert.All(started, process => Assert.False(process.IsRunning(), $"{process} still runs"));
-        }
-        finally
-        {
-            container?.Dispose();
-            foreach (var process in started)
-            {
-                process.Kill();
-            }
-
-            wmi?.Kill(AttemptRunner.TerminatedExitCode);
-            wmi?.Dispose();
-        }
-    }
-
-    [Fact(Timeout = 120_000)]
-    public void AProcessInAJobIsRefusedAndTerminationNeedsItsIdentity()
+    public void TerminationRequiresTheOriginalProcessIdentity()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows job objects.");
         using var harness = PlatformHarness.Start();
+        var report = harness.Platform.Evaluate();
+        Assert.Equal(AdoptSupport.Unsupported, report.Adopt);
+        Assert.Equal("New legacy process adoption has been retired. Cleanup of recorded adoptions requires confirmed custody.", report.AdoptReason);
+        Assert.EndsWith("; same-user code can change or end ArcForges' containers (T-22), and work launched outside the recorded ancestry never joins them (T-23)",
+            report.KillTreeReason, StringComparison.Ordinal);
         using var job = JobObject.Create(null);
         LaunchedProcess? process = null;
         try
         {
             process = StartInJob(job, "Start-Sleep -Seconds 60");
             var start = ProcessInfo.FromFileTime(process.CreationFileTime);
-
-            // 04 section 10: joining a foreign job would attach the ArcForges jobs to it.
-            var refused = Assert.Throws<AdoptionRefusedException>(() => harness.Platform.Adopt(new AdoptionRequest(harness.NodeName, "x" + Guid.NewGuid().ToString("N")[..12],
-                process.ProcessId, start)));
-            Assert.False(refused.NotFound || refused.AlreadyManaged);
-            Assert.Contains("already in a job", refused.Message, StringComparison.Ordinal);
 
             // Termination by identity: a stale start time is another process (never terminated); the right one is.
             Assert.Equal(ProcessTermination.Gone, harness.Platform.TerminateProcess(process.ProcessId, start.AddSeconds(-30)));
