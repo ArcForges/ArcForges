@@ -55,6 +55,8 @@ public sealed class WindowsAttemptHandle : IAttemptHandle
     /// <summary>The child job.</summary>
     public JobObject Job => _job;
 
+    internal nuint CompletionKey => _key;
+
     /// <inheritdoc />
     public void SetCpuWeight(int weight)
     {

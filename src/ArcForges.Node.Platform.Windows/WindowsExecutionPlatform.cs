@@ -4,9 +4,7 @@ using System.ComponentModel;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
-using System.Text;
 using ArcForges.Contracts.Node.V1;
-using Microsoft.Win32.SafeHandles;
 
 namespace ArcForges.Node.Platform.Windows;
 
@@ -15,9 +13,8 @@ namespace ArcForges.Node.Platform.Windows;
 /// <list type="bullet">
 /// <item>The root job <c>Local\ArcForges.&lt;node&gt;.root</c> with a hard CPU cap, a commit limit and a soft-pressure notification limit,
 /// created or re-opened at startup and verified with a probe job (02 section 2 step 6).</item>
-/// <item>Each attempt's child job <c>Local\ArcForges.&lt;node&gt;.&lt;attempt&gt;</c> (weight or cap, commit limit, optional active-process
-/// limit, never breakaway), started by its holder <c>arcforges node exec-wrap</c> outside the job; <c>kill_with_node</c> attempts are
-/// started by the node itself in a job with <c>KILL_ON_JOB_CLOSE</c>.</item>
+/// <item>Reopens a recorded child job <c>Local\ArcForges.&lt;node&gt;.&lt;attempt&gt;</c> and its holder acknowledgement
+/// event to observe and control the surviving attempt.</item>
 /// <item>One completion port for every child job; recovered jobs are re-associated by clearing the previous run's port first (L-15).</item>
 /// </list>
 /// </summary>
@@ -203,104 +200,6 @@ public sealed class WindowsExecutionPlatform : IExecutionPlatform
     /// <inheritdoc />
     public bool Listens(int port, IReadOnlyCollection<int> processIds) => ListeningSockets.Listens(port, processIds);
 
-    /// <summary>Starts a new legacy attempt for the Windows platform fixtures.</summary>
-    public IAttemptHandle Launch(AttemptLaunch launch)
-    {
-        ArgumentNullException.ThrowIfNull(launch);
-        var root = _root ?? throw new InvalidOperationException("The platform has not started.");
-        var files = launch.Files;
-        Directory.CreateDirectory(files.Directory);
-        Directory.CreateDirectory(files.TempDirectory);
-        if (launch.Command.ScriptFile is { } scriptFile)
-        {
-            File.WriteAllText(scriptFile, launch.Command.ScriptContent ?? string.Empty, new UTF8Encoding(false));
-        }
-
-        var job = JobObject.Create(JobName(launch.NodeName, files.AttemptName));
-        var key = (nuint)Interlocked.Increment(ref _nextKey);
-        WindowsAttemptHandle? handle = null;
-        SafeFileHandle? stdout = null, stderr = null;
-        SafeHandle? stdin = null;
-        Stream? stdinWriter = null;
-        try
-        {
-            // Every attempt runs below normal priority, enforced by its job (03 section 5.2 as amended for AF-SCHED-01): the root's hard cap
-            // bounds managed CPU over each rate-control interval, but within one, normal-priority managed threads would contend with the
-            // user's own interactive work for the reserved headroom; below normal they always yield to it. The order among managed tasks
-            // stays the jobs' CPU weights.
-            job.SetLimits(launch.Limits.CommitLimitBytes, launch.Limits.ActiveProcessLimit, killOnClose: launch.KillWithNode, priorityClass: AttemptPriorityClass);
-            if (launch.Limits.CommitLimitBytes > 0)
-            {
-                job.SetMemoryNotification(launch.Limits.CommitNotificationBytes > 0 ? launch.Limits.CommitNotificationBytes : launch.Limits.CommitLimitBytes);
-            }
-
-            if (launch.Limits.CpuRateCap is { } cap)
-            {
-                job.SetCpuHardCap(cap);
-            }
-            else
-            {
-                job.SetCpuWeight(launch.Limits.CpuWeight);
-            }
-
-            if (launch.DiscardOutput)
-            {
-                stdout = ProcessLauncher.OpenNull(write: true);
-                stderr = ProcessLauncher.OpenNull(write: true);
-            }
-            else
-            {
-                stdout = File.OpenHandle(files.StdoutPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
-                stderr = File.OpenHandle(files.StderrPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
-            }
-
-            (stdin, stdinWriter) = OpenStdin(launch);
-            handle = new WindowsAttemptHandle(this, key, job, files, stdinWriter, root: null);
-            _attempts[key] = handle;
-            job.AssociateCompletionPort(_port, key, clearFirst: false);
-            var spec = new HolderSpec
-            {
-                AttemptId = files.AttemptName,
-                Application = launch.Command.Application,
-                CommandLine = launch.Command.CommandLine,
-                WorkingDirectory = launch.WorkingDirectory,
-                Environment = [.. launch.Environment],
-                LaunchSteps = [.. launch.LaunchSteps],
-                EndSteps = [.. launch.EndSteps],
-                LeftoverGraceMs = launch.LeftoverGraceMs,
-                AttemptDirectory = files.Directory,
-            };
-            if (launch.KillWithNode)
-            {
-                StartDirect(handle, spec, root, job, stdin, stdout, stderr);
-            }
-            else
-            {
-                StartHolder(handle, spec, root, job, stdin, stdout, stderr);
-            }
-
-            return handle;
-        }
-        catch
-        {
-            _attempts.TryRemove(key, out _);
-            job.Terminate(AttemptRunner.TerminatedExitCode);
-            handle?.Dispose();
-            job.Dispose();
-            stdinWriter?.Dispose();
-            throw;
-        }
-        finally
-        {
-            stdin?.Dispose();
-            if (!launch.KillWithNode)
-            {
-                stdout?.Dispose();
-                stderr?.Dispose();
-            }
-        }
-    }
-
     /// <inheritdoc />
     public IAttemptHandle? Reopen(string nodeName, AttemptFiles files, RootProcess? root, bool stopping = false)
     {
@@ -315,8 +214,7 @@ public sealed class WindowsExecutionPlatform : IExecutionPlatform
         WindowsAttemptHandle? handle = null;
         try
         {
-            var key = (nuint)Interlocked.Increment(ref _nextKey);
-            handle = new WindowsAttemptHandle(this, key, job, files, stdinWriter: null, root);
+            handle = CreateAttemptHandle(job, files, root);
             if (root is null && !File.Exists(files.ExitPath) && !File.Exists(files.LaunchPath))
             {
                 // The node stopped in the middle of the attempt's launch: the holder may still start a launch step or the command. A stop awaits
@@ -326,8 +224,7 @@ public sealed class WindowsExecutionPlatform : IExecutionPlatform
                 handle.AwaitLaunch(stopping);
             }
 
-            _attempts[key] = handle;
-            job.AssociateCompletionPort(_port, key, clearFirst: true);
+            ObserveAttemptJob(handle, clearFirst: true);
             var ack = Native.OpenEvent(Native.EventModifyState | Native.Synchronize, inherit: false, AckName(nodeName, files.AttemptName));
             if (ack.IsInvalid)
             {
@@ -406,148 +303,16 @@ public sealed class WindowsExecutionPlatform : IExecutionPlatform
         }
     }
 
+    internal WindowsAttemptHandle CreateAttemptHandle(JobObject job, AttemptFiles files, RootProcess? root) =>
+        new(this, (nuint)Interlocked.Increment(ref _nextKey), job, files, stdinWriter: null, root);
+
+    internal void ObserveAttemptJob(WindowsAttemptHandle handle, bool clearFirst)
+    {
+        _attempts[handle.CompletionKey] = handle;
+        handle.Job.AssociateCompletionPort(_port, handle.CompletionKey, clearFirst);
+    }
+
     internal void Forget(nuint key) => _attempts.TryRemove(key, out _);
-
-    private static (SafeHandle Handle, Stream? Writer) OpenStdin(AttemptLaunch launch)
-    {
-        switch (launch.Stdin)
-        {
-            case StdinKind.File:
-                return (File.OpenHandle(launch.StdinPath ?? throw new ArgumentException("A stdin file is required.", nameof(launch)),
-                    FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete), null);
-            case StdinKind.Stream:
-                var attributes = new Native.SecurityAttributes { Length = Marshal.SizeOf<Native.SecurityAttributes>() };
-                if (!Native.CreatePipe(out var read, out var write, ref attributes, 64 * 1024))
-                {
-                    throw new Win32Exception(Native.LastError, "CreatePipe failed.");
-                }
-
-                var writer = new FileStream(new SafeFileHandle(write, ownsHandle: true), FileAccess.Write, 1, isAsync: false);
-                return (new SafeKernelHandle(read, ownsHandle: true), writer);
-            default:
-                return (ProcessLauncher.OpenNull(write: false), null);
-        }
-    }
-
-    private void StartHolder(WindowsAttemptHandle handle, HolderSpec spec, JobObject root, JobObject job, SafeHandle stdin, SafeHandle stdout, SafeHandle stderr)
-    {
-        var ack = Native.CreateEvent(0, manualReset: true, initialState: false, AckName(_nodeName, handle.Files.AttemptName));
-        if (ack.IsInvalid)
-        {
-            var error = Native.LastError;
-            ack.Dispose();
-            throw new Win32Exception(error, "CreateEvent(ack) failed.");
-        }
-
-        handle.Ack = ack;
-        var attributes = new Native.SecurityAttributes { Length = Marshal.SizeOf<Native.SecurityAttributes>() };
-        if (!Native.CreatePipe(out var specRead, out var specWrite, ref attributes, 64 * 1024))
-        {
-            throw new Win32Exception(Native.LastError, "CreatePipe(spec) failed.");
-        }
-
-        if (!Native.CreatePipe(out var reportRead, out var reportWrite, ref attributes, 16 * 1024))
-        {
-            var error = Native.LastError;
-            Native.CloseHandle(specRead);
-            Native.CloseHandle(specWrite);
-            throw new Win32Exception(error, "CreatePipe(report) failed.");
-        }
-
-        using var specReadHandle = new SafeKernelHandle(specRead, ownsHandle: true);
-        using var reportWriteHandle = new SafeKernelHandle(reportWrite, ownsHandle: true);
-        var reportStream = new FileStream(new SafeFileHandle(reportRead, ownsHandle: true), FileAccess.Read, 1, isAsync: false);
-        var specStream = new FileStream(new SafeFileHandle(specWrite, ownsHandle: true), FileAccess.Write, 1, isAsync: false);
-        var inheritable = new List<nint>();
-        try
-        {
-            using var nulError = ProcessLauncher.OpenNull(write: true);
-            nint Copy(SafeHandle source)
-            {
-                var copy = ProcessLauncher.InheritableCopy(source);
-                inheritable.Add(copy);
-                return copy;
-            }
-
-            var arguments = new List<string>
-            {
-                _helper, "node", "exec-wrap", "--attempt", handle.Files.AttemptName,
-                "--job", Text(Copy(job.Handle)), "--root-job", Text(Copy(root.Handle)),
-                "--stdin", Text(Copy(stdin)), "--stdout", Text(Copy(stdout)), "--stderr", Text(Copy(stderr)),
-                "--ack", Text(Copy(ack)),
-            };
-            var holder = ProcessLauncher.Start(new LaunchOptions
-            {
-                Application = _helper,
-                CommandLine = WindowsCommandLine.Build(arguments),
-                WorkingDirectory = Path.GetDirectoryName(_helper),
-                Flags = Native.DetachedProcess,
-                StdInput = specReadHandle,
-                StdOutput = reportWriteHandle,
-                StdError = nulError,
-                InheritableHandles = inheritable,
-            });
-            holder.Resume();
-            handle.Holder = holder;
-        }
-        catch
-        {
-            reportStream.Dispose();
-            specStream.Dispose();
-            throw;
-        }
-        finally
-        {
-            foreach (var copy in inheritable)
-            {
-                Native.CloseHandle(copy);
-            }
-        }
-
-        handle.ReadReports(reportStream);
-        try
-        {
-            specStream.Write(Encoding.UTF8.GetBytes(spec.ToJson()));
-        }
-        finally
-        {
-            specStream.Dispose();
-        }
-    }
-
-    private static void StartDirect(WindowsAttemptHandle handle, HolderSpec spec, JobObject root, JobObject job, SafeHandle stdin, SafeFileHandle stdout,
-        SafeFileHandle stderr)
-    {
-        // The node is the holder: the runner keeps its own copies of the stdio handles; the job dies with the node (KILL_ON_JOB_CLOSE).
-        var stdinCopy = new SafeKernelHandle(ProcessLauncher.InheritableCopy(stdin), ownsHandle: true);
-        var thread = new Thread(() =>
-        {
-            try
-            {
-                var runner = new AttemptRunner(spec, root, job, stdinCopy, stdout, stderr, handle.OnReport);
-                runner.Run(guard: false);
-            }
-            catch (ObjectDisposedException)
-            {
-                // The node closed the job (kill-on-close ended the attempt): nothing is left to record.
-            }
-            catch (Exception exception) when (exception is Win32Exception or IOException or UnauthorizedAccessException)
-            {
-                handle.OnReport(new HolderReport { Event = "spawn_failed", Error = exception.Message });
-            }
-            finally
-            {
-                stdinCopy.Dispose();
-                stdout.Dispose();
-                stderr.Dispose();
-            }
-        })
-        {
-            IsBackground = true,
-            Name = "arcforges-attempt-" + spec.AttemptId,
-        };
-        thread.Start();
-    }
 
     private static string? SelfTest()
     {
@@ -596,6 +361,4 @@ public sealed class WindowsExecutionPlatform : IExecutionPlatform
             JobMessageObserved?.Invoke(message, key, (int)data);
         }
     }
-
-    private static string Text(nint handle) => ((long)handle).ToString(CultureInfo.InvariantCulture);
 }
