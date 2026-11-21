@@ -20,6 +20,8 @@ namespace ArcForges.Node.Api;
 public sealed class QueueServiceHandler : QueueService.QueueServiceBase
 {
     private const string ServiceName = "arcforges.node.v1.QueueService";
+    // QUEUED, WAITING_DEPENDENCY, and RETRY_WAIT remain visible for inspection and cancellation.
+    private const string RetainedQueueRows = "state IN (1, 2, 6) AND purged_at IS NULL";
     private readonly NodeRuntime _node;
     private readonly ApiCommands _api;
 
@@ -70,37 +72,13 @@ public sealed class QueueServiceHandler : QueueService.QueueServiceBase
         }
 
         var snapshot = Snapshot();
-        var value = new QueueServiceGetQueueValue { Budget = Budget(snapshot, settings) };
-        value.Pools.Add(Pools(snapshot, settings));
-        foreach (var name in snapshot.Result.Order)
+        response.Value = _node.Store.Read(reader =>
         {
-            if (!snapshot.Tasks.TryGetValue(name, out var view) || (request.HasPool && view.Pool != request.Pool) || !IsQueued(view.TaskId))
-            {
-                continue;
-            }
-
-            var verdict = snapshot.Result.Waiting.GetValueOrDefault(name);
-            var entry = new QueueEntry
-            {
-                TaskId = new Id { Value = ByteString.CopyFrom(view.TaskId) },
-                Title = view.Title,
-                Pool = view.Pool,
-                EffectivePriority = view.Effective,
-                Owner = view.Owner,
-                Queue = new QueueInfo
-                {
-                    Position = (uint)(verdict?.Position ?? 0),
-                    BlockingReason = verdict?.Reason ?? "admitted",
-                    WaitedMs = (ulong)Math.Max(0, (StoreTime.ToMicroseconds(_node.Clock.GetUtcNow()) - view.QueuedAt) / 1000),
-                },
-                Request = view.Request,
-                ReservedForLarge = snapshot.Result.Reservation?.Task == name,
-                Aged = view.Aged,
-            };
-            value.Entries.Add(entry);
-        }
-
-        response.Value = value;
+            var value = new QueueServiceGetQueueValue { Budget = Budget(snapshot, settings) };
+            value.Pools.Add(Pools(reader, snapshot, settings));
+            value.Entries.Add(RetainedQueue(reader, request.HasPool ? request.Pool : null));
+            return value;
+        });
         return Task.FromResult(response);
     }
 
@@ -141,7 +119,9 @@ public sealed class QueueServiceHandler : QueueService.QueueServiceBase
         }
 
         var value = new QueueServiceListPoolsValue();
-        value.Pools.Add(Pools(Snapshot(), Execution.Settings));
+        var snapshot = Snapshot();
+        var settings = Execution.Settings;
+        value.Pools.Add(_node.Store.Read(reader => Pools(reader, snapshot, settings)));
         response.Value = value;
         return Task.FromResult(response);
     }
@@ -529,11 +509,36 @@ public sealed class QueueServiceHandler : QueueService.QueueServiceBase
         var row = TaskRecords.GetRow(reader, id)!;
         var settings = Execution.Settings;
         var snapshot = Snapshot();
-        var name = IdText.Format(id);
         var explanation = new AdmissionExplanation { TaskId = task.TaskId, State = task.State };
+        if (task.State is TaskState.Queued or TaskState.WaitingDependency or TaskState.RetryWait)
+        {
+            explanation.BlockingReason = TaskRecords.RetiredAdmission;
+            explanation.Text = "Legacy Task admission is retired. This retained task will not start or retry.";
+            explanation.Request = row.Spec.Resources?.Hint;
+            if (task.State == TaskState.WaitingDependency)
+            {
+                using var command = reader.CreateCommand("""
+                    SELECT d.depends_on_task_id, d.condition, t.state, t.ready
+                    FROM task_dependency d JOIN task t ON t.task_id = d.depends_on_task_id
+                    WHERE d.task_id = $id ORDER BY d.depends_on_task_id;
+                    """);
+                command.Parameters.AddWithValue("$id", id);
+                using var rows = command.ExecuteReader();
+                while (rows.Read())
+                {
+                    if (!ExecutionSupervisor.DependencySatisfied((DependencyCondition)rows.GetInt32(1), (TaskState)rows.GetInt32(2), rows.GetInt32(3) == 1))
+                    {
+                        explanation.WaitingOnTasks.Add(new Id { Value = ByteString.CopyFrom((byte[])rows.GetValue(0)) });
+                    }
+                }
+            }
+
+            return explanation;
+        }
+
         var (cpu, expected, ceiling, source) = settings.Request(row.Spec.Resources?.Hint, light: false);
-        explanation.Request = snapshot.Tasks.TryGetValue(name, out var view) ? view.Request
-            : new ResourceDemand { CpuMillicores = (uint)Math.Min(cpu, uint.MaxValue), MemExpectedBytes = (ulong)expected, MemCeilingBytes = (ulong)ceiling, Source = source };
+        explanation.Request = new ResourceDemand { CpuMillicores = (uint)Math.Min(cpu, uint.MaxValue), MemExpectedBytes = (ulong)expected,
+            MemCeilingBytes = (ulong)ceiling, Source = source };
         explanation.BlockingKeys.Add(task.ExclusiveKeys);
         var running = Execution.RunningAttempts.ToList();
         var availableMemory = snapshot.BudgetMemory - running.Sum(attempt => attempt.AccountedMemory);
@@ -547,72 +552,37 @@ public sealed class QueueServiceHandler : QueueService.QueueServiceBase
         var feasibility = AdmissionEngine.Classify((long)explanation.Request.MemExpectedBytes, settings.MaxShareMemory,
             settings.CapacityMemory - settings.ReserveMemory - (Execution.Resources?.Current?.UnmanagedMemory ?? 0), settings.MaxTaskMemory);
         explanation.Feasibility = ExecutionSupervisor.Word(feasibility);
-        switch (task.State)
+        explanation.Text = TaskRecords.IsTerminal(task.State) ? $"the task is {task.State.ToString().ToUpperInvariant()}" : $"the task was admitted and is {task.State.ToString().ToUpperInvariant()}";
+        return explanation;
+    }
+
+    private static List<QueueEntry> RetainedQueue(StoreReader reader, string? pool)
+    {
+        // Retained timestamps provide a stable display order. There is no admission position or ETA.
+        using var command = reader.CreateCommand($"""
+            SELECT task_id, title, pool, effective_priority, owner, queued_at, spec
+            FROM task WHERE {RetainedQueueRows} AND ($pool IS NULL OR pool = $pool)
+            ORDER BY coalesce(queued_at, created_at), task_id;
+            """);
+        command.Parameters.AddWithValue("$pool", (object?)pool ?? DBNull.Value);
+        using var rows = command.ExecuteReader();
+        var now = reader.NowMicroseconds;
+        var entries = new List<QueueEntry>();
+        while (rows.Read())
         {
-            case TaskState.Queued:
-                {
-                    var verdict = snapshot.Result.Waiting.GetValueOrDefault(name);
-                    explanation.BlockingReason = verdict?.Reason ?? task.Queue?.BlockingReason ?? BlockingReasons.GlobalLimit;
-                    explanation.Position = (uint)(verdict?.Position ?? (int)(task.Queue?.Position ?? 0));
-                    explanation.Feasibility = ExecutionSupervisor.Word(verdict?.Feasibility ?? feasibility);
-                    explanation.Text = verdict?.Text ?? "waiting for the next admission pass";
-                    explanation.BlockingKeys.Clear();
-                    explanation.BlockingKeys.Add(verdict?.BlockingKeys ?? []);
-                    foreach (var holder in verdict?.Holders ?? [])
-                    {
-                        if (IdText.TryParse(holder, out var holderId))
-                        {
-                            explanation.WaitingOnTasks.Add(new Id { Value = ByteString.CopyFrom(holderId) });
-                        }
-                    }
-
-                    // The aging clock starts at the later of the queueing and the last SetTaskPriority (task.aged_at).
-                    var queuedAt = reader.Scalar("SELECT max(coalesce(queued_at, created_at), coalesce(aged_at, 0)) FROM task WHERE task_id = $id;", ("$id", id)) is long at ? at : 0;
-                    if (AdmissionEngine.AgesAt(task.EffectivePriority, queuedAt, reader.NowMicroseconds, (long)settings.StarvationBound.TotalMicroseconds) is { } ages)
-                    {
-                        explanation.AgesAt = Notifications.Time(ages);
-                    }
-
-                    if (snapshot.Result.Reservation?.Task == name)
-                    {
-                        explanation.Text += "; it holds the large-task reservation";
-                    }
-
-                    break;
-                }
-
-            case TaskState.WaitingDependency:
-                {
-                    explanation.BlockingReason = BlockingReasons.Dependency;
-                    var waiting = new List<string>();
-                    using var command = reader.CreateCommand(
-                        "SELECT d.depends_on_task_id, d.condition, t.state, t.ready FROM task_dependency d JOIN task t ON t.task_id = d.depends_on_task_id WHERE d.task_id = $id;");
-                    command.Parameters.AddWithValue("$id", id);
-                    using var rows = command.ExecuteReader();
-                    while (rows.Read())
-                    {
-                        var condition = (DependencyCondition)rows.GetInt32(1);
-                        if (!ExecutionSupervisor.DependencySatisfied(condition, (TaskState)rows.GetInt32(2), rows.GetInt32(3) == 1))
-                        {
-                            var dependency = (byte[])rows.GetValue(0);
-                            explanation.WaitingOnTasks.Add(new Id { Value = ByteString.CopyFrom(dependency) });
-                            waiting.Add($"{IdText.Format(dependency)} ({condition.ToString().ToUpperInvariant()})");
-                        }
-                    }
-
-                    explanation.Text = "waits for its dependencies: " + string.Join(", ", waiting);
-                    break;
-                }
-
-            case TaskState.RetryWait:
-                explanation.Text = (task.HasStateReason ? task.StateReason : "an automatic retry") + " (RETRY_WAIT)";
-                break;
-            default:
-                explanation.Text = TaskRecords.IsTerminal(task.State) ? $"the task is {task.State.ToString().ToUpperInvariant()}" : $"the task was admitted and is {task.State.ToString().ToUpperInvariant()}";
-                break;
+            entries.Add(new QueueEntry
+            {
+                TaskId = new Id { Value = ByteString.CopyFrom((byte[])rows.GetValue(0)) },
+                Title = rows.GetString(1),
+                Pool = rows.GetString(2),
+                EffectivePriority = (Priority)rows.GetInt32(3),
+                Owner = ActorRef.Parser.ParseFrom((byte[])rows.GetValue(4)),
+                Request = TaskSpec.Parser.ParseFrom((byte[])rows.GetValue(6)).Resources?.Hint,
+                Queue = TaskRecords.RetainedQueueInfo(rows.IsDBNull(5) ? null : rows.GetInt64(5), now),
+            });
         }
 
-        return explanation;
+        return entries;
     }
 
     private QueueSnapshot Snapshot()
@@ -638,20 +608,18 @@ public sealed class QueueServiceHandler : QueueService.QueueServiceBase
         };
     }
 
-    private List<Pool> Pools(QueueSnapshot snapshot, ExecutionSettings settings)
+    private List<Pool> Pools(StoreReader reader, QueueSnapshot snapshot, ExecutionSettings settings)
     {
-        var counts = _node.Store.Read(reader =>
+        var counts = new Dictionary<string, uint>(StringComparer.Ordinal);
+        using (var command = reader.CreateCommand($"SELECT pool, count(*) FROM task WHERE {RetainedQueueRows} GROUP BY pool;"))
+        using (var rows = command.ExecuteReader())
         {
-            using var command = reader.CreateCommand("SELECT pool, count(*) FROM task WHERE state IN (1, 2, 6) GROUP BY pool;");
-            using var rows = command.ExecuteReader();
-            var result = new Dictionary<string, uint>(StringComparer.Ordinal);
             while (rows.Read())
             {
-                result[rows.GetString(0)] = (uint)rows.GetInt64(1);
+                counts[rows.GetString(0)] = (uint)rows.GetInt64(1);
             }
+        }
 
-            return result;
-        });
         var running = Execution.RunningAttempts.Where(attempt => !attempt.Light).GroupBy(attempt => attempt.Pool).ToDictionary(group => group.Key, group => (uint)group.Count(),
             StringComparer.Ordinal);
         return [.. settings.PoolPolicies.Select(pool =>
@@ -685,8 +653,6 @@ public sealed class QueueServiceHandler : QueueService.QueueServiceBase
 
         return view;
     }
-
-    private bool IsQueued(byte[] taskId) => _node.Store.Read(reader => reader.Scalar("SELECT state FROM task WHERE task_id = $id;", ("$id", taskId))) is 1L;
 
     // ------------------------------------------------------------------------------------------------------------------- mutations
 

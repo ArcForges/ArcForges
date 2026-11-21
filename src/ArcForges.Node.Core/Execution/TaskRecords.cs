@@ -117,6 +117,8 @@ public sealed class AttemptRow
 /// </summary>
 public static class TaskRecords
 {
+    internal const string RetiredAdmission = "legacy_admission_retired";
+
     private const string AttemptColumns =
         "attempt_id, task_id, number, kind, state, executor_node_id, container_name, root_pid, root_start, boot_identity, request_cpu_millicores, " +
         "request_mem_expected_bytes, request_mem_ceiling_bytes, request_source, unenforced, node_gap, created_at, started_at, finished_at, exit_code, " +
@@ -366,24 +368,25 @@ public static class TaskRecords
         return (uint)Convert.ToInt64(value ?? 0L, CultureInfo.InvariantCulture);
     }
 
+    /// <summary>Reports the time since the stored queue timestamp without predicting admission.</summary>
+    internal static QueueInfo RetainedQueueInfo(long? queuedAt, long now)
+    {
+        var info = new QueueInfo { BlockingReason = RetiredAdmission };
+        if (queuedAt is { } since)
+        {
+            info.WaitedMs = (ulong)Math.Max(0, (now - since) / 1000);
+        }
+
+        return info;
+    }
+
     private static void Complete(StoreReader reader, ManagedTask task)
     {
         var id = task.TaskId.Value.ToByteArray();
-        if (task.State is TaskState.Queued or TaskState.WaitingDependency)
+        if (task.State is TaskState.Queued or TaskState.WaitingDependency or TaskState.RetryWait)
         {
-            var queuedAt = reader.Scalar("SELECT queued_at FROM task WHERE task_id = $id;", ("$id", id));
-            task.Queue = new QueueInfo
-            {
-                // The admission pass records why a queued task waits in state_reason (03 section 4); a dependency wait is "dependency".
-                BlockingReason = task.State == TaskState.WaitingDependency ? "dependency" : task.HasStateReason && task.StateReason.Length > 0 && task.StateReason != "retry"
-                    ? task.StateReason
-                    : "global_limit",
-                WaitedMs = queuedAt is long since ? (ulong)Math.Max(0, (reader.NowMicroseconds - since) / 1000) : 0,
-            };
-            if (task.State == TaskState.Queued)
-            {
-                task.Queue.Position = QueuePosition(reader, id);
-            }
+            var queuedAt = reader.Scalar("SELECT queued_at FROM task WHERE task_id = $id;", ("$id", id)) as long?;
+            task.Queue = RetainedQueueInfo(queuedAt, reader.NowMicroseconds);
         }
 
         using (var keys = reader.CreateCommand("SELECT concurrency_key, mode FROM task_concurrency_key WHERE task_id = $id ORDER BY concurrency_key;"))
