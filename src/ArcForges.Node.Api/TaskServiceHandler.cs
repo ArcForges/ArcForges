@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-using System.Security.Cryptography;
-using System.Text;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
@@ -14,16 +12,13 @@ using ArcForges.Node.Platform;
 using ArcForges.Node.Store;
 using Google.Protobuf;
 using Grpc.Core;
+using NodeShapes = ArcForges.Contracts.Node.Shapes.ContractShapeValidation;
 
 namespace ArcForges.Node.Api;
 
 /// <summary>
-/// <c>arcforges.node.v1.TaskService</c> (tasks.proto; architecture 04; AD-0006): Submit (with dependencies, keys and the side-effect class
-/// from the caller or a <c>retry_safety</c> rule), Get, List, Wait, Attach (with STREAM stdin through Write/CloseTaskInput),
-/// ReleaseCallerBinding, Cancel, Retry (manual, with an optional larger memory grant), SetTaskPriority (the class or pool of a waiting task,
-/// the class and CPU weight of a running one), Pause and Resume (Linux; Windows reports pause unsupported), Pin, PurgeTaskRecord,
-/// ReadTaskOutput, WatchTaskOutput, GetAttempt and ListAttempts. Mutations are idempotent by <c>meta.command_id</c> (24 h; the payload
-/// digest of the request's wire bytes). <c>GetTimeline</c> belongs to a later task; the generated base answers it <c>UNIMPLEMENTED</c>.
+/// The legacy Task service reconciles original Submit and Retry commands and provides controls and reads for existing Tasks and Attempts.
+/// Mutations retain their wire-payload digest and idempotency window under <c>meta.command_id</c>.
 /// </summary>
 public sealed class TaskServiceHandler : TaskService.TaskServiceBase
 {
@@ -59,8 +54,8 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
             TaskServicePauseTaskRequest.Parser, (request, caller) => PauseTask(caller, request, CancellationToken.None));
         executors.Register<TaskServiceResumeTaskRequest, TaskServiceResumeTaskResponse>("TaskService.ResumeTask", PermissionMatrix.TaskCancelOthers,
             TaskServiceResumeTaskRequest.Parser, (request, caller) => ResumeTask(caller, request, CancellationToken.None));
-        executors.Register<TaskServiceRetryTaskRequest, TaskServiceRetryTaskResponse>("TaskService.RetryTask", PermissionMatrix.TaskRetry,
-            TaskServiceRetryTaskRequest.Parser, (request, caller) => RetryTask(caller, request, CancellationToken.None));
+        executors.RegisterRetained("TaskService.RetryTask", PermissionMatrix.TaskRetry,
+            TaskServiceRetryTaskRequest.Parser, (request, caller) => ReconcileRetry(caller, request), response => response.Error);
     }
 
     private ExecutionSupervisor Execution => _node.Execution ?? throw new InvalidOperationException("The node has no execution supervisor.");
@@ -144,204 +139,27 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
 
     // ------------------------------------------------------------------------------------------------------------------- the operations
 
-    /// <summary><c>SubmitTask</c> for <paramref name="caller"/>.</summary>
-    internal async Task<TaskServiceSubmitTaskResponse> SubmitTask(Caller caller, TaskServiceSubmitTaskRequest request, CancellationToken cancellationToken)
+    /// <summary>Reconciles the original Submit command during legacy drain.</summary>
+    internal Task<TaskServiceSubmitTaskResponse> SubmitTask(Caller caller, TaskServiceSubmitTaskRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(caller);
         ArgumentNullException.ThrowIfNull(request);
-        var response = new TaskServiceSubmitTaskResponse { Meta = Meta(request.Meta) };
-        var origin = caller.Origin;
-        var execution = Execution;
-        var settings = execution.Settings;
-        var refused = Stopping() ?? Validation.CommandId(request.Meta) ?? LocalBound(caller)
-            ?? TaskValidation.Submit(request, origin, settings, _node.NodeId.Span, _node.Capabilities);
-        if (refused is null && execution.Platform is null)
+        TaskServiceSubmitTaskResponse Failed(ArcError error) => new() { Meta = Meta(request.Meta), Error = error };
+        if ((Stopping() ?? Validation.CommandId(request.Meta) ?? LocalBound(caller)) is { } refused)
         {
-            refused = NodeErrors.EnforcementUnavailable("no execution platform could be started on this node (see the node log)");
+            return Task.FromResult(Failed(refused));
         }
 
-        // 03 section 8 (R-RES-008): an observe-only or partial node runs tasks unenforced unless the policy forbids it.
-        if (refused is null && execution.Unenforced && settings.AllowUnenforced == false)
-        {
-            refused = NodeErrors.EnforcementUnavailable("resources.allow_unenforced is false and this node does not enforce cpu and memory limits");
-        }
-
-        var spec = request.Spec;
-        if (refused is null)
-        {
-            try
-            {
-                execution.Platform!.Prepare(new CommandRequest
-                {
-                    Argv = spec.Command.FormCase == CommandSpec.FormOneofCase.Argv ? [.. spec.Command.Argv.Argv] : null,
-                    Shell = spec.Command.FormCase == CommandSpec.FormOneofCase.Shell ? spec.Command.Shell.Kind : ShellKind.Unspecified,
-                    Script = spec.Command.FormCase == CommandSpec.FormOneofCase.Shell ? spec.Command.Shell.Script : null,
-                    ShellPath = spec.Command.FormCase == CommandSpec.FormOneofCase.Shell && spec.Command.Shell.HasShellPath ? spec.Command.Shell.ShellPath : null,
-                    WorkingDirectory = spec.WorkingDirectory,
-                    Environment = ExecutionSupervisor.ValidationEnvironment(spec, execution.Platform.EnvironmentNames),
-                });
-            }
-            catch (CommandRefusedException exception)
-            {
-                refused = NodeErrors.Validation(exception.Code, exception.Reason);
-            }
-        }
-
-        // R-EXE-012: a dependency must name a task of this node (a new task can never close a cycle: nothing depends on it yet).
-        if (refused is null && spec.DependsOn.Count > 0)
-        {
-            refused = _node.Store.Read(reader =>
-            {
-                for (var index = 0; index < spec.DependsOn.Count; index++)
-                {
-                    var dependency = spec.DependsOn[index].TaskId.Value.ToByteArray();
-                    if (TaskRecords.GetRow(reader, dependency) is not { Purged: false })
-                    {
-                        return NodeErrors.InvalidDependency(dependency, $"depends_on[{index}]: task {IdText.Format(dependency)} does not exist on this node");
-                    }
-                }
-
-                return (ArcError?)null;
-            });
-        }
-
-        if (refused is null && caller.CellsOrigin == Origin.Agent && !settings.AgentCommandAllowed(CommandLine(spec.Command)))
-        {
-            // 11 section 1, "Submit task (own)": AGENT A subject to agents.allowed_command_patterns (default all); a guardrail over the argv. A
-            // center-routed caller relayed for a local AGENT is narrowed the same way (decisions B-4, SEC-10).
-            refused = NodeErrors.CommandPatternDenied("agents.allowed_command_patterns");
-            caller.Routed?.Refused(PermissionMatrix.TaskSubmit, "agents.allowed_command_patterns");
-            await _api.AuditAsync(caller, new GateRequest(PermissionMatrix.TaskSubmit, "TaskService.SubmitTask",
-                "submit " + CommandText.Summary(spec.Command, settings.SecretNames), "task"), PermissionDecision.Deny,
-                "denied: the command matches no agents.allowed_command_patterns").ConfigureAwait(false);
-        }
-
-        if (refused is not null)
-        {
-            response.Error = refused;
-            return response;
-        }
-
-        var parts = SubmittedEnvironment.Split(spec, settings.SecretNames);
-        if (parts.Secrets is not null)
-        {
-            // The node data key loads at startup; sealing never waits on the OS secret store under the writer lock.
-            await execution.KeysReady.ConfigureAwait(false);
-        }
-
-        var session = caller.Session;
-        var warnings = new List<string>();
-        var sideEffect = spec.HasSideEffect ? spec.SideEffect : SideEffectClass.Unknown;
-        var source = spec.HasSideEffect && sideEffect != SideEffectClass.Unknown ? SideEffectSource.Caller : SideEffectSource.Default;
-        if (caller.CellsOrigin == Origin.Agent && (caller.CenterCaller is not null || !settings.AcceptAgentAssertions)
-            && sideEffect is SideEffectClass.Pure or SideEffectClass.Idempotent)
-        {
-            var reason = caller.CenterCaller is not null
-                ? "retry_safety.accept_agent_assertions is treated as false for a center-routed AGENT"
-                : "retry_safety.accept_agent_assertions is false";
-            warnings.Add($"The agent's side-effect class {sideEffect.ToString().ToUpperInvariant()} is not accepted ({reason}); the task is UNKNOWN.");
-            sideEffect = SideEffectClass.Unknown;
-            source = SideEffectSource.Default;
-        }
-
-        var (keys, _) = KeyHolders.FromSpec(spec.Concurrency?.ExclusiveKeys ?? [], spec.Concurrency?.SharedKeys ?? []);
-        var pool = spec.HasPool ? spec.Pool : "default";
-        var poolPolicy = settings.PoolPolicies.FirstOrDefault(candidate => candidate.Name == pool);
-
-        if (execution.Unenforced)
-        {
-            warnings.Add("This node does not enforce every resource limit (" + (NodeCapabilities.MissingReason(_node.Capabilities) ?? "observe only")
-                + "); the task runs unenforced (03 section 8).");
-        }
-
-        if (caller.CenterCaller is not null && request.CancelWhenCallerGone)
-        {
-            // AF-CTR-05 Q19: a center-routed caller has no process on this node to bind the task to.
-            warnings.Add("cancel_when_caller_gone has no effect for a center-routed caller: no local process is bound to the task.");
-        }
-
-        if (request.JoinExisting)
-        {
-            warnings.Add("join_existing joins only tasks of the same session; sessions arrive with AF-AI-01, so the task was queued as a new task.");
-        }
-
-        // The policy snapshot is fixed for this call, but the workspace is selected only inside the write transaction.
-        // Do all command-dependent matching and digest/serialization work before acquiring that writer.
-        var matchedRules = source == SideEffectSource.Default && settings.RetrySafetyRules.Count > 0
-            ? PolicyRules.PrepareRetrySafety(settings.RetrySafetyRules, CommandLine(spec.Command), execution.AfterRetryMatchForTests, cancellationToken)
-            : [];
-        var fingerprint = CommandText.Fingerprint(spec.Command);
-        var commandDigest = CommandText.Digest(spec, EnvironmentDigest(spec.Environment));
-        var storage = PreparedSubmitStorage.Create(parts);
-        var dependencies = spec.DependsOn.Select(dependency => (dependency.TaskId.Value.ToByteArray(),
-            dependency.HasCondition ? dependency.Condition : DependencyCondition.Succeeded)).ToArray();
         cancellationToken.ThrowIfCancellationRequested();
-
-        var summary = CommandText.Summary(spec.Command, settings.SecretNames);
-        CallerKey? binding = request.CancelWhenCallerGone && session is not null
-            ? new CallerKey(session.Peer.ProcessId, session.Peer.ProcessStartTime.UtcTicks)
-            : null;
-        if (execution.BeforeSubmitTransactionForTests is { } beforeTransaction)
+        var (response, retained) = _api.ReadRetained(request, request.Meta, caller, "SubmitTask", TaskServiceSubmitTaskResponse.Parser,
+            Failed, NodeErrors.LegacyTaskOutcomeUnknown());
+        if (retained && (!NodeShapes.IsValid(response) || (response.Error is null &&
+            (response.Value?.TaskId?.Value.Length != 16 || !ValidTaskReceipt(response.Value?.Receipt, request.Meta.CommandId)))))
         {
-            // Tests coordinate real registry changes here; production never sets the callback.
-            await beforeTransaction(cancellationToken).ConfigureAwait(false);
+            return Task.FromResult(Failed(NodeErrors.LegacyTaskOutcomeUnknown()));
         }
 
-        var (result, replayed) = await Idempotent(request, request.Meta, caller, "SubmitTask", TaskServiceSubmitTaskResponse.Parser,
-            failure => new TaskServiceSubmitTaskResponse { Meta = Meta(request.Meta), Error = failure },
-            command =>
-            {
-                // Select the current longest active root in the very transaction that inserts the task. Unregister uses
-                // the same SQLite writer, so it either sees this live task or commits before this fresh selection.
-                var workspace = ExecutionSupervisor.WorkspaceOf(command.Transaction, spec.WorkingDirectory);
-                var effectiveSideEffect = sideEffect;
-                var effectiveSource = source;
-                // Workspace-scoped retry safety must be derived from that same selection, not an earlier read snapshot.
-                if (effectiveSource == SideEffectSource.Default
-                    && PolicyRules.PreparedRetrySafety(matchedRules, workspace ?? []) is { } ruled)
-                {
-                    effectiveSideEffect = ruled;
-                    effectiveSource = SideEffectSource.Policy;
-                }
-
-                var plan = new SubmitPlan
-                {
-                    Parts = parts,
-                    Storage = storage,
-
-                    // The caller's ActorRef: a center-routed owner carries its center_caller and the routed command ID (CTR5-NODE-10).
-                    Owner = caller.Actor,
-                    LocalDiagnostic = caller.CenterCaller is null,
-                    RemoteCommandId = caller.CenterCaller is null ? null : request.Meta.CommandId.Value.ToByteArray(),
-                    Title = spec.HasTitle && spec.Title.Length > 0 ? spec.Title : summary,
-                    Summary = summary,
-                    Fingerprint = fingerprint,
-                    CommandDigest = commandDigest,
-                    Kind = spec.HasKind ? spec.Kind : TaskKind.Command,
-                    Pool = pool,
-                    Priority = spec.HasPriority ? spec.Priority : poolPolicy is { HasDefaultPriority: true, DefaultPriority: not Priority.Unspecified } ? poolPolicy.DefaultPriority : Priority.Normal,
-                    SideEffect = effectiveSideEffect,
-                    SideEffectSource = effectiveSource,
-                    Warnings = warnings,
-                    CommandId = request.Meta.CommandId,
-                    Dependencies = dependencies,
-                    Keys = keys,
-                    WorkspaceId = workspace,
-                };
-                return new TaskServiceSubmitTaskResponse
-                {
-                    Meta = Meta(request.Meta),
-                    Value = execution.Submit(command, plan, caller.Routed is { } routed ? routed.BeforeEffect : null),
-                };
-            }).ConfigureAwait(false);
-        if (result.OutcomeCase == TaskServiceSubmitTaskResponse.OutcomeOneofCase.Value && !replayed)
-        {
-            execution.Submitted(result.Value.TaskId.Value.Span, binding);
-            _node.Log.Debug("api.task.submitted", new LogField("task", IdText.Format(result.Value.TaskId)), new LogField("origin", origin),
-                new LogField("callerBound", binding is not null));
-        }
-
-        return result;
+        return Task.FromResult(response);
     }
 
     /// <summary><c>GetTask</c> for <paramref name="caller"/>.</summary>
@@ -873,67 +691,35 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
         return result;
     }
 
-    /// <summary>
-    /// <c>RetryTask</c> for <paramref name="caller"/> (a connection's caller, or an approval's requester): <c>task.retry</c>, ALLOW for every
-    /// origin except an AGENT's retry of a SIDE_EFFECTING or UNKNOWN task, which needs an approval (tasks.proto).
-    /// </summary>
-    internal async Task<TaskServiceRetryTaskResponse> RetryTask(Caller caller, TaskServiceRetryTaskRequest request, CancellationToken cancellationToken)
+    /// <summary>Reconciles the original Retry command during legacy drain.</summary>
+    internal Task<TaskServiceRetryTaskResponse> RetryTask(Caller caller, TaskServiceRetryTaskRequest request, CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(request);
-        ArgumentNullException.ThrowIfNull(caller);
-        var response = new TaskServiceRetryTaskResponse { Meta = Meta(request.Meta) };
-        var refused = Stopping() ?? Validation.CommandId(request.Meta) ?? Validation.RequiredId(request.TaskId, "task_id");
-        if (refused is null && request.HasReason && request.Reason.Length > 500)
-        {
-            refused = NodeErrors.InvalidArgument("reason: <= 500 chars");
-        }
-
-        if (refused is null && request.OverrideDemand is { } demand)
-        {
-            var maxTask = Execution.Settings.MaxTaskMemory;
-            if ((demand.HasMemExpectedBytes && (demand.MemExpectedBytes < 1024 * 1024 || (long)demand.MemExpectedBytes > maxTask))
-                || (demand.HasMemCeilingBytes && ((long)demand.MemCeilingBytes > maxTask || (demand.HasMemExpectedBytes && demand.MemCeilingBytes < demand.MemExpectedBytes)))
-                || (demand.HasCpuMillicores && demand.CpuMillicores is < 1 or > 1_024_000))
-            {
-                refused = NodeErrors.InvalidArgument("override_demand: mem_expected_bytes 1 MiB..max_task_memory, mem_ceiling_bytes >= mem_expected_bytes and <= max_task_memory, cpu 1..1,024,000");
-            }
-        }
-
-        GateRequest? gate = null;
-        if (refused is null)
-        {
-            var row = _node.Store.Read(reader => TaskRecords.GetRow(reader, request.TaskId.Value.Span));
-            gate = new GateRequest(PermissionMatrix.TaskRetry, "TaskService.RetryTask",
-                "retry task " + IdText.Format(request.TaskId) + (row is null ? string.Empty : " (" + row.SideEffect.ToString().ToUpperInvariant() + ")"), "task", Bytes(request.TaskId))
-            {
-                AgentApproval = row is { SideEffect: SideEffectClass.SideEffecting or SideEffectClass.Unknown },
-                AgentApprovalReason = "an AGENT's retry of a SIDE_EFFECTING or UNKNOWN task needs approval (tasks.proto RetryTask)",
-            };
-            refused = await _api.GateAsync(caller, gate, request, request.Meta).ConfigureAwait(false);
-        }
-
-        if (refused is not null)
-        {
-            response.Error = refused;
-            return response;
-        }
-
-        var id = request.TaskId.Value.ToByteArray();
-        var (result, replayed) = await _api.IdempotentAsync(request, request.Meta, caller, "RetryTask", TaskServiceRetryTaskResponse.Parser,
-            failure => new TaskServiceRetryTaskResponse { Meta = Meta(request.Meta), Error = failure }, command =>
-        {
-            var (value, error) = Execution.Retry(command, id, request.Meta.CommandId, request.OverrideDemand);
-            return error is not null
-                ? new TaskServiceRetryTaskResponse { Meta = Meta(request.Meta), Error = error }
-                : new TaskServiceRetryTaskResponse { Meta = Meta(request.Meta), Value = value };
-        }, gate).ConfigureAwait(false);
-        if (!replayed && result.OutcomeCase == TaskServiceRetryTaskResponse.OutcomeOneofCase.Value)
-        {
-            Execution.Kick();
-        }
-
-        return result;
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(ReconcileRetry(caller, request).Response);
     }
+
+    private (TaskServiceRetryTaskResponse Response, bool Retained) ReconcileRetry(Caller caller, TaskServiceRetryTaskRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+        ArgumentNullException.ThrowIfNull(request);
+        TaskServiceRetryTaskResponse Failed(ArcError error) => new() { Meta = Meta(request.Meta), Error = error };
+        if ((Stopping() ?? Validation.CommandId(request.Meta) ?? Validation.RequiredId(request.TaskId, "task_id")) is { } refused)
+        {
+            return (Failed(refused), false);
+        }
+
+        var (response, retained) = _api.ReadRetained(request, request.Meta, caller, "RetryTask", TaskServiceRetryTaskResponse.Parser,
+            Failed, NodeErrors.LegacyTaskOutcomeUnknown());
+        if (retained && (!NodeShapes.IsValid(response) || (response.Error is null && !ValidTaskReceipt(response.Value?.Receipt, request.Meta.CommandId))))
+        {
+            return (Failed(NodeErrors.LegacyTaskOutcomeUnknown()), false);
+        }
+
+        return (response, retained);
+    }
+
+    private static bool ValidTaskReceipt(Receipt? receipt, Id commandId) =>
+        receipt is { HasEffect: true, Effect: EffectCertainty.Happened } && commandId.Equals(receipt.CommandId);
 
     /// <summary><c>SetTaskPriority</c> for <paramref name="caller"/> (a connection's caller, or an approval's requester).</summary>
     internal async Task<TaskServiceSetTaskPriorityResponse> SetTaskPriority(Caller caller, TaskServiceSetTaskPriorityRequest request, CancellationToken cancellationToken)
@@ -1636,42 +1422,6 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
         }
 
         return Task.FromResult(response);
-    }
-
-    /// <summary>The command line a <c>retry_safety</c> pattern is matched against: the argument vector joined by spaces, or the shell script.</summary>
-    internal static string CommandLine(CommandSpec command) =>
-        command.FormCase == CommandSpec.FormOneofCase.Argv ? string.Join(' ', command.Argv.Argv) : command.Shell?.Script ?? string.Empty;
-
-    /// <summary>The digest of an environment spec (inherit mode, caller environment, set and unset, in canonical order).</summary>
-    internal static byte[] EnvironmentDigest(EnvironmentSpec? environment)
-    {
-        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        void Add(string text)
-        {
-            var bytes = Encoding.UTF8.GetBytes(text);
-            hash.AppendData(BitConverter.GetBytes(bytes.Length));
-            hash.AppendData(bytes);
-        }
-
-        Add("arcforges.environment-digest.v1");
-        Add(((int)(environment?.Inherit ?? EnvironmentInherit.Unspecified)).ToString(System.Globalization.CultureInfo.InvariantCulture));
-        foreach (var (name, map) in (ReadOnlySpan<(string, Google.Protobuf.Collections.MapField<string, string>?)>)[("caller", environment?.CallerEnvironment), ("set", environment?.Set)])
-        {
-            Add(name);
-            foreach (var pair in (map ?? []).OrderBy(pair => pair.Key, StringComparer.Ordinal))
-            {
-                Add(pair.Key);
-                Add(pair.Value);
-            }
-        }
-
-        Add("unset");
-        foreach (var name in (environment?.Unset ?? []).Order(StringComparer.Ordinal))
-        {
-            Add(name);
-        }
-
-        return hash.GetHashAndReset();
     }
 
     private static OutputChunk Chunk(Id attemptId, OutputSlice slice) => new()

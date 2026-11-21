@@ -15,7 +15,10 @@ public static class RoutedCommandOwnership
     public const string TargetKind = "routed_command_owner";
 
     /// <summary>True when existing approval and live dedup records may be used by this caller class.</summary>
-    public static bool MayUse(StoreReader reader, ReadOnlySpan<byte> commandId, CenterCaller? caller)
+    public static bool MayUse(StoreReader reader, ReadOnlySpan<byte> commandId, CenterCaller? caller) =>
+        MayUse(reader, commandId, caller, retainedDedup: null);
+
+    private static bool MayUse(StoreReader reader, ReadOnlySpan<byte> commandId, CenterCaller? caller, bool? retainedDedup)
     {
         ArgumentNullException.ThrowIfNull(reader);
         var id = commandId.ToArray();
@@ -28,6 +31,11 @@ public static class RoutedCommandOwnership
             }
         }
 
+        if (retainedDedup == false)
+        {
+            return true;
+        }
+
         long createdAt;
         long expiresAt;
         Origin origin;
@@ -37,7 +45,7 @@ public static class RoutedCommandOwnership
             using var row = command.ExecuteReader();
             if (!row.Read())
             {
-                return true;
+                return retainedDedup != true;
             }
 
             origin = (Origin)row.GetInt32(0);
@@ -45,7 +53,7 @@ public static class RoutedCommandOwnership
             expiresAt = row.GetInt64(2);
         }
 
-        if (expiresAt <= reader.NowMicroseconds && !RoutedFileRetention.IsHeld(reader, id))
+        if (retainedDedup is null && expiresAt <= reader.NowMicroseconds && !RoutedFileRetention.IsHeld(reader, id))
         {
             return true;
         }
@@ -78,9 +86,14 @@ public static class RoutedCommandOwnership
     }
 
     /// <summary>Also prevents a routed approval's command ID being reused for another method or request before its outcome exists.</summary>
-    public static bool MayExecute(StoreReader reader, ReadOnlySpan<byte> commandId, CenterCaller? caller, string operation, ReadOnlySpan<byte> digest)
+    public static bool MayExecute(StoreReader reader, ReadOnlySpan<byte> commandId, CenterCaller? caller, string operation, ReadOnlySpan<byte> digest) =>
+        MayExecute(reader, commandId, caller, operation, digest, retainedDedup: null);
+
+    /// <summary>Uses the dedup retention decision already made in this snapshot to bind ownership of a replay.</summary>
+    internal static bool MayExecute(StoreReader reader, ReadOnlySpan<byte> commandId, CenterCaller? caller, string operation,
+        ReadOnlySpan<byte> digest, bool? retainedDedup)
     {
-        if (!MayUse(reader, commandId, caller))
+        if (!MayUse(reader, commandId, caller, retainedDedup))
         {
             return false;
         }

@@ -4,6 +4,7 @@ using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.LocalRpc;
 using ArcForges.Node.Core;
+using ArcForges.Node.Core.Sandboxes;
 using ArcForges.Node.Core.Security;
 using ArcForges.Node.Store;
 using Grpc.Core;
@@ -129,6 +130,17 @@ public sealed class NodeServiceHandler : NodeService.NodeServiceBase
             Summary = NodeCapabilities.FullyEnforced(_node.Capabilities)
                 ? "Resource limits are enforced."
                 : "Resource limits are observed only: " + (NodeCapabilities.MissingReason(_node.Capabilities) ?? NodeCapabilities.NotInBuild) + ".",
+        });
+        var runReadiness = _node.RunReadiness;
+        value.Checks.Add(new DoctorCheck
+        {
+            CheckId = "node.v2_run_profile",
+            Area = "enforcement",
+            Status = runReadiness.Qualified ? CheckStatus.Pass : CheckStatus.Warn,
+            Summary = runReadiness.Qualified
+                ? "The default V2 Run profile matched the last host observation. Each Run checks its native scope before execution."
+                : "The default V2 Run profile is " + runReadiness.State.ToString().ToLowerInvariant() + ": " +
+                    (runReadiness.Reason ?? SandboxRunReadiness.NotObserved.Reason) + ".",
         });
         value.Metrics.Add(Gauge("node.uptime_seconds", (_node.Clock.GetUtcNow() - _node.StartedAt).TotalSeconds));
         value.Metrics.Add(Counter("node.rpc_calls", _node.RpcCalls));

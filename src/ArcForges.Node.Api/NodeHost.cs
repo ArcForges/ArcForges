@@ -376,7 +376,9 @@ public static class NodeHost
 
         // 02 section 2 step 6: the platform layer creates or re-opens the root container and verifies enforcement with a probe.
         var platform = protectedStorage ? null : StartPlatform(options, store, log);
-        var capabilities = platform is null ? NodeCapabilities.Evaluate(clock) : NodeCapabilities.FromPlatform(platform, clock);
+        CapabilityReport ReadLegacyCapabilities() => platform is null
+            ? NodeCapabilities.Evaluate(clock) : NodeCapabilities.FromPlatform(platform, clock);
+        var capabilities = ReadLegacyCapabilities();
         if (OperatingSystem.IsLinux())
         {
             // An in-memory data root: captured output and temporary files count against the attempts' memory (no swap to reclaim into).
@@ -430,6 +432,7 @@ public static class NodeHost
         {
             Execution = execution,
             Sandboxes = sandboxes,
+            ReadLegacyCapabilities = ReadLegacyCapabilities,
 
             // AD-0021 section 5 (Plan decision Q8): a local SCRIPT submission only on a --test-mode node with the allowance; never in production.
             LocalScriptSubmit = !protectedStorage && (options.AllowLocalScriptSubmit

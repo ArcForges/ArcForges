@@ -122,7 +122,7 @@ internal static class SandboxPolicyAdmission
             : CapabilityState.Unverified;
         var capabilities = new List<Capability>
         {
-            Capability("mxc.profile", state, result.Admitted ? null : result.Reason, result.EvidenceId),
+            Capability(SandboxRunReadiness.ProfileKey, state, result.Admitted ? null : result.Reason, result.EvidenceId),
         };
         if (result.Admitted)
         {
@@ -145,7 +145,7 @@ internal static class SandboxPolicyAdmission
         var profile = OperatingSystem.IsWindows() ? Windows : OperatingSystem.IsLinux() ? Linux : null;
         if (profile is null)
         {
-            return [Capability("mxc.profile", CapabilityState.Unsupported, "operating_system_not_supported", null)];
+            return [Capability(SandboxRunReadiness.ProfileKey, CapabilityState.Unsupported, "operating_system_not_supported", null)];
         }
 
         var windows = profile == Windows;

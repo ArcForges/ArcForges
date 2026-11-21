@@ -131,6 +131,10 @@ public sealed class NodeRuntime : IDisposable
 
     internal SandboxManager? Sandboxes { get; init; }
 
+    internal SandboxRunReadiness RunReadiness => Sandboxes?.RunReadiness ?? SandboxRunReadiness.NoAuthority;
+
+    internal Func<CapabilityReport>? ReadLegacyCapabilities { get; init; }
+
     /// <summary>Releases the Sandbox authority and stop token.</summary>
     public void Dispose()
     {
@@ -143,7 +147,7 @@ public sealed class NodeRuntime : IDisposable
     /// <summary>Re-runs the capability evaluation (<c>GetCapabilities</c> with <c>reevaluate</c>).</summary>
     public CapabilityReport Reevaluate()
     {
-        var report = Execution?.Platform is { } platform ? NodeCapabilities.FromPlatform(platform, Clock) : NodeCapabilities.Evaluate(Clock);
+        var report = ReadLegacyCapabilities?.Invoke() ?? NodeCapabilities.Evaluate(Clock);
         if (OperatingSystem.IsLinux())
         {
             NodeCapabilities.AddDataRootFact(report, DataRoot);

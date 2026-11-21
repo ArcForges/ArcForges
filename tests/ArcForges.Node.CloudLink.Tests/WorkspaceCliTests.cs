@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Diagnostics;
 using ArcForges.Client;
+using ArcForges.CommandLine;
 using ArcForges.Contracts.Fleet.V1;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
@@ -18,7 +19,7 @@ namespace ArcForges.Node.CloudLink.Tests;
 public sealed class WorkspaceCliTests
 {
     [Fact(Timeout = 60_000)]
-    public async Task RegisterListShowAndUnregisterUseBoundFleetEnvelopes()
+    public async Task ExistingWorkspaceControlsKeepBoundFleetEnvelopesAndRegistrationSendsNothing()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         var ct = TestContext.Current.CancellationToken;
@@ -49,33 +50,6 @@ public sealed class WorkspaceCliTests
             Name = "demo",
             RootPath = path,
         };
-        center.Script("RegisterNodeWorkspace", Reply(new FleetServiceRegisterNodeWorkspaceResponse
-        {
-            Meta = new ResponseMeta { CorrelationId = CommandIds.New() },
-            Value = new FleetServiceRegisterNodeWorkspaceValue
-            {
-                NodeId = nodeId,
-                Response = new WorkspaceServiceRegisterWorkspaceResponse
-                {
-                    Meta = new ResponseMeta { CorrelationId = CommandIds.New() },
-                    Value = new WorkspaceServiceRegisterWorkspaceValue { Workspace = workspace },
-                }.ToByteString(),
-            },
-        }));
-        var registered = await RunCliAsync(node, ct, "workspace", "register", path, "--name", "demo");
-        Assert.True(registered.Exit == 0, "registration exit=" + registered.Exit + "; stderr=" + registered.Error);
-        Assert.Contains(IdText.Format(workspaceId), registered.Output, StringComparison.Ordinal);
-        var sent = FleetServiceRegisterNodeWorkspaceRequest.Parser.ParseFrom(FakeCenter.Payload(Assert.Single(center.CallsOf("RegisterNodeWorkspace")).Body));
-        var inner = WorkspaceServiceRegisterWorkspaceRequest.Parser.ParseFrom(sent.Request);
-        var assertion = RelayAssertion.Parser.ParseFrom(sent.RelayAssertion);
-        Assert.Equal(path, inner.Path);
-        Assert.Equal("demo", inner.Name);
-        Assert.Equal(inner.Meta.CommandId, sent.Meta.CommandId);
-        Assert.Equal(inner.Meta.CommandId, assertion.CommandId);
-        Assert.Equal(RoutedMethod.RegisterNodeWorkspace, assertion.Method);
-        Assert.Equal(Origin.Script, sent.Caller.LocalOrigin); // this test process is noninteractive, not a HUMAN claim.
-        Assert.True(FakeChannelPeer.Verify(publicKey, RelaySignatures.AssertionInput(assertion, center.Endpoint)!, assertion.Signature.ToByteArray()));
-
         // Script the same declared metadata transcript as the producer, bound to each actual CLI request.
         // These bytes describe synthetic records only, not an observed workspace or a real Center audit.
         async Task<(int Exit, string Output, string Error)> ReadReply(string method, string[] arguments,
@@ -151,7 +125,11 @@ public sealed class WorkspaceCliTests
         var remove = WorkspaceServiceUnregisterWorkspaceRequest.Parser.ParseFrom(sentRemove.Request);
         Assert.Equal(workspaceId, remove.WorkspaceId);
         Assert.Equal(remove.Meta.CommandId, sentRemove.Meta.CommandId);
-        Assert.Equal(remove.Meta.CommandId, RelayAssertion.Parser.ParseFrom(sentRemove.RelayAssertion).CommandId);
+        var assertion = RelayAssertion.Parser.ParseFrom(sentRemove.RelayAssertion);
+        Assert.Equal(remove.Meta.CommandId, assertion.CommandId);
+        Assert.Equal(RoutedMethod.UnregisterNodeWorkspace, assertion.Method);
+        Assert.Equal(Origin.Script, sentRemove.Caller.LocalOrigin);
+        Assert.True(FakeChannelPeer.Verify(publicKey, RelaySignatures.AssertionInput(assertion, center.Endpoint)!, assertion.Signature.ToByteArray()));
         center.Script("UnregisterNodeWorkspace", Reply(new FleetServiceUnregisterNodeWorkspaceResponse
         {
             Meta = new ResponseMeta { CorrelationId = CommandIds.New() },
@@ -194,9 +172,9 @@ public sealed class WorkspaceCliTests
         Assert.NotEqual(0, badReceipt.Exit);
         Assert.DoesNotContain("Unregistered", badReceipt.Output, StringComparison.Ordinal);
 
-        var local = await RunCliAsync(node, ct, "workspace", "register", path, "--local");
-        Assert.NotEqual(0, local.Exit);
-        Assert.Single(center.CallsOf("RegisterNodeWorkspace"));
+        var registration = await RunCliAsync(node, ct, "workspace", "register", path, "--name", "demo");
+        Assert.Equal(ExitCodes.Usage, registration.Exit);
+        Assert.Empty(center.CallsOf("RegisterNodeWorkspace"));
 
         var wrongWorkspace = workspace.Clone();
         wrongWorkspace.WorkspaceId = CommandIds.New();

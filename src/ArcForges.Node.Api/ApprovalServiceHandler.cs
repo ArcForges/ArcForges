@@ -30,6 +30,26 @@ internal sealed class ApprovalExecutors
     internal void RegisterReference(string method, string operation, Func<byte[], Caller, Task<byte[]?>> run) =>
         _executors[method] = (operation, run);
 
+    /// <summary>Registers a retiring method whose approval can settle only from a validated retained result with a known effect.</summary>
+    internal void RegisterRetained<TRequest, TResponse>(string method, string operation, MessageParser<TRequest> parser,
+        Func<TRequest, Caller, (TResponse Response, bool Retained)> reconcile, Func<TResponse, ArcError?> error)
+        where TRequest : IMessage<TRequest>
+        where TResponse : IMessage<TResponse> => RegisterReference(method, operation, (bytes, caller) =>
+        {
+            try
+            {
+                var (response, retained) = reconcile(parser.ParseFrom(bytes), caller);
+                var failure = error(response);
+                var settled = retained && (failure is null || failure is { HasEffect: true, Effect: EffectCertainty.Happened or EffectCertainty.DidNotHappen });
+                return Task.FromResult<byte[]?>(settled ? response.ToByteArray() : null);
+            }
+            catch (Exception exception) when (exception is not OutOfMemoryException)
+            {
+                // A null response retains the original approval for reconciliation.
+                return Task.FromResult<byte[]?>(null);
+            }
+        });
+
     /// <summary>The executor of <paramref name="method"/>, or <see langword="null"/>.</summary>
     public (string Operation, Func<byte[], Caller, Task<byte[]?>> Run)? Find(string method) => _executors.TryGetValue(method, out var found) ? found : null;
 }

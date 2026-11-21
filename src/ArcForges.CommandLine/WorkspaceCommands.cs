@@ -12,8 +12,7 @@ internal static class WorkspaceCommands
 {
     internal static Command Build(Func<ParseResult, Cli> factory)
     {
-        var workspace = new Command("workspace", "Manage registered workspaces through the center");
-        workspace.Subcommands.Add(Register(factory));
+        var workspace = new Command("workspace", "Inspect or remove existing registrations through the center");
         workspace.Subcommands.Add(Unregister(factory));
         workspace.Subcommands.Add(List(factory));
         workspace.Subcommands.Add(Show(factory));
@@ -21,30 +20,6 @@ internal static class WorkspaceCommands
     }
 
     private static Option<string?> NodeOption() => new("--node") { Description = "Target node UUID or exact name (default: this node)", HelpName = "name-or-id" };
-
-    private static Command Register(Func<ParseResult, Cli> factory)
-    {
-        var path = new Argument<string>("path") { Description = "Absolute existing directory on the target node" };
-        var name = new Option<string?>("--name") { Description = "Workspace name", HelpName = "name" };
-        var node = NodeOption();
-        var command = new Command("register", "Register an existing directory (HUMAN only)") { path, name, node };
-        Actions.Set(command, factory, async (cli, result, cancellationToken) =>
-        {
-            await using var session = await cli.ConnectAsync(autoStart: true, cancellationToken).ConfigureAwait(false);
-            var (route, exit) = await WorkspaceRoute.ResolveAsync(cli, session, result.GetValue(node), cancellationToken).ConfigureAwait(false);
-            if (route is null) return exit;
-            var request = new WorkspaceServiceRegisterWorkspaceRequest { Meta = Cli.Meta(), Path = result.GetValue(path)! };
-            if (result.GetValue(name) is { } selected) request.Name = selected;
-            var action = CommandIds.Begin(request, item => item.Meta, (item, meta) => item.Meta = meta);
-            var response = await route.RegisterWorkspaceAsync(action.RequestForAttempt(), cancellationToken).ConfigureAwait(false);
-            if (response.Error is { } error) return WorkspaceRoute.Fail(cli, error, request.Meta.CorrelationId, request.Meta.CommandId);
-            if (response.Value?.Workspace is not { WorkspaceId.Value.Length: 16 } created)
-                return WorkspaceRoute.Fail(cli, WorkspaceRoute.MalformedResponse(), request.Meta.CorrelationId, request.Meta.CommandId);
-            Render(cli, created);
-            return ExitCodes.Success;
-        });
-        return command;
-    }
 
     private static Command Unregister(Func<ParseResult, Cli> factory)
     {

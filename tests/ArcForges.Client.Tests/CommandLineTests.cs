@@ -305,6 +305,22 @@ public sealed class CommandLineTests
         Assert.Equal(NodeContract.ProductVersion, version.ToString().Trim());
     }
 
+    [Fact]
+    public async Task WorkspaceRegistrationIsClosedWhileExistingControlsRemainAvailable()
+    {
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        Assert.Equal(ExitCodes.Success, await CliApplication.RunAsync(["workspace", "--help"], NoNode, output, error));
+        var help = output.ToString();
+        Assert.DoesNotMatch(@"\bregister\b", help);
+        Assert.Matches(@"\blist\b", help);
+        Assert.Matches(@"\bshow\b", help);
+        Assert.Matches(@"\bunregister\b", help);
+
+        Assert.Equal(ExitCodes.Usage, await CliApplication.RunAsync(["workspace", "register", "/legacy-workspace", "--name", "demo"], NoNode, output, error));
+        Assert.Contains("register", error.ToString(), StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData("run", "--node", "--local", "--wait")]
     [InlineData("tasks", "--node", "--local", "list")]

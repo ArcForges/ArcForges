@@ -131,18 +131,6 @@ internal sealed class WorkspaceRoute(Cli cli, NodeSession session, Id nodeId, Ti
 
     private static string FormatNode(Id? id) => id?.Value.Length == 16 ? new Guid(id.Value.Span, bigEndian: true).ToString("D") : "unknown";
 
-    public async Task<WorkspaceServiceRegisterWorkspaceResponse> RegisterWorkspaceAsync(WorkspaceServiceRegisterWorkspaceRequest request, CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(request);
-        var routed = new FleetServiceRegisterNodeWorkspaceRequest { Meta = request.Meta?.Clone() ?? Cli.Meta(), NodeId = NodeId.Clone(), Request = request.ToByteString() };
-        return await MutationAsync(
-            (deadline, token) => _fleet.RegisterNodeWorkspaceAsync(routed, deadline: deadline, cancellationToken: token).ResponseAsync,
-            answer => answer.Error, answer => answer.Value?.Response, WorkspaceServiceRegisterWorkspaceResponse.Parser,
-            answer => NodeShapes.IsValid(answer), answer => answer.Error,
-            error => new WorkspaceServiceRegisterWorkspaceResponse { Meta = Meta(request.Meta), Error = error }, request.Meta!.CommandId, TimeSpan.FromSeconds(20), cancellationToken)
-            .ConfigureAwait(false);
-    }
-
     public async Task<WorkspaceServiceUnregisterWorkspaceResponse> UnregisterWorkspaceAsync(WorkspaceServiceUnregisterWorkspaceRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);

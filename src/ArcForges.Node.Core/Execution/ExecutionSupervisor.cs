@@ -257,7 +257,6 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
     private readonly HeartbeatMonitor _tailerMonitor;
     private ExecutionSettings _settings;
     private Thread? _loop;
-    private Task _admissionLoop = Task.CompletedTask;
     private long _lastSettingsRead;
     private readonly Lock _settingsLock = new();
     private int _launching;
@@ -556,16 +555,15 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
 
     // ------------------------------------------------------------------------------------------------------------------ lifecycle
 
-    /// <summary>Starts the enforcement loop, the admission loop and the heartbeat probes.</summary>
+    /// <summary>Starts monitoring and enforcing existing Attempt ownership while draining the legacy runtime.</summary>
     public void Start()
     {
         Heartbeat.Start();
         _loop = new Thread(EnforcementLoop) { IsBackground = true, Name = "arcforges-enforcement" };
         _loop.Start();
-        _admissionLoop = Task.Run(AdmissionLoopAsync);
+        // Keep the recovered holders and control path running. Queued, dependency-waiting and retrying Tasks must not start another Attempt.
         Resources?.Start();
         Adoptions.Start();
-        Kick();
     }
 
     /// <summary>Wakes the admission loop; a kick that arrives during a pass runs another pass right after it (a kick is never lost).</summary>
@@ -590,13 +588,6 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         _loopWake.Pulse();
         _loop?.Join(TimeSpan.FromSeconds(2));
         await PlatformCalls.DisposeAsync().ConfigureAwait(false);
-        try
-        {
-            await _admissionLoop.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
-        }
-        catch (TimeoutException)
-        {
-        }
 
         foreach (var attempt in _running.Values.Where(attempt => attempt.KillWithNode))
         {
