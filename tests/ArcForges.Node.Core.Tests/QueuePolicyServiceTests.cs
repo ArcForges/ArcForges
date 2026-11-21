@@ -2,6 +2,7 @@
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
+using Google.Protobuf;
 
 namespace ArcForges.Node.Core.Tests;
 
@@ -141,7 +142,9 @@ public sealed class QueuePolicyServiceTests
     public async Task TheMatrixFollowsTheDefaultsPerOrigin()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        await using var node = await InProcessNode.Create().StartAsync();
+        var queued = new Id();
+        await using var node = await InProcessNode.Create(seed: transaction =>
+            queued = LegacyTaskHistoryFixture.SeedQueued(transaction, new ActorRef { Origin = Origin.Script, ClientKind = ClientKind.Cli })).StartAsync();
         await using var human = await node.ChannelAsync(helloAsHuman: true);
         await using var script = await node.ChannelAsync();
         await using var agent = await node.ChannelAsync(kind: ClientKind.McpAdapter);
@@ -200,7 +203,6 @@ public sealed class QueuePolicyServiceTests
 
         // AGENT: everything here is P, except ResumeTask (A); a task action on a queued task (all pools paused, so it waits).
         Assert.Null((await human.Queue.PausePoolAsync(new QueueServicePausePoolRequest { Meta = Tasks.Meta(), All = true }, cancellationToken: Ct)).Error);
-        var queued = await Tasks.SubmitAsync(script, Tasks.Argv(node.Root, Tasks.TestLoad, "hold", "--hold-ms", "100"));
         Approval(await CreatePoolAsync(agent, "agent-pool"));
         Approval(await ParallelismAsync(agent));
         Approval((await Sched.ChangePolicyAsync(agent, policy => policy.Resources.GlobalMaxRunning = 3)).Error);
@@ -238,15 +240,18 @@ public sealed class QueuePolicyServiceTests
     public async Task AnotherOwnersTaskIsCancelledOnceAHumanApproves()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        await using var node = await InProcessNode.Create().StartAsync();
+        var others = new Id();
+        var own = new Id();
+        await using var node = await InProcessNode.Create(seed: transaction =>
+        {
+            var session = new Id { Value = ByteString.CopyFrom(Sched.SeedSession(transaction)) };
+            others = LegacyTaskHistoryFixture.SeedQueued(transaction, new ActorRef { Origin = Origin.Agent, ClientKind = ClientKind.McpAdapter, SessionId = session });
+            own = LegacyTaskHistoryFixture.SeedQueued(transaction, new ActorRef { Origin = Origin.Script, ClientKind = ClientKind.Cli });
+        }).StartAsync();
         Assert.SkipWhen(node.Runtime.Execution is null, "The node has no execution supervisor.");
         await using var human = await node.ChannelAsync(helloAsHuman: true);
         await using var script = await node.ChannelAsync();
         Assert.Null((await human.Queue.PausePoolAsync(new QueueServicePausePoolRequest { Meta = Tasks.Meta(), All = true }, cancellationToken: Ct)).Error);
-        byte[] session = [];
-        node.Runtime.Store.Write(transaction => session = Sched.SeedSession(transaction));
-        var others = await Sched.SubmitAsSessionAsync(node, Tasks.Argv(node.Root, Tasks.TestLoad, "hold", "--hold-ms", "100"), session);
-        var own = await Tasks.SubmitAsync(script, Tasks.Argv(node.Root, Tasks.TestLoad, "hold", "--hold-ms", "100"));
 
         var cancel = new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = others };
         var refused = (await script.Tasks.CancelTaskAsync(cancel, cancellationToken: Ct)).Error;
