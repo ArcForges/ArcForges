@@ -579,7 +579,7 @@ public sealed partial class MxcRunServiceTests
         var result = await RunInstalledCliAsync(fixture, ["--json", .. args]);
         if (result.ExitCode != 0)
         {
-            Assert.Fail($"The installed CLI {args[0]} command returned {result.ExitCode} ({InstalledCliFailureCode(result.Stdout)}).");
+            Assert.Fail($"The installed CLI {args[0]} command returned {result.ExitCode} ({InstalledCliFailureDiagnostic(result.Stdout)}).");
         }
 
         using var json = JsonDocument.Parse(result.Stdout);
@@ -587,7 +587,7 @@ public sealed partial class MxcRunServiceTests
         return json.RootElement.Clone();
     }
 
-    private static string InstalledCliFailureCode(byte[] output)
+    private static string InstalledCliFailureDiagnostic(byte[] output)
     {
         if (output.Length > 65_536) return "oversized_diagnostic";
         try
@@ -597,6 +597,15 @@ public sealed partial class MxcRunServiceTests
                 && error.ValueKind == JsonValueKind.Object && error.TryGetProperty("code", out var code) && code.ValueKind == JsonValueKind.String
                 && code.GetString() is { Length: > 0 and <= 64 } text && text.All(c => char.IsAsciiLetterOrDigit(c) || c == '_'))
             {
+                if (text == "unsupported_combination" && error.TryGetProperty("details", out var details)
+                    && details.ValueKind == JsonValueKind.Object && details.TryGetProperty("state", out var state)
+                    && state.ValueKind == JsonValueKind.Object && state.TryGetProperty("reason", out var reason)
+                    && reason.ValueKind == JsonValueKind.String && reason.GetString() is { Length: > 0 and <= 160 } reasonText
+                    && reasonText.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or ':' or '-' or ',' or ' ' or '.'))
+                {
+                    return $"{text}, reason {reasonText}";
+                }
+
                 return text;
             }
         }
