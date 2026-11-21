@@ -354,7 +354,7 @@ public sealed class NodeServiceHandler : NodeService.NodeServiceBase
             return response;
         }
 
-        var reason = request.HasReason && request.Reason.Length > 0 ? request.Reason : "stop requested";
+        var beginShutdown = false;
         var (result, _) = await _api.IdempotentAsync(request, request.Meta, caller, "StopNode", NodeServiceStopNodeResponse.Parser,
             failure => new NodeServiceStopNodeResponse { Meta = Meta(request.Meta), Error = failure }, command =>
         {
@@ -373,6 +373,7 @@ public sealed class NodeServiceHandler : NodeService.NodeServiceBase
             {
                 _node.Lifecycle.MoveTo(NodeLifecycleState.Stopping, "stop_node");
                 command.Emit(EventTopic.Node, new NodeEvent { Node = _node.Status("stop_node") });
+                beginShutdown = true;
             }
 
             return new NodeServiceStopNodeResponse
@@ -384,12 +385,18 @@ public sealed class NodeServiceHandler : NodeService.NodeServiceBase
                 },
             };
         }, gate).ConfigureAwait(false);
-        if (result.OutcomeCase == NodeServiceStopNodeResponse.OutcomeOneofCase.Value)
+        if (beginShutdown && result.OutcomeCase == NodeServiceStopNodeResponse.OutcomeOneofCase.Value)
         {
             // The caller's free-text reason is not logged (it may carry anything); the log records that one was given and its length.
             _node.Log.Info("node.stop.requested", new LogField("origin", _sessions.OriginOf(context)), new LogField("reasonGiven", request.HasReason && request.Reason.Length > 0),
                 new LogField("reasonLength", request.Reason.Length), new LogField("cancelRunning", request.CancelRunning));
-            _node.RequestStop("stop_node");
+            // The durable stop has been accepted. Let Kestrel finish the gRPC reply before stopping its listener.
+            // Kestrel also invokes this callback when a disconnected request is torn down.
+            context.GetHttpContext().Response.OnCompleted(static state =>
+            {
+                ((NodeRuntime)state).RequestStop("stop_node");
+                return Task.CompletedTask;
+            }, _node);
         }
 
         return result;

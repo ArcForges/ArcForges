@@ -328,10 +328,13 @@ public sealed class NodeServiceTests
         // A free-text reason may carry anything; it never reaches the log (R-SEC-003).
         var value = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(12));
         var reason = "token=" + value;
+        var meta = InProcessNode.Command();
+        NodeServiceStopNodeResponse response;
         await using (var channel = await node.ChannelAsync(helloAsHuman: true))
         {
-            var meta = InProcessNode.Command();
-            var response = await channel.Node.StopNodeAsync(new NodeServiceStopNodeRequest { Meta = meta, Reason = reason }, deadline: DateTime.UtcNow + Deadline, cancellationToken: ct);
+            response = await channel.Node.StopNodeAsync(new NodeServiceStopNodeRequest { Meta = meta, Reason = reason },
+                deadline: DateTime.UtcNow + Deadline, cancellationToken: ct);
+            Assert.Null(response.Error);
             Assert.Equal(meta.CommandId, response.Value.Receipt.CommandId);
             Assert.Equal(EffectCertainty.Happened, response.Value.Receipt.Effect);
         }
@@ -340,6 +343,10 @@ public sealed class NodeServiceTests
         Assert.False(File.Exists(descriptor));
         using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = node.DataRoot, BootIdentity = "check" });
         Assert.True(store.Metadata.PreviousShutdownClean);
+        var recorded = store.Read(reader => reader.Scalar(
+            "SELECT outcome FROM command_dedup WHERE command_id = $id AND method = 'arcforges.node.v1.NodeService/StopNode';",
+            ("$id", meta.CommandId.Value.ToByteArray())));
+        Assert.Equal(response, NodeServiceStopNodeResponse.Parser.ParseFrom(Assert.IsType<byte[]>(recorded)));
         var log = File.ReadAllText(Path.Combine(node.DataRoot, "logs", "node", "node.log"));
         Assert.Contains("\"event\":\"node.stopped\"", log, StringComparison.Ordinal);
         Assert.Contains("\"reasonLength\":" + reason.Length.ToString(System.Globalization.CultureInfo.InvariantCulture), log, StringComparison.Ordinal);
