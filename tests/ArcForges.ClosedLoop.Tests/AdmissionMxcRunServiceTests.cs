@@ -608,7 +608,6 @@ public sealed partial class MxcRunServiceTests
             try
             {
                 PrepareDataRoot(fixture.DataRoot);
-                fixture.LiveMachine = true;
                 if (seed is not null) fixture.SeedPolicy(seed);
                 process = await fixture.StartNodeAsync();
                 channel = OpenChannel(fixture);

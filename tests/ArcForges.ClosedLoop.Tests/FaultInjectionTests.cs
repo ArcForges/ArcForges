@@ -3,7 +3,6 @@ using System.Runtime.Versioning;
 using System.Security.AccessControl;
 using System.Security.Cryptography;
 using System.Security.Principal;
-using System.Text.Json;
 using ArcForges.Client;
 using ArcForges.Node.Store;
 
@@ -83,10 +82,13 @@ public sealed class FaultInjectionTests
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         await using var node = TestNode.Create();
-        var id = RetainedClosedLoopTask.Seed(node, exitCode: 0);
         await node.StartNodeAsync();
-        var before = await node.CliAsync("tasks", "show", id, "--json");
+        const string retainedName = "before write refusal";
+        Assert.Equal(0, (await node.CliAsync("node", "rename", retainedName)).ExitCode);
+        var before = await node.CliAsync("node", "info", "--json");
         Assert.Equal(0, before.ExitCode);
+        var original = before.Json().GetProperty("node").GetProperty("node");
+        Assert.Equal(retainedName, original.GetProperty("name").GetString());
         Assert.Equal(0, (await node.CliAsync("node", "stop")).ExitCode);
         await TestNode.WaitAsync(() => node.LiveProcesses().Count == 0, Bound, "the node to exit");
 
@@ -102,16 +104,15 @@ public sealed class FaultInjectionTests
         Assert.Equal(1, run.ExitCode);
         Assert.StartsWith("arcforges: the node store cannot be opened: ", run.Error, StringComparison.Ordinal);
         Assert.Equal(digest, Digest(store));
+        Assert.Null(node.Descriptor());
         Assert.Empty(node.LiveProcesses());
 
         await node.StartNodeAsync();
-        var after = await node.CliAsync("tasks", "show", id, "--json");
+        var after = await node.CliAsync("node", "info", "--json");
         Assert.Equal(0, after.ExitCode);
-        using var beforeJson = JsonDocument.Parse(before.Output);
-        using var afterJson = JsonDocument.Parse(after.Output);
-        var restored = afterJson.RootElement.GetProperty("task");
-        Assert.Equal("TASK_STATE_SUCCEEDED", restored.GetProperty("state").GetString());
-        Assert.True(JsonElement.DeepEquals(beforeJson.RootElement.GetProperty("task"), restored));
+        var restored = after.Json().GetProperty("node").GetProperty("node");
+        Assert.Equal(original.GetProperty("nodeId").GetString(), restored.GetProperty("nodeId").GetString());
+        Assert.Equal(retainedName, restored.GetProperty("name").GetString());
         Assert.Equal(0, (await node.CliAsync("node", "stop")).ExitCode);
     }
 

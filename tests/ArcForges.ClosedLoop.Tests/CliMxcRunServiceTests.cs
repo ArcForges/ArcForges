@@ -332,8 +332,6 @@ public sealed partial class MxcRunServiceTests
             TestMode = true,
             SecretStore = NodeSecretStores.ForTestDataRoot,
             NodeKeys = NodeKeyStores.ForTestDataRoot,
-            IsolatedFromMachineLoad = true,
-            LinuxSlice = fixture.Slice,
             HelperExecutable = InstalledCliHost,
             SandboxMxcInstallationRoot = Path.Combine(Path.GetDirectoryName(InstalledCliHost)!, "mxc"),
             BeforeReady = runtime =>

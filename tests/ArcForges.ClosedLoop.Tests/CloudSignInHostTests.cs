@@ -1,16 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-using System.Diagnostics;
-using System.Security.Cryptography;
-using System.Text;
 using ArcForges.Client;
-using ArcForges.Contracts.Fleet.V1;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
-using ArcForges.Contracts.Relay.V1;
 using ArcForges.Node.CloudLink;
 using ArcForges.Node.CloudLink.Tests;
-using ArcForges.Node.Core;
-using Google.Protobuf;
 
 namespace ArcForges.ClosedLoop.Tests;
 
@@ -18,8 +11,7 @@ namespace ArcForges.ClosedLoop.Tests;
 /// N2-16 and N2-17: the sign-in of a REAL <c>arcforges node run --test-mode</c> process whose center is FakeCenter (MOCKED center, compiled
 /// in from the cloud-link test project) through <c>ARCFORGES_TEST_CENTER_URL</c>, the browser played by the test (MOCKED browser: the node
 /// writes the derived URL to <c>ARCFORGES_TEST_BROWSER_FILE</c> and starts nothing; the test approves on FakeCenter and sends the
-/// redirect to the node's REAL loopback receiver), and the REAL CLI: a SCRIPT caller is refused on both systems, a HUMAN CLI in a pty
-/// (<c>script -qefc</c>, Linux only: Windows has no pseudo-terminal path here, H-C14) signs in, follows the flow and cancels it with Ctrl+C.
+/// redirect to the Node's loopback receiver). Local SCRIPT callers cannot start or end the account session.
 /// </summary>
 [Trait("loop", "local")]
 public sealed class CloudSignInHostTests
@@ -121,485 +113,87 @@ public sealed class CloudSignInHostTests
         Assert.DoesNotContain("afr1.", log, StringComparison.Ordinal);
     }
 
-    /// <summary>The actual selected host binary serves the fleet proxy in a separate node process; the center is MOCKED.</summary>
-    [Fact(Timeout = 90000)]
-    public async Task SelectedHostNodeAndCliRouteThroughTheFleetProxy()
-    {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        await using var center = await FakeCenter.StartAsync();
-        center.ScriptedFleet = true;
-        center.CommandKeys.Add(center.Channel.CommandPublicKey);
-        await using var node = TestNode.Create();
-        node.UseLocalDiagnosticCli = false;
-        node.Environment[CloudLinkTestHooks.CenterUrl] = center.Endpoint.Url;
-        const string sentinel = "fixture-only-aot-d3-sentinel";
-        node.Environment["AF_SYNTH_TOKEN"] = sentinel;
-        using var host = await node.StartNodeAsync();
-        var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
-        Assert.Equal(Path.GetFullPath(TestNode.Host), Path.GetFullPath(host.MainModule!.FileName), comparer);
-        await using var human = await node.HumanChannelAsync();
-        var info = await human.Node.GetNodeInfoAsync(new NodeServiceGetNodeInfoRequest(), cancellationToken: Ct);
-        var nodeId = info.Value.Node.Node.NodeId;
-        var begun = await human.Account.BeginSignInAsync(new AccountServiceBeginSignInRequest { Meta = Command(), Method = SignInMethod.DeviceCode }, cancellationToken: Ct);
-        Assert.Null(begun.Error);
-        center.ApproveDevice();
-        await TestNode.WaitAsync(async () => (await human.Account.GetAccountStatusAsync(new AccountServiceGetAccountStatusRequest(), cancellationToken: Ct))
-            .Value.Status.Relay == RelayState.Connected, TimeSpan.FromSeconds(30), "mock center channel connected");
-        var connection = await center.Channel.ProvedAsync();
-        var publicKey = Assert.IsType<byte[]>(center.Channel.NodeKeyOf(connection.Installation));
-        var retainedTask = new ManagedTask
-        {
-            TaskId = CommandIds.New(),
-            Title = "retained fleet task fixture",
-            State = TaskState.Succeeded,
-            Pool = "default",
-        };
-        var response = new FleetServiceListNodeTasksResponse
-        {
-            Meta = new ResponseMeta(),
-            Value = new FleetServiceListNodeTasksValue
-            {
-                NodeId = nodeId,
-                Response = new TaskServiceListTasksResponse
-                {
-                    Meta = new ResponseMeta(),
-                    Value = new TaskServiceListTasksValue
-                    {
-                        Page = new PageState { HasMore = false },
-                        Tasks = { retainedTask },
-                    },
-                }.ToByteString(),
-            },
-        };
-        center.Script("ListNodeTasks", new FakeFault.Raw([.. FakeCenter.DataFrame(response), .. FakeCenter.TrailerFrame(0, null)]));
-        using var cli = node.Start(TestNode.LegacyCli, [NodeLocations.TestModeOption, "tasks", "list", "--json"]);
-        Assert.Equal(Path.GetFullPath(TestNode.LegacyCli), Path.GetFullPath(cli.StartInfo.FileName), comparer);
-        var result = await TestNode.CompleteAsync(cli, TimeSpan.FromSeconds(30));
-        Assert.True(result.ExitCode == 0, result.ToString());
-        var displayed = Assert.Single(result.Json().GetProperty("tasks").EnumerateArray());
-        Assert.Equal(IdText.Format(retainedTask.TaskId), displayed.GetProperty("taskId").GetString());
-        Assert.Equal(retainedTask.Title, displayed.GetProperty("title").GetString());
-        var request = FleetServiceListNodeTasksRequest.Parser.ParseFrom(FakeCenter.Payload(Assert.Single(center.CallsOf("ListNodeTasks")).Body));
-        Assert.Equal(nodeId, request.NodeId);
-        Assert.Equal(Origin.Script, request.Caller.LocalOrigin);
-        var assertion = RelayAssertion.Parser.ParseFrom(request.RelayAssertion);
-        Assert.Equal(RoutedMethod.ListNodeTasks, assertion.Method);
-        Assert.Equal(nodeId, assertion.TargetNodeId);
-        Assert.Equal(Origin.Script, assertion.LocalOrigin);
-        Assert.Equal(SHA256.HashData(request.Request.Span), assertion.RequestSha256.ToByteArray());
-        Assert.True(FakeChannelPeer.Verify(publicKey, RelaySignatures.AssertionInput(assertion, center.Endpoint)!, assertion.Signature.ToByteArray()));
-
-        // Exercise the submit guard inside the selected node executable, not only the managed test process or a CLI binary.
-        var nonceCount = connection.Received.Count(frame => frame.FrameCase == RelayFrame.FrameOneofCase.RelayNonceRequest);
-        var meta = Command();
-        var unsafeEnvironment = new EnvironmentSpec { Inherit = EnvironmentInherit.None };
-        unsafeEnvironment.Set["AF_SYNTH_TOKEN"] = sentinel;
-        var inner = new TaskServiceSubmitTaskRequest { Meta = meta.Clone(), Spec = new TaskSpec { Environment = unsafeEnvironment } };
-        var fleet = new FleetService.FleetServiceClient(human.CallInvoker);
-        var refused = await fleet.SubmitNodeTaskAsync(new FleetServiceSubmitNodeTaskRequest { Meta = meta, NodeId = nodeId, Request = inner.ToByteString() },
-            deadline: DateTime.UtcNow.AddSeconds(15), cancellationToken: Ct);
-        Assert.True(refused.Error is { Code: "invalid_argument", Effect: EffectCertainty.DidNotHappen });
-        Assert.Equal(RetryMode.Never, refused.Error.Retry.Mode);
-        Assert.True(ArcForges.Contracts.Node.Shapes.ContractShapeValidation.IsValid(refused.Error));
-        Assert.False(refused.Error.ToString().Contains(sentinel, StringComparison.Ordinal));
-        Assert.Equal(nonceCount, connection.Received.Count(frame => frame.FrameCase == RelayFrame.FrameOneofCase.RelayNonceRequest));
-        Assert.True(center.CallsOf("SubmitNodeTask").Count == 0);
-
-        // The fixture center represents the target's drain response for a command without a retained receipt.
-        var unknown = new FleetServiceSubmitNodeTaskResponse
-        {
-            Meta = new ResponseMeta(),
-            Value = new FleetServiceSubmitNodeTaskValue
-            {
-                NodeId = nodeId,
-                Response = new TaskServiceSubmitTaskResponse
-                {
-                    Meta = new ResponseMeta(),
-                    Error = NodeErrors.LegacyTaskOutcomeUnknown(),
-                }.ToByteString(),
-            },
-        };
-        center.Script("SubmitNodeTask", new FakeFault.Raw([.. FakeCenter.DataFrame(unknown), .. FakeCenter.TrailerFrame(0, null)]));
-        using var run = node.Start(TestNode.LegacyCli, [NodeLocations.TestModeOption, "run", "--detach", "--", "fixture-never-starts"]);
-        var runResult = await TestNode.CompleteAsync(run, TimeSpan.FromSeconds(30));
-        Assert.Equal(1, runResult.ExitCode);
-        Assert.Contains("EXECUTION/operation_failed", runResult.Error, StringComparison.Ordinal);
-        Assert.Contains("the command may have run; do not submit a new command", runResult.Error, StringComparison.Ordinal);
-        var submitted = FleetServiceSubmitNodeTaskRequest.Parser.ParseFrom(FakeCenter.Payload(Assert.Single(center.CallsOf("SubmitNodeTask")).Body));
-        var submittedEnvironment = TaskServiceSubmitTaskRequest.Parser.ParseFrom(submitted.Request).Spec.Environment;
-        Assert.Equal(EnvironmentInherit.Node, submittedEnvironment.Inherit);
-        Assert.Empty(submittedEnvironment.Set);
-        Assert.Empty(submittedEnvironment.CallerEnvironment);
-        Assert.False(submitted.Request.Span.IndexOf(Encoding.UTF8.GetBytes(sentinel)) >= 0);
-        Assert.False(runResult.Output.Contains(sentinel, StringComparison.Ordinal));
-        Assert.False(runResult.Error.Contains(sentinel, StringComparison.Ordinal));
-
-        Assert.Null((await human.Account.SignOutAsync(new AccountServiceSignOutRequest { Meta = Command() }, cancellationToken: Ct)).Error);
-        await node.StopNodeAsync();
-    }
-
     [Fact]
-    public async Task AScriptCallerOfTheCliIsRefusedWithTheExplanation()
+    public async Task ALocalScriptCanReadButCannotChangeTheAccountSession()
     {
         await using var center = await FakeCenter.StartAsync();
         await using var node = TestNode.Create();
         node.Environment[CloudLinkTestHooks.CenterUrl] = center.Endpoint.Url;
         await node.StartNodeAsync();
-        var login = await node.CliAsync("login", "--device-code");
-        Assert.Equal(5, login.ExitCode);
-        Assert.Contains("interactive terminal", login.Error, StringComparison.Ordinal);
-        var logout = await node.CliAsync("logout");
-        Assert.Equal(5, logout.ExitCode);
-        var set = await node.CliAsync("center", "set", "https://other.example.test");
-        Assert.Equal(5, set.ExitCode);
-        var status = await node.CliAsync("account", "status", "--json");
-        Assert.Equal(0, status.ExitCode);
-        Assert.False(status.Json().TryGetProperty("signedIn", out var signedIn) && signedIn.GetBoolean());
+        await using var script = CloudLinkCenterControlTests.OpenChannel(node);
+        var hello = ClientProcess.Hello(ClientKind.Cli);
+        hello.InteractiveTerminal = false;
+        hello.CiMarkers.Clear();
+        var origin = await script.Node.HelloAsync(new NodeServiceHelloRequest { Hello = hello }, cancellationToken: Ct);
+        Assert.Null(origin.Error);
+        Assert.Equal(Origin.Script, origin.Value.AssignedOrigin);
+        var login = await script.Account.BeginSignInAsync(new AccountServiceBeginSignInRequest
+        {
+            Meta = Command(),
+            Method = SignInMethod.DeviceCode,
+        }, cancellationToken: Ct);
+        Assert.Equal("permission_denied", login.Error.Code);
+        var logout = await script.Account.SignOutAsync(new AccountServiceSignOutRequest { Meta = Command() }, cancellationToken: Ct);
+        Assert.Equal("permission_denied", logout.Error.Code);
+        var status = await script.Account.GetAccountStatusAsync(new AccountServiceGetAccountStatusRequest(), cancellationToken: Ct);
+        Assert.Null(status.Error);
+        Assert.False(status.Value.Status.SignedIn);
         Assert.Equal(0, center.DeviceCount);
+        Assert.Empty(center.CallsOf("SignOutNode"));
     }
 
     [Fact]
-    public async Task TheCliInAPtySignsInFollowsTheFlowAndCancelsOnCtrlC()
+    public async Task ALocalSignOutCanForgetAStrandedLinkWithoutDeletingTheUnownedCredential()
     {
-        Assert.SkipUnless(OperatingSystem.IsLinux() && File.Exists("/usr/bin/script"), "no pseudo-terminal path on this system (H-C14): the HUMAN CLI runs in a pty on Linux only");
         await using var center = await FakeCenter.StartAsync();
         await using var node = TestNode.Create();
         node.Environment[CloudLinkTestHooks.CenterUrl] = center.Endpoint.Url;
         await node.StartNodeAsync();
-
-        // Ctrl+C: CancelSignIn, exit 130; the center change is accepted again afterwards.
-        using (var cli = Pty(node, "login --device-code"))
-        {
-            var text = await cli.WaitForAsync("Waiting for the approval");
-            Assert.Contains("open " + center.Endpoint.ActivateUrl + " on any device", text, StringComparison.Ordinal);
-            Assert.Contains(SignInUrls.DisplayUserCode(center.LatestUserCode!), text, StringComparison.Ordinal);
-            Assert.Contains("Center:          127.0.0.1:" + center.Endpoint.Port, text, StringComparison.Ordinal);
-
-            // The printed fingerprint is the node's, and the group the page asks for is its LAST group (tests N-5).
-            var fingerprint = System.Text.RegularExpressions.Regex.Match(text, @"Key fingerprint: ([0-9A-F]{4}(?:-[0-9A-F]{4})+)").Groups[1].Value;
-            await using (var human = await node.HumanChannelAsync())
-            {
-                var status = (await human.Account.GetAccountStatusAsync(new AccountServiceGetAccountStatusRequest(), cancellationToken: Ct)).Value.Status;
-                Assert.Equal(status.NodeKeyFingerprint, fingerprint);
-            }
-
-            Assert.Contains("The page asks for the last group of the fingerprint: " + fingerprint[^4..], text, StringComparison.Ordinal);
-            Assert.NotEqual(fingerprint[..4], fingerprint[^4..]);
-
-            // While it runs, a center change from a HUMAN CLI is refused (here first by the test-center override, G-6), exit 1.
-            using (var set = Pty(node, "center set https://other.example.test"))
-            {
-                Assert.Equal(1, await set.ExitAsync());
-                Assert.Contains("(STATE/invalid_state)", set.Text, StringComparison.Ordinal);
-            }
-
-            cli.Interrupt();
-            Assert.Equal(130, await cli.ExitAsync());
-            Assert.Contains("Sign-in cancelled.", cli.Text, StringComparison.Ordinal);
-        }
-
-        // The flow is CANCELLED at the node (tests B-1): a new BeginSignIn starts a new device authorization instead of following it.
-        await AssertNoActiveFlowAsync(node, center);
-
-        // SIGINT itself (tests N-3): the CLI under a pty started with SIGINT at its default disposition, interrupted with kill -INT.
-        using (var cli = Pty(node, "login --device-code", defaultInterrupt: true))
-        {
-            await cli.WaitForAsync("Waiting for the approval");
-            cli.Interrupt("INT");
-            Assert.Equal(130, await cli.ExitAsync());
-            Assert.Contains("Sign-in cancelled.", cli.Text, StringComparison.Ordinal);
-        }
-
-        await AssertNoActiveFlowAsync(node, center);
-
-        // --quiet trims the device block to the code line (tests N-5).
-        var devices = center.DeviceCount;
-        using (var cli = Pty(node, "--quiet login --device-code"))
-        {
-            await TestNode.WaitAsync(() => center.DeviceCount > devices, TimeSpan.FromSeconds(30), "the device authorization");
-            await cli.WaitForAsync(SignInUrls.DisplayUserCode(center.LatestUserCode!));
-            await Task.Delay(500, Ct);
-            var lines = cli.Text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            Assert.Equal([SignInUrls.DisplayUserCode(center.LatestUserCode!)], lines);
-            cli.Interrupt();
-            Assert.Equal(130, await cli.ExitAsync());
-        }
-
-        // A sign-in that the account approves: exit 0.
-        using (var cli = Pty(node, "login --device-code"))
-        {
-            await cli.WaitForAsync("Waiting for the approval");
-            center.ApproveDevice();
-            Assert.Equal(0, await cli.ExitAsync());
-
-            // d.3's success line (tests N-6).
-            Assert.Contains("Signed in as " + center.Account.Name + " (" + center.Account.Email + ") at 127.0.0.1:" + center.Endpoint.Port + ".", cli.Text, StringComparison.Ordinal);
-        }
-
-        // Signed in: login and center set exit 1 with what to do; logout signs out (exit 0).
-        using (var cli = Pty(node, "login"))
-        {
-            Assert.Equal(1, await cli.ExitAsync());
-            Assert.Contains("already signed in", cli.Text, StringComparison.Ordinal);
-        }
-
-        using (var set = Pty(node, "center set https://other.example.test"))
-        {
-            Assert.Equal(1, await set.ExitAsync());
-            Assert.Contains("(STATE/invalid_state)", set.Text, StringComparison.Ordinal);
-        }
-
-        using (var cli = Pty(node, "--json login --device-code"))
-        {
-            Assert.Equal(1, await cli.ExitAsync());
-        }
-
-        using (var cli = Pty(node, "logout"))
-        {
-            Assert.Equal(0, await cli.ExitAsync());
-            Assert.Contains("Signed out.", cli.Text, StringComparison.Ordinal);
-        }
-
-        Assert.Single(center.CallsOf("SignOutNode"));
-
-        // --json: JSON Lines, the begun flow first (with its code), the end last.
-        using (var cli = Pty(node, "--json login --device-code"))
-        {
-            await cli.WaitForAsync("\"userCode\"");
-            center.DenyDevice();
-            Assert.Equal(1, await cli.ExitAsync());
-            var lines = cli.Text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Where(line => line.StartsWith('{', StringComparison.Ordinal)).ToList();
-            Assert.True(lines.Count >= 2, cli.Text);
-            Assert.Contains("SIGN_IN_FLOW_STATE_PENDING", lines[0], StringComparison.Ordinal);
-            Assert.Contains("SIGN_IN_FLOW_STATE_DENIED", lines[^1], StringComparison.Ordinal);
-        }
-    }
-
-    [Fact]
-    public async Task TheCliInAPtyOpensTheBrowserRefusesACenterChangeAndForgetsAStrandedLink()
-    {
-        // N2-17 (tests N-7): the browser login through ARCFORGES_TEST_BROWSER_FILE; `center set` refused while signing in, with the center set
-        // by a HUMAN UpdateNodeSettings (not the test-center override); `center set` grammar; `logout --local --yes` on a stranded link.
-        Assert.SkipUnless(OperatingSystem.IsLinux() && File.Exists("/usr/bin/script"), "no pseudo-terminal path on this system (H-C14): the HUMAN CLI runs in a pty on Linux only");
-        await using var center = await FakeCenter.StartAsync();
-        await using var node = TestNode.Create();
-        var browserFile = Path.Combine(node.Root, "browser.txt");
-        node.Environment[CloudLinkTestHooks.BrowserFile] = browserFile;
-        await node.StartNodeAsync();
+        byte[] nodeId;
         await using (var human = await node.HumanChannelAsync())
         {
-            var settings = (await human.Node.GetNodeSettingsAsync(new NodeServiceGetNodeSettingsRequest(), cancellationToken: Ct)).Value.Settings;
-            var meta = Command();
-            meta.ExpectedRev = settings.Revision;
-            Assert.Null((await human.Node.UpdateNodeSettingsAsync(new NodeServiceUpdateNodeSettingsRequest { Meta = meta, CenterUrl = center.Endpoint.Url }, cancellationToken: Ct)).Error);
+            var response = await human.Node.GetNodeInfoAsync(new NodeServiceGetNodeInfoRequest(), cancellationToken: Ct);
+            Assert.Null(response.Error);
+            nodeId = response.Value.Node.Node.NodeId.Value.ToByteArray();
         }
 
-        foreach (var usage in new[] { "center set", "center set https://other.example.test --default" })
-        {
-            using var set = Pty(node, usage);
-            Assert.Equal(2, await set.ExitAsync());
-        }
-
-        using (var cli = Pty(node, "login"))
-        {
-            var text = await cli.WaitForAsync("Waiting for the approval");
-            Assert.Contains("Opening your browser to sign this node in.", text, StringComparison.Ordinal);
-            await TestNode.WaitAsync(() => File.Exists(browserFile), TimeSpan.FromSeconds(10), "the browser file");
-            var url = File.ReadAllText(browserFile).Trim();
-            Assert.Contains("    " + url, text, StringComparison.Ordinal);
-            Assert.Contains("(compare it with the page)", text, StringComparison.Ordinal);
-            using (var set = Pty(node, "center set https://other.example.test"))
-            {
-                Assert.Equal(1, await set.ExitAsync());
-                Assert.Contains("error: a sign-in is in progress; finish or cancel it first (STATE/invalid_state)", set.Text, StringComparison.Ordinal);
-            }
-
-            Assert.Equal("HTTP/1.1 200 OK", await ScriptedBrowser.GetAsync(center.ApproveFlow()));
-            Assert.Equal(0, await cli.ExitAsync());
-            Assert.Contains("Signed in as ", cli.Text, StringComparison.Ordinal);
-        }
-
-        // A link of another node ID (stranded): `--json logout --local` needs --yes; `logout --local --yes` forgets it.
         await node.StopNodeAsync();
+        var issued = center.Issue(nodeId);
+        CloudLinkHostTests.Seed(node.DataRoot, nodeId, center, issued);
         var linkPath = Path.Combine(node.DataRoot, "run", "cloud-link.json");
-        var file = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(linkPath))!.AsObject();
-        var target = (string)file["target"]!;
-        file["nodeId"] = Convert.ToHexStringLower(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16));
-        File.WriteAllText(linkPath, file.ToJsonString());
-        await node.StartNodeAsync();
-        using (var cli = Pty(node, "--json logout --local"))
-        {
-            Assert.Equal(2, await cli.ExitAsync());
-        }
-
-        Assert.True(File.Exists(linkPath));
-        using (var cli = Pty(node, "--yes logout --local"))
-        {
-            Assert.Equal(0, await cli.ExitAsync());
-            Assert.Contains("The node forgot the credential it could not use.", cli.Text, StringComparison.Ordinal);
-        }
-
-        Assert.False(File.Exists(linkPath));
-        Assert.Empty(center.CallsOf("SignOutNode"));
-
-        // The abandon never touches the record (it is not this node's to delete); the test removes it.
+        var link = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(linkPath))!.AsObject();
+        var otherNode = nodeId.ToArray();
+        otherNode[0] ^= 1;
+        link["nodeId"] = Convert.ToHexStringLower(otherNode);
+        File.WriteAllText(linkPath, link.ToJsonString());
+        var target = CloudCredentialStore.Target(nodeId, center.Endpoint.Origin);
         var secrets = ArcForges.Node.Store.NodeSecretStores.ForTestDataRoot(node.DataRoot).Store;
-        Assert.NotNull(secrets.Read(target));
-        secrets.Delete(target);
-    }
-
-    /// <summary>No flow is active at the node: BeginSignIn starts a new device authorization (it would return an active flow), then cancels it.</summary>
-    private static async Task AssertNoActiveFlowAsync(TestNode node, FakeCenter center)
-    {
-        var before = center.DeviceCount;
-        var code = center.LatestUserCode;
-        await using var human = await node.HumanChannelAsync();
-        var begun = await human.Account.BeginSignInAsync(new AccountServiceBeginSignInRequest { Meta = Command(), Method = SignInMethod.DeviceCode }, cancellationToken: Ct);
-        Assert.Null(begun.Error);
-        Assert.Equal(before + 1, center.DeviceCount);
-        Assert.NotEqual(code, begun.Value.Flow.UserCode);
-        var cancelled = await human.Account.CancelSignInAsync(new AccountServiceCancelSignInRequest { Meta = Command(), FlowId = begun.Value.Flow.FlowId }, cancellationToken: Ct);
-        Assert.Equal(SignInFlowState.Cancelled, cancelled.Value.Flow.State);
+        try
+        {
+            await node.StartNodeAsync();
+            await using var human = await node.HumanChannelAsync();
+            var status = await human.Account.GetAccountStatusAsync(new AccountServiceGetAccountStatusRequest(), cancellationToken: Ct);
+            Assert.Null(status.Error);
+            Assert.False(status.Value.Status.SignedIn);
+            Assert.Contains("credential_for_other_node", status.Value.Status.Warnings);
+            var signedOut = await human.Account.SignOutAsync(new AccountServiceSignOutRequest
+            {
+                Meta = Command(),
+                RevokeRemote = false,
+            }, cancellationToken: Ct);
+            Assert.Null(signedOut.Error);
+            Assert.Contains("stranded_credential_abandoned", signedOut.Meta.Warnings);
+            Assert.False(File.Exists(linkPath));
+            Assert.Empty(center.CallsOf("SignOutNode"));
+            Assert.True(center.IsLive(issued.RefreshToken));
+            Assert.NotNull(secrets.Read(target));
+            await node.StopNodeAsync();
+        }
+        finally
+        {
+            secrets.Delete(target);
+        }
     }
 
     private static RequestMeta Command() => new() { CommandId = CommandIds.New(), CorrelationId = CommandIds.New() };
-
-    /// <summary>Starts the selected test-mode CLI inside a pseudo-terminal (<c>script -qefc</c>) as a HUMAN caller.</summary>
-    internal static PtyProcess Pty(TestNode node, string arguments, bool defaultInterrupt = false)
-    {
-        // The command strings in these fixtures spell their options as separate words before the shell argument boundary.
-        var executable = TestNode.UsesLegacyCli(arguments.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList())
-            ? TestNode.LegacyCli : TestNode.Host;
-        var quoted = "'" + executable.Replace("'", "'\"'\"'", StringComparison.Ordinal) + "'";
-        var start = new ProcessStartInfo("/usr/bin/script")
-        {
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            RedirectStandardInput = true,
-        };
-        start.ArgumentList.Add("-qefc");
-        // `env --default-signal=INT` gives the CLI SIGINT at its default disposition even when the test run inherited it ignored.
-        start.ArgumentList.Add((defaultInterrupt ? "exec env --default-signal=INT " : "") + quoted + " --test-mode " + arguments);
-        start.ArgumentList.Add("/dev/null");
-        foreach (var (name, value) in node.Environment)
-        {
-            if (value is null)
-            {
-                start.Environment.Remove(name);
-            }
-            else
-            {
-                start.Environment[name] = value;
-            }
-        }
-
-        start.Environment.Remove(ArcForges.Security.Secrets.OsSecretStoreGuard.OptInVariable);
-        return new PtyProcess(Process.Start(start) ?? throw new InvalidOperationException("script did not start."));
-    }
-
-    internal sealed class PtyProcess : IDisposable
-    {
-        private readonly Process _process;
-        private readonly StringBuilder _text = new();
-        private readonly Task _reader;
-
-        public PtyProcess(Process process)
-        {
-            _process = process;
-            _reader = Task.Run(async () =>
-            {
-                var buffer = new char[4096];
-                int read;
-                while ((read = await process.StandardOutput.ReadAsync(buffer)) > 0)
-                {
-                    lock (_text)
-                    {
-                        _text.Append(buffer, 0, read);
-                    }
-                }
-            });
-        }
-
-        public string Text
-        {
-            get
-            {
-                lock (_text)
-                {
-                    return _text.ToString();
-                }
-            }
-        }
-
-        public async Task<string> WaitForAsync(string marker)
-        {
-            await TestNode.WaitAsync(() => Text.Contains(marker, StringComparison.Ordinal), TimeSpan.FromSeconds(30), "the CLI to print " + marker);
-            return Text;
-        }
-
-        /// <summary>
-        /// The interrupt the CLI handles like Ctrl+C: SIGTERM (default) to every process under the pty, found by process IDs only (a test
-        /// run started in the background of a non-interactive shell inherits SIGINT as ignored, and the CLI treats both signals alike), or
-        /// <c>INT</c> to the CLI itself (the leaf; with <c>defaultInterrupt</c> it has SIGINT at its default disposition).
-        /// </summary>
-        public void Interrupt(string signal = "TERM")
-        {
-            // The shell script starts may or may not exec the CLI: every descendant gets the signal (as the terminal's foreground group would).
-            var descendants = new List<string>();
-            var pending = new Queue<string>([_process.Id.ToString(System.Globalization.CultureInfo.InvariantCulture)]);
-            while (pending.Count > 0)
-            {
-                var pid = pending.Dequeue();
-                foreach (var task in Directory.EnumerateDirectories($"/proc/{pid}/task"))
-                {
-                    foreach (var child in File.ReadAllText(Path.Combine(task, "children")).Split(' ', StringSplitOptions.RemoveEmptyEntries))
-                    {
-                        descendants.Add(child);
-                        pending.Enqueue(child);
-                    }
-                }
-            }
-
-            Assert.NotEmpty(descendants);
-            if (signal != "TERM")
-            {
-                descendants = [.. descendants.Where(pid => Directory.EnumerateDirectories($"/proc/{pid}/task").All(task => File.ReadAllText(Path.Combine(task, "children")).Trim().Length == 0))];
-            }
-
-            foreach (var child in descendants)
-            {
-                using var kill = Process.Start(new ProcessStartInfo("/bin/kill") { ArgumentList = { "-" + signal, child }, UseShellExecute = false })!;
-                kill.WaitForExit();
-            }
-        }
-
-        public Task<int> ExitAsync() => WaitExitAsync(TimeSpan.FromSeconds(60));
-
-        public async Task<int> WaitExitAsync(TimeSpan timeout)
-        {
-            using var deadline = new CancellationTokenSource(timeout);
-            try
-            {
-                await _process.WaitForExitAsync(deadline.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                throw new TimeoutException("the CLI did not exit; it printed: " + Text);
-            }
-
-            await _reader;
-            return _process.ExitCode;
-        }
-
-        public void Dispose()
-        {
-            if (!_process.HasExited)
-            {
-                _process.Kill(entireProcessTree: true);
-            }
-
-            _process.Dispose();
-        }
-    }
 }

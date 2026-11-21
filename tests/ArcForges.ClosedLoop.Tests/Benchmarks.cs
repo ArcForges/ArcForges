@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Diagnostics;
 using System.Text.Json;
+using ArcForges.Client;
+using ArcForges.Contracts.Sandbox.V2;
 
 namespace ArcForges.ClosedLoop.Tests;
 
@@ -43,10 +45,8 @@ public sealed class Benchmarks
     }
 
     /// <summary>
-    /// Idle CPU while sampling (15 section 1: at most 0.5% of one core, a 10-minute average, LAN and cloud off; AF-RES-01): the node's own
-    /// processor time over <c>ARCFORGES_IDLE_SECONDS</c> (default 600) after a 30 s warm-up, with the resource monitor sampling the machine
-    /// every second, taking its stored machine sample every 5 s, and reading the process table every 30 s (the idle interval; every 5 s
-    /// while attempts run). The machine samples the node stored over the window prove that it sampled.
+    /// Measures the Node's idle CPU after a 30 s warm-up. V2 resource snapshots before and after the measurement
+    /// show that the background sampler continued without a Run or a connected watcher.
     /// </summary>
     [Fact(Timeout = 1_500_000)]
     public async Task IdleCpuWhileSampling()
@@ -60,6 +60,9 @@ public sealed class Benchmarks
         await node.StartNodeAsync();
         using var process = Process.GetProcessById(node.NodePid());
         await Task.Delay(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+        await using var channel = CloudLinkCenterControlTests.OpenChannel(node);
+        var resources = new ResourceService.ResourceServiceClient(channel.CallInvoker);
+        var firstSample = await SampleAsync(resources);
         process.Refresh();
         var before = process.TotalProcessorTime;
         var watch = Stopwatch.StartNew();
@@ -68,16 +71,17 @@ public sealed class Benchmarks
         var cpu = process.TotalProcessorTime - before;
         var elapsed = watch.Elapsed;
         var percent = cpu.TotalMilliseconds / elapsed.TotalMilliseconds * 100;
-        var samples = (await node.LegacyCliAsync("samples", "--scope", "machine", "--range", (seconds + 60).ToString(System.Globalization.CultureInfo.InvariantCulture) + "s",
-            "--max-points", "10000", "--json")).Json();
-        var stored = samples.TryGetProperty("samples", out var list) ? list.GetArrayLength() : 0;
+        var lastSample = await SampleAsync(resources);
+        Assert.Equal(firstSample.SampleEpoch, lastSample.SampleEpoch);
+        Assert.True(lastSample.SampleSequence >= firstSample.SampleSequence);
+        var samples = lastSample.SampleSequence - firstSample.SampleSequence;
         var result = new System.Text.Json.Nodes.JsonObject
         {
             ["name"] = "idle-cpu",
             ["seconds"] = Math.Round(elapsed.TotalSeconds, 1),
             ["cpuMs"] = Math.Round(cpu.TotalMilliseconds, 1),
             ["percentOfOneCore"] = Math.Round(percent, 3),
-            ["machineSamples"] = stored,
+            ["machineSamples"] = samples,
             ["host"] = TestNode.Host,
         };
         TestContext.Current.TestOutputHelper?.WriteLine(result.ToJsonString());
@@ -88,8 +92,22 @@ public sealed class Benchmarks
                 result.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
         }
 
-        Assert.True(stored >= (seconds / 5) - 2, $"the node stored {stored} machine samples in {seconds} s");
+        Assert.True(samples >= (ulong)Math.Max(0, (seconds / 5) - 2), $"the Node produced {samples} samples in {seconds} s");
         Assert.True(percent <= 0.5, $"the idle node used {percent:0.000}% of one core ({cpu.TotalMilliseconds:0} ms in {elapsed.TotalSeconds:0} s)");
+    }
+
+    private static async Task<ResourceSnapshot> SampleAsync(ResourceService.ResourceServiceClient resources)
+    {
+        var reply = await resources.GetBudgetAsync(new ResourceServiceGetBudgetRequest
+        {
+            Meta = new() { CorrelationId = CommandIds.New() },
+            ScopeKind = "node",
+        }, deadline: DateTime.UtcNow.AddSeconds(5), cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Null(reply.Error);
+        var sample = reply.Value.Snapshot;
+        Assert.False(sample.Stale);
+        Assert.True(sample.HasSampleSequence && sample.SampleSequence > 0);
+        return sample;
     }
 
     private static async Task<JsonElement> BenchAsync(string name, TestNode? node, string[] arguments)

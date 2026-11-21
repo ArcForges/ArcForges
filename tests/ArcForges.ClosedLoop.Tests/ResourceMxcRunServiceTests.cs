@@ -31,7 +31,6 @@ public sealed partial class MxcRunServiceTests
         // A disk-backed Linux root makes the generated file reclaimable cache instead of tmpfs shared memory.
         await using var fixture = TestNode.Create(OperatingSystem.IsLinux() ? TestNode.DiskParent : null);
         PrepareDataRoot(fixture.DataRoot);
-        fixture.LiveMachine = true;
         var startingAt = DateTimeOffset.UtcNow;
         var nodeProcess = await fixture.StartNodeAsync();
         await using var channel = OpenChannel(fixture);

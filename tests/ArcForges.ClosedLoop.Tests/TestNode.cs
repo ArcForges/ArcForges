@@ -5,7 +5,6 @@ using System.Text;
 using System.Text.Json;
 using ArcForges.Client;
 using ArcForges.Node.Api;
-using ArcForges.Node.Core.Resources;
 using ArcForges.Node.Store;
 using ArcForges.Security.Secrets;
 using Microsoft.Data.Sqlite;
@@ -28,8 +27,8 @@ internal sealed record ProcessRun(int ExitCode, string Output, string Error)
 /// file-backed isolated secret store of its data root and never selects an OS-wide secret store (02-node-service section 4); the child
 /// environment never carries the OS secret-store tier's opt-in <c>ARCFORGES_OS_SECRET_STORE_TESTS</c>, which alone would lift that
 /// rule. It has no CI markers (unless a test adds them), and on Linux a session bus address that does not exist. Disposing stops the
-/// node, deletes its data key, verifies that every recorded key is absent from the data root's isolated store and that nothing else
-/// is left there (a leak is reported by name), removes the files, and fails when any <c>arcforges</c> or <c>arcforges-supervisor</c>
+/// node, checks that no isolated secret was left in its data root, removes the fixture files and fails when any
+/// <c>arcforges</c> or <c>arcforges-supervisor</c>
 /// process started from the binaries under test during the test is still running (16-testing-strategy section 4).
 /// </summary>
 internal sealed class TestNode : IAsyncDisposable
@@ -60,57 +59,19 @@ internal sealed class TestNode : IAsyncDisposable
         Environment[OsSecretStoreGuard.OptInVariable] = null;
 
         // The isolated test hook admits these exact peer images. A CLI without a terminal remains a SCRIPT caller.
-        Environment[ClientImages.TestVariable] = string.Join(Path.PathSeparator, System.Environment.ProcessPath, LegacyCli);
+        Environment[ClientImages.TestVariable] = System.Environment.ProcessPath;
 
         // AD-0021 section 5 (Plan decision Q8, CTR5-NODE-14; N2-23): the closed-loop suites submit through local SCRIPT CLIs and connections,
         // which a --test-mode node admits only with this allowance; tests of the local bound clear it.
         Environment[ArcForges.Node.Core.LocalSubmission.Variable] = "1";
 
-        // The --test-mode machine isolation (MachineIsolation): the node's budgets and pressure see only itself and its attempts, never the
-        // other tests' load (LiveMachine).
-        LiveMachine = false;
-
         if (!OperatingSystem.IsWindows())
         {
             Environment["DBUS_SESSION_BUS_ADDRESS"] = "unix:path=" + Path.Combine(root, "no-session-bus");
 
-            // 16 section 4: each test node gets its own slice.
-            Environment["ARCFORGES_SLICE"] = Slice;
-
             // A JIT process the test kills would leave the runtime's diagnostic sockets in /tmp.
             Environment["DOTNET_EnableDiagnostics"] = "0";
         }
-    }
-
-    /// <summary>The node's slice on Linux (<c>arcforges-test-&lt;id&gt;.slice</c>).</summary>
-    public string Slice { get; } = ArcForges.Tests.SystemdTestEnvironment.NewSlice();
-
-    /// <summary>Test units this environment installed in the runtime unit directory (stopped and removed at the end).</summary>
-    public List<string> Units { get; } = [];
-
-    /// <summary>
-    /// Installs a user unit for this test only, in <c>$XDG_RUNTIME_DIR/systemd/user</c> (cleared at logout; nothing is enabled); the unit is
-    /// stopped and removed when the environment is disposed. <paramref name="name"/> must be new: the manager loads it from the unit
-    /// directories on its first use, with no daemon-reload, once <see cref="ArcForges.Tests.SystemdTestEnvironment.InstallUnitFile"/> has
-    /// made the directory's modification time move past the manager's cached one.
-    /// </summary>
-    public string InstallUnit(string name, string content)
-    {
-        ArcForges.Tests.SystemdTestEnvironment.InstallUnitFile(name, content);
-        Units.Add(name);
-        return name;
-    }
-
-    /// <summary>The <c>Environment=</c> lines that give a unit this environment's variables (and the JIT build its runtime).</summary>
-    public string UnitEnvironment()
-    {
-        var variables = Environment.Where(pair => pair.Value is not null).Select(pair => (pair.Key, Value: pair.Value!)).ToList();
-        if (System.Environment.GetEnvironmentVariable("DOTNET_ROOT") is { Length: > 0 } dotnetRoot)
-        {
-            variables.Add(("DOTNET_ROOT", dotnetRoot));
-        }
-
-        return string.Join("\n", variables.Select(pair => $"Environment=\"{pair.Key}={pair.Value}\""));
     }
 
     /// <summary>
@@ -156,10 +117,6 @@ internal sealed class TestNode : IAsyncDisposable
     /// <summary>The <c>arcforges</c> binary under test: <c>ARCFORGES_HOST_PATH</c> or the JIT build next to the tests.</summary>
     public static string Host { get; } = Binary("ARCFORGES_HOST_PATH", "arcforges");
 
-    /// <summary>The test-only apphost for carried V1 CLI paths.</summary>
-    public static string LegacyCli { get; } = Path.Combine(AppContext.BaseDirectory,
-        OperatingSystem.IsWindows() ? "ArcForges.LegacyCliFixture.exe" : "ArcForges.LegacyCliFixture");
-
     /// <summary>The <c>arcforges-testload</c> workload: <c>ARCFORGES_TESTLOAD_PATH</c> or the build next to the tests.</summary>
     public static string TestLoad { get; } = Binary("ARCFORGES_TESTLOAD_PATH", "arcforges-testload");
 
@@ -172,12 +129,6 @@ internal sealed class TestNode : IAsyncDisposable
     /// <summary>The <c>arcforges</c> that <see cref="StartNodeAsync"/> runs as the node: <see cref="Host"/>, or a copy in a version directory.</summary>
     public string NodeExecutable { get; set; } = Host;
 
-    /// <summary>
-    /// Existing local execution regressions exercise the V1 diagnostic path. A routed regression sets this false to exercise the
-    /// original V1 Center route. The test-mode SCRIPT allowance is checked by the Node.
-    /// </summary>
-    public bool UseLocalDiagnosticCli { get; set; } = true;
-
     public string Root { get; }
 
     public string ConfigDirectory { get; }
@@ -185,18 +136,6 @@ internal sealed class TestNode : IAsyncDisposable
     public string DataRoot { get; }
 
     public string Endpoint { get; }
-
-    /// <summary>
-    /// The node evaluates its budgets and pressure from the live machine (03 sections 2 and 7), with every other test's load counted as
-    /// unmanaged. False (the default): <c>ARCFORGES_TEST_MACHINE=isolated</c>, so it sees only itself and its attempts on the machine and what
-    /// runs beside the test cannot change its budgets, root limits, AUTO parallelism or pressure level. Only a test of the measured budgets or
-    /// of pressure sets it, and such a test is <c>isolation=exclusive</c>.
-    /// </summary>
-    public bool LiveMachine
-    {
-        get => Environment.GetValueOrDefault(MachineIsolation.Variable) is null;
-        set => Environment[MachineIsolation.Variable] = value ? null : MachineIsolation.Isolated;
-    }
 
     /// <summary>The child processes' environment changes (null removes a variable).</summary>
     public Dictionary<string, string?> Environment { get; } = new(StringComparer.Ordinal);
@@ -224,17 +163,10 @@ internal sealed class TestNode : IAsyncDisposable
         return node;
     }
 
-    /// <summary>Runs a CLI command to completion, using the private apphost for carried V1 commands.</summary>
+    /// <summary>Runs the selected Host command to completion.</summary>
     public async Task<ProcessRun> CliAsync(params string[] args)
     {
         using var process = Start(Host, [NodeLocations.TestModeOption, .. args]);
-        return await CompleteAsync(process, ProcessTimeout);
-    }
-
-    /// <summary>Runs a carried command through the private V1 apphost.</summary>
-    public async Task<ProcessRun> LegacyCliAsync(params string[] args)
-    {
-        using var process = StartCore(LegacyCli, [NodeLocations.TestModeOption, .. args]);
         return await CompleteAsync(process, ProcessTimeout);
     }
 
@@ -245,29 +177,11 @@ internal sealed class TestNode : IAsyncDisposable
         return await CompleteAsync(process, ProcessTimeout);
     }
 
-    /// <summary>
-    /// Runs <c>arcforges --test-mode &lt;args&gt;</c> (the option before the arguments, so <c>run -- program</c> works) to completion and returns
-    /// the exact bytes of its streams.
-    /// </summary>
-    public async Task<(int ExitCode, byte[] Stdout, byte[] Stderr)> CliBytesAsync(TimeSpan timeout, params string[] args)
-    {
-        using var process = Start(Host, [NodeLocations.TestModeOption, .. args]);
-        return await BytesAsync(process, timeout);
-    }
-
     /// <summary>Returns the exact streams of the actual product CLI, including rejected legacy commands.</summary>
     public async Task<(int ExitCode, byte[] Stdout, byte[] Stderr)> ProductCliBytesAsync(TimeSpan timeout, params string[] args)
     {
         using var process = StartProduct([NodeLocations.TestModeOption, .. args]);
         return await BytesAsync(process, timeout);
-    }
-
-    /// <summary>Checks and removes the explicit local diagnostic banner before comparing the task's own stderr bytes.</summary>
-    public static byte[] WithoutLocalDiagnosticBanner(byte[] stderr)
-    {
-        var banner = Encoding.UTF8.GetBytes("arcforges: local diagnostic task; ordinary execution uses the center" + System.Environment.NewLine);
-        Assert.True(stderr.AsSpan().StartsWith(banner), "the local diagnostic banner is required");
-        return stderr[banner.Length..];
     }
 
     /// <summary>Collects a started process's streams as bytes until it exits (bounded).</summary>
@@ -323,96 +237,6 @@ internal sealed class TestNode : IAsyncDisposable
         return process;
     }
 
-    /// <summary>Applies the local diagnostic option used by legacy local-only closed-loop fixtures.</summary>
-    internal static void AddLocalDiagnosticOption(List<string> arguments)
-    {
-        var separator = arguments.IndexOf("--");
-        var end = separator < 0 ? arguments.Count : separator;
-        var root = CommandPosition(arguments, 0, end);
-        if (root < 0 || root == end || arguments.Take(end).Any(value => value is "--local" or "--node"
-            || value.StartsWith("--local=", StringComparison.Ordinal) || value.StartsWith("--node=", StringComparison.Ordinal)))
-        {
-            return;
-        }
-
-        if (arguments[root] == "output" || arguments[root] == "run" && !NewRunCommand(arguments, root, end))
-        {
-            arguments.Insert(root + 1, "--local");
-        }
-        else if (arguments[root] == "tasks")
-        {
-            var sub = CommandPosition(arguments, root + 1, end);
-            if (sub == end)
-            {
-                arguments.Insert(root + 1, "--local");
-            }
-            else if (sub >= 0 && arguments[sub] is "list" or "show" or "wait" or "cancel")
-            {
-                arguments.Insert(sub + 1, "--local");
-            }
-        }
-    }
-
-    /// <summary>Recognizes the former commands used by the carried tests before their argument boundary.</summary>
-    internal static bool UsesLegacyCli(List<string> arguments)
-    {
-        int separator = arguments.IndexOf("--");
-        int end = separator < 0 ? arguments.Count : separator;
-        int root = CommandPosition(arguments, 0, end);
-        if (root < 0 || root == end)
-        {
-            return false;
-        }
-
-        return arguments[root] switch
-        {
-            "run" => !NewRunCommand(arguments, root, end),
-            "resources" => !HasSubcommand(arguments, root, end, "show", "watch", "set"),
-            "tasks" or "output" or "queue" or "jobs" or "ps" or "samples" or "adopt" or "terminate" or "login" => true,
-            _ => false,
-        };
-    }
-
-    private static bool NewRunCommand(List<string> arguments, int root, int end) =>
-        HasSubcommand(arguments, root, end, "start", "list", "inspect", "stop");
-
-    private static bool HasSubcommand(List<string> arguments, int root, int end, params string[] subcommands)
-    {
-        int selected = CommandPosition(arguments, root + 1, end);
-        return selected >= 0 && selected < end && subcommands.Contains(arguments[selected], StringComparer.Ordinal);
-    }
-
-    /// <summary>Finds the command after known global options; never searches option values for command names.</summary>
-    private static int CommandPosition(List<string> arguments, int start, int end)
-    {
-        var i = start;
-        while (i < end)
-        {
-            var value = arguments[i];
-            var equals = value.IndexOf('=', StringComparison.Ordinal);
-            var name = equals < 0 ? value : value[..equals];
-            if (name is "--timeout" or "--wait-approval")
-            {
-                if (equals < 0 && ++i == end)
-                {
-                    return -1;
-                }
-
-                i++;
-            }
-            else if (name is "--json" or "--quiet" or "-q" or "--verbose" or "-v" or "--yes" or "-y" or "--no-color" or "--test-mode")
-            {
-                i++;
-            }
-            else
-            {
-                return value.StartsWith('-', StringComparison.Ordinal) ? -1 : i;
-            }
-        }
-
-        return end;
-    }
-
     /// <summary>
     /// Starts a process with the environment's variables; it is tracked and killed at the end if it still runs. The node, CLI and
     /// supervisor binaries start only with <c>--test-mode</c> (16-testing-strategy section 1: a test never starts a node without it),
@@ -420,8 +244,7 @@ internal sealed class TestNode : IAsyncDisposable
     /// </summary>
     public Process Start(string executable, IEnumerable<string> arguments)
     {
-        var argumentList = arguments.ToList();
-        return StartCore(SameExecutable(executable, Host) && UsesLegacyCli(argumentList) ? LegacyCli : executable, argumentList);
+        return StartCore(executable, arguments.ToList());
     }
 
     /// <summary>Starts the exact product Host for help, completion, capability and native V2 tests.</summary>
@@ -434,18 +257,12 @@ internal sealed class TestNode : IAsyncDisposable
     private Process StartCore(string executable, List<string> argumentList)
     {
         var binary = Path.GetFileNameWithoutExtension(executable);
-        bool legacy = SameExecutable(executable, LegacyCli);
         int separator = argumentList.IndexOf("--");
         int controlArguments = separator < 0 ? argumentList.Count : separator;
-        if ((legacy || binary is "arcforges" or "arcforges-supervisor" || SameExecutable(executable, Host))
+        if ((binary is "arcforges" or "arcforges-supervisor" || SameExecutable(executable, Host))
             && !argumentList.Take(controlArguments).Contains(NodeLocations.TestModeOption, StringComparer.Ordinal))
         {
             throw new InvalidOperationException($"{executable} must be started with {NodeLocations.TestModeOption} in a test.");
-        }
-
-        if (legacy && UseLocalDiagnosticCli)
-        {
-            AddLocalDiagnosticOption(argumentList);
         }
 
         var start = new ProcessStartInfo(executable)
@@ -554,27 +371,6 @@ internal sealed class TestNode : IAsyncDisposable
     /// stopped renewing its heartbeat: the fault's delay; for a hung probe, the probe timeout (5 s) and up to three missed probes one second
     /// apart; and two heartbeat intervals (1 s each).
     /// </summary>
-    public static TimeSpan FaultHorizon(string fault, int seconds) =>
-        TimeSpan.FromSeconds(seconds + (fault == "hang-probe-after" ? 8 : 0) + 2);
-
-    /// <summary>
-    /// Waits until the node heartbeat (<c>run/node-heartbeat</c>) changes once <paramref name="horizon"/> has passed on
-    /// <paramref name="since"/>: a condition that proves the node still renews it, instead of a fixed wait. Bounded by 30 s past the horizon.
-    /// </summary>
-    public async Task WaitHeartbeatChangeAsync(Stopwatch since, TimeSpan horizon)
-    {
-        var path = ArcForges.Node.Platform.AttemptFiles.HeartbeatPath(DataRoot);
-        var seen = ReadShared(path);
-        await WaitAsync(() =>
-        {
-            var current = ReadShared(path);
-            var changed = current.Length > 0 && current != seen;
-            seen = current;
-            return changed && since.Elapsed > horizon;
-        }, horizon + TimeSpan.FromSeconds(30), $"the heartbeat to change more than {horizon.TotalSeconds:0} s after the start");
-    }
-
-    /// <summary>A file another process replaces or writes, or an empty string while it is missing.</summary>
     public static string ReadShared(string path)
     {
         try
@@ -620,13 +416,12 @@ internal sealed class TestNode : IAsyncDisposable
 
     /// <summary>
     /// Running processes of the binaries under test started since this environment was created that belong to it: they carry its
-    /// endpoint in their environment (every node, supervisor, holder and helper it started inherits it), or on Linux run in its slice
-    /// (the helpers of its attempt units). Tests run in parallel, so the processes of another environment are never counted. A running
+    /// endpoint in their environment. Tests run in parallel, so the processes of another environment are never counted. A running
     /// process whose environment cannot be read is neither counted nor dropped: the last scan remembers it and the fixture reports it.
     /// </summary>
     public List<Process> LiveProcesses()
     {
-        var binaries = new[] { Host, LegacyCli, NodeExecutable, Path.Combine(Path.GetDirectoryName(Host)!, OperatingSystem.IsWindows() ? "arcforges-supervisor.exe" : "arcforges-supervisor") }
+        var binaries = new[] { Host, NodeExecutable, Path.Combine(Path.GetDirectoryName(Host)!, OperatingSystem.IsWindows() ? "arcforges-supervisor.exe" : "arcforges-supervisor") }
             .Select(path => Path.GetFullPath(path)).ToHashSet(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
         var live = new List<Process>();
         lock (_uninspectable)
@@ -668,27 +463,8 @@ internal sealed class TestNode : IAsyncDisposable
     }
 
     /// <summary>True when the process belongs to this environment, false when it does not, null when that cannot be told.</summary>
-    private bool? Owns(int pid)
-    {
-        if (!OperatingSystem.IsWindows() && ProcessCgroup(pid) is { } cgroup && cgroup.Contains("/" + Slice + "/", StringComparison.Ordinal))
-        {
-            return true;
-        }
-
-        return ArcForges.Tests.ProcessInspection.TryEnvironmentValue(pid, NodeLocations.EndpointVariable, out var endpoint) ? endpoint == Endpoint : null;
-    }
-
-    private static string? ProcessCgroup(int pid)
-    {
-        try
-        {
-            return File.ReadAllText($"/proc/{pid.ToString(CultureInfo.InvariantCulture)}/cgroup");
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            return null;
-        }
-    }
+    private bool? Owns(int pid) =>
+        ArcForges.Tests.ProcessInspection.TryEnvironmentValue(pid, NodeLocations.EndpointVariable, out var endpoint) ? endpoint == Endpoint : null;
 
     public async ValueTask DisposeAsync()
     {
@@ -698,33 +474,6 @@ internal sealed class TestNode : IAsyncDisposable
             if (Descriptor() is { } descriptor && descriptor.ProcessIsAlive())
             {
                 await ProductCliAsync("node", "stop", "--timeout", "15s");
-            }
-
-            // Attempts outlive a stopped node under their holders: end them, release the holders, and count what was left (16 section 4).
-            if (OperatingSystem.IsWindows())
-            {
-                leftovers.AddRange(EndAttempts());
-            }
-            else
-            {
-                // Attempts outlive a stopped node as transient units: stop this node's units, its slice and the test units, and count what was left.
-                foreach (var unit in Units)
-                {
-                    ArcForges.Tests.SystemdTestEnvironment.Systemctl("stop", unit);
-                }
-
-                leftovers.AddRange(ArcForges.Tests.SystemdTestEnvironment.Cleanup(Slice, AttemptNames(), Units));
-                var unitDirectory = Path.Combine(System.Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR") ?? "/nonexistent", "systemd", "user");
-                foreach (var unit in Units)
-                {
-                    File.Delete(Path.Combine(unitDirectory, unit));
-                }
-
-                // No daemon-reload (see InstallUnit): a stopped unit whose file is gone is unloaded once it is not failed.
-                foreach (var unit in Units)
-                {
-                    ArcForges.Tests.SystemdTestEnvironment.Systemctl("reset-failed", unit);
-                }
             }
 
             // Supervisors exit once their node stopped; give them a moment.
@@ -787,7 +536,8 @@ internal sealed class TestNode : IAsyncDisposable
 
             if (_ownsDataRoot)
             {
-                leftovers.AddRange(DeleteDataKeys());
+                var files = new TestDataRootSecretStore(DataRoot);
+                leftovers.AddRange(files.Names().Select(name => "isolated secret store entry " + name));
             }
 
             SqliteConnection.ClearAllPools();
@@ -812,129 +562,6 @@ internal sealed class TestNode : IAsyncDisposable
 
         var second = await rescan();
         return [.. first.Intersect(second, StringComparer.Ordinal)];
-    }
-
-    /// <summary>The attempts of this node's store.</summary>
-    public List<string> AttemptNames()
-    {
-        if (!File.Exists(StorePaths.Database(DataRoot)))
-        {
-            return [];
-        }
-
-        List<string> names;
-        using (var store = NodeStore.Open(new NodeStoreOptions { DataRoot = DataRoot, BootIdentity = "cleanup" }))
-        {
-            names = store.Read(reader =>
-            {
-                var list = new List<string>();
-                using var command = reader.CreateCommand("SELECT attempt_id FROM attempt;");
-                using var rows = command.ExecuteReader();
-                while (rows.Read())
-                {
-                    list.Add(IdText.Format((byte[])rows.GetValue(0)));
-                }
-
-                return list;
-            });
-        }
-
-        SqliteConnection.ClearAllPools();
-        return names;
-    }
-
-    /// <summary>Terminates every attempt job of this node by name and sets its ack event; returns the attempts that still ran.</summary>
-    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
-    private List<string> EndAttempts()
-    {
-        var running = new List<string>();
-        if (!File.Exists(StorePaths.Database(DataRoot)))
-        {
-            return running;
-        }
-
-        string node;
-        List<string> attempts;
-        using (var store = NodeStore.Open(new NodeStoreOptions { DataRoot = DataRoot, BootIdentity = "cleanup" }))
-        {
-            node = IdText.Format(store.Metadata.NodeId.Span);
-            attempts = store.Read(reader =>
-            {
-                var names = new List<string>();
-                using var command = reader.CreateCommand("SELECT attempt_id FROM attempt;");
-                using var rows = command.ExecuteReader();
-                while (rows.Read())
-                {
-                    names.Add(IdText.Format((byte[])rows.GetValue(0)));
-                }
-
-                return names;
-            });
-        }
-
-        SqliteConnection.ClearAllPools();
-        foreach (var attempt in attempts)
-        {
-            using var job = ArcForges.Node.Platform.Windows.JobObject.Open(ArcForges.Node.Platform.Windows.WindowsExecutionPlatform.JobName(node, attempt));
-            if (job is not null && job.Accounting().ActiveProcesses > 0)
-            {
-                running.Add($"attempt {attempt}");
-                job.Terminate(1);
-            }
-        }
-
-        var watch = Stopwatch.StartNew();
-        while (watch.Elapsed < TimeSpan.FromSeconds(15))
-        {
-            var open = 0;
-            foreach (var attempt in attempts)
-            {
-                if (EventWaitHandle.TryOpenExisting(ArcForges.Node.Platform.Windows.WindowsExecutionPlatform.AckName(node, attempt), out var ack))
-                {
-                    using (ack)
-                    {
-                        ack.Set();
-                    }
-
-                    open++;
-                }
-            }
-
-            if (open == 0)
-            {
-                break;
-            }
-
-            Thread.Sleep(100);
-        }
-
-        return running;
-    }
-
-    /// <summary>
-    /// Deletes the node data keys the store records from the data root's isolated secret store (where every test node keeps them), then
-    /// verifies that each is absent and nothing else is left there; returns what is left, by name (test verification).
-    /// </summary>
-    private List<string> DeleteDataKeys()
-    {
-        if (!File.Exists(StorePaths.Database(DataRoot)))
-        {
-            return [];
-        }
-
-        var secrets = NodeSecretStores.ForTestDataRoot(DataRoot);
-        var files = (TestDataRootSecretStore)secrets.Store;
-        List<string> names;
-        using (var store = NodeStore.Open(new NodeStoreOptions { DataRoot = DataRoot, BootIdentity = "cleanup" }))
-        using (var keys = new NodeDataKeyRing(store, secrets))
-        {
-            names = [.. keys.Keys().Select(key => NodeDataKeyRing.TargetName(store.Metadata.NodeId.Span, key.KeyId))];
-            keys.DeleteKeys();
-        }
-
-        var remaining = names.Where(name => files.Read(name) is not null).ToList();
-        return [.. remaining.Select(name => "node data key " + name + " still in the isolated secret store after its delete"),
-            .. files.Names().Except(remaining, StringComparer.Ordinal).Select(name => "isolated secret store entry " + name)];
     }
 
     private static string Binary(string variable, string name)
