@@ -29,41 +29,17 @@
         "type": "Project"
       },
       "arcforges.node.platform": {
-        "type": "Project",
-        "dependencies": {
-          "ArcForges.Contracts.Node": "[1.0.0-ci.450.1, )"
-        }
+        "type": "Project"
       },
       "arcforges.node.platform.windows": {
         "type": "Project",
         "dependencies": {
-          "ArcForges.Contracts.Node": "[1.0.0-ci.450.1, )",
           "ArcForges.Node.Platform": "[0.1.0-dev, )",
           "ArcForges.RunSupervisor.Protocol": "[0.1.0-dev, )"
         }
       },
       "arcforges.runsupervisor.protocol": {
         "type": "Project"
-      },
-      "ArcForges.Contracts.Foundation": {
-        "type": "CentralTransitive",
-        "requested": "[1.0.0-ci.486.1, )",
-        "resolved": "1.0.0-ci.486.1",
-        "contentHash": "wENqAu2EtZfQn9noM353Almep9+AIe9M7wIrpoC6l97qnkuiAEBcurmcSaVBder797NNnVJxeDQ+MTZyyrwQig==",
-        "dependencies": {
-          "Google.Protobuf": "3.36.2"
-        }
-      },
-      "ArcForges.Contracts.Node": {
-        "type": "CentralTransitive",
-        "requested": "[1.0.0-ci.450.1, )",
-        "resolved": "1.0.0-ci.450.1",
-        "contentHash": "mfh4+fC7shcBYRq82rMWzNnUi3Ztj8f82imom+5+XVz4LfmXTjiIHCyfhbt9HlKZwl/Fnt143N+tN+Fpl7eFeQ==",
-        "dependencies": {
-          "ArcForges.Contracts.Foundation": "1.0.0-ci.450.1",
-          "Google.Protobuf": "3.36.1",
-          "Grpc.Core.Api": "2.84.0"
-        }
       },
       "Azure.Core": {
         "type": "CentralTransitive",
@@ -88,18 +64,6 @@
           "OpenTelemetry.Extensions.Hosting": "1.18.0",
           "OpenTelemetry.PersistentStorage.FileSystem": "1.1.1"
         }
-      },
-      "Google.Protobuf": {
-        "type": "CentralTransitive",
-        "requested": "[3.36.2, )",
-        "resolved": "3.36.2",
-        "contentHash": "Ci1q1iJg74qAE5riTA2FbMS0wPbpruPQI/JQ9DrAsRo2VsSxgt1e/pmxGxgrci+pXJEgrSYg2vPl8rrStZkclQ=="
-      },
-      "Grpc.Core.Api": {
-        "type": "CentralTransitive",
-        "requested": "[2.85.0, )",
-        "resolved": "2.85.0",
-        "contentHash": "cpYu/nw/QhwHcRZMJbYD8lEllKrdwYMiDS4U3oH61nhYPUMNkcCcef4ulv11svHvTBThYV+ju332N9bCrfe7cQ=="
       },
       "Microsoft.ApplicationInsights": {
         "type": "CentralTransitive",
