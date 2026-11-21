@@ -1,622 +1,397 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-using System.Diagnostics;
 using System.Globalization;
+using System.Security.Cryptography;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
+using ArcForges.Node.Api;
+using ArcForges.Node.Core.Events;
+using ArcForges.Node.Core.Execution;
+using ArcForges.Node.Core.Platform;
 using ArcForges.Node.Platform;
-using ArcForges.Node.Platform.Windows;
+using ArcForges.Node.Store;
+using Google.Protobuf;
 
 namespace ArcForges.Node.Core.Tests;
 
 /// <summary>
-/// Execution control with a real node, real holders and real processes (env=windows-real): timeouts and CPU-time limits (R-EXE-007),
-/// the cancellation sequence (R-EXE-006), the interim global FIFO admission, the output limit under TERMINATE and NOTIFY (R-STOR-009),
-/// commit limits in the mem-ramp scenario (R-RES-014), launch and end steps and SPAWN_FAILED, <c>kill_with_node</c>, recovery after a node
-/// restart (R-EXE-008, R-EXE-018), LOST after a reboot or a vanished container (R-EXE-009), and <c>cancel_when_caller_gone</c> with
-/// <c>ReleaseCallerBinding</c> (R-AI-010).
+/// Recovery and controls for owned legacy attempts, using a real store and execution supervisor.
+/// The original Windows execution cases remain at eaaccb8380a2bd265aaad0a67d62c8fab2a8a29a,
+/// including FIFO admission, native output overshoot, commit and priority classes, and launch/end step order.
+/// <see cref="LaunchFaultTests"/> covers queued cancel and limits on retained roots.
+/// <see cref="RecoveredLegacyTaskControlsTests"/> covers priority and pause/resume on retained handles.
 /// </summary>
-[Trait("env", "windows-real")]
-[System.Runtime.Versioning.SupportedOSPlatform("windows")]
 public sealed class TaskControlTests
 {
+    private static readonly Caller Human = new(Origin.Human, ClientKind.Cli, null);
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    [Fact(Timeout = 120_000)]
-    public async Task ATimeoutAndACpuTimeLimitStopTheTreeWithTheirReasons()
+    [Fact(Timeout = 30_000)]
+    public async Task CancellingARecoveredAttemptRecordsGracefulThenForcedStopAndAccountsTheExit()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows execution platform.");
-        await using var node = await InProcessNode.Create().StartAsync();
-        await using var channel = await node.ChannelAsync();
-        var marker = Path.Combine(node.Root, "timeout.txt");
-
-        // The break reaches the processes of the root's group that exist when the timeout fires (04 section 6): a child started later gets
-        // none, and the forced phase ends it. The attempt runs below normal priority (03 section 5.2, amended), so under the parallel suites'
-        // load its processes may take seconds to start (a 5 s timeout fired before the child was up). So the test waits for both processes
-        // to record "ready" (their break handlers in place) and requires that before the timeout can fire: the timeout is the bound of the
-        // tree's start, on the failure path only, and a tree that starts later fails the test with that diagnosis.
-        const int TimeoutMs = 20_000;
-
-        // Under a normal-priority load each break handler runs only when Windows boosts its starved thread (about every 4 s); with every
-        // processor saturated they recorded the break up to 14 s after the signal, past the default 10 s grace, so the grace is 30 s. The
-        // root waits for its child before it exits on the break (--wait-children-ms): once the root has exited, the holder's leftover_grace
-        // (5 s) would end a child whose handler has not run yet. Both processes then exit on the break, so the grace is never waited on the
-        // success path; it is the failure-path bound of both handlers.
-        const int GraceMs = 30_000;
-        var timed = Tasks.Argv(node.Root, Tasks.TestLoad, "signal", "--hold-ms", "120000", "--child", "same",
-            "--wait-children-ms", GraceMs.ToString(CultureInfo.InvariantCulture), "--marker", marker);
-        timed.TimeoutMs = TimeoutMs;
-        timed.Resources = new ResourceSpec { CancelGraceMs = GraceMs };
-
-        // The attempt starts after the submission, so its timeout fires no earlier than this instant plus the timeout. The node times the
-        // timeout on the monotonic clock and the processes record wall-clock times; the inference holds while both advance at the same rate
-        // (a clock step could only flip the diagnosis below). A process that is not ready when the timeout fires may record no "break" at
-        // all, so only the "ready" times prove that the whole tree was up before the timeout fired.
-        var submittedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        var taskId = await Tasks.SubmitAsync(channel, timed);
-        var waited = Stopwatch.StartNew();
-        while (true)
+        await WithRetainedAttemptAsync(async fixture =>
         {
-            // The tree is up, the timeout fired, or the task already ended (the precondition below then reports it at once).
-            var lines = Tasks.Marker(marker);
-            if (lines.Count(line => line.Event == "ready") == 2 || lines.Any(line => line.Event == "break")
-                || Execution.TaskRecords.IsTerminal((await Tasks.GetAsync(channel, taskId)).State))
+            var (tasks, execution, store, holder, clock, taskId, attemptId) = fixture;
+            var recovered = await fixture.ReadAsync();
+            Assert.Equal((TaskState.Running, attemptId, true), (recovered.State, recovered.CurrentAttempt.AttemptId, recovered.CurrentAttempt.NodeGap));
+            Assert.Equal(1L, store.Read(reader => reader.Scalar("SELECT count(*) FROM timeline_segment WHERE category = 'node_gap';")));
+
+            var request = new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = taskId, Reason = "migration test", GraceMs = 1000 };
+            var cancel = await tasks.CancelTask(Human, request, Ct);
+            Assert.Null(cancel.Error);
+            Assert.Equal((TaskState.Running, EffectCertainty.Happened, request.Meta.CommandId),
+                (cancel.Value.State, cancel.Value.Receipt.Effect, cancel.Value.Receipt.CommandId));
+            var stopping = await fixture.ReadAsync();
+            Assert.Equal(AttemptState.Stopping, stopping.CurrentAttempt.State);
+            var running = Assert.IsType<RunningAttempt>(execution.Running(IdText.Format(attemptId)));
+            await Assert.IsAssignableFrom<Task>(running.GracefulPhase).WaitAsync(Ct);
+            Assert.Equal(1, holder.GracefulStops);
+            Assert.Equal(0, holder.Terminations);
+
+            clock.Advance(TimeSpan.FromSeconds(1));
+            execution.Start();
+            await holder.Acknowledged.WaitAsync(Ct);
+            var finished = await fixture.ReadAsync();
+            Assert.Equal((TaskState.Cancelled, TerminationReason.Cancelled, EffectCertainty.Happened),
+                (finished.State, finished.CurrentAttempt.Result.TerminationReason, finished.CurrentAttempt.Result.Effect));
+            Assert.Equal(1, holder.Terminations);
+            Assert.Equal(RetainedHolder.ForcedExitCode, finished.CurrentAttempt.Result.ExitCode);
+            Assert.Equal((ulong)RetainedHolder.PeakMemory, finished.CurrentAttempt.Usage.MemPeakBytes);
+            Assert.Equal(cancel, await tasks.CancelTask(Human, request, Ct));
+            var again = await tasks.CancelTask(Human, new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = taskId }, Ct);
+            Assert.Null(again.Error);
+            Assert.Equal(TaskState.Cancelled, again.Value.State);
+            Assert.Equal(1, holder.Terminations);
+        });
+    }
+
+    [Fact(Timeout = 30_000)]
+    public async Task RecoveredKillWithNodeAttemptIsStoppedAndRecordedOnShutdown()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await WithRetainedAttemptAsync(async fixture =>
+        {
+            await fixture.Execution.StopAsync();
+            Assert.True(fixture.Holder.Acknowledged.IsCompletedSuccessfully);
+            var task = await fixture.ReadAsync();
+            Assert.Equal((TaskState.Cancelled, TerminationReason.NodeShutdown, EffectCertainty.Happened),
+                (task.State, task.CurrentAttempt.Result.TerminationReason, task.CurrentAttempt.Result.Effect));
+            Assert.Equal(1, fixture.Holder.Terminations);
+            Assert.Equal(0, fixture.Holder.GracefulStops);
+        }, prepare: (transaction, taskId, _) =>
+        {
+            var spec = TaskRecords.GetRow(transaction, taskId.Value.Span)!.Spec;
+            spec.Resources.KillWithNode = true;
+            var bytes = spec.ToByteArray();
+            transaction.Execute("UPDATE task SET spec = $spec, spec_digest = $digest WHERE task_id = $id;",
+                ("$spec", bytes), ("$digest", SHA256.HashData(bytes)), ("$id", taskId.Value.ToByteArray()));
+        });
+    }
+
+    [Theory(Timeout = 30_000)]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DurableExitOrFailedLaunchRecordedWhileNodeStoppedIsRecoveredOnce(bool launchFailed)
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await WithRetainedAttemptAsync(async fixture =>
+        {
+            fixture.Execution.Start();
+            await fixture.Holder.Acknowledged.WaitAsync(Ct);
+            var task = await fixture.ReadAsync();
+            var attempt = task.CurrentAttempt;
+            Assert.True(attempt.NodeGap);
+            Assert.Equal(AttemptState.Finished, attempt.State);
+            Assert.Equal(1L, fixture.Store.Read(reader => reader.Scalar("SELECT count(*) FROM timeline_segment WHERE category = 'node_gap';")));
+            if (launchFailed)
             {
-                break;
+                Assert.Equal((TaskState.Failed, TerminationReason.SpawnFailed, EffectCertainty.DidNotHappen),
+                    (task.State, attempt.Result.TerminationReason, attempt.Result.Effect));
+                Assert.Contains("retained-setup", attempt.Result.Detail, StringComparison.Ordinal);
+            }
+            else
+            {
+                Assert.Equal((TaskState.Succeeded, TerminationReason.Exited, EffectCertainty.Happened),
+                    (task.State, attempt.Result.TerminationReason, attempt.Result.Effect));
+                Assert.Equal((ulong)RetainedHolder.PeakMemory, attempt.Usage.MemPeakBytes);
             }
 
-            Assert.True(waited.Elapsed < Tasks.Bound, $"Timed out after {Tasks.Bound.TotalSeconds:0} s waiting for the tree to start.");
-            await Task.Delay(200, Ct);
-        }
-
-        var task = await Tasks.WaitAsync(channel, taskId);
-        var attempt = task.CurrentAttempt;
-        var tree = Tasks.Marker(marker);
-        TestContext.Current.TestOutputHelper?.WriteLine($"submitted {submittedAt}, attempt {Sched.Ms(attempt.StartedAt)}..{Sched.Ms(attempt.FinishedAt)}, "
-            + $"exit {attempt.Result.ExitCode}, leftovers terminated {attempt.Result.LeftoverProcessesTerminated} [{string.Join(", ", attempt.Result.LeftoverImages)}], "
-            + $"detail '{attempt.Result.Detail}', "
-            + $"marker {string.Join(", ", tree)}");
-        var ready = tree.Where(line => line.Event == "ready").ToList();
-        Assert.True(ready.Count == 2 && ready.All(line => line.At < submittedAt + TimeoutMs),
-            $"The tree was not ready before the {TimeoutMs} ms timeout could fire (submitted at {submittedAt}): {string.Join(", ", tree)}.");
-
-        Assert.Equal(TaskState.Failed, task.State);
-        Assert.Equal(TerminationReason.TimedOut, attempt.Result.TerminationReason);
-        Assert.Equal(3, attempt.Result.ExitCode);
-        // Only the tree's own image counts: the root's console host (conhost.exe) is in the job too, runs below normal priority as well and may
-        // still be closing when leftover_grace ends; it never ran a break handler.
-        Assert.True(!attempt.Result.LeftoverImages.Any(image => image.Contains("arcforges-testload", StringComparison.OrdinalIgnoreCase)),
-            $"leftover_grace terminated {string.Join(", ", attempt.Result.LeftoverImages)} after the root exited: the child did not end on the break first.");
-
-        // A generous safety bound, not a timing contract (so the test stays in the parallel suites), on the attempt's own times: after the
-        // timeout fires the stop takes at most the grace; the bound only catches a timeout that fires late or not at all (the command holds
-        // 120 s).
-        var ran = Sched.Ms(attempt.FinishedAt) - Sched.Ms(attempt.StartedAt);
-        Assert.True(ran < TimeoutMs + GraceMs + 15_000, $"The attempt ran {ran} ms.");
-        Assert.Equal(2, Tasks.Marker(marker).Count(line => line.Event == "break"));
-
-        var cpu = Tasks.Argv(node.Root, Tasks.TestLoad, "cpu", "--threads", "2", "--iterations", "20000000000");
-        cpu.CpuTimeLimitMs = 1_500;
-        var cpuTask = await Tasks.WaitAsync(channel, await Tasks.SubmitAsync(channel, cpu));
-        Assert.Equal(TerminationReason.CpuTimeExceeded, cpuTask.CurrentAttempt.Result.TerminationReason);
-        Assert.True(cpuTask.CurrentAttempt.Usage.CpuTimeMs >= 1_500);
-    }
-
-    [Fact(Timeout = 120_000)]
-    public async Task CancellationSignalsGracefullyThenForcesATreeThatIgnoresIt()
-    {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows execution platform.");
-        await using var node = await InProcessNode.Create().StartAsync();
-        await using var channel = await node.ChannelAsync();
-        var marker = Path.Combine(node.Root, "ignore.txt");
-        // The tree holds 300 s, far beyond the grace and every wait below, so only the forced phase can end it, and its exit code says so (a
-        // natural exit would be 0, and a stopped attempt is CANCELLED either way).
-        var spec = Tasks.Argv(node.Root, Tasks.TestLoad, "signal", "--hold-ms", "300000", "--on-break", "ignore", "--child", "same", "--marker", marker);
-        // The grace must outlast the start of each process's break handler: the attempt runs below normal priority (03 section 5.2, amended),
-        // and under a normal-priority load its handler thread can wait seconds for a processor (Windows' starvation boost runs a ready thread
-        // within about 4 s, once per step). With every processor saturated the break was recorded up to 14 s after the cancel, past a 10 s
-        // grace, so the forced phase waits 30 s; the tree ignores the break, so this test always waits the full grace.
-        const int GraceMs = 30_000;
-        spec.Resources = new ResourceSpec { CancelGraceMs = GraceMs };
-        var taskId = await Tasks.SubmitAsync(channel, spec);
-        await Tasks.RunningAsync(channel, taskId);
-        await Tasks.WaitForAsync(() => Tasks.Marker(marker).Count(line => line.Event == "ready") == 2, Tasks.Bound, "the tree");
-        var processes = Tasks.Processes(marker);
-
-        var cancelledAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        var cancel = await channel.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = taskId, Reason = "test" }, cancellationToken: Ct);
-        Assert.Equal(TaskState.Running, cancel.Value.State);
-        await Tasks.WaitForAsync(() => Tasks.Marker(marker).Count(line => line.Event == "break") == 2, TimeSpan.FromMilliseconds(GraceMs), "both processes to record the break");
-        var task = await Tasks.WaitAsync(channel, taskId);
-        TestContext.Current.TestOutputHelper?.WriteLine($"cancelled at {cancelledAt}, marker {string.Join(", ", Tasks.Marker(marker))}");
-        Assert.Equal(TaskState.Cancelled, task.State);
-        Assert.Equal(TerminationReason.Cancelled, task.CurrentAttempt.Result.TerminationReason);
-        Assert.Equal((int)AttemptRunner.TerminatedExitCode, task.CurrentAttempt.Result.ExitCode);
-        Assert.Contains("CTRL_BREAK_EVENT delivered", task.CurrentAttempt.Result.Detail, StringComparison.Ordinal);
-        Assert.Equal(2, Tasks.Marker(marker).Count(line => line.Event == "break"));
-        Assert.All(processes, process => Assert.False(process.IsRunning(), $"{process} is still running."));
-
-        // Cancelling a terminal task returns its state.
-        var again = await channel.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = taskId }, cancellationToken: Ct);
-        Assert.Equal(TaskState.Cancelled, again.Value.State);
-    }
-
-    [Fact(Timeout = 180_000)]
-    public async Task TasksOfOneOwnerAndClassRunInSubmissionOrderWithinTheGlobalLimit()
-    {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows execution platform.");
-        await using var node = await InProcessNode.Create(seed: transaction => Tasks.SeedPolicy(transaction, policy => policy.Resources.GlobalMaxRunning = 2)).StartAsync();
-        await using var channel = await node.ChannelAsync();
-        var markers = Enumerable.Range(0, 4).Select(index => Path.Combine(node.Root, $"fifo-{index}.txt")).ToList();
-        var ids = new List<Id>();
-        foreach (var marker in markers)
+            Assert.Equal(0, fixture.Holder.Terminations);
+        }, phase: launchFailed ? AttemptState.Starting : AttemptState.Running, holderAvailable: false, prepare: (transaction, taskId, holder) =>
         {
-            ids.Add(await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, Tasks.TestLoad, "signal", "--hold-ms", "1500", "--marker", marker)));
-        }
-
-        var queued = await Tasks.GetAsync(channel, ids[3]);
-        if (queued.State == TaskState.Queued)
-        {
-            Assert.Equal("global_limit", queued.Queue.BlockingReason);
-            Assert.InRange(queued.Queue.Position, 1u, 4u);
-        }
-
-        foreach (var id in ids)
-        {
-            Assert.Equal(TaskState.Succeeded, (await Tasks.WaitAsync(channel, id)).State);
-        }
-
-        var starts = markers.Select(marker => Tasks.Marker(marker).Single(line => line.Event == "ready").At).ToList();
-        Assert.True(starts[2] >= Math.Min(starts[0], starts[1]) + 1_000, "The third task waited for a running one to finish.");
-        Assert.True(starts[3] >= Math.Min(starts[0], starts[1]) + 1_000, "The fourth task waited for a running one to finish.");
-        // The order is the node's: its start records (admission starts them in order), not the processes' markers, which a below-normal
-        // process under the parallel suites' load writes late.
-        var started = new List<long>();
-        foreach (var id in ids)
-        {
-            started.Add(Sched.Ms((await Tasks.GetAsync(channel, id)).StartedAt));
-        }
-
-        Assert.True(started[2] <= started[3], "Queued tasks start in submission order.");
-    }
-
-    [Fact(Timeout = 120_000)]
-    public async Task AQueuedTaskIsCancelledWithoutAnAttempt()
-    {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows execution platform.");
-        await using var node = await InProcessNode.Create(seed: transaction => Tasks.SeedPolicy(transaction, policy => policy.Resources.GlobalMaxRunning = 1)).StartAsync();
-        await using var channel = await node.ChannelAsync();
-        var running = await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, Tasks.TestLoad, "signal", "--hold-ms", "60000", "--marker", Path.Combine(node.Root, "m.txt")));
-        await Tasks.RunningAsync(channel, running);
-        var waiting = await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, Tasks.Cmd, "/d", "/c", "exit 0"));
-        var queued = await Tasks.GetAsync(channel, waiting);
-        Assert.Equal(TaskState.Queued, queued.State);
-        Assert.Equal(1u, queued.Queue.Position);
-        var cancel = await channel.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = waiting }, cancellationToken: Ct);
-        Assert.Equal(TaskState.Cancelled, cancel.Value.State);
-        Assert.Equal(0u, (await Tasks.GetAsync(channel, waiting)).AttemptCount);
-        await channel.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = running }, cancellationToken: Ct);
-        Assert.Equal(TaskState.Cancelled, (await Tasks.WaitAsync(channel, running)).State);
-    }
-
-    // isolation=exclusive: the overshoot (rate over 500 ms) is a timing bound of the enforcement loop.
-    [Fact(Timeout = 120_000, DisableParallelization = true)]
-    [Trait("isolation", "exclusive")]
-    public async Task OutputBeyondTheLimitStopsTheAttemptAtOnceWithinTheStatedBound()
-    {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows execution platform.");
-        const long Limit = 2L << 20;
-        const long Rate = 8L << 20;
-        await using var node = await InProcessNode.Create(seed: transaction => Tasks.SeedPolicy(transaction, policy => policy.Storage.MaxAttemptOutputBytes = Limit)).StartAsync();
-        await using var channel = await node.ChannelAsync();
-        var spec = Tasks.Argv(node.Root, Tasks.TestLoad, "output", "--bytes", "67108864", "--rate", Rate.ToString(CultureInfo.InvariantCulture));
-        var task = await Tasks.WaitAsync(channel, await Tasks.SubmitAsync(channel, spec));
-        var attempt = task.CurrentAttempt;
-        var output = (long)(await Tasks.ReadAllAsync(channel, attempt.AttemptId, OutputStream.Stdout)).Length;
-        TestContext.Current.TestOutputHelper?.WriteLine($"limit {Limit}, output {output}, overshoot {output - Limit} bytes at {Rate} B/s");
-        Assert.Equal(TaskState.Failed, task.State);
-        Assert.Equal(TerminationReason.OutputLimit, attempt.Result.TerminationReason);
-        Assert.Equal("NODE", attempt.LimitEnforcedBy);
-        Assert.True(output > Limit);
-
-        // The bound: the write rate over one tailer interval (100 ms) plus the stop latency (allowed 400 ms here).
-        Assert.True(output - Limit <= Rate / 2, $"The overshoot {output - Limit} exceeds the rate over 500 ms ({Rate / 2}).");
-    }
-
-    /// <summary>
-    /// Under NOTIFY the attempt runs on and gets one finding, whether an enforcement pass sees the output cross the limit while it runs
-    /// (6 MiB/s: about half a second) or the attempt ends before any pass does (unthrottled: the final tail at finalization finds it).
-    /// </summary>
-    [Theory(Timeout = 120_000)]
-    [InlineData(6_291_456)]
-    [InlineData(0)]
-    public async Task UnderNotifyTheAttemptContinuesWithAFindingAndKeepsItsOutput(int rate)
-    {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows execution platform.");
-        await using var node = await InProcessNode.Create(seed: transaction => Tasks.SeedPolicy(transaction, policy =>
-        {
-            policy.Storage.MaxAttemptOutputBytes = 1L << 20;
-            policy.Storage.DiskLimitAction = DiskLimitAction.Notify;
-        })).StartAsync();
-        await using var channel = await node.ChannelAsync();
-        var task = await Tasks.WaitAsync(channel, await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, Tasks.TestLoad, "output", "--bytes", "3145728", "--rate", rate.ToString(System.Globalization.CultureInfo.InvariantCulture))));
-        Assert.Equal(TaskState.Succeeded, task.State);
-        Assert.Equal(3_145_728, (await Tasks.ReadAllAsync(channel, task.CurrentAttempt.AttemptId, OutputStream.Stdout)).Length);
-        var findings = node.Runtime.Store.Read(reader => Execution.ExecutionFindings.OpenFor(reader, "attempt", task.CurrentAttempt.AttemptId.Value.Span));
-        var finding = Assert.Single(findings);
-        Assert.Equal(FindingKind.QuotaExceeded, finding.Kind);
-        Assert.Contains(finding.Evidence, item => item.Name == "detected_by" && item.Value == "NODE");
-    }
-
-    /// <summary>
-    /// The attempt's commit limit in the mem-ramp scenario, through the node. The root's commit limit is <c>commit_factor x (C_mem - R_mem)</c>
-    /// (03 section 5.1), checked here; that it bounds all attempts together is proven with real jobs by the platform test
-    /// <c>JobTests.TheRootCommitLimitBoundsAllAttemptsTogether</c>: since admission (AF-SCHED-01) counts against <c>B_mem = C_mem - R_mem -
-    /// U_mem</c>, a node whose managed share is shrunk below the machine's unmanaged use admits nothing (<c>exceeds_budget</c>), so a node-level
-    /// scenario can no longer push two admitted attempts into a small root.
-    /// </summary>
-    // isolation=exclusive: the below-normal memory ramp must reach the real commit limit within the unchanged wait bound.
-    [Fact(Timeout = 180_000, DisableParallelization = true)]
-    [Trait("isolation", "exclusive")]
-    public async Task NoAttemptExceedsItsCommitLimitInTheMemRampScenario()
-    {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows commit limits.");
-        await using var node = await InProcessNode.Create().StartAsync();
-        await using var channel = await node.ChannelAsync();
-        var nodeName = IdText.Format(node.Runtime.NodeId.Span);
-        using var root = JobObject.Open(WindowsExecutionPlatform.JobName(nodeName, "root"))!;
-        var settings = node.Runtime.Execution!.Settings;
-        // The job rounds its limit down to a page.
-        var rootLimit = (long)(settings.CommitFactor * settings.ManagedMemory);
-        Assert.InRange(root.Limits().JobMemoryLimit, rootLimit - 4095, rootLimit);
-
-        // One attempt with a 128 MiB ceiling: its commit limit is 192 MiB, its notification limit 128 MiB. The workload's heap limit is
-        // lifted (hex without 0x, read by the JIT runtime and Native AOT): inside a job the .NET GC would otherwise refuse at 75% of the
-        // commit limit (144 MiB) itself, and the job's limit would never be exercised.
-        var single = Tasks.Argv(node.Root, Tasks.TestLoad, "mem-ramp", "--target-mb", "512", "--step-mb", "16");
-        single.Environment.Set["DOTNET_GCHeapHardLimit"] = "C0000000";
-        single.Resources = new ResourceSpec { Hint = new ResourceDemand { MemExpectedBytes = 64L << 20, MemCeilingBytes = 128L << 20 } };
-        var singleId = await Tasks.SubmitAsync(channel, single);
-        var attempt = await Tasks.RunningAsync(channel, singleId);
-        using var job = JobObject.Open(WindowsExecutionPlatform.JobName(nodeName, IdText.Format(attempt.AttemptId)));
-        var attemptMax = Sample(job);
-        var finished = await Tasks.WaitAsync(channel, singleId);
-        Assert.Equal(TerminationReason.MemoryLimit, finished.CurrentAttempt.Result.TerminationReason);
-        Assert.True(attemptMax.Max <= 192L << 20, $"The attempt committed {attemptMax.Max}.");
-
-        // The job refused: its peak (which counts the refused request) reached the commit limit, within one 16 MiB step.
-        Assert.InRange((long)finished.CurrentAttempt.Usage.MemPeakBytes, (192L - 16) << 20, (192L + 16) << 20);
-        attemptMax.Stop();
-        TestContext.Current.TestOutputHelper?.WriteLine($"attempt committed at most {attemptMax.Max} of {192L << 20}");
-    }
-
-    [Fact(Timeout = 120_000, DisableParallelization = true)]
-    [Trait("isolation", "exclusive")]
-    public async Task LaunchStepsRunBeforeTheRootEndStepsBeforeLeftoversAndAFailingStepIsSpawnFailed()
-    {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows execution platform.");
-        var steps = new Tasks.FixedSteps(
-            files => files.AttemptName.Length > 0 && File.Exists(Path.Combine(Path.GetTempPath(), "arcforges-fail-" + files.DataRoot.GetHashCode(StringComparison.Ordinal)))
-                ? [Step("failing-launch", Tasks.Cmd, "/d", "/c", "exit 9")]
-                : [Step("synthetic-launch", Tasks.TestLoad, "signal", "--hold-ms", "500", "--marker", files.Directory + "-launch.txt")],
-            files => [Step("synthetic-end", Tasks.TestLoad, "signal", "--hold-ms", "100", "--marker", files.Directory + "-end.txt")]);
-        await using var node = await InProcessNode.Create(steps: steps).StartAsync();
-        await using var channel = await node.ChannelAsync();
-        var marker = Path.Combine(node.Root, "root.txt");
-        var task = await Tasks.WaitAsync(channel, await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, Tasks.TestLoad, "signal", "--hold-ms", "200", "--marker", marker)));
-        Assert.Equal(TaskState.Succeeded, task.State);
-        var files = Tasks.Files(node, task.CurrentAttempt.AttemptId);
-        var launch = Tasks.Marker(files.Directory + "-launch.txt").Single();
-        var root = Tasks.Marker(marker).Single();
-        var end = Tasks.Marker(files.Directory + "-end.txt").Single();
-        Assert.True(root.At >= launch.At + 400, "The root started after the launch step.");
-        Assert.True(end.At >= root.At + 150, "The end step ran after the root exited.");
-
-        var flag = Path.Combine(Path.GetTempPath(), "arcforges-fail-" + node.DataRoot.GetHashCode(StringComparison.Ordinal));
-        File.WriteAllText(flag, "fail");
-        try
-        {
-            var failed = await Tasks.WaitAsync(channel, await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, Tasks.TestLoad, "signal", "--hold-ms", "200", "--marker", marker)));
-            Assert.Equal(TaskState.Failed, failed.State);
-            Assert.Equal(TerminationReason.SpawnFailed, failed.CurrentAttempt.Result.TerminationReason);
-            Assert.Equal(EffectCertainty.DidNotHappen, failed.CurrentAttempt.Result.Effect);
-            Assert.Contains("failing-launch", failed.CurrentAttempt.Result.Detail, StringComparison.Ordinal);
-            Assert.Single(Tasks.Marker(marker));
-        }
-        finally
-        {
-            File.Delete(flag);
-        }
-    }
-
-    /// <summary>
-    /// 03 section 5.2 (amended for AF-SCHED-01): every process of an attempt runs below normal priority, enforced by its job
-    /// (<c>JOB_OBJECT_LIMIT_PRIORITY_CLASS</c>), so managed work always yields to the user's own normal-priority work. The attempt's shell
-    /// and a child it starts are BELOW_NORMAL, and the shell cannot raise itself to NORMAL or HIGH.
-    /// </summary>
-    [Fact(Timeout = 120_000)]
-    public async Task AnAttemptsProcessesRunBelowNormalAndCannotRaiseThemselves()
-    {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows execution platform.");
-        await using var node = await InProcessNode.Create().StartAsync();
-        await using var channel = await node.ChannelAsync();
-        var script = string.Join("; ",
-            "$p = [Diagnostics.Process]::GetCurrentProcess()",
-            "'before=' + $p.PriorityClass",
-            "try { $p.PriorityClass = 'High' } catch { 'high-refused' }",
-            "$p.Refresh(); 'after-high=' + $p.PriorityClass",
-            "try { $p.PriorityClass = 'Normal' } catch { 'normal-refused' }",
-            "$p.Refresh(); 'after-normal=' + $p.PriorityClass",
-            "$c = [Diagnostics.Process]::Start('cmd.exe', '/d /c ping -n 3 127.0.0.1 >nul')",
-            "'child=' + $c.PriorityClass",
-            "$c.WaitForExit()");
-        var spec = Tasks.Argv(node.Root, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe"),
-            "-NoProfile", "-NonInteractive", "-Command", script);
-        var task = await Tasks.WaitAsync(channel, await Tasks.SubmitAsync(channel, spec));
-        var output = System.Text.Encoding.UTF8.GetString(await Tasks.ReadAllAsync(channel, task.CurrentAttempt.AttemptId, OutputStream.Stdout));
-        TestContext.Current.TestOutputHelper?.WriteLine(output);
-        Assert.Equal(TaskState.Succeeded, task.State);
-        Assert.Contains("before=BelowNormal", output, StringComparison.Ordinal);
-        Assert.Contains("after-high=BelowNormal", output, StringComparison.Ordinal);
-        Assert.Contains("after-normal=BelowNormal", output, StringComparison.Ordinal);
-        Assert.Contains("child=BelowNormal", output, StringComparison.Ordinal);
-    }
-    [Fact(Timeout = 120_000)]
-    public async Task AKillWithNodeTaskEndsWithTheNode()
-    {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows execution platform.");
-        await using var node = await InProcessNode.Create().StartAsync();
-        Id taskId;
-        ArcForges.Tests.ProcessIdentity root;
-        await using (var channel = await node.ChannelAsync())
-        {
-            var spec = Tasks.Argv(node.Root, Tasks.TestLoad, "signal", "--hold-ms", "60000", "--marker", Path.Combine(node.Root, "m.txt"));
-            spec.Resources = new ResourceSpec { KillWithNode = true };
-            taskId = await Tasks.SubmitAsync(channel, spec);
-            await Tasks.RunningAsync(channel, taskId);
-            root = node.Runtime.Store.Read(reader =>
+            if (launchFailed)
             {
-                using var command = reader.CreateCommand("SELECT root_pid, root_start FROM attempt WHERE task_id = $id;");
-                command.Parameters.AddWithValue("$id", taskId.Value.ToByteArray());
-                using var rows = command.ExecuteReader();
-                Assert.True(rows.Read());
-                return ArcForges.Tests.ProcessIdentity.CreatedNoLaterThan(rows.GetInt32(0), ArcForges.Node.Store.StoreTime.FromMicroseconds(rows.GetInt64(1)));
-            });
-            Assert.Empty(ExecutionCleanup.Holders(InProcessNode.AttemptNames(node.Runtime.Store)));
-        }
-
-        await node.StopAsync();
-        Assert.False(root.IsRunning(), "A kill_with_node attempt does not outlive the node.");
-        await node.StartAsync();
-        await using var after = await node.ChannelAsync();
-        var task = await Tasks.GetAsync(after, taskId);
-        Assert.Equal(TaskState.Cancelled, task.State);
-        Assert.Equal(TerminationReason.NodeShutdown, task.CurrentAttempt.Result.TerminationReason);
-    }
-
-    [Fact(Timeout = 180_000)]
-    public async Task AttemptsSurviveANodeRestartAndAreRecoveredCancelledAndAccounted()
-    {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows execution platform.");
-        await using var node = await InProcessNode.Create().StartAsync();
-        var longMarker = Path.Combine(node.Root, "long.txt");
-
-        // The short attempt runs until the test writes the go file once the node stopped, so it cannot finish before the stop however
-        // slowly the test runs (a fixed 2 s hold raced with it under load).
-        var go = Path.Combine(node.Root, "go");
-        Id longId, shortId, shortAttempt;
-        await using (var channel = await node.ChannelAsync())
-        {
-            longId = await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, Tasks.TestLoad, "signal", "--hold-ms", "120000", "--marker", longMarker));
-            shortId = await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, Tasks.WaitForFile(go)));
-            await Tasks.RunningAsync(channel, longId);
-            shortAttempt = (await Tasks.RunningAsync(channel, shortId)).AttemptId;
-
-            // RUNNING records the root process; its marker follows once the workload started.
-            await Tasks.WaitForAsync(() => Tasks.Marker(longMarker).Count > 0, Tasks.Bound, "the workload to start");
-        }
-
-        await node.StopAsync();
-        File.WriteAllText(go, "go");
-        var longProcess = Tasks.Processes(longMarker).Single();
-        Assert.True(longProcess.IsRunning(), "The attempt keeps running while the node is stopped.");
-        await Tasks.WaitForAsync(() => File.Exists(Tasks.Files(node, shortAttempt).ExitPath), Tasks.Bound, "the short attempt to finish while the node is down, recorded by its holder");
-
-        await node.StartAsync();
-        await using var after = await node.ChannelAsync();
-
-        // The attempt that finished while the node was down is finalized from its holder's exit record.
-        var finished = await Tasks.WaitAsync(after, shortId);
-        Assert.Equal(TaskState.Succeeded, finished.State);
-        Assert.True(finished.CurrentAttempt.NodeGap);
-
-        // The running one was re-opened by name through its holder; cancelling it uses the restarted node's handles.
-        var running = await Tasks.GetAsync(after, longId);
-        Assert.Equal(TaskState.Running, running.State);
-        Assert.True(running.CurrentAttempt.NodeGap);
-        var cancel = await after.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = longId }, cancellationToken: Ct);
-        Assert.Null(cancel.Error);
-        var cancelled = await Tasks.WaitAsync(after, longId);
-        Assert.Equal(TaskState.Cancelled, cancelled.State);
-        Assert.Equal(3, cancelled.CurrentAttempt.Result.ExitCode);
-        Assert.True(cancelled.CurrentAttempt.Usage.MemPeakBytes > 0, "The recovered attempt's accounting was read.");
-        Assert.False(longProcess.IsRunning());
-        var segments = node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM timeline_segment WHERE category = 'node_gap';"));
-        Assert.Equal(2L, segments);
-        using var logStream = new FileStream(Path.Combine(node.DataRoot, "logs", "node", "node.log"), FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-        var log = new StreamReader(logStream).ReadToEnd();
-        Assert.Contains("\"portReassociated\":true", log, StringComparison.Ordinal);
-    }
-
-    [Fact(Timeout = 180_000)]
-    public async Task AnAttemptOfAnEarlierBootIsLostWithEvidence()
-    {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows execution platform.");
-        await using var node = await InProcessNode.Create().StartAsync();
-        Id taskId;
-        await using (var channel = await node.ChannelAsync())
-        {
-            taskId = await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, Tasks.TestLoad, "signal", "--hold-ms", "120000", "--marker", Path.Combine(node.Root, "m.txt")));
-            await Tasks.RunningAsync(channel, taskId);
-        }
-
-        await node.StopAsync();
-
-        // A simulated reboot: the store and the attempt record another boot identity than this boot's (AD-0006 section 3).
-        using (var store = ArcForges.Node.Store.NodeStore.Open(new ArcForges.Node.Store.NodeStoreOptions { DataRoot = node.DataRoot, BootIdentity = "previous-boot" }))
-        {
-            store.Write(transaction => transaction.Execute("UPDATE attempt SET boot_identity = 'previous-boot' WHERE task_id = $id;", ("$id", taskId.Value.ToByteArray())));
-        }
-
-        await node.StartAsync();
-        await using var after = await node.ChannelAsync();
-        var task = await Tasks.GetAsync(after, taskId);
-        Assert.Equal(TaskState.Lost, task.State);
-        Assert.Equal(TerminationReason.Lost, task.CurrentAttempt.Result.TerminationReason);
-        Assert.Equal(EffectCertainty.Unknown, task.CurrentAttempt.Result.Effect);
-        Assert.Contains("boot_id_old=previous-boot", task.CurrentAttempt.Result.Detail, StringComparison.Ordinal);
-    }
-
-    [Fact(Timeout = 180_000)]
-    public async Task AnAttemptWhoseContainerWasDestroyedOutsideTheNodeIsLost()
-    {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows execution platform.");
-        await using var node = await InProcessNode.Create().StartAsync();
-        var marker = Path.Combine(node.Root, "m.txt");
-        Id taskId;
-        await using (var channel = await node.ChannelAsync())
-        {
-            taskId = await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, Tasks.TestLoad, "signal", "--hold-ms", "120000", "--marker", marker));
-            await Tasks.RunningAsync(channel, taskId);
-
-            // RUNNING records the root process; its marker (which names it) follows once the workload started: under load, later.
-            await Tasks.WaitForAsync(() => Tasks.Marker(marker).Count > 0, Tasks.Bound, "the workload to start");
-        }
-
-        var holders = ExecutionCleanup.Holders(InProcessNode.AttemptNames(node.Runtime.Store)).ToList();
-        Assert.Single(holders);
-        await node.StopAsync();
-
-        // The tree is destroyed outside the node: the holder first (so no exit record is written), then the process.
-        using (var holder = Process.GetProcessById(holders[0]))
-        {
-            holder.Kill();
-            holder.WaitForExit(5_000);
-        }
-
-        using (var root = Process.GetProcessById(Tasks.Marker(marker).Single().Pid))
-        {
-            root.Kill();
-            root.WaitForExit(5_000);
-        }
-
-        await node.StartAsync();
-        await using var after = await node.ChannelAsync();
-        var task = await Tasks.GetAsync(after, taskId);
-        Assert.Equal(TaskState.Lost, task.State);
-        Assert.StartsWith("container_missing", task.CurrentAttempt.Result.Detail, StringComparison.Ordinal);
-
-        // A LOST task waits for a decision: a manual retry runs it again.
-        var retry = await after.Tasks.RetryTaskAsync(new TaskServiceRetryTaskRequest { Meta = Tasks.Meta(), TaskId = taskId }, cancellationToken: Ct);
-        Assert.Null(retry.Error);
-        await Tasks.RunningAsync(after, taskId);
-        await after.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = taskId }, cancellationToken: Ct);
-        Assert.Equal(TaskState.Cancelled, (await Tasks.WaitAsync(after, taskId)).State);
-    }
-
-    [Fact(Timeout = 120_000)]
-    public async Task ABindingSurvivesALostConnectionOfALiveCallerAndReleaseIsIdempotent()
-    {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "The Windows execution platform.");
-        await using var node = await InProcessNode.Create().StartAsync();
-        Id bound, released;
-        await using (var channel = await node.ChannelAsync())
-        {
-            bound = await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, Tasks.TestLoad, "signal", "--hold-ms", "60000", "--marker", Path.Combine(node.Root, "a.txt")), cancelWhenCallerGone: true);
-            released = await Tasks.SubmitAsync(channel, Tasks.Argv(node.Root, Tasks.TestLoad, "signal", "--hold-ms", "60000", "--marker", Path.Combine(node.Root, "b.txt")), cancelWhenCallerGone: true);
-            await Tasks.RunningAsync(channel, bound);
-            await Tasks.RunningAsync(channel, released);
-            var release = await channel.Tasks.ReleaseCallerBindingAsync(new TaskServiceReleaseCallerBindingRequest { Meta = Tasks.Meta(), TaskId = released }, cancellationToken: Ct);
-            Assert.Null(release.Error);
-            Assert.Equal(TaskState.Running, release.Value.State);
-            var twice = await channel.Tasks.ReleaseCallerBindingAsync(new TaskServiceReleaseCallerBindingRequest { Meta = Tasks.Meta(), TaskId = released }, cancellationToken: Ct);
-            Assert.Null(twice.Error);
-        }
-
-        // The binding is to the caller's process (08 section 4; AD-0006 section 7): this process lost its only connection but is alive
-        // (a client reconnecting after a lost connection), so nothing is cancelled. A caller whose process ends is cancelled within 5 s:
-        // ExecutionTests.AClientTimeoutHandsOffWithExit124AndAnInterruptBeforeItCancels kills a real CLI process.
-        TaskState State(Id id) => (TaskState)node.Runtime.Store.Read(reader => Convert.ToInt32(reader.Scalar("SELECT state FROM task WHERE task_id = $id;", ("$id", id.Value.ToByteArray())), CultureInfo.InvariantCulture));
-
-        // A deliberate hold longer than the 5 s caller-gone window: the absence of a cancellation cannot be awaited.
-        await Task.Delay(TimeSpan.FromSeconds(6), Ct);
-        Assert.Equal(TaskState.Running, State(bound));
-        Assert.Equal(TaskState.Running, State(released));
-        await using var after = await node.ChannelAsync();
-        foreach (var id in (Id[])[bound, released])
-        {
-            await after.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = id }, cancellationToken: Ct);
-            await Tasks.WaitAsync(after, id);
-        }
-    }
-
-    private static StepSpec Step(string name, params string[] argv) => new()
-    {
-        Name = name,
-        Application = argv[0],
-        CommandLine = WindowsCommandLine.Build(argv),
-        TimeoutMs = 30_000,
-    };
-
-    private static Sampler Sample(JobObject? job) => new(job);
-
-    private sealed class Sampler
-    {
-        private readonly Thread _thread;
-        private volatile bool _stop;
-
-        public Sampler(JobObject? job)
-        {
-            _thread = new Thread(() =>
-            {
-                while (!_stop && job is not null)
+                transaction.Execute("UPDATE task SET started_at = NULL WHERE task_id = $id;", ("$id", taskId.Value.ToByteArray()));
+                transaction.Execute("UPDATE attempt SET started_at = NULL WHERE task_id = $id;", ("$id", taskId.Value.ToByteArray()));
+                HelperFiles.WriteAtomically(holder.Files.LaunchPath, new LaunchRecord
                 {
-                    try
-                    {
-                        Max = Math.Max(Max, job.CurrentCommit());
-                    }
-                    catch (ObjectDisposedException)
-                    {
-                        return;
-                    }
+                    AttemptId = holder.Files.AttemptName, Step = "retained-setup", Error = "fixture failure", ExitCode = 9,
+                }.ToJson());
+            }
 
-                    Thread.Sleep(2);
-                }
-            })
-            { IsBackground = true };
-            _thread.Start();
-        }
+            holder.ReportExit(launchFailed ? 9 : 0);
+        });
+    }
 
-        public long Max { get; private set; }
-
-        public void Stop()
+    [Theory(Timeout = 30_000)]
+    [InlineData(true, "boot_changed")]
+    [InlineData(false, "container_missing")]
+    public async Task AnUnconfirmedRecoveredAttemptIsLostAndFreshRetryDoesNotStartWork(bool earlierBoot, string reason)
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await WithRetainedAttemptAsync(async fixture =>
         {
-            _stop = true;
-            _thread.Join();
+            var lost = await fixture.ReadAsync();
+            var result = lost.CurrentAttempt.Result;
+            Assert.Equal((TaskState.Lost, reason, TerminationReason.Lost, EffectCertainty.Unknown),
+                (lost.State, lost.StateReason, result.TerminationReason, result.Effect));
+            Assert.StartsWith(reason + ":", result.Detail, StringComparison.Ordinal);
+            if (earlierBoot)
+                Assert.Contains("boot_id_old=previous-boot", result.Detail, StringComparison.Ordinal);
+
+            Assert.Equal(earlierBoot ? 0 : 1, fixture.Holder.Reopens);
+            var retry = await fixture.Tasks.RetryTask(Human,
+                new TaskServiceRetryTaskRequest { Meta = Tasks.Meta(), TaskId = fixture.TaskId }, Ct);
+            Assert.Null(retry.Value);
+            Assert.Equal((ErrorCategory.Execution, "operation_failed", "legacy_task_outcome_unavailable", EffectCertainty.Unknown, RetryMode.Never),
+                (retry.Error.Category, retry.Error.Code, retry.Error.Details.State.Reason, retry.Error.Effect, retry.Error.Retry.Mode));
+            Assert.Equal(TaskState.Lost, (await fixture.ReadAsync()).State);
+            Assert.Empty(fixture.Execution.RunningAttempts);
+            Assert.Equal(0, fixture.Holder.Terminations);
+        }, holderAvailable: false, earlierBoot: earlierBoot);
+    }
+
+    [Fact(Timeout = 30_000)]
+    public async Task ReleasingARetainedTaskBindingIsIdempotentAndKeepsTheAttemptRunning()
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        await WithRetainedAttemptAsync(async fixture =>
+        {
+            var callerKey = new CallerKey(int.MaxValue - 1, fixture.Clock.GetUtcNow().Ticks);
+            fixture.Execution.CallerConnected(callerKey);
+            fixture.Execution.Submitted(fixture.TaskId.Value.Span, callerKey);
+            Assert.Equal(callerKey, fixture.Execution.BindingOf(fixture.TaskId.Value.Span));
+
+            var first = new TaskServiceReleaseCallerBindingRequest { Meta = Tasks.Meta(), TaskId = fixture.TaskId };
+            var response = await fixture.Tasks.ReleaseCallerBinding(Human, first, Ct);
+            Assert.Null(response.Error);
+            Assert.Equal((TaskState.Running, EffectCertainty.Happened, first.Meta.CommandId),
+                (response.Value.State, response.Value.Receipt.Effect, response.Value.Receipt.CommandId));
+            Assert.Null(fixture.Execution.BindingOf(fixture.TaskId.Value.Span));
+            var released = fixture.Store.Read(reader => TaskRecords.GetRow(reader, fixture.TaskId.Value.Span))!;
+            Assert.NotNull(released.CallerReleasedAt);
+
+            fixture.Execution.CallerDisconnected(callerKey);
+            fixture.Clock.Advance(TimeSpan.FromSeconds(1));
+            var second = new TaskServiceReleaseCallerBindingRequest { Meta = Tasks.Meta(), TaskId = fixture.TaskId };
+            var repeated = await fixture.Tasks.ReleaseCallerBinding(Human, second, Ct);
+            Assert.Null(repeated.Error);
+            Assert.Equal((TaskState.Running, EffectCertainty.Happened, second.Meta.CommandId),
+                (repeated.Value.State, repeated.Value.Receipt.Effect, repeated.Value.Receipt.CommandId));
+            var persisted = fixture.Store.Read(reader => TaskRecords.GetRow(reader, fixture.TaskId.Value.Span))!;
+            Assert.Equal(released.CallerReleasedAt, persisted.CallerReleasedAt);
+            Assert.Equal(TaskState.Running, (await fixture.ReadAsync()).State);
+            Assert.Equal(0, fixture.Holder.Terminations);
+        });
+    }
+
+    [Theory(Timeout = 30_000)]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RetainedOutputOverTheLimitHonorsTerminateOrNotify(bool notify)
+    {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
+        const int limit = 1 << 20;
+        const int outputLength = limit + 1;
+        await WithRetainedAttemptAsync(async fixture =>
+        {
+            fixture.Execution.Start();
+            if (notify)
+            {
+                IReadOnlyList<Finding> Findings() => fixture.Store.Read(reader => ExecutionFindings.OpenFor(reader, "attempt", fixture.AttemptId.Value.Span));
+                await Tasks.WaitForAsync(() => Findings().Count > 0, TimeSpan.FromSeconds(5), "the retained attempt quota finding");
+                Assert.Equal(TaskState.Running, (await fixture.ReadAsync()).State);
+                Assert.Equal(0, fixture.Holder.Terminations);
+                fixture.Holder.ReportExit(0);
+                await fixture.Holder.Acknowledged.WaitAsync(Ct);
+                Assert.Equal(TaskState.Succeeded, (await fixture.ReadAsync()).State);
+                var finding = Assert.Single(Findings());
+                Assert.Equal(FindingKind.QuotaExceeded, finding.Kind);
+                Assert.Contains(finding.Evidence, item => item.Name == "detected_by" && item.Value == "NODE");
+            }
+            else
+            {
+                await fixture.Holder.Acknowledged.WaitAsync(Ct);
+                var task = await fixture.ReadAsync();
+                Assert.Equal((TaskState.Failed, TerminationReason.OutputLimit, EffectCertainty.Happened, "NODE"),
+                    (task.State, task.CurrentAttempt.Result.TerminationReason, task.CurrentAttempt.Result.Effect, task.CurrentAttempt.LimitEnforcedBy));
+                Assert.Equal(1, fixture.Holder.Terminations);
+                Assert.Equal(0, fixture.Holder.GracefulStops);
+            }
+
+            var output = await fixture.Tasks.ReadTaskOutput(Human, new TaskServiceReadTaskOutputRequest
+            {
+                Meta = Tasks.Meta(), AttemptId = fixture.AttemptId, Stream = OutputStream.Stdout, FromOffset = 0, MaxBytes = outputLength,
+            }, Ct);
+            Assert.Null(output.Error);
+            Assert.Equal(outputLength, output.Value.Data.Length);
+        }, prepare: (transaction, _, holder) =>
+        {
+            Tasks.SeedPolicy(transaction, policy =>
+            {
+                policy.Storage.MaxAttemptOutputBytes = limit;
+                policy.Storage.DiskLimitAction = notify ? DiskLimitAction.Notify : DiskLimitAction.Terminate;
+            });
+            File.WriteAllBytes(holder.Files.StdoutPath, new byte[outputLength]);
+        });
+    }
+
+    private static async Task WithRetainedAttemptAsync(Func<RetainedAttempt, Task> verify, AttemptState phase = AttemptState.Running,
+        bool holderAvailable = true, bool earlierBoot = false, Action<StoreTransaction, Id, RetainedHolder>? prepare = null)
+    {
+        await using var fixture = InProcessNode.Create();
+        var clock = new FixtureClock();
+        fixture.Clock = clock;
+        var root = phase == AttemptState.Starting ? null : new RootProcess(int.MaxValue, clock.GetUtcNow());
+        var (taskId, attemptId) = LegacyTaskHistoryFixture.Seed(fixture, phase, root: root);
+        using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = fixture.DataRoot, BootIdentity = BootIdentity.Read(), Clock = clock });
+        var files = Tasks.Files(fixture, attemptId);
+        Directory.CreateDirectory(files.Directory);
+        using var holder = new RetainedHolder(IdText.Format(store.Metadata.NodeId.Span), files, clock, root, holderAvailable);
+        store.Write(transaction =>
+        {
+            if (earlierBoot)
+            {
+                transaction.Execute("UPDATE attempt SET boot_identity = 'previous-boot' WHERE attempt_id = $id;",
+                    ("$id", attemptId.Value.ToByteArray()));
+            }
+
+            prepare?.Invoke(transaction, taskId, holder);
+        }, CommitDurability.Full);
+
+        using var log = new NodeLog(Path.Combine(fixture.DataRoot, "logs", "node"), LogLevel.Info, clock);
+        using var heartbeat = new NodeHeartbeatWriter(fixture.DataRoot, log, clock);
+        using var keys = new NodeDataKeyRing(store, fixture.Secrets.Selection);
+        var journal = EventJournal.Open(store);
+        var hub = new StreamHub();
+        await using var processor = new CommandProcessor(store, journal, hub);
+        await using var execution = new ExecutionSupervisor(new ExecutionOptions
+        {
+            Store = store, Processor = processor, Log = log, Clock = clock, DataRoot = fixture.DataRoot,
+            Platform = holder, Secrets = new TaskSecrets(store, keys), Heartbeat = heartbeat,
+        });
+        var recovery = new RecoveryReport(true, earlierBoot, null, store.Opening);
+        using var runtime = new NodeRuntime(store, journal, hub, processor, log,
+            new NodeSettingsManager(fixture.ConfigPath, fixture.DataRoot, log), fixture.DataRoot, "offline-fixture", clock,
+            recovery, new CapabilityReport()) { Execution = execution };
+        await runtime.TransitionAsync(NodeLifecycleState.Recovering, "fixture").WaitAsync(Ct);
+        await execution.RecoverAsync(recovery, processor, Ct);
+        await runtime.TransitionAsync(NodeLifecycleState.Ready, "fixture").WaitAsync(Ct);
+
+        await verify(new RetainedAttempt(new TaskServiceHandler(runtime, new ClientSessions()), execution, store, holder, clock, taskId, attemptId));
+        Assert.Equal(1L, store.Read(reader => reader.Scalar("SELECT count(*) FROM attempt;")));
+    }
+
+    private sealed record RetainedAttempt(TaskServiceHandler Tasks, ExecutionSupervisor Execution, NodeStore Store, RetainedHolder Holder,
+        FixtureClock Clock, Id TaskId, Id AttemptId)
+    {
+        public async Task<ManagedTask> ReadAsync()
+        {
+            var result = await Tasks.GetTask(Human, new TaskServiceGetTaskRequest { TaskId = TaskId }, Ct);
+            Assert.Null(result.Error);
+            Assert.Equal(AttemptId, result.Value.Task.CurrentAttempt.AttemptId);
+            return result.Value.Task;
         }
+    }
+
+    private sealed class FixtureClock : TimeProvider
+    {
+        private long _timestamp;
+        public override long TimestampFrequency => TimeProvider.System.TimestampFrequency;
+        public override long GetTimestamp() => Interlocked.Read(ref _timestamp);
+        public override DateTimeOffset GetUtcNow() => DateTimeOffset.UnixEpoch.AddDays(1) + GetElapsedTime(0, GetTimestamp());
+        public void Advance(TimeSpan elapsed) => Interlocked.Add(ref _timestamp, (long)(elapsed.TotalSeconds * TimestampFrequency));
+    }
+
+    private sealed class RetainedHolder(string nodeName, AttemptFiles files, FixtureClock clock, RootProcess? root, bool available)
+        : IExecutionPlatform, IAttemptHandle
+    {
+        public const int ForcedExitCode = 17;
+        public const long PeakMemory = 64L << 20;
+        private readonly TaskCompletionSource _acknowledged = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _gracefulStops;
+        private int _terminations;
+        private int _exited;
+
+        public AttemptFiles Files => files;
+        public int Reopens { get; private set; }
+        public int GracefulStops => Volatile.Read(ref _gracefulStops);
+        public int Terminations => Volatile.Read(ref _terminations);
+        public Task Acknowledged => _acknowledged.Task;
+        public string Name => "retained-control-fixture";
+        public MachineCapacity Capacity => new(4, 1L << 30);
+        public string ContainerName => "retained-holder-fixture";
+        public RootProcess? Root => root;
+        public Task<RootProcess?> Started => Task.FromResult(Root);
+        public bool RootRunning => Volatile.Read(ref _exited) == 0;
+        public bool MemoryLimitHit => false;
+        public Stream? StdinWriter => null;
+        public bool UsageNeedsProcessTable => false;
+        public event Action? Changed;
+
+        public IAttemptHandle? Reopen(string node, AttemptFiles retainedFiles, RootProcess? retainedRoot, bool stopping)
+        {
+            Assert.Equal(nodeName, node);
+            Assert.Equal(files.AttemptName, retainedFiles.AttemptName);
+            Assert.Equal(root, retainedRoot);
+            Assert.False(stopping);
+            Reopens++;
+            return available ? this : null;
+        }
+
+        public GracefulOutcome RequestGracefulStop()
+        {
+            Interlocked.Increment(ref _gracefulStops);
+            return new(true, 0, null);
+        }
+
+        public void Terminate()
+        {
+            Interlocked.Increment(ref _terminations);
+            ReportExit(ForcedExitCode);
+        }
+
+        public void ReportExit(int exitCode)
+        {
+            HelperFiles.WriteAtomically(files.ExitPath, new ExitRecord
+            {
+                AttemptId = files.AttemptName, ExitStatus = exitCode,
+                RecordedAt = clock.GetUtcNow().ToString("O", CultureInfo.InvariantCulture),
+                MemPeakBytes = PeakMemory,
+            }.ToJson());
+            Volatile.Write(ref _exited, 1);
+            Changed?.Invoke();
+        }
+
+        public CapabilityReport Evaluate() => new();
+        public bool AcknowledgeRecorded(string node, string attempt)
+        {
+            Assert.Equal(nodeName, node);
+            Assert.Equal(files.AttemptName, attempt);
+            Acknowledge();
+            return true;
+        }
+
+        public void UpdateRootLimits(RootLimits limits) { }
+        public ExitRecord? TryReadExit() => ExitRecord.TryRead(files.ExitPath);
+        public LaunchRecord? TryReadLaunchFailure() => LaunchRecord.TryRead(files.LaunchPath);
+        public IReadOnlyList<ContainerProcess> Processes() => [];
+        public ContainerAccounting Accounting() => new(0, 0, PeakMemory, 0, 0, RootRunning ? 1 : 0, []);
+        public IReadOnlyList<EscapedProcess> ScanEscaped() => [];
+        public void Acknowledge() => _acknowledged.TrySetResult();
+        public void Dispose() { }
+        public void Start(string node, RootLimits limits, string helperExecutable) =>
+            throw new InvalidOperationException("The retained control fixture must not start a process.");
     }
 }
