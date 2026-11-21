@@ -71,9 +71,9 @@ public sealed partial class TestIsolationPolicyTests
     /// <summary>
     /// The members of a class file at four spaces of indentation: their attributes, their name and their body (comment lines left out).
     /// Every line at that indentation that starts with a letter starts a member: a method or constructor is named by the identifier before
-    /// its parameter list, a field, property or event by the identifier before <c>=</c>, <c>=&gt;</c>, <c>{</c> or <c>;</c>, and any other
-    /// by its line number (such a member is called by nothing, so a live use in it fails the check closed). A member ends where the next
-    /// one, its attributes or a type at the top level start.
+    /// its parameter list, a nested type by its declaration, a field, property or event by the identifier before <c>=</c>, <c>=&gt;</c>,
+    /// <c>{</c> or <c>;</c>, and any other by its line number (such a member is called by nothing, so a live use in it fails the check closed).
+    /// The next member, its attributes or a top-level type ends the previous member.
     /// </summary>
     private static List<Member> Members(string file, string[] lines)
     {
@@ -109,7 +109,8 @@ public sealed partial class TestIsolationPolicyTests
             else if (line.Length > 4 && line.StartsWith("    ", StringComparison.Ordinal) && char.IsLetter(line[4]))
             {
                 Close();
-                name = Method().Match(line) is { Success: true } method ? method.Groups["name"].Value
+                name = TypeDeclaration().Match(line) is { Success: true } type ? type.Groups["name"].Value
+                    : Method().Match(line) is { Success: true } method ? method.Groups["name"].Value
                     : Other().Match(line) is { Success: true } other ? other.Groups["name"].Value
                     : $"<{file}:{index + 1}>";
                 memberAttributes = string.Join('\n', attributes);
@@ -149,6 +150,9 @@ public sealed partial class TestIsolationPolicyTests
 
     [GeneratedRegex(@"^    [^=(]*?\b(?<name>\w+)\s*(?:<[^>()]*>)?\(", RegexOptions.None, matchTimeoutMilliseconds: 1000)]
     private static partial Regex Method();
+
+    [GeneratedRegex(@"^    (?:\w+\s+)*(?:class|struct|record|interface|enum)\s+(?<name>\w+)\b", RegexOptions.None, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex TypeDeclaration();
 
     [GeneratedRegex(@"^    [^=(]*?\b(?<name>\w+)\s*(?:=>|=|\{|;|$)", RegexOptions.None, matchTimeoutMilliseconds: 1000)]
     private static partial Regex Other();
