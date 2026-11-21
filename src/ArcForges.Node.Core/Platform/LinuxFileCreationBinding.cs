@@ -21,13 +21,6 @@ internal sealed record LinuxFileCreationBinding(
 {
     private static readonly UTF8Encoding Utf8 = new(false, true);
 
-    internal static LinuxFileCreationBinding FromPrepared(FileJournalIntent intent, ReadOnlySpan<byte> transmitted,
-        long deadline, long expiryMicroseconds)
-    {
-        FileMutationJournal.ValidateIntent(intent, transmitted);
-        return FromIntent(intent, SHA256.HashData(transmitted), durableStage: false, deadline, expiryMicroseconds);
-    }
-
     /// <summary>
     /// An approved command retains its exact transmitted digest, not its old content-bearing request. The FULL
     /// coordinator must independently read and bind the current APPROVED record; no request is reserialized here.

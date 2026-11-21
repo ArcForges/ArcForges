@@ -18,12 +18,6 @@ internal sealed record LinuxFileEffectBinding(
     byte[] IntendedStageIdentity, long OriginalSize, byte[] OriginalSha256, long IntendedSize,
     byte[] IntendedSha256, long Deadline, long ExpiryMicroseconds, bool DurableStages = false)
 {
-    internal static LinuxFileEffectBinding FromPrepared(FileJournalIntent intent, ReadOnlySpan<byte> raw, long deadline, long expiryMicroseconds)
-    {
-        FileMutationJournal.ValidateIntent(intent, raw);
-        return FromIntent(intent, SHA256.HashData(raw), deadline, expiryMicroseconds, durableStages: false);
-    }
-
     internal static LinuxFileEffectBinding FromApproved(PrivateStageApprovedPlan plan, long deadline, long expiryMicroseconds)
     {
         if (!plan.Active) throw new InvalidOperationException("The approved stage reservation is inactive.");
