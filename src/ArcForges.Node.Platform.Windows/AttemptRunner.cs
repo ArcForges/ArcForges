@@ -76,7 +76,8 @@ public sealed class AttemptRunner
         OutputGuard? outputGuard = null;
         try
         {
-            if (guard && GuardSpec.TryRead(_files.GuardPath) is { } guardSpec)
+            if (guard && string.Equals(_spec.AttemptId, _files.AttemptName, StringComparison.Ordinal)
+                && GuardSpec.TryReadForAttempt(_files.GuardPath, _files.AttemptName) is { } guardSpec)
             {
                 outputGuard = new OutputGuard(guardSpec, _files.GuardEventsPath, _child, [_stdout, _stderr], _clock);
                 outputGuard.Start();
