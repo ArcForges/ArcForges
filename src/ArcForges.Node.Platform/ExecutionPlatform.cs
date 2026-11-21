@@ -437,21 +437,6 @@ public enum ProcessTermination
     Failed = 3,
 }
 
-/// <summary>A process to adopt (04 section 10).</summary>
-/// <param name="NodeName">The node ID's text (container names).</param>
-/// <param name="AttemptName">The adoption attempt's ID text (the container's own name).</param>
-/// <param name="Pid">The process ID.</param>
-/// <param name="Start">Its start time, which must match (a process ID alone may have been reused).</param>
-public sealed record AdoptionRequest(string NodeName, string AttemptName, int Pid, DateTimeOffset Start);
-
-/// <summary>The adoption container with how the children that existed at adoption time fared (04 section 10 step 3, best effort).</summary>
-/// <param name="Container">The adoption container.</param>
-/// <param name="Image">The adopted process's image.</param>
-/// <param name="AdoptedChildren">Children placed in the container individually.</param>
-/// <param name="FailedChildren">Children that could not be placed (each recorded in <paramref name="ChildResults"/>).</param>
-/// <param name="ChildResults">One line per child: its image, ID and result.</param>
-public sealed record AdoptionResult(IAdoptedContainer Container, string Image, int AdoptedChildren, int FailedChildren, IReadOnlyList<string> ChildResults);
-
 /// <summary>An adoption container: the adopted process and every process that joined it since (later children follow the container).</summary>
 public interface IAdoptedContainer : IDisposable
 {
@@ -468,32 +453,4 @@ public interface IAdoptedContainer : IDisposable
     /// Gives up an adoption the node could not record, without terminating anything, and says what became of its processes (review round 2).
     /// </summary>
     string Abandon() => "the container was released; its processes keep running, not adopted";
-}
-
-/// <summary>The OS refused to place a process under management, or it is not the node's user's (<c>EXECUTION/adopt_not_permitted</c>).</summary>
-public sealed class AdoptionRefusedException : Exception
-{
-    /// <summary>Creates the exception.</summary>
-    public AdoptionRefusedException()
-        : base("adoption refused")
-    {
-    }
-
-    /// <summary>Creates the exception with the reason (<c>details.state.reason</c>).</summary>
-    public AdoptionRefusedException(string message)
-        : base(message)
-    {
-    }
-
-    /// <summary>Creates the exception.</summary>
-    public AdoptionRefusedException(string message, Exception innerException)
-        : base(message, innerException)
-    {
-    }
-
-    /// <summary>True when the process named does not exist (it exited, or its ID names a process that started later): <c>STATE/not_found</c>.</summary>
-    public bool NotFound { get; init; }
-
-    /// <summary>True when the process is already in one of this node's containers: <c>CONFLICT/already_exists</c>.</summary>
-    public bool AlreadyManaged { get; init; }
 }
