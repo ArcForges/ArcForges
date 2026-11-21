@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Globalization;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
@@ -720,6 +721,14 @@ public sealed class TaskServiceHandler : TaskService.TaskServiceBase
                 // The original missing-task reply carried the exact target as its only state detail.
                 checkedResponse.Error.Details.State.State = "task";
                 checkedResponse.Error.Details.State.Reason = "not_found";
+            }
+            else if (response.Error is { Code: "secrets_unavailable", Details.State: { HasReason: true } state }
+                && DateTimeOffset.TryParse(state.Reason, CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var purgedAt)
+                && response.Error.Equals(StoreErrors.SecretsUnavailable(StoreTime.ToMicroseconds(purgedAt))))
+            {
+                // The old purge refusal used the timestamp as its only state detail.
+                checkedResponse.Error.Details.State.State = "secrets_unavailable";
             }
         }
 

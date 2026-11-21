@@ -236,6 +236,30 @@ public sealed class CallerTests
         Assert.Equal("legacy_task_outcome_unavailable", refusal.Error.Details.State.Reason);
         Assert.Equal(otherTask.ToByteArray(), store.Read(reader => reader.Scalar(
             "SELECT outcome FROM command_dedup WHERE command_id = $id;", ("$id", inconsistent.Meta.CommandId.Value.ToByteArray()))) as byte[]);
+
+        var afterPurge = new TaskServiceRetryTaskRequest { Meta = Tasks.Meta(), TaskId = CommandIds.New() };
+        var purgeTime = StoreTime.ToMicroseconds(new DateTimeOffset(2026, 11, 21, 8, 30, 0, TimeSpan.Zero));
+        var previousPurgeRefusal = new TaskServiceRetryTaskResponse
+        {
+            Meta = new ResponseMeta { CorrelationId = afterPurge.Meta.CorrelationId },
+            Error = StoreErrors.SecretsUnavailable(purgeTime),
+        };
+        store.Write(transaction => RecordPrior(transaction, "RetryTask", afterPurge.Meta, afterPurge, previousPurgeRefusal, Origin.Human),
+            CommitDurability.Full);
+        var purgeReplay = afterPurge.Clone();
+        purgeReplay.Meta.CorrelationId = CommandIds.New();
+        var recordedPurgeRefusal = await human.Tasks.RetryTaskAsync(purgeReplay, cancellationToken: Ct);
+        Assert.Equal(EffectCertainty.DidNotHappen, recordedPurgeRefusal.Error.Effect);
+        Assert.Equal(previousPurgeRefusal.ToByteArray(), recordedPurgeRefusal.ToByteArray());
+
+        var malformed = afterPurge.Clone();
+        malformed.Meta = Tasks.Meta();
+        var malformedRefusal = previousPurgeRefusal.Clone();
+        malformedRefusal.Meta.CorrelationId = malformed.Meta.CorrelationId;
+        malformedRefusal.Error.Details.State.Reason = "2026-11-21T08:30:00Z";
+        store.Write(transaction => RecordPrior(transaction, "RetryTask", malformed.Meta, malformed, malformedRefusal, Origin.Human),
+            CommitDurability.Full);
+        Assert.Equal(EffectCertainty.Unknown, (await human.Tasks.RetryTaskAsync(malformed, cancellationToken: Ct)).Error.Effect);
     }
 
     private static void RecordPrior(StoreTransaction transaction, string method, RequestMeta meta, IMessage request, IMessage response, Origin origin)
