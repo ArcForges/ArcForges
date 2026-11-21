@@ -6,7 +6,9 @@ using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Contracts.Relay.V1;
+using ArcForges.Node.Api;
 using ArcForges.Node.CloudLink;
+using ArcForges.Node.Core.Events;
 using ArcForges.Node.Core.Execution;
 using ArcForges.Node.Core.Security;
 using ArcForges.Node.Platform;
@@ -411,41 +413,74 @@ public sealed class RoutedDispatchTests
     public async Task NoPolicyOrApprovalReachesTheRoutedCancelOfAnAdoptedTask()
     {
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        await using var node = await InProcessNode.Create().StartAsync();
-        Assert.SkipWhen(node.Runtime.Execution is null, "The node has no execution supervisor.");
-        await using var human = await node.ChannelAsync(helloAsHuman: true);
-        Assert.Null((await human.Queue.PausePoolAsync(new QueueServicePausePoolRequest { Meta = Tasks.Meta(), All = true }, cancellationToken: Ct)).Error);
-        Assert.Null((await Sched.ChangePolicyAsync(human, policy =>
+        await using var files = InProcessNode.Create();
+        files.Clock = new RoutedWallClock();
+        var human = new Caller(Origin.Human, ClientKind.Cli, null);
+        var (queued, approval, requester) = await WithRoutedAdoptionAsync(files, seed: true, async fixture =>
         {
-            policy.Permissions.Add(new PermissionOverride { Operation = PermissionMatrix.ProcessTerminate, Origin = Origin.Script, Decision = A });
-            policy.Permissions.Add(new PermissionOverride { Operation = PermissionMatrix.ProcessTerminate, Origin = Origin.Agent, Decision = A });
-        })).Error);
-        var routed = new RoutedCalls(node);
-        var nodeId = node.Runtime.NodeId.ToArray();
-        var adopted = new Id { Value = ByteString.CopyFrom(await node.Runtime.Processor.ExecuteAsync(context => GateAndReplayTests.SeedAdopted(context, nodeId))) };
-        foreach (var caller in (CenterCaller[])[RoutedCalls.Session(), routed.Relay(Origin.Human), routed.Relay(Origin.Script), routed.Relay(Origin.Agent)])
+            var before = await fixture.ReadTaskAsync(human, fixture.AdoptedTaskId);
+            Assert.Equal((TaskState.Running, TaskKind.Adopted, AttemptKind.Adopted), (before.State, before.Spec.Kind, before.CurrentAttempt.Kind));
+            foreach (var caller in (CenterCaller[])[RoutedCalls.Session(), fixture.Relay(Origin.Human), fixture.Relay(Origin.Script), fixture.Relay(Origin.Agent)])
+            {
+                var denied = await fixture.CancelAsync(caller, fixture.AdoptedTaskId);
+                Assert.Equal((RoutedOutcome.RefusedByPolicy, "permission_denied", PermissionMatrix.ProcessTerminate, EffectCertainty.DidNotHappen),
+                    (denied.Outcome, denied.Error?.Code, denied.Error?.Details.State.State, denied.Error?.Effect));
+                Assert.Contains(fixture.Runtime.Store.Read(reader => AuditLog.Recent(reader)), entry =>
+                    entry.Operation == PermissionMatrix.ProcessTerminate + " TaskService.CancelTask" && entry.Decision == D
+                    && entry.Actor.Origin == Origin.Remote && caller.Equals(entry.Actor.CenterCaller));
+            }
+
+            Assert.Equal(before, await fixture.ReadTaskAsync(human, fixture.AdoptedTaskId));
+            Assert.Equal(0, fixture.Platform.Terminations);
+            Assert.Equal(0L, fixture.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM approval;")));
+            var task = await fixture.Runtime.Processor.ExecuteAsync(command => LegacyTaskHistoryFixture.SeedQueued(command.Transaction, human.Actor),
+                CommitDurability.Full).WaitAsync(Ct);
+            var session = RoutedCalls.Session();
+            var pending = await fixture.CancelAsync(session, task);
+            Assert.Equal((RoutedOutcome.RefusedByPolicy, "approval_required", PermissionMatrix.TaskCancelOthers),
+                (pending.Outcome, pending.Error?.Code, pending.Error?.Details.State.State));
+            var approvalId = pending.Error!.Details.State.Resource.Id;
+            await fixture.Runtime.Processor.ExecuteAsync(command =>
+            {
+                var tx = command.Transaction;
+                var spec = TaskRecords.GetRow(tx, task.Value.Span)!.Spec;
+                spec.Kind = TaskKind.Adopted;
+                var serialized = spec.ToByteArray();
+                return tx.Execute("UPDATE task SET kind = $kind, spec = $spec, spec_digest = $digest WHERE task_id = $id;",
+                    ("$kind", (int)TaskKind.Adopted), ("$spec", serialized), ("$digest", SHA256.HashData(serialized)), ("$id", task.Value.ToByteArray()));
+            }, CommitDurability.Full).WaitAsync(Ct);
+            return (task, approvalId, session);
+        });
+
+        // Verifier N-7: reopening the database preserves the pending approval and the target's new classification.
+        await WithRoutedAdoptionAsync(files, seed: false, async fixture =>
         {
-            var denied = (await routed.CancelAsync(caller, adopted)).Answer!;
-            Assert.Equal((RoutedOutcome.RefusedByPolicy, "permission_denied", PermissionMatrix.ProcessTerminate), (denied.Outcome, denied.Error?.Code, denied.Error?.Details.State.State));
-        }
+            var target = await fixture.ReadTaskAsync(human, queued);
+            Assert.Equal((TaskKind.Adopted, TaskState.Queued), (target.Spec.Kind, target.State));
+            var approvalId = approval.Value.ToByteArray();
+            var pending = fixture.Runtime.Store.Read(reader => Approvals.Get(reader, approvalId));
+            Assert.NotNull(pending);
+            Assert.Equal(ApprovalState.Pending, pending.State);
+            Assert.Equal(requester, pending.View.Requester.CenterCaller);
+            var approved = await fixture.Runtime.Processor.ExecuteAsync(command =>
+                Approvals.Decide(command, approvalId, approve: true, human.Actor, null), CommitDurability.Full).WaitAsync(Ct);
+            Assert.Equal(ApprovalState.Approved, approved.State);
+            await fixture.ApprovalHandler.ResumeAsync().WaitAsync(Ct);
 
-        Assert.Equal(TaskState.Running, (await Tasks.GetAsync(human, adopted)).State);
-        Assert.Empty((await human.Approvals.ListApprovalsAsync(new ApprovalServiceListApprovalsRequest { Meta = Tasks.Meta() }, cancellationToken: Ct)).Value.Approvals);
-        Assert.Contains(node.Runtime.Store.Read(reader => AuditLog.Recent(reader)), entry => entry.Operation == PermissionMatrix.ProcessTerminate + " TaskService.CancelTask"
-            && entry.Decision == D && entry.Actor.Origin == Origin.Remote);
-
-        // Verifier N-7: an approved routed cancel of another owner's task that became ADOPTED before it executed is still denied.
-        var queued = await SeedHumanQueueAsync(node);
-        var approval = (await routed.CancelAsync(RoutedCalls.Session(), queued)).Answer!.Error!.Details.State.Resource.Id;
-        await node.Runtime.Processor.ExecuteAsync(context => context.Transaction.Execute("UPDATE task SET kind = 3 WHERE task_id = $id;", ("$id", queued.Value.ToByteArray())));
-        Assert.Equal(0, await node.StopAsync());
-        await node.StartAsync();
-        await using var restartedHuman = await node.ChannelAsync(helloAsHuman: true);
-        Assert.Equal(3L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT kind FROM task WHERE task_id = $id;", ("$id", queued.Value.ToByteArray()))));
-        var decided = (await restartedHuman.Approvals.DecideApprovalAsync(new ApprovalServiceDecideApprovalRequest { Meta = Tasks.Meta(), ApprovalId = approval, Decision = ApprovalDecisionKind.Approve },
-            cancellationToken: Ct)).Value.Approval;
-        Assert.Equal(ApprovalState.Failed, decided.State);
-        Assert.NotEqual(TaskState.Cancelled, (await Tasks.GetAsync(restartedHuman, queued)).State);
+            var completed = fixture.Runtime.Store.Read(reader => Approvals.Get(reader, approvalId));
+            Assert.NotNull(completed);
+            Assert.Equal(ApprovalState.Failed, completed.State);
+            var refused = TaskServiceCancelTaskResponse.Parser.ParseFrom(completed.Outcome);
+            Assert.Equal((ErrorCategory.Authorization, "permission_denied", EffectCertainty.DidNotHappen, RetryMode.Never),
+                (refused.Error.Category, refused.Error.Code, refused.Error.Effect, refused.Error.Retry.Mode));
+            Assert.Contains(PermissionMatrix.ProcessTerminate + " is denied for REMOTE callers", refused.Error.Details.State.Reason, StringComparison.Ordinal);
+            Assert.Contains(fixture.Runtime.Store.Read(reader => AuditLog.Recent(reader)), entry =>
+                entry.Operation == PermissionMatrix.ProcessTerminate + " TaskService.CancelTask" && entry.Decision == D
+                && requester.Equals(entry.Actor.CenterCaller) && entry.TargetId.AsSpan().SequenceEqual(queued.Value.Span));
+            Assert.Equal(target, await fixture.ReadTaskAsync(human, queued));
+            Assert.Equal(0, fixture.Platform.Terminations);
+            return true;
+        });
     }
 
     /// <summary>
@@ -984,6 +1019,137 @@ public sealed class RoutedDispatchTests
 
     private static Task<Id> SeedOwnedQueueAsync(InProcessNode node, CenterCaller owner) => node.Runtime.Processor.ExecuteAsync(command =>
         LegacyTaskHistoryFixture.SeedQueued(command.Transaction, new ActorRef { Origin = Origin.Remote, CenterCaller = owner }), CommitDurability.Full).WaitAsync(Ct);
+
+    private static async Task<T> WithRoutedAdoptionAsync<T>(InProcessNode files, bool seed, Func<RoutedAdoptionFixture, Task<T>> verify)
+    {
+        const string fixtureBoot = "linux:532cb2f3-6b2a-48af-a8ca-3b72ac02ecb1";
+        using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = files.DataRoot, BootIdentity = fixtureBoot, Clock = files.Clock });
+        using var log = new NodeLog(Path.Combine(files.DataRoot, "logs", "node"), LogLevel.Info, files.Clock);
+        using var heartbeat = new NodeHeartbeatWriter(files.DataRoot, log, files.Clock);
+        using var keys = new NodeDataKeyRing(store, files.Secrets.Selection);
+        var journal = EventJournal.Open(store);
+        var hub = new StreamHub();
+        await using var processor = new CommandProcessor(store, journal, hub);
+        if (seed)
+        {
+            await processor.ExecuteAsync(command =>
+            {
+                Tasks.SeedPolicy(command.Transaction, policy =>
+                {
+                    policy.Permissions.Add(new PermissionOverride { Operation = PermissionMatrix.ProcessTerminate, Origin = Origin.Script, Decision = A });
+                    policy.Permissions.Add(new PermissionOverride { Operation = PermissionMatrix.ProcessTerminate, Origin = Origin.Agent, Decision = A });
+                });
+                var adopted = GateAndReplayTests.SeedAdopted(command, store.Metadata.NodeId.ToArray());
+                return command.Transaction.Execute("UPDATE attempt SET container_name = $name, boot_identity = $boot, root_pid = $pid WHERE task_id = $id;",
+                    ("$name", RoutedAdoptionPlatform.RecordedName), ("$boot", store.Metadata.BootIdentity), ("$pid", RoutedAdoptionPlatform.RecordedPid), ("$id", adopted));
+            }, CommitDurability.Full).WaitAsync(Ct);
+        }
+
+        using var platform = new RoutedAdoptionPlatform();
+        await using var execution = new ExecutionSupervisor(new ExecutionOptions
+        {
+            Store = store,
+            Processor = processor,
+            Log = log,
+            Clock = files.Clock,
+            DataRoot = files.DataRoot,
+            Platform = platform,
+            Secrets = new TaskSecrets(store, keys),
+            Heartbeat = heartbeat,
+        });
+        var recovery = new RecoveryReport(!seed, false, null, store.Opening);
+        using var runtime = new NodeRuntime(store, journal, hub, processor, log,
+            new NodeSettingsManager(files.ConfigPath, files.DataRoot, log), files.DataRoot, "routed-adoption-fixture", files.Clock,
+            recovery, new CapabilityReport())
+        { Execution = execution };
+        await runtime.TransitionAsync(NodeLifecycleState.Recovering, "fixture").WaitAsync(Ct);
+        await execution.RecoverAsync(recovery, processor, Ct);
+        await runtime.TransitionAsync(NodeLifecycleState.Ready, "fixture").WaitAsync(Ct);
+        Assert.Equal(1, platform.Reopens);
+        Assert.Single(execution.Adoptions.Tracked);
+        var sessions = new ClientSessions();
+        var executors = new ApprovalExecutors();
+        var tasks = new TaskServiceHandler(runtime, sessions, executors);
+        var approvals = new ApprovalServiceHandler(runtime, sessions, executors);
+        using var dispatcher = new RoutedDispatcher(runtime);
+        dispatcher.Bind(tasks, new WorkspaceServiceHandler(runtime), new FileServiceHandler(runtime));
+        var taskId = store.Read(reader => new Id
+        {
+            Value = ByteString.CopyFrom((byte[])reader.Scalar("SELECT task_id FROM attempt WHERE container_name = $name;",
+                ("$name", RoutedAdoptionPlatform.RecordedName))!),
+        });
+        return await verify(new RoutedAdoptionFixture(runtime, tasks, approvals, dispatcher, platform, taskId));
+    }
+
+    private sealed record RoutedAdoptionFixture(NodeRuntime Runtime, TaskServiceHandler TaskHandler, ApprovalServiceHandler ApprovalHandler,
+        RoutedDispatcher Dispatcher, RoutedAdoptionPlatform Platform, Id AdoptedTaskId)
+    {
+        public CenterCaller Relay(Origin origin) => new()
+        {
+            Kind = CenterCallerKind.NodeRelay,
+            AccountId = RoutedCalls.Account.Clone(),
+            RelayingNodeId = new Id { Value = ByteString.CopyFrom(Runtime.NodeId.Span) },
+            LocalOrigin = origin,
+            LocalSessionId = CommandIds.New(),
+        };
+
+        public async Task<ManagedTask> ReadTaskAsync(Caller caller, Id taskId)
+        {
+            var response = await TaskHandler.GetTask(caller, new TaskServiceGetTaskRequest { TaskId = taskId, Detail = TaskDetail.Full }, Ct);
+            Assert.Null(response.Error);
+            return response.Value.Task;
+        }
+
+        public async Task<RoutedAnswer> CancelAsync(CenterCaller caller, Id taskId)
+        {
+            var request = new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = taskId };
+            var payload = request.ToByteString();
+            var now = Runtime.Clock.GetUtcNow();
+            var header = new CallHeader
+            {
+                CallId = CommandIds.New(),
+                Caller = caller,
+                AccountId = caller.AccountId,
+                TargetNodeId = new Id { Value = ByteString.CopyFrom(Runtime.NodeId.Span) },
+                CommandId = request.Meta.CommandId,
+                Method = RoutedMethod.CancelNodeTask,
+                RequestSha256 = ByteString.CopyFrom(SHA256.HashData(payload.Span)),
+                RequestSize = (uint)payload.Length,
+                IssuedAt = ProtoTime.ToInstant(now.AddSeconds(-1)),
+                ExpiresAt = ProtoTime.ToInstant(now.AddSeconds(60)),
+                Deadline = ProtoTime.ToInstant(now.AddSeconds(10)),
+            };
+            return Assert.IsType<RoutedAnswer>(
+                await Dispatcher.DispatchAsync(new VerifiedCall(header, payload, 0), new RoutedCalls.TestLink(), Ct));
+        }
+    }
+
+    private sealed class RoutedAdoptionPlatform : IExecutionPlatform, IAdoptedContainer
+    {
+        public const string RecordedName = "routed-adoption-fixture";
+        public const int RecordedPid = int.MaxValue;
+        public int Reopens { get; private set; }
+        public int Terminations { get; private set; }
+        public string Name => RecordedName;
+        public string ContainerName => RecordedName;
+        public MachineCapacity Capacity => new(4, 1L << 30);
+
+        public IAdoptedContainer ReopenAdopted(string containerName)
+        {
+            Assert.Equal(RecordedName, containerName);
+            Reopens++;
+            return this;
+        }
+
+        public IReadOnlyList<int> Processes() => [RecordedPid];
+        public void Terminate() => Terminations++;
+        public CapabilityReport Evaluate() => new();
+        public void UpdateRootLimits(RootLimits limits) { }
+        public bool AcknowledgeRecorded(string nodeName, string attemptName) => false;
+        public IAttemptHandle? Reopen(string nodeName, AttemptFiles files, RootProcess? root, bool stopping) => throw new NotSupportedException();
+        public void Start(string nodeName, RootLimits limits, string helperExecutable) => throw new NotSupportedException();
+        public void Dispose() { }
+    }
 
     private sealed class RoutedWallClock : TimeProvider
     {
