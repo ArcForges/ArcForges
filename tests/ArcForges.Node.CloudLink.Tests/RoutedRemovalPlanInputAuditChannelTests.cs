@@ -41,7 +41,7 @@ public sealed class RoutedRemovalPlanInputAuditChannelTests
         {
             Observations =
             {
-                new()
+                new FileAuditObservation
                 {
                     Kind = FileAuditKind.InputBytes,
                     SizeBytes = (ulong)body.Length,
