@@ -78,17 +78,6 @@ public sealed record ProcessSample(int Pid, int ParentPid, DateTimeOffset StartT
     public long? IoWriteBytes { get; init; }
 }
 
-/// <summary>What one attempt's container uses now (03 sections 1 and 3).</summary>
-/// <param name="CpuTimeMs">Processor time of the container so far (its processes, exited ones included).</param>
-/// <param name="MemoryBytes">
-/// Resident memory without reclaimable page cache: Linux <c>memory.current - inactive_file</c> of the unit's cgroup; Windows the sum of
-/// the private working sets of the job's processes (the measure of <c>peak_observed</c>, 03 section 3).
-/// </param>
-/// <param name="IoReadBytes">Bytes read so far.</param>
-/// <param name="IoWriteBytes">Bytes written so far.</param>
-/// <param name="Pids">The processes in the container now.</param>
-public sealed record AttemptUsage(long CpuTimeMs, long MemoryBytes, long IoReadBytes, long IoWriteBytes, IReadOnlyList<int> Pids);
-
 /// <summary>
 /// The platform's observation sources (03 section 1; R-RES-001). Every call reads the operating system now; the node's resource monitor
 /// decides how often. Implementations: <c>WindowsResourceSampler</c> and <c>LinuxResourceSampler</c>.
