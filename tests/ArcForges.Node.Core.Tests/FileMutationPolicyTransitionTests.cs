@@ -1,124 +1,110 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Security.Cryptography;
-using System.Text;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
-using ArcForges.Node.Api;
+using ArcForges.Contracts.Relay.V1;
+using ArcForges.Node.CloudLink;
 using ArcForges.Node.Core.Files;
 using ArcForges.Node.Core.Security;
+using ArcForges.Node.Store;
 using Google.Protobuf;
-using NodeFilePath = ArcForges.Contracts.Node.V1.FilePath;
 
 namespace ArcForges.Node.Core.Tests;
 
-/// <summary>Actual policy changes between PREPARED and effect on owned Windows fixtures; caller is synthetic.</summary>
+/// <summary>Current policy gates metadata reads. Exact retained mutation receipts remain bound to their original caller.</summary>
 public sealed class FileMutationPolicyTransitionTests
 {
-    [Fact(Timeout = 120_000)]
-    [Trait("env", "windows-real")]
-    public async Task PolicyNarrowingAfterPrepareSettlesAReplayableRefusalWithoutEffect()
+    [Theory(Timeout = 120_000)]
+    [InlineData(Origin.Remote, false)]
+    [InlineData(Origin.Script, true)]
+    public async Task PolicyNarrowingGatesStatusAndKeepsTheExactHistoricalRefusal(Origin origin, bool approvalUnavailable)
     {
-        if (!OperatingSystem.IsWindows()) { Assert.Skip("Windows native guarded-effect boundary."); return; }
         var ct = TestContext.Current.CancellationToken;
         await using var node = await InProcessNode.Create().StartAsync();
         var calls = new RoutedCalls(node);
-        var handler = calls.Dispatcher.FileHandlerForTests!;
-        var humanActor = calls.Relay(Origin.Human);
-        var scriptActor = calls.Relay(Origin.Script);
-        await using var human = await node.ChannelAsync(helloAsHuman: true);
-        var root = Directory.CreateDirectory(Path.Combine(node.Root, "policy-boundary")).FullName;
-        var workspace = new RegisteredWorkspaces(node.Runtime.Store).RegisterFromVerifiedHuman(root, cancellationToken: ct);
-        var original = Encoding.UTF8.GetBytes("policy-before-original");
-        var body = Encoding.UTF8.GetBytes("policy-after-intended");
-        var path = Path.Combine(root, "existing.txt");
-        File.WriteAllBytes(path, original);
-        File.SetAttributes(path, FileAttributes.Archive);
-
-        FileServiceWriteFileRequest Request(string name) => new()
+        var actor = origin == Origin.Remote ? RoutedCalls.Session() : calls.Relay(origin);
+        var fixture = new RetainedFileMutationFixture(node, actor, expectedAbsent: !approvalUnavailable, ct);
+        fixture.Prepare();
+        var status = new FileServiceGetFileOperationRequest
         {
-            Meta = new RequestMeta { CommandId = CommandIds.New(), CorrelationId = CommandIds.New() },
-            Path = new NodeFilePath { WorkspaceId = new Id { Value = ByteString.CopyFrom(workspace.Id) }, Path = name },
-            Data = ByteString.CopyFrom(body),
+            Meta = new RequestMeta { CorrelationId = CommandIds.New() },
+            OperationCommandId = new Id { Value = ByteString.CopyFrom(fixture.Intent.CommandId) },
         };
-        async Task<byte[]> Invoke(FileServiceWriteFileRequest request, CenterCaller actor)
+
+        async Task<RoutedAnswer?> ReadStatus(CenterCaller caller) => (await calls.CallAsync(caller, RoutedMethod.GetNodeFileOperation,
+            status.ToByteArray(), cancellationToken: ct)).Answer;
+
+        var initial = await ReadStatus(actor);
+        Assert.Equal(RoutedOutcome.Executed, initial!.Outcome);
+        var prepared = FileServiceGetFileOperationResponse.Parser.ParseFrom(initial.Response);
+        Assert.Equal(FileOperationState.Prepared, prepared.Value.Operation.State);
+        Assert.True(prepared.Value.Operation.Held);
+        Assert.Equal(SHA256.HashData(fixture.Raw), prepared.Value.Operation.RequestSha256.ToByteArray());
+
+        var effectiveOrigin = CenterRouting.CellsOrigin(actor, node.Runtime.NodeId.Span);
+        await using (var human = await node.ChannelAsync(helloAsHuman: true))
         {
-            var raw = request.ToByteArray();
-            var routed = new RoutedContext(calls.Link, node.Runtime.Lifecycle, node.Runtime.Clock.GetUtcNow().AddSeconds(30),
-                TimeSpan.FromSeconds(15), node.Runtime.Clock, node.Runtime.Clock.GetTimestamp(), CommandIds.New(), fileWorkspace: true);
-            var caller = new Caller(Origin.Remote, ClientKind.Unspecified, null, centerCaller: actor.Clone())
+            Assert.Null((await Sched.ChangePolicyAsync(human, policy =>
             {
-                CellsOrigin = CenterRouting.CellsOrigin(actor, node.Runtime.NodeId.Span),
-                RemoteCommandId = request.Meta.CommandId.Clone(),
-                RawRequest = raw,
-                Routed = routed,
-            };
-            return (await handler.WriteExistingCandidateAsync(caller, ct))!;
+                policy.Permissions.Add(new PermissionOverride
+                {
+                    Operation = PermissionMatrix.FileRead,
+                    Origin = effectiveOrigin,
+                    Decision = PermissionDecision.Deny,
+                });
+                policy.Permissions.Add(new PermissionOverride
+                {
+                    Operation = PermissionMatrix.FileWrite,
+                    Origin = effectiveOrigin,
+                    Decision = PermissionDecision.Deny,
+                });
+            })).Error);
+
+            var denied = await ReadStatus(actor);
+            Assert.Equal(RoutedOutcome.RefusedByPolicy, denied!.Outcome);
+            Assert.Equal("permission_denied", denied.Error!.Code);
+            Assert.Equal(EffectCertainty.DidNotHappen, denied.Error.Effect);
+            Assert.Null(denied.Response);
+            Assert.Null(await fixture.InvokeAsync(calls, actor, ct));
+            Assert.Equal(prepared.Value.Operation, fixture.ReadJournal());
+            fixture.AssertNoEffect();
+
+            // The fixture supplies an original, settled pre-effect refusal through the real SQLite journal.
+            // The running service only reconciles its bytes.
+            var original = node.Runtime.Store.Write(transaction => FileMutationJournal.CompleteKnownAuthorityRefusal(transaction,
+                fixture.Intent.Kind, fixture.Intent.CommandId, actor, fixture.Raw, approvalUnavailable), CommitDurability.Full);
+            var saved = FileServiceWriteFileResponse.Parser.ParseFrom(original);
+            Assert.Equal(approvalUnavailable ? ErrorCategory.Resource : ErrorCategory.Authorization, saved.Error.Category);
+            Assert.Equal(approvalUnavailable ? "enforcement_unavailable" : "permission_denied", saved.Error.Code);
+            Assert.Equal(approvalUnavailable ? "file_approval_unavailable" : PermissionMatrix.FileWrite, saved.Error.Details.State.Reason);
+            Assert.Equal(EffectCertainty.DidNotHappen, saved.Error.Effect);
+            Assert.Equal(original, await fixture.InvokeAsync(calls, actor, ct));
+
+            Assert.Null((await Sched.ChangePolicyAsync(human, policy => policy.Permissions.Clear())).Error);
+            Assert.Equal(original, await fixture.InvokeAsync(calls, actor, ct));
+            var complete = await ReadStatus(actor);
+            Assert.Equal(RoutedOutcome.Executed, complete!.Outcome);
+            var completed = FileServiceGetFileOperationResponse.Parser.ParseFrom(complete.Response).Value.Operation;
+            Assert.Equal(FileOperationState.Completed, completed.State);
+            Assert.False(completed.Held);
+            Assert.Equal(saved.Error, completed.Error);
+
+            var foreign = origin == Origin.Remote ? calls.Relay(Origin.Script) : actor.Clone();
+            if (origin != Origin.Remote)
+                foreign.LocalSessionId = CommandIds.New();
+            var deniedReplay = FileServiceWriteFileResponse.Parser.ParseFrom(await fixture.InvokeAsync(calls, foreign, ct));
+            Assert.Equal("command_id_reused", deniedReplay.Error.Code);
+            var deniedRead = await ReadStatus(foreign);
+            Assert.Equal(RoutedOutcome.Executed, deniedRead!.Outcome);
+            Assert.Equal("not_found", FileServiceGetFileOperationResponse.Parser.ParseFrom(deniedRead.Response).Error.Code);
+
+            Assert.Equal(0, await node.StopAsync());
+            await node.StartAsync();
+            Assert.Equal(original, await fixture.InvokeAsync(new RoutedCalls(node), actor, ct));
+            Assert.Equal(completed, fixture.ReadJournal());
         }
 
-        var create = Request("new.txt");
-        create.ExpectedAbsent = true;
-        handler.AfterPreparationForTests = async () =>
-        {
-            Assert.Null((await Sched.ChangePolicyAsync(human, policy => policy.Permissions.Add(new PermissionOverride
-            {
-                Operation = PermissionMatrix.FileWrite,
-                Origin = Origin.Remote,
-                Decision = PermissionDecision.Deny,
-            }))).Error);
-        };
-        var deniedBytes = await Invoke(create, humanActor);
-        handler.AfterPreparationForTests = null;
-        var denied = FileServiceWriteFileResponse.Parser.ParseFrom(deniedBytes);
-        Assert.Equal("permission_denied", denied.Error.Code);
-        Assert.Equal(EffectCertainty.DidNotHappen, denied.Error.Effect);
-        Assert.False(File.Exists(Path.Combine(root, "new.txt")));
-        var deniedStatus = node.Runtime.Store.Read(reader => FileMutationJournal.GetForCaller(reader, create.Meta.CommandId.Value.Span, humanActor));
-        Assert.Equal(FileOperationState.Completed, deniedStatus!.State);
-        Assert.False(deniedStatus.Held);
-        Assert.Equal(denied.Error, deniedStatus.Error);
-        Assert.Null((await Sched.ChangePolicyAsync(human, policy => policy.Permissions.Clear())).Error);
-        Assert.Equal(deniedBytes, await Invoke(create, humanActor)); // exact original command, bytes and caller
-        Assert.False(File.Exists(Path.Combine(root, "new.txt")));
-
-        Assert.Null((await Sched.ChangePolicyAsync(human, policy => policy.Permissions.Add(new PermissionOverride
-        {
-            Operation = PermissionMatrix.FileWrite,
-            Origin = Origin.Script,
-            Decision = PermissionDecision.Allow,
-        }))).Error);
-        var edit = Request("existing.txt");
-        edit.ExpectedSha256 = ByteString.CopyFrom(SHA256.HashData(original));
-        handler.AfterPreparationForTests = async () =>
-        {
-            Assert.Null((await Sched.ChangePolicyAsync(human, policy => policy.Permissions.Clear())).Error);
-        };
-        var approvalBytes = await Invoke(edit, scriptActor);
-        handler.AfterPreparationForTests = null;
-        var refusal = FileServiceWriteFileResponse.Parser.ParseFrom(approvalBytes);
-        Assert.Equal(ErrorCategory.Resource, refusal.Error.Category);
-        Assert.Equal("enforcement_unavailable", refusal.Error.Code);
-        Assert.Equal("file_approval_unavailable", refusal.Error.Details.State.Reason);
-        Assert.Equal(EffectCertainty.DidNotHappen, refusal.Error.Effect);
-        Assert.Equal(original, File.ReadAllBytes(path));
-        var approvalStatus = node.Runtime.Store.Read(reader => FileMutationJournal.GetForCaller(reader, edit.Meta.CommandId.Value.Span, scriptActor));
-        Assert.Equal(FileOperationState.Completed, approvalStatus!.State);
-        Assert.False(approvalStatus.Held);
-        Assert.Equal(refusal.Error, approvalStatus.Error);
-        Assert.Equal(approvalBytes, await Invoke(edit, scriptActor));
-        Assert.Equal(original, File.ReadAllBytes(path));
-
-        Assert.Equal(0, await node.StopAsync());
-        await node.StartAsync();
-        var afterDenied = node.Runtime.Store.Read(reader => FileMutationJournal.GetForCaller(reader, create.Meta.CommandId.Value.Span, humanActor));
-        var afterApproval = node.Runtime.Store.Read(reader => FileMutationJournal.GetForCaller(reader, edit.Meta.CommandId.Value.Span, scriptActor));
-        Assert.Equal(FileOperationState.Completed, afterDenied!.State);
-        Assert.Equal(denied.Error, afterDenied.Error);
-        Assert.False(afterDenied.Held);
-        Assert.Equal(FileOperationState.Completed, afterApproval!.State);
-        Assert.Equal(refusal.Error, afterApproval.Error);
-        Assert.False(afterApproval.Held);
-        Assert.False(File.Exists(Path.Combine(root, "new.txt")));
-        Assert.Equal(original, File.ReadAllBytes(path));
+        fixture.AssertNoEffect();
     }
 }
