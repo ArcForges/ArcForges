@@ -325,6 +325,18 @@ public sealed class NodeServiceTests
         var descriptor = NodeLocations.EndpointDescriptorFile(node.DataRoot);
         Assert.True(File.Exists(descriptor));
 
+        var failedCommand = InProcessNode.Command();
+        var failedId = failedCommand.CommandId.Value.ToByteArray();
+        node.Runtime.Store.Write(tx =>
+        {
+            tx.Execute($"""
+                CREATE TRIGGER test_fail_stop_receipt BEFORE UPDATE OF outcome ON command_dedup
+                WHEN NEW.command_id = X'{Convert.ToHexString(failedId)}' AND NEW.outcome IS NOT NULL
+                BEGIN SELECT RAISE(ABORT, 'test_stop_receipt_failure'); END;
+                """);
+            return 0;
+        }, CommitDurability.Full);
+
         // A free-text reason may carry anything; it never reaches the log (R-SEC-003).
         var value = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(12));
         var reason = "token=" + value;
@@ -332,6 +344,14 @@ public sealed class NodeServiceTests
         NodeServiceStopNodeResponse response;
         await using (var channel = await node.ChannelAsync(helloAsHuman: true))
         {
+            var failed = await channel.Node.StopNodeAsync(new NodeServiceStopNodeRequest { Meta = failedCommand },
+                deadline: DateTime.UtcNow + Deadline, cancellationToken: ct);
+            Assert.Equal("internal", Assert.IsType<ArcError>(failed.Error).Code);
+            Assert.Null(node.Runtime.Store.Read(reader => reader.Scalar(
+                "SELECT outcome FROM command_dedup WHERE command_id = $id;", ("$id", failedId))));
+            Assert.Equal(InProcessNode.ExpectedState, node.Runtime.Lifecycle.State);
+            Assert.False(node.Runtime.Stopping.IsCancellationRequested);
+
             response = await channel.Node.StopNodeAsync(new NodeServiceStopNodeRequest { Meta = meta, Reason = reason },
                 deadline: DateTime.UtcNow + Deadline, cancellationToken: ct);
             Assert.Null(response.Error);

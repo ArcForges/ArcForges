@@ -371,9 +371,14 @@ public sealed class NodeServiceHandler : NodeService.NodeServiceBase
 
             if (!_node.Lifecycle.IsStopping)
             {
-                _node.Lifecycle.MoveTo(NodeLifecycleState.Stopping, "stop_node");
-                command.Emit(EventTopic.Node, new NodeEvent { Node = _node.Status("stop_node") });
-                beginShutdown = true;
+                var status = _node.Status("stop_node");
+                status.State = NodeLifecycleState.Stopping;
+                command.Emit(EventTopic.Node, new NodeEvent { Node = status });
+                command.AfterCommit = () =>
+                {
+                    _node.Lifecycle.MoveTo(NodeLifecycleState.Stopping, "stop_node");
+                    beginShutdown = true;
+                };
             }
 
             return new NodeServiceStopNodeResponse
@@ -387,16 +392,16 @@ public sealed class NodeServiceHandler : NodeService.NodeServiceBase
         }, gate).ConfigureAwait(false);
         if (beginShutdown && result.OutcomeCase == NodeServiceStopNodeResponse.OutcomeOneofCase.Value)
         {
-            // The caller's free-text reason is not logged (it may carry anything); the log records that one was given and its length.
-            _node.Log.Info("node.stop.requested", new LogField("origin", _sessions.OriginOf(context)), new LogField("reasonGiven", request.HasReason && request.Reason.Length > 0),
-                new LogField("reasonLength", request.Reason.Length), new LogField("cancelRunning", request.CancelRunning));
-            // The durable stop has been accepted. Let Kestrel finish the gRPC reply before stopping its listener.
+            // Let Kestrel queue the gRPC reply and trailers before requesting graceful listener shutdown.
             // Kestrel also invokes this callback when a disconnected request is torn down.
             context.GetHttpContext().Response.OnCompleted(static state =>
             {
                 ((NodeRuntime)state).RequestStop("stop_node");
                 return Task.CompletedTask;
             }, _node);
+            // The caller's free-text reason is not logged (it may carry anything); the log records that one was given and its length.
+            _node.Log.Info("node.stop.requested", new LogField("origin", _sessions.OriginOf(context)), new LogField("reasonGiven", request.HasReason && request.Reason.Length > 0),
+                new LogField("reasonLength", request.Reason.Length), new LogField("cancelRunning", request.CancelRunning));
         }
 
         return result;
