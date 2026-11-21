@@ -92,9 +92,10 @@ public sealed partial class MxcRunServiceTests
         Assert.Equal(RunState.Running, (await InspectAsync(package.Runs, newest.RunId, cancellation)).State);
 
         int sustainedChanges = TestNode.LogEvents(package.Fixture.NodeLog, PressureChangeEvent).Count;
-        await using (var sustained = new InstalledPressurePulse(package.Fixture, "sustained", critical))
+        var sustained = new InstalledPressurePulse(package.Fixture, "sustained", critical);
+        try
         {
-            try
+            await using (sustained)
             {
                 _ = await sustained.WaitForCriticalAsync(cancellation);
                 var crossed = DateTimeOffset.UtcNow;
@@ -123,11 +124,11 @@ public sealed partial class MxcRunServiceTests
                 lowestAvailable = Math.Min(lowestAvailable, sustained.LowestAvailable);
                 RequirePressureDecisionTiming(package.Fixture, sustainedChanges, crossed, decision);
             }
-            catch
-            {
-                ReportSustainedPressureFailure(package.Fixture, sustainedChanges, sustained);
-                throw;
-            }
+        }
+        catch
+        {
+            ReportSustainedPressureFailure(package.Fixture, sustainedChanges, sustained);
+            throw;
         }
 
         // The observed effective level retains Critical after the physical release. Even interactive admissions are refused.
