@@ -5,12 +5,6 @@ using System.Text.Json;
 using ArcForges.CommandLine;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
-using Google.Protobuf;
-using LegacyCliApplication = ArcForges.LegacyCliFixture.Program;
-using RunCommand = ArcForges.LegacyCliFixture.RunCommand;
-using TaskCommands = ArcForges.LegacyCliFixture.TaskCommands;
-using TaskRoute = ArcForges.LegacyCliFixture.TaskRoute;
-using TaskText = ArcForges.LegacyCliFixture.TaskText;
 
 namespace ArcForges.Client.Tests;
 
@@ -18,35 +12,6 @@ namespace ArcForges.Client.Tests;
 public sealed class CommandLineTests
 {
     private static readonly NodeRunner NoNode = (_, _) => throw new InvalidOperationException("These tests never run the node role.");
-
-    [Fact]
-    public void TheClientTimeoutHandOffCountsFromTheCliStart()
-    {
-        // The caller's timer started with the CLI: connecting, an auto-start and the submission use part of the budget (cli.md, run).
-        using var self = System.Diagnostics.Process.GetCurrentProcess();
-        var started = self.StartTime.ToUniversalTime();
-        var at = RunCommand.HandoffAt(TimeSpan.FromMinutes(10));
-        Assert.Equal(started + TimeSpan.FromMinutes(10) - RunCommand.HandoffMargin, at);
-        Assert.Equal(started, RunCommand.HandoffAt(TimeSpan.FromSeconds(10)));
-        Assert.True(RunCommand.HandoffAt(TimeSpan.FromMinutes(10)) < DateTime.UtcNow + TimeSpan.FromMinutes(10) - RunCommand.HandoffMargin,
-            "The hand-off time does not restart when the attach begins.");
-    }
-
-    [Fact]
-    public async Task AnAlreadyExhaustedTaskWaitReportsTheTaskAndReturnsNine()
-    {
-        using var output = new StringWriter();
-        using var error = new StringWriter();
-        var cli = new Cli(new CliOutput(output, error, json: false, quiet: false, color: false, verbose: false, width: 120), false, null, false);
-        var task = CommandIds.New();
-
-        var exit = await TaskCommands.WaitAsync(cli, null!, task, WaitTarget.Terminal, TimeSpan.Zero, "none", CancellationToken.None);
-
-        Assert.Equal(9, exit);
-        Assert.Contains("the wait ended", error.ToString(), StringComparison.Ordinal);
-        Assert.Contains(IdText.Format(task), error.ToString(), StringComparison.Ordinal);
-        Assert.Equal(string.Empty, output.ToString());
-    }
 
     [Theory]
     [InlineData("node start")]
@@ -85,29 +50,9 @@ public sealed class CommandLineTests
     [InlineData("grant revoke 01m4zrxnr8e7d81pn7xnwfqw14 --expected-revision 1")]
     [InlineData("operation inspect 01m4zrxnr8e7d81pn7xnwfqw14 --owner-epoch 01m4zrxnr8e7d81pn7xnwfqw14")]
     [InlineData("doctor --sandbox 01m4zrxnr8e7d81pn7xnwfqw14")]
-    [InlineData("workspace list")]
-    [InlineData("file-operation show 01m4zrxnr8e7d81pn7xnwfqw14")]
-    [InlineData("file-operation acknowledge 01m4zrxnr8e7d81pn7xnwfqw14 --digest 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")]
     [InlineData("node status --test-mode")]
     public void ThePublicGrammarParses(string line) =>
         Assert.Empty(Root().Parse(line.Split(' ')).Errors);
-
-    [Theory]
-    [InlineData("jobs list --state running --state pending --limit 20")]
-    [InlineData("jobs show 01m4zr")]
-    [InlineData("jobs cancel 01m4zrxnr8e7d81pn7xnwfqw14")]
-    [InlineData("run --wait -- /bin/echo ok")]
-    [InlineData("run --detach --wait 3s -- /bin/echo ok")]
-    [InlineData("run --node build-box -- /bin/echo ok")]
-    [InlineData("run --local -- /bin/echo ok")]
-    [InlineData("tasks")]
-    [InlineData("tasks list --local")]
-    [InlineData("tasks show 01m4zr --node build-box")]
-    [InlineData("tasks wait 01m4zr --node build-box")]
-    [InlineData("tasks cancel 01m4zr --node build-box")]
-    [InlineData("output 01m4zr --from-offset 42 --follow --node build-box")]
-    public void TheRetainedFixtureGrammarParses(string line) =>
-        Assert.Empty(LegacyCliApplication.Build(TextWriter.Null, TextWriter.Null).Parse(line.Split(' ')).Errors);
 
     [Fact]
     public void RunStartPreservesEachArgumentAfterTheDelimiter()
@@ -128,6 +73,12 @@ public sealed class CommandLineTests
     [InlineData("output 01m4zr")]
     [InlineData("run --local -- /bin/echo ok")]
     [InlineData("node stop --cancel-running")]
+    [InlineData("workspace list")]
+    [InlineData("workspace unregister 01m4zrxnr8e7d81pn7xnwfqw14")]
+    [InlineData("file-operation show 01m4zrxnr8e7d81pn7xnwfqw14")]
+    [InlineData("file-operation acknowledge 01m4zrxnr8e7d81pn7xnwfqw14 --digest 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")]
+    [InlineData("policy show")]
+    [InlineData("events --topic tasks")]
     public void RetiredExecutionGrammarIsRejectedByTheProduct(string line) =>
         Assert.NotEmpty(Root().Parse(line.Split(' ')).Errors);
 
@@ -177,99 +128,6 @@ public sealed class CommandLineTests
     }
 
     [Fact]
-    public async Task TheRetainedFixtureStillRejectsAnUnknownJobState()
-    {
-        using var output = new StringWriter();
-        using var error = new StringWriter();
-        Assert.Equal(ExitCodes.Usage, await LegacyCliApplication.RunAsync(["jobs", "list", "--state", "lost"], output, error));
-        Assert.StartsWith("error: ", error.ToString(), StringComparison.Ordinal);
-        Assert.Equal(string.Empty, output.ToString());
-    }
-    [Fact]
-    public void RecoveryDisplayEscapesControlCharactersAndKeepsTheEffectUnknown()
-    {
-        using var output = new StringWriter();
-        using var error = new StringWriter();
-        var cli = new Cli(new CliOutput(output, error, json: false, quiet: false, color: false, verbose: false, width: 120), false, null, false);
-        var operation = new FileOperation
-        {
-            CommandId = CommandIds.New(),
-            WorkspacePath = new FilePath { WorkspaceId = CommandIds.New(), Path = "part/evil\n\u001b[31m\u202e.txt" },
-            RequestSha256 = ByteString.CopyFrom(Enumerable.Repeat((byte)0x2a, 32).ToArray()),
-            Kind = FileOperationKind.Write,
-            State = FileOperationState.Unknown,
-            Held = true,
-            Acknowledged = false,
-        };
-
-        FileOperationCommands.Render(cli, operation);
-        var text = output.ToString();
-        Assert.Contains(IdText.Format(operation.CommandId), text, StringComparison.Ordinal);
-        Assert.Contains(IdText.Format(operation.WorkspacePath.WorkspaceId), text, StringComparison.Ordinal);
-        Assert.Contains(@"part/evil\u000a\u001b[31m\u202e.txt", text, StringComparison.Ordinal);
-        Assert.DoesNotContain('\u001b', text);
-        Assert.DoesNotContain('\u202e', text);
-        Assert.Contains("effect is UNKNOWN", text, StringComparison.Ordinal);
-        Assert.Contains("other handles may retain it", text, StringComparison.Ordinal);
-        Assert.Contains("2a2a2a2a", text, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void LocalStageWarningShowsEscapedConfirmedOrLastKnownLocationWithoutTruncation()
-    {
-        using var output = new StringWriter();
-        using var error = new StringWriter();
-        var cli = new Cli(new CliOutput(output, error, json: false, quiet: false, color: false, verbose: false, width: 120), false, null, false);
-        var operation = new FileOperation
-        {
-            CommandId = CommandIds.New(),
-            WorkspacePath = new FilePath { WorkspaceId = CommandIds.New(), Path = "target" },
-            RequestSha256 = ByteString.CopyFrom(new byte[32]),
-            Kind = FileOperationKind.Write,
-            State = FileOperationState.Unknown,
-            Held = true,
-            Acknowledged = false,
-        };
-        var path = Path.Combine(Path.GetTempPath(), new string('x', 1500) + "\n\u001b\u202e");
-        var encoded = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(path));
-        var warning = "arcforges.file-stage.v1:2:confirmed:" + encoded;
-        Assert.True(FileOperationCommands.TryStageWarning(warning, out var location));
-        Assert.Equal(path, location!.Path);
-        FileOperationCommands.Render(cli, operation, [warning]);
-        Assert.Contains("identity confirmed at check", output.ToString(), StringComparison.Ordinal);
-        Assert.Contains(new string('x', 1500), output.ToString(), StringComparison.Ordinal);
-        Assert.Contains(@"\u000a\u001b\u202e", output.ToString(), StringComparison.Ordinal);
-        Assert.DoesNotContain('\u001b', output.ToString());
-        Assert.False(FileOperationCommands.TryStageWarning("arcforges.file-stage.v1:2:confirmed:%%%", out _));
-        Assert.True(FileOperationCommands.TryStageWarning("arcforges.file-stage.v1:1:last-known:" + encoded, out var stale));
-        Assert.False(stale!.Confirmed);
-        Assert.True(stale.HasIdentity);
-        var unboundWarning = "arcforges.file-stage.v1:2:unbound:" + encoded;
-        Assert.True(FileOperationCommands.TryStageWarning(unboundWarning, out var unbound));
-        Assert.False(unbound!.HasIdentity);
-        var pathRoot = Path.GetPathRoot(path)!;
-        var maximumPath = pathRoot + new string('x', 4096 - System.Text.Encoding.UTF8.GetByteCount(pathRoot));
-        var maximumWarning = "arcforges.file-stage.v1:2:unbound:" + Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(maximumPath));
-        Assert.True(FileOperationCommands.TryStageWarning(maximumWarning, out var maximum));
-        Assert.Equal(maximumPath, maximum!.Path);
-        using var unboundOutput = new StringWriter();
-        using var unboundError = new StringWriter();
-        var unboundCli = new Cli(new CliOutput(unboundOutput, unboundError, json: false, quiet: false, color: false, verbose: false, width: 120), false, null, false);
-        FileOperationCommands.RenderStageLocations(unboundCli, [unboundWarning]);
-        Assert.Contains("object identity not recorded and object may not exist", unboundOutput.ToString(), StringComparison.Ordinal);
-        Assert.Contains(@"\u000a\u001b\u202e", unboundOutput.ToString(), StringComparison.Ordinal);
-
-        using var jsonOutput = new StringWriter();
-        using var jsonError = new StringWriter();
-        var jsonCli = new Cli(new CliOutput(jsonOutput, jsonError, json: true, quiet: false, color: false, verbose: false, width: 120), false, null, false);
-        FileOperationCommands.Render(jsonCli, operation, [warning]);
-        using var document = System.Text.Json.JsonDocument.Parse(jsonOutput.ToString());
-        Assert.Equal(path, document.RootElement.GetProperty("localStageLocations")[0].GetProperty("path").GetString());
-        Assert.DoesNotContain('\u001b', jsonOutput.ToString());
-        Assert.DoesNotContain('\u202e', jsonOutput.ToString());
-    }
-
-    [Fact]
     public async Task AnInvalidDurationIsAUsageError()
     {
         using var output = new StringWriter();
@@ -299,82 +157,11 @@ public sealed class CommandLineTests
         Assert.Contains("sandbox", output.ToString(), StringComparison.Ordinal);
         Assert.Contains("resources", output.ToString(), StringComparison.Ordinal);
         Assert.Contains("operation", output.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotMatch(@"(?m)^\s+(?:workspace|file-operation|policy)(?:\s|$)", output.ToString());
         Assert.DoesNotContain("--test-mode", output.ToString(), StringComparison.Ordinal);
         using var version = new StringWriter();
         Assert.Equal(0, await CliApplication.RunAsync(["--version"], NoNode, version, error));
         Assert.Equal(NodeContract.ProductVersion, version.ToString().Trim());
-    }
-
-    [Fact]
-    public async Task WorkspaceRegistrationIsClosedWhileExistingControlsRemainAvailable()
-    {
-        using var output = new StringWriter();
-        using var error = new StringWriter();
-        Assert.Equal(ExitCodes.Success, await CliApplication.RunAsync(["workspace", "--help"], NoNode, output, error));
-        var help = output.ToString();
-        Assert.DoesNotMatch(@"\bregister\b", help);
-        Assert.Matches(@"\blist\b", help);
-        Assert.Matches(@"\bshow\b", help);
-        Assert.Matches(@"\bunregister\b", help);
-
-        Assert.Equal(ExitCodes.Usage, await CliApplication.RunAsync(["workspace", "register", "/legacy-workspace", "--name", "demo"], NoNode, output, error));
-        Assert.Contains("register", error.ToString(), StringComparison.Ordinal);
-    }
-
-    [Theory]
-    [InlineData("run", "--node", "--local", "--wait")]
-    [InlineData("tasks", "--node", "--local", "list")]
-    [InlineData("output", "--node", "--local", "--from-offset")]
-    public async Task RoutedCommandHelpDescribesItsOptions(string command, string first, string second, string third)
-    {
-        using var output = new StringWriter();
-        using var error = new StringWriter();
-        Assert.Equal(0, await LegacyCliApplication.RunAsync([command, "--help"], output, error));
-        Assert.Contains(first, output.ToString(), StringComparison.Ordinal);
-        Assert.Contains(second, output.ToString(), StringComparison.Ordinal);
-        Assert.Contains(third, output.ToString(), StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task RunHelpExplainsEnvironmentAndApprovalWaitBoundaries()
-    {
-        using var output = new StringWriter();
-        using var error = new StringWriter();
-        Assert.Equal(0, await LegacyCliApplication.RunAsync(["run", "--help"], output, error));
-        var help = System.Text.RegularExpressions.Regex.Replace(output.ToString(), @"\s+", " ");
-        Assert.Contains("routed default: node", help, StringComparison.Ordinal);
-        Assert.Contains("--local default: caller", help, StringComparison.Ordinal);
-        Assert.Contains("other-node values are refused", help, StringComparison.Ordinal);
-        Assert.Contains("human wait is outside the routed retry window", help, StringComparison.Ordinal);
-    }
-
-    [Theory]
-    [InlineData("not_signed_in", EffectCertainty.DidNotHappen, 4, "not signed in")]
-    [InlineData("cloud_unreachable", EffectCertainty.DidNotHappen, 4, "unavailable")]
-    [InlineData("node_offline", EffectCertainty.DidNotHappen, 75, "node_offline")]
-    [InlineData("node_unreachable", EffectCertainty.Unknown, 1, "may have run")]
-    public void RoutedStateExitsDistinguishOfflineFromUncertain(string code, EffectCertainty effect, int expected, string diagnostic)
-    {
-        using var output = new StringWriter();
-        using var error = new StringWriter();
-        var cli = new Cli(new CliOutput(output, error, json: false, quiet: false, color: false, verbose: false, width: 120), false, null, false);
-        var command = CommandIds.New();
-        var refusal = new ArcError { Category = ErrorCategory.State, Code = code, MessageKey = "error.state." + code, Effect = effect };
-        Assert.Equal(expected, TaskRoute.Fail(cli, refusal, null, command, submission: true));
-        Assert.Contains(diagnostic, error.ToString(), StringComparison.Ordinal);
-        if (effect == EffectCertainty.Unknown)
-        {
-            Assert.Contains(IdText.Format(command), error.ToString(), StringComparison.Ordinal);
-        }
-    }
-
-    [Fact]
-    public void RoutedMutationAttemptsAreCappedByTheRemainingTwoMinuteBudget()
-    {
-        Assert.Equal(TimeSpan.FromSeconds(25), TaskRoute.MutationAttemptBudget(TimeSpan.Zero, TimeSpan.FromSeconds(25)));
-        Assert.Equal(TimeSpan.FromSeconds(1), TaskRoute.MutationAttemptBudget(TimeSpan.FromSeconds(119), TimeSpan.FromSeconds(25)));
-        Assert.Equal(TimeSpan.FromMilliseconds(500), TaskRoute.MutationAttemptBudget(TimeSpan.FromMilliseconds(119_500), TimeSpan.FromSeconds(1)));
-        Assert.Equal(TimeSpan.Zero, TaskRoute.MutationAttemptBudget(TimeSpan.FromMinutes(2), TimeSpan.FromSeconds(25)));
     }
 
     [Theory]
@@ -421,21 +208,6 @@ public sealed class CommandLineTests
     [InlineData(NodeUnavailableReason.Incompatible, 1)]
     public void UnreachableNodesMapToTheSpecifiedExitCodes(NodeUnavailableReason reason, int exit) =>
         Assert.Equal(exit, ExitCodes.For(new NodeUnavailableException(reason, "x", "y")));
-
-    [Fact]
-    public void AKilledResultNeverExitsZero()
-    {
-        // cli.md section 3 / 04 section 5: a signal maps to 128 + n (a real-time one too); an unknown signal or a missing exit code is a failure.
-        using var output = new StringWriter();
-        using var error = new StringWriter();
-        var cli = new CliOutput(output, error, json: false, quiet: false, color: false, verbose: false, width: 120);
-        Assert.Equal(162, TaskText.ExitCode(new AttemptResult { TerminationReason = TerminationReason.Exited, Signal = 34 }, cli));
-        Assert.Equal(192, TaskText.ExitCode(new AttemptResult { TerminationReason = TerminationReason.Exited, Signal = 64 }, cli));
-        Assert.Equal(ExitCodes.Failed, TaskText.ExitCode(new AttemptResult { TerminationReason = TerminationReason.Exited, Signal = 0 }, cli));
-        Assert.Equal(ExitCodes.Failed, TaskText.ExitCode(new AttemptResult { TerminationReason = TerminationReason.Exited }, cli));
-        Assert.Equal(0, TaskText.ExitCode(new AttemptResult { TerminationReason = TerminationReason.Exited, ExitCode = 0 }, cli));
-        Assert.Equal(3, TaskText.ExitCode(new AttemptResult { TerminationReason = TerminationReason.Exited, ExitCode = 3 }, cli));
-    }
 
     [Fact]
     public void TheRefusedAutoStartPrintsTheSpecifiedGuidance()
@@ -668,25 +440,11 @@ public sealed class CommandLineTests
     }
 
     [Theory]
-    [InlineData("arcforges run --n", "--node")]
-    [InlineData("arcforges run --l", "--local")]
-    [InlineData("arcforges tasks wait --n", "--node")]
-    [InlineData("arcforges output --l", "--local")]
-    public async Task TheSuggestDirectiveCompletesTheRetainedFixtureGrammar(string line, string expected)
-    {
-        using var output = new StringWriter();
-        using var error = new StringWriter();
-
-        var exit = await LegacyCliApplication.RunAsync([$"[suggest:{line.Length}]", line], output, error);
-
-        Assert.Equal(0, exit);
-        Assert.Contains(expected, output.ToString().Split('\n', StringSplitOptions.TrimEntries));
-    }
-
-    [Theory]
     [InlineData("arcforges ta", "tasks")]
     [InlineData("arcforges jo", "jobs")]
     [InlineData("arcforges qu", "queue")]
+    [InlineData("arcforges wo", "workspace")]
+    [InlineData("arcforges fi", "file-operation")]
     [InlineData("arcforges run --n", "--node")]
     [InlineData("arcforges run --l", "--local")]
     public async Task CompletionDoesNotOfferRetiredExecutionRoutes(string line, string retired)

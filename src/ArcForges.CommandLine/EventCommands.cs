@@ -17,16 +17,11 @@ internal static class EventCommands
     internal static readonly IReadOnlyDictionary<string, EventTopic> Topics = new Dictionary<string, EventTopic>(StringComparer.OrdinalIgnoreCase)
     {
         ["node"] = EventTopic.Node,
-        ["tasks"] = EventTopic.Tasks,
-        ["queue"] = EventTopic.Queue,
-        ["resources"] = EventTopic.Resources,
         ["findings"] = EventTopic.Findings,
         ["approvals"] = EventTopic.Approvals,
         ["sessions"] = EventTopic.Sessions,
-        ["workspaces"] = EventTopic.Workspaces,
         ["jobs"] = EventTopic.Jobs,
         ["peers"] = EventTopic.Peers,
-        ["policy"] = EventTopic.Policy,
         ["updates"] = EventTopic.Updates,
         ["account"] = EventTopic.Account,
         ["integrations"] = EventTopic.Integrations,

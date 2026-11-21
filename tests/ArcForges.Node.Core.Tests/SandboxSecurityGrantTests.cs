@@ -321,7 +321,7 @@ public sealed class SandboxSecurityGrantTests
                 provision.GrantId.Value.Memory, 1, connection.HubFence, deadline.ToUnixTimeMilliseconds(),
                 SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(enrollment.Audience)), "fixture");
             // Exercise the production adapter after channel verification, where Core's ordinary error becomes a signed reply body.
-            using var dispatcher = new RoutedDispatcher(fixture.Runtime);
+            var dispatcher = new RoutedDispatcher(fixture.Runtime);
             var routed = new V2ControlCall(new(header, wrongTemplate.ToByteArray(), default, default, default), accepted, now, deadline);
             var returned = SandboxServiceCreateResponse.Parser.ParseFrom((await dispatcher.DispatchV2Async(routed, ct)).Span);
             Denied(returned.Error);

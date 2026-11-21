@@ -73,14 +73,11 @@ public static class CliApplication
         DataCommands.AddTo(sandboxes, factory);
         root.Subcommands.Add(sandboxes);
         root.Subcommands.Add(SandboxRunCommands.Build(factory));
-        root.Subcommands.Add(WorkspaceCommands.Build(factory));
-        root.Subcommands.Add(FileOperationCommands.Build(factory));
         root.Subcommands.Add(StatusCommands.Status(factory));
         root.Subcommands.Add(SandboxResourceCommands.Build(factory));
         root.Subcommands.Add(SandboxGrantCommands.Build(factory));
         root.Subcommands.Add(SandboxOperationCommands.Build(factory));
         root.Subcommands.Add(V2NodeCommands.Doctor(factory));
-        root.Subcommands.Add(PolicyCommands.Build(factory));
         root.Subcommands.Add(ApprovalCommands.Build(factory));
         root.Subcommands.Add(NodeCommands.Build(factory, nodeRunner));
         root.Subcommands.Add(ConfigCommands.Build(factory));

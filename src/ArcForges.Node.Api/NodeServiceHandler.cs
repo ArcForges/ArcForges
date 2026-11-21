@@ -19,6 +19,7 @@ namespace ArcForges.Node.Api;
 /// </summary>
 public sealed class NodeServiceHandler : NodeService.NodeServiceBase
 {
+    internal const string UpdateSettingsMethod = "NodeService.UpdateNodeSettings";
     private const string ServiceName = "arcforges.node.v1.NodeService";
     private readonly NodeRuntime _node;
     private readonly ClientSessions _sessions;
@@ -39,7 +40,7 @@ public sealed class NodeServiceHandler : NodeService.NodeServiceBase
         _sessions = sessions ?? throw new ArgumentNullException(nameof(sessions));
         _images = images ?? throw new ArgumentNullException(nameof(images));
         _api = new ApiCommands(node, sessions, ServiceName);
-        executors.Register<NodeServiceUpdateNodeSettingsRequest, NodeServiceUpdateNodeSettingsResponse>("NodeService.UpdateNodeSettings", PermissionMatrix.NodeSettings,
+        executors.Register<NodeServiceUpdateNodeSettingsRequest, NodeServiceUpdateNodeSettingsResponse>(UpdateSettingsMethod, PermissionMatrix.NodeSettings,
             NodeServiceUpdateNodeSettingsRequest.Parser, UpdateNodeSettings);
     }
 
@@ -264,7 +265,7 @@ public sealed class NodeServiceHandler : NodeService.NodeServiceBase
         }
 
         // node.proto: HUMAN=A SCRIPT=P AGENT=D.
-        var gate = new GateRequest(PermissionMatrix.NodeSettings, "NodeService.UpdateNodeSettings",
+        var gate = new GateRequest(PermissionMatrix.NodeSettings, UpdateSettingsMethod,
             "change node settings" + (request.HasLogLevel ? " (log level " + request.LogLevel.ToString().ToLowerInvariant() + ")" : string.Empty), "node");
         refused ??= await _api.GateAsync(caller, gate, request, request.Meta).ConfigureAwait(false);
         if (refused is not null)
@@ -286,7 +287,7 @@ public sealed class NodeServiceHandler : NodeService.NodeServiceBase
         using (await _node.CloudLink.EnterAsync(_node.Stopping).ConfigureAwait(false))
         {
             var phase = _node.CloudLink.Phase;
-            if (phase != CloudLinkPhase.SignedOut && !_api.Recorded("NodeService.UpdateNodeSettings", request, request.Meta))
+            if (phase != CloudLinkPhase.SignedOut && !_api.Recorded(UpdateSettingsMethod, request, request.Meta))
             {
                 response.Error = NodeErrors.InvalidState(phase == CloudLinkPhase.SignedIn ? "signed_in" : "signing_in", "center_url");
                 return response;

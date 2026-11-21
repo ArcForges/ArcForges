@@ -18,7 +18,6 @@
     <PackageReference Include="ArcForges.LocalRpc" />
     <InternalsVisibleTo Include="ArcForges.Client.Tests" />
     <InternalsVisibleTo Include="ArcForges.CommandLine" />
-    <InternalsVisibleTo Include="ArcForges.LegacyCliFixture" />
     <InternalsVisibleTo Include="ArcForges.Node.CloudLink.Tests" />
   </ItemGroup>
 </Project>

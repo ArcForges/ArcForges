@@ -11,153 +11,24 @@ using Grpc.Core;
 
 namespace ArcForges.Node.Api;
 
-/// <summary>
-/// Who calls a method: the connection's session (its origin assigned at the hello), or, when an approved request executes, the requester
-/// the approval captured. <see cref="ApprovalId"/> is set only for the latter, and then an APPROVAL cell of the matrix lets the call through.
-/// <see cref="CenterCaller"/> is the center-routed caller (AF-CTR-05 CTR5-NODE-08, origin REMOTE, no local session), set only by the routed
-/// dispatcher (part N2b) and by the execution of a routed caller's approved request; a caller of a local connection can never carry one:
-/// building or copying a caller with a center caller and a local session, or with any origin but REMOTE, throws. The check runs at every
-/// assignment, so a <c>with</c> copy that assigns <see cref="CenterCaller"/> before clearing <see cref="Session"/> or setting <see cref="Origin"/>
-/// throws even when its final state would be valid: build a routed caller with the constructor.
-/// </summary>
-public sealed record Caller
+/// <summary>The local session or the local requester of an approved operation.</summary>
+public sealed record Caller(Origin Origin, ClientKind Kind, ClientSession? Session, byte[]? ApprovalId = null)
 {
-    /// <summary>Creates a caller; a center caller needs origin REMOTE and no local session.</summary>
-    /// <param name="origin">The origin.</param>
-    /// <param name="kind">The client kind.</param>
-    /// <param name="session">The connection's session, or <see langword="null"/> (no hello, an approved request executing, or a center caller).</param>
-    /// <param name="approvalId">The approval under which the request executes, or <see langword="null"/>.</param>
-    /// <param name="centerCaller">The center-routed caller, or <see langword="null"/> (always, until the routed path of part N2b).</param>
-    public Caller(Origin origin, ClientKind kind, ClientSession? session, byte[]? approvalId = null, CenterCaller? centerCaller = null)
-    {
-        Origin = origin;
-        Kind = kind;
-        Session = session;
-        ApprovalId = approvalId;
-        CenterCaller = centerCaller;
-    }
-
-    /// <summary>The origin.</summary>
-    public Origin Origin
-    {
-        get;
-        init
-        {
-            field = value;
-            Check(nameof(Origin));
-        }
-    }
-
-    /// <summary>The client kind.</summary>
-    public ClientKind Kind { get; init; }
-
-    /// <summary>The connection's session, or <see langword="null"/> (no hello, an approved request executing, or a center caller).</summary>
-    public ClientSession? Session
-    {
-        get;
-        init
-        {
-            field = value;
-            Check(nameof(Session));
-        }
-    }
-
-    /// <summary>The approval under which the request executes, or <see langword="null"/>.</summary>
-    public byte[]? ApprovalId { get; init; }
-
-    /// <summary>The center-routed caller (origin REMOTE, no local session), or <see langword="null"/>.</summary>
-    public CenterCaller? CenterCaller
-    {
-        get;
-        init
-        {
-            field = value;
-            Check(nameof(CenterCaller));
-        }
-    }
-
-    /// <summary>
-    /// The origin whose HUMAN, SCRIPT or AGENT cells and AGENT-only rules apply: the origin of a local caller, and for a center-routed caller
-    /// <see cref="CenterRouting.CellsOrigin"/> (the local origin of a relay from this node, SCRIPT for one from another node, REMOTE for an
-    /// account session). Decisions B-4: every AGENT-only branch of a routed body reads this, never <see cref="Origin"/>.
-    /// </summary>
-    public Origin CellsOrigin
-    {
-        get => CenterCaller is null ? Origin : field;
-        init;
-    }
-
-    /// <summary>The routed command ID of a center-routed mutation (<c>ActorRef.remote_command_id</c>), or <see langword="null"/>.</summary>
-    public Id? RemoteCommandId { get; init; }
-
-    /// <summary>
-    /// The exact request bytes as received (a center-routed call's payload, or an approval's captured bytes of a routed request): its payload
-    /// digest is computed over these, never over a re-encoding (decisions Q6, verifier N-2); <see langword="null"/> for a local call.
-    /// </summary>
-    public byte[]? RawRequest { get; init; }
-
-    /// <summary>The routed call this caller came with (the dispatcher's context: the effect re-check), or <see langword="null"/>.</summary>
-    internal RoutedContext? Routed { get; init; }
-
-    /// <summary>The caller as an <see cref="ActorRef"/> (task owners, policy revisions, the audit log): a center caller carries its <c>center_caller</c>.</summary>
-    public ActorRef Actor
-    {
-        get
-        {
-            var actor = new ActorRef { Origin = Origin, ClientKind = Kind };
-            if (CenterCaller is { } center)
-            {
-                actor.CenterCaller = center.Clone();
-                if (RemoteCommandId is { } command)
-                {
-                    actor.RemoteCommandId = command.Clone();
-                }
-            }
-
-            return actor;
-        }
-    }
+    /// <summary>The actor recorded for this local operation.</summary>
+    public ActorRef Actor => new() { Origin = Origin, ClientKind = Kind };
 
     /// <summary>True while an approved request executes.</summary>
     public bool Approved => ApprovalId is not null;
 
-    /// <summary>
-    /// The caller of a local connection's call, exactly as the node derived it before part N2a: the session's origin and kind, or SCRIPT
-    /// with no kind for a connection that sent no hello; never a center caller.
-    /// </summary>
+    /// <summary>Attributes the call to the verified local session, or to SCRIPT before hello.</summary>
     public static Caller OfConnection(ClientSession? session) =>
         new(session?.Origin ?? Origin.Script, session?.Kind ?? ClientKind.Unspecified, session);
 
-    /// <summary>
-    /// The caller of an approval's request: its requester. A center-routed requester (REMOTE with its <c>center_caller</c>) stays one, with
-    /// the cells of <paramref name="nodeId"/>'s point of view and the captured <paramref name="request"/> bytes, so the approved execution is
-    /// owned by the routed caller and digests the bytes it received (AF-CTR-05 Q14, verifier N-2); it has no routed call context, so no
-    /// expiry re-check applies to it (verifier N-8).
-    /// </summary>
-    public static Caller OfApproval(ActorRef requester, byte[] approvalId, ReadOnlySpan<byte> nodeId = default, byte[]? request = null)
+    /// <summary>Attributes the approved operation to its captured local requester.</summary>
+    public static Caller OfApproval(ActorRef requester, byte[] approvalId)
     {
         ArgumentNullException.ThrowIfNull(requester);
-        if (requester.Origin == Origin.Remote && requester.CenterCaller is { } center)
-        {
-            return new Caller(Origin.Remote, requester.ClientKind, null, approvalId, center.Clone())
-            {
-                CellsOrigin = CenterRouting.CellsOrigin(center, nodeId),
-                RemoteCommandId = requester.RemoteCommandId?.Clone(),
-                RawRequest = request,
-            };
-        }
-
         return new Caller(requester.Origin, requester.ClientKind, null, approvalId);
-    }
-
-    /// <summary>A center caller is REMOTE and never comes with a local session (<paramref name="accessor"/> names the assignment that failed).</summary>
-    private void Check(string accessor)
-    {
-        if (CenterCaller is not null && (Session is not null || Origin != Origin.Remote))
-        {
-            throw new ArgumentException("A center caller has origin REMOTE and no local session: a local connection's caller never carries one.",
-                accessor);
-        }
     }
 }
 
@@ -167,17 +38,7 @@ public sealed record Caller
 /// <param name="Summary">A one-line summary.</param>
 /// <param name="TargetKind">The kind of the object acted on, if any.</param>
 /// <param name="TargetId">The object's ID, if any.</param>
-public sealed record GateRequest(string Operation, string Method, string Summary, string? TargetKind = null, byte[]? TargetId = null)
-{
-    /// <summary>Details for the approver.</summary>
-    public IReadOnlyList<KeyValue> Details { get; init; } = [];
-
-    /// <summary>True when an AGENT caller's ALLOW is an APPROVAL for this target (the matrix's per-target rule, for example task.retry).</summary>
-    public bool AgentApproval { get; init; }
-
-    /// <summary>Why <see cref="AgentApproval"/> applies (shown as the decision's source).</summary>
-    public string AgentApprovalReason { get; init; } = string.Empty;
-}
+public sealed record GateRequest(string Operation, string Method, string Summary, string? TargetKind = null, byte[]? TargetId = null);
 
 /// <summary>
 /// Thrown inside an idempotent command when what the gate relied on no longer holds (review round 2): the command stops before it acts, nothing
@@ -234,38 +95,15 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
         return node.Lifecycle.IsStopping ? NodeErrors.NodeStopping(node.Clock.GetUtcNow()) : null;
     }
 
-    /// <summary>The caller's origin.</summary>
-    public Origin OriginOf(ServerCallContext context) => sessions.OriginOf(context);
-
     /// <summary>The caller of a connection's call (<see cref="Caller.OfConnection"/> of the connection's session).</summary>
     public Caller CallerOf(ServerCallContext context) => Caller.OfConnection(sessions.SessionOf(context));
 
-    /// <summary>
-    /// The matrix decision for <paramref name="caller"/> on <paramref name="operation"/> under the current policy: a center-routed caller is
-    /// decided by the routed column narrowed by its cells (<see cref="PermissionMatrix.DecideRouted"/>), never by the HUMAN cells.
-    /// </summary>
-    public PermissionVerdict Decide(Caller caller, string operation)
+    /// <summary>The local permission matrix decision under the current policy.</summary>
+    private PermissionVerdict Decide(Caller caller, string operation)
     {
-        ArgumentNullException.ThrowIfNull(caller);
         var permissions = node.Store.Read(PolicyRules.Current).Document.Permissions;
-        return caller.CenterCaller is null
-            ? PermissionMatrix.Decide(caller.Origin, operation, permissions)
-            : PermissionMatrix.DecideRouted(operation, caller.CellsOrigin, permissions);
+        return PermissionMatrix.Decide(caller.Origin, operation, permissions);
     }
-
-    /// <summary>
-    /// The payload digest of <paramref name="request"/> for <paramref name="caller"/>: over the exact bytes received when the caller carries
-    /// them (a center-routed call, an approved routed request; decisions Q6), else over the message (a local call).
-    /// </summary>
-    public static byte[] Digest(Caller caller, IMessage request)
-    {
-        ArgumentNullException.ThrowIfNull(caller);
-        ArgumentNullException.ThrowIfNull(request);
-        return caller.RawRequest is { } raw ? PayloadDigest.Compute(raw) : PayloadDigest.Compute(request);
-    }
-
-    /// <summary>True when the matrix allows <paramref name="operation"/> to <paramref name="caller"/> without an approval.</summary>
-    public bool Allowed(Caller caller, string operation) => Decide(caller, operation).Decision == PermissionDecision.Allow;
 
     /// <summary>
     /// The permission gate (11 section 1) of a call that needs no approval capture (a refusal of an APPROVAL cell would raise one, so such
@@ -275,7 +113,7 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
     {
         ArgumentNullException.ThrowIfNull(caller);
         ArgumentNullException.ThrowIfNull(gate);
-        if (request is not null && meta is not null && Recorded(gate.Method, request, meta, caller))
+        if (request is not null && meta is not null && Recorded(gate.Method, request, meta))
         {
             // Review round 1: a command that already ran answers with its recorded outcome, whatever the matrix says now (replay only).
             MarkReplayOnly(meta);
@@ -299,7 +137,7 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
         ArgumentNullException.ThrowIfNull(gate);
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(meta);
-        if (Recorded(gate.Method, request, meta, caller))
+        if (Recorded(gate.Method, request, meta))
         {
             // Review round 1: the gate runs after dedup. A command that already ran (within the 24-hour window, or after its approval) answers
             // with its recorded outcome and raises no new approval, whatever the matrix says now. Review round 2: replay only.
@@ -308,12 +146,6 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
         }
 
         var verdict = Decide(caller, gate.Operation);
-        if (verdict.Decision == PermissionDecision.Allow && gate.AgentApproval && caller.Origin == Origin.Agent && !caller.Approved)
-        {
-            // A row whose AGENT cell is ALLOW except for some targets (task.retry: a SIDE_EFFECTING or UNKNOWN task needs approval).
-            verdict = verdict with { Decision = PermissionDecision.Approval, Source = verdict.Source + "; " + gate.AgentApprovalReason };
-        }
-
         if (verdict.Decision == PermissionDecision.Allow || (verdict.Decision == PermissionDecision.Approval && caller.Approved))
         {
             return null;
@@ -324,47 +156,29 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
             return await DeniedAsync(caller, gate, verdict).ConfigureAwait(false);
         }
 
-        caller.Routed?.Refused(gate.Operation, "approval_required");
-
         var capture = new ApprovalCapture
         {
             Operation = gate.Method,
             MatrixOperation = gate.Operation,
             Summary = gate.Summary,
-            Details = gate.Details,
             Risk = PermissionMatrix.Find(gate.Operation)!.Risk,
             Requester = caller.Actor,
             CommandId = meta.CommandId.Value.ToByteArray(),
-            Request = caller.RawRequest ?? request.ToByteArray(),
-            RequestDigest = Digest(caller, request),
+            Request = request.ToByteArray(),
+            RequestDigest = PayloadDigest.Compute(request),
             TargetKind = gate.TargetKind,
             TargetId = gate.TargetId,
         };
         try
         {
-            var approvalAudited = false;
-            var replayFound = false;
-            var result = await node.Processor.ExecuteTrackedAsync(context =>
+            return await node.Processor.ExecuteTrackedAsync(context =>
             {
-                caller.Routed?.BeforeReplay();
-                Approvals.Expire(context);
-                if (caller.CenterCaller is not null && RecordedIn(context.Transaction, service + "/" + gate.Method[(gate.Method.LastIndexOf('.', StringComparison.Ordinal) + 1)..],
-                    capture.RequestDigest, meta, caller))
-                {
-                    // Decisions B-2 and verifier N-1, inside the writer: an outcome recorded since the check (an approved execution whose approval
-                    // record was deferred included) answers before any approval rule; the idempotent command replays it.
-                    replayFound = true;
-                    return null;
-                }
-
-                // A different caller takes its own policy path, but cannot claim an existing approval or recorded command.
-                if (!RoutedCommandOwnership.MayUse(context.Transaction, meta.CommandId.Value.Span, caller.CenterCaller))
+                Approvals.Expire(context, gate.Method);
+                if (!RoutedCommandOwnership.MayUse(context.Transaction, meta.CommandId.Value.Span, null))
                 {
                     return StoreErrors.CommandIdReused();
                 }
 
-                // Decisions B-3: raising the approval is the call's effect; the link and the expiry are read again immediately before it.
-                caller.Routed?.BeforeEffect();
                 var policy = PolicyRules.Current(context.Transaction).Document.Approvals;
                 var ttl = policy is { HasDefaultTtlMs: true, DefaultTtlMs: > 0 } ? TimeSpan.FromMilliseconds(policy.DefaultTtlMs) : Approvals.DefaultTtl;
                 var (approval, created, error) = Approvals.Raise(context, capture, ttl);
@@ -373,7 +187,6 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
                     return error;
                 }
 
-                approvalAudited = created;
                 if (created && policy?.NotifyDesktop != false)
                 {
                     Notifications.Add(context, "approval_needed", Severity.Warning, "Approval needed",
@@ -381,12 +194,6 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
                 }
 
                 var id = IdText.Format(approval!.View.ApprovalId);
-                if (caller.CenterCaller is not null && approval.State == ApprovalState.Approved)
-                {
-                    // Decisions B-2: an approved request still executing is in progress for a routed duplicate, never a refusal.
-                    return NodeErrors.CommandInProgress();
-                }
-
                 return approval.State switch
                 {
                     ApprovalState.Pending or ApprovalState.Approved => Approvals.Required(approval.View),
@@ -396,84 +203,10 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
                     _ => NodeErrors.PermissionDenied($"{gate.Method}: approval {id} was withdrawn"),
                 };
             }, meta.CommandId.Value.Memory, CommitDurability.Full).ConfigureAwait(false);
-            if (approvalAudited)
-            {
-                caller.Routed?.MarkAudited();
-            }
-
-            if (replayFound)
-            {
-                MarkReplayOnly(meta);
-            }
-
-            return result;
         }
         catch (CommandQueueFullException)
         {
             return NodeErrors.Overloaded(node.Clock.GetUtcNow());
-        }
-    }
-
-    /// <summary>Reads the original authorized result without reserving a command ID or entering the effect writer.</summary>
-    internal (TResponse Response, bool Retained) ReadRetained<TResponse>(IMessage request, RequestMeta meta, Caller caller, string method,
-        MessageParser<TResponse> parser, Func<ArcError, TResponse> fail, ArcError missing) where TResponse : class, IMessage<TResponse>
-    {
-        var (response, retained) = ReadRetained(node, service, request, meta, caller, method, parser, fail, missing);
-        return (response, retained is not null);
-    }
-
-    /// <summary>Returns the original serialized response for a routed replay that preserves its exact bytes and correlation.</summary>
-    internal static (TResponse Response, ReadOnlyMemory<byte>? Retained) ReadRetained<TResponse>(NodeRuntime node, string service,
-        IMessage request, RequestMeta meta, Caller caller, string method, MessageParser<TResponse> parser, Func<ArcError, TResponse> fail,
-        ArcError missing, ArcError? inProgress = null, int maximumOutcomeBytes = int.MaxValue, bool allowTerminalApproval = true)
-        where TResponse : class, IMessage<TResponse>
-    {
-        var commandId = meta.CommandId.Value.ToByteArray();
-        var digest = Digest(caller, request);
-        var operation = service[(service.LastIndexOf('.', StringComparison.Ordinal) + 1)..] + "." + method;
-        (TResponse Response, ReadOnlyMemory<byte>? Retained) Unconfirmed(ArcError error) => (fail(error), null);
-
-        try
-        {
-            return node.Store.Read<(TResponse Response, ReadOnlyMemory<byte>? Retained)>(reader =>
-            {
-                caller.Routed?.BeforeReplay();
-                var retained = CommandDeduplication.ReadRetained(reader, commandId, service + "/" + method, digest, reader.NowMicroseconds);
-                if (!RoutedCommandOwnership.MayExecute(reader, commandId, caller.CenterCaller, operation, digest, retained is not null))
-                {
-                    return Unconfirmed(StoreErrors.CommandIdReused());
-                }
-
-                var approval = Approvals.ByCommand(reader, commandId);
-                if (caller.ApprovalId is { } approvalId && (approval is not { State: ApprovalState.Approved } ||
-                    !approval.Id.AsSpan().SequenceEqual(approvalId)))
-                {
-                    return Unconfirmed(StoreErrors.CommandIdReused());
-                }
-
-                if (approval is not null && (approval.View.Operation != operation || !SameRequest(approval, method, digest)))
-                {
-                    return Unconfirmed(StoreErrors.CommandIdReused());
-                }
-
-                return retained switch
-                {
-                    { Status: DedupStatus.Replay, Outcome: { } stored } when stored.Length <= maximumOutcomeBytes =>
-                        (parser.ParseFrom(stored.Span), stored),
-                    { Status: DedupStatus.Conflict } => Unconfirmed(StoreErrors.CommandIdReused()),
-                    { Status: DedupStatus.InProgress } => Unconfirmed(inProgress ?? NodeErrors.CommandInProgress()),
-                    _ when allowTerminalApproval && !caller.Approved &&
-                        approval is { State: ApprovalState.Executed or ApprovalState.Failed, Outcome: { Length: > 0 } approved } &&
-                        approved.Length <= maximumOutcomeBytes =>
-                        (parser.ParseFrom(approved), new ReadOnlyMemory<byte>(approved)),
-                    _ => Unconfirmed(missing),
-                };
-            });
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException and not RoutedAbortException and not OutOfMemoryException)
-        {
-            node.Log.Warning("api.retained_command.unavailable", new LogField("errorType", exception.GetType().Name));
-            return Unconfirmed(missing);
         }
     }
 
@@ -487,7 +220,7 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
         where TResponse : class, IMessage<TResponse>
     {
         ArgumentNullException.ThrowIfNull(caller);
-        var digest = Digest(caller, request);
+        var digest = PayloadDigest.Compute(request);
         var replayOnly = _replayOnly.Remove(meta);
         try
         {
@@ -495,8 +228,7 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
             // ID is CONFLICT/command_id_reused, as for any reused command ID.
             if (!caller.Approved && node.Store.Read(reader => Approvals.ByCommand(reader, meta.CommandId.Value.Span)) is { } earlier
                 && (!SameRequest(earlier, method, digest)
-                    || ((caller.CenterCaller is not null || earlier.View.Requester?.CenterCaller is not null)
-                        && !CenterRouting.SameClass(caller.CenterCaller, earlier.View.Requester?.CenterCaller))))
+                    || earlier.View.Requester?.CenterCaller is not null))
             {
                 return (fail(StoreErrors.CommandIdReused()), false);
             }
@@ -515,8 +247,6 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
                     throw new GateStaleException("the recorded outcome expired before the command") { ReplayOnly = true };
                 }
 
-                // Decisions B-3 and PN-15: the link, the stop and the expiry of a routed call, immediately before its effect.
-                caller.Routed?.BeforeEffect();
                 var response = execute(command);
                 if (audit is not null)
                 {
@@ -527,14 +257,8 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
 
                 return response.ToByteArray();
             },
-            beforeDedup: command =>
-            {
-                caller.Routed?.BeforeReplay();
-                var operation = service[(service.LastIndexOf('.', StringComparison.Ordinal) + 1)..] + "." + method;
-                return RoutedCommandOwnership.MayExecute(command.Transaction, meta.CommandId.Value.Span, caller.CenterCaller, operation, digest)
-                    ? null : StoreErrors.CommandIdReused();
-            },
-            afterComplete: command => RoutedCommandOwnership.Record(command.Transaction, meta.CommandId.Value.Span, caller.Actor)).ConfigureAwait(false);
+            beforeDedup: command => RoutedCommandOwnership.MayUse(command.Transaction, meta.CommandId.Value.Span, null)
+                ? null : StoreErrors.CommandIdReused()).ConfigureAwait(false);
             return outcome.Error is { } failure ? (fail(failure), false) : (parser.ParseFrom(outcome.Outcome), outcome.Replayed);
         }
         catch (CommandQueueFullException)
@@ -546,7 +270,7 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
             return (fail(NodeErrors.InvalidState("EXPIRED",
                 "the recorded outcome of this command ID expired while the request was checked; nothing ran: send the request again")), false);
         }
-        catch (Exception exception) when (exception is not OperationCanceledException and not GateStaleException and not RoutedAbortException)
+        catch (Exception exception) when (exception is not OperationCanceledException and not GateStaleException)
         {
             node.Log.Error("api.command.failed", exception);
             return (fail(NodeErrors.Internal(node.Clock.GetUtcNow())), false);
@@ -558,7 +282,7 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
     /// <c>command_dedup</c> (24-hour window), or an approval executed it (any time). The gate lets such a retry through so that the
     /// idempotent command answers with the recorded outcome.
     /// </summary>
-    public bool Recorded(string method, IMessage request, RequestMeta meta, Caller? caller = null)
+    public bool Recorded(string method, IMessage request, RequestMeta meta)
     {
         ArgumentNullException.ThrowIfNull(method);
         ArgumentNullException.ThrowIfNull(request);
@@ -569,15 +293,15 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
         }
 
         var name = method[(method.LastIndexOf('.', StringComparison.Ordinal) + 1)..];
-        var digest = caller is null ? PayloadDigest.Compute(request) : Digest(caller, request);
-        return node.Store.Read(reader => RoutedCommandOwnership.MayUse(reader, id.Value.Span, caller?.CenterCaller)
-            && (RecordedIn(reader, service + "/" + name, digest, meta, caller)
+        var digest = PayloadDigest.Compute(request);
+        return node.Store.Read(reader => RoutedCommandOwnership.MayUse(reader, id.Value.Span, null)
+            && (RecordedIn(reader, service + "/" + name, digest, meta)
                 || (Approvals.ByCommand(reader, id.Value.Span) is { State: ApprovalState.Executed or ApprovalState.Failed, Outcome.Length: > 0 } approval
                     && SameRequest(approval, name, digest))));
     }
 
     /// <summary>True when <c>command_dedup</c> holds an unexpired outcome of <paramref name="meta"/>'s command ID for this method and digest.</summary>
-    private static bool RecordedIn(StoreReader reader, string method, ReadOnlySpan<byte> digest, RequestMeta meta, Caller? caller)
+    private static bool RecordedIn(StoreReader reader, string method, ReadOnlySpan<byte> digest, RequestMeta meta)
     {
         if (meta.CommandId is not { } id || id.Value.Length != 16)
         {
@@ -589,11 +313,12 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
         {
             command.Parameters.AddWithValue("$id", id.Value.ToByteArray());
             using var row = command.ExecuteReader();
-            recorded = row.Read() && (row.GetInt64(3) > reader.NowMicroseconds || RoutedFileRetention.IsHeld(reader, id.Value.Span)) && !row.IsDBNull(2) && row.GetString(0) == method
-                && ((byte[])row.GetValue(1)).AsSpan().SequenceEqual(digest);
+            recorded = row.Read() && !row.IsDBNull(2) && row.GetString(0) == method
+                && ((byte[])row.GetValue(1)).AsSpan().SequenceEqual(digest)
+                && (row.GetInt64(3) > reader.NowMicroseconds || RoutedFileRetention.IsHeld(reader, id.Value.Span));
         }
 
-        return recorded && RoutedCommandOwnership.MayUse(reader, id.Value.Span, caller?.CenterCaller);
+        return recorded;
     }
 
     /// <summary>Marks the call of <paramref name="meta"/>'s command ID as replay-only (its gate was skipped as a replay).</summary>
@@ -616,17 +341,12 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
         {
             await node.Processor.ExecuteAsync(context =>
             {
-                var summary = caller.Routed is { Reason: { } reason } && decision == PermissionDecision.Deny ? "denied: " + reason : outcome;
                 AuditLog.Append(context.Transaction, caller.Actor, gate.Operation + " " + gate.Method, gate.TargetKind, gate.TargetId ?? [], decision,
-                    caller.ApprovalId ?? [], summary);
+                    caller.ApprovalId ?? [], outcome);
                 return 0;
-            }, caller.Routed is null ? CommitDurability.Normal : CommitDurability.Full).ConfigureAwait(false);
-            if (decision is PermissionDecision.Deny or PermissionDecision.Approval)
-            {
-                caller.Routed?.MarkAudited();
-            }
+            }, CommitDurability.Normal).ConfigureAwait(false);
         }
-        catch (CommandQueueFullException) when (caller.Routed is null)
+        catch (CommandQueueFullException)
         {
             node.Log.Warning("api.audit.dropped", new LogField("operation", gate.Operation));
         }
@@ -645,7 +365,6 @@ internal sealed class ApiCommands(NodeRuntime node, ClientSessions sessions, str
 
     private async Task<ArcError> DeniedAsync(Caller caller, GateRequest gate, PermissionVerdict verdict)
     {
-        caller.Routed?.Refused(gate.Operation, verdict.Source.StartsWith("policy permissions[", StringComparison.Ordinal) ? "permission_override" : "denied");
         await AuditAsync(caller, gate, verdict.Decision, "denied: " + gate.Summary).ConfigureAwait(false);
         return NodeErrors.PermissionDenied($"{gate.Method}: {gate.Operation} is denied for {PermissionMatrix.Name(caller.Origin)} callers ({verdict.Source})");
     }

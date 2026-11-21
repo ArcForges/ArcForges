@@ -245,22 +245,16 @@ public sealed partial class OsSecretStoreGuardPolicyTests
     [Fact]
     public void EveryNodeProcessATestStartsRunsWithTestMode()
     {
-        // The closed-loop launchers share StartCore. Its guard covers the product Host, supervisor and private V1 apphost.
+        // The closed-loop launchers share StartCore. Its guard covers the product Host and supervisor.
         var testNode = File.ReadAllText(Path.Combine(Root, TestNodeFile));
-        Assert.Contains("bool legacy = SameExecutable(executable, LegacyCli);", testNode, StringComparison.Ordinal);
-        Assert.Matches(new Regex(@"if\s*\(\(legacy\s*\|\|\s*binary is ""arcforges"" or ""arcforges-supervisor""\s*\|\|\s*SameExecutable\(executable, Host\)\)\s*"
+        Assert.Matches(new Regex(@"if\s*\(\(binary is ""arcforges"" or ""arcforges-supervisor""\s*\|\|\s*SameExecutable\(executable, Host\)\)\s*"
             + @"&&\s*!argumentList\.Take\(controlArguments\)\.Contains\(NodeLocations\.TestModeOption, StringComparer\.Ordinal\)\)"), testNode);
         Assert.Contains("int controlArguments = separator < 0 ? argumentList.Count : separator;", testNode, StringComparison.Ordinal);
         Assert.Contains("start.Environment.Remove(OsSecretStoreGuard.OptInVariable);", testNode, StringComparison.Ordinal);
         Assert.Contains("Start(Host, [NodeLocations.TestModeOption, .. args])", testNode, StringComparison.Ordinal);
-        Assert.Contains("StartCore(LegacyCli, [NodeLocations.TestModeOption, .. args])", testNode, StringComparison.Ordinal);
         Assert.Contains("StartProduct([NodeLocations.TestModeOption, .. args])", testNode, StringComparison.Ordinal);
         Assert.Contains("StartCore(Host, arguments.ToList())", testNode, StringComparison.Ordinal);
         Assert.Contains("StartCore(NodeExecutable, [\"node\", \"run\", NodeLocations.TestModeOption])", testNode, StringComparison.Ordinal);
-
-        var legacyCli = File.ReadAllText(Path.Combine(Root, "tests/Shared/LegacyCliFixture/Program.cs"));
-        Assert.Contains("!args.TakeWhile(argument => argument != \"--\").Contains(NodeLocations.TestModeOption, StringComparer.Ordinal)", legacyCli, StringComparison.Ordinal);
-        Assert.Contains("|| !HasIsolatedNodeLocation()", legacyCli, StringComparison.Ordinal);
 
         var mentions = new HashSet<(string, string)>();
         foreach (var path in Sources().Where(path => !IsProduction(path) && path != ThisFile))
@@ -271,7 +265,7 @@ public sealed partial class OsSecretStoreGuardPolicyTests
                 // No process start of the host or supervisor binaries bypasses TestNode.Start.
                 if (path != TestNodeFile)
                 {
-                    Assert.DoesNotMatch(new Regex(@"(ProcessStartInfo|Process\.Start)\(\s*(TestNode\.(Host|LegacyCli)|Host|Supervisor|InProcessNode\.HelperExecutable)\b"), line);
+                    Assert.DoesNotMatch(new Regex(@"(ProcessStartInfo|Process\.Start)\(\s*(TestNode\.Host|Host|Supervisor|InProcessNode\.HelperExecutable)\b"), line);
                 }
 
                 if (!NodeRun().IsMatch(line) || line.Contains("--test-mode", StringComparison.Ordinal)

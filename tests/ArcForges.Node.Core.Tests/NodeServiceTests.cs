@@ -14,6 +14,7 @@ namespace ArcForges.Node.Core.Tests;
 public sealed class NodeServiceTests
 {
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan StartupTestBound = TimeSpan.FromSeconds(60);
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -274,7 +275,7 @@ public sealed class NodeServiceTests
         var starting = node.StartAsync();
         try
         {
-            Assert.Same(reached.Task, await Task.WhenAny(reached.Task, starting).WaitAsync(Tasks.Bound, ct));
+            Assert.Same(reached.Task, await Task.WhenAny(reached.Task, starting).WaitAsync(StartupTestBound, ct));
             var runtime = await reached.Task;
             Assert.Equal(NodeLifecycleState.Recovering, runtime.Lifecycle.State);
             await using (var channel = await node.ChannelAsync(helloAsHuman: true))
@@ -293,7 +294,7 @@ public sealed class NodeServiceTests
                 Assert.False(node.Exit.IsCompleted);
 
                 proceed.TrySetResult();
-                await starting.WaitAsync(Tasks.Bound, ct);
+                await starting.WaitAsync(StartupTestBound, ct);
                 Assert.Equal(InProcessNode.ExpectedState, runtime.Lifecycle.State);
 
                 var replay = await channel.Node.StopNodeAsync(request, deadline: DateTime.UtcNow + Deadline, cancellationToken: ct);
@@ -308,12 +309,12 @@ public sealed class NodeServiceTests
             }
 
             Assert.Equal(0, await node.Exit.WaitAsync(TimeSpan.FromSeconds(15), ct));
-            Assert.DoesNotContain("api.command.failed", Tasks.ReadShared(Path.Combine(node.DataRoot, "logs", "node", "node.log")), StringComparison.Ordinal);
+            Assert.DoesNotContain("api.command.failed", ReadShared(Path.Combine(node.DataRoot, "logs", "node", "node.log")), StringComparison.Ordinal);
         }
         finally
         {
             proceed.TrySetResult();
-            await starting.WaitAsync(Tasks.Bound, ct);
+            await starting.WaitAsync(StartupTestBound, ct);
         }
     }
 
@@ -464,5 +465,11 @@ public sealed class NodeServiceTests
         hello.CiMarkers.Clear();
         change(hello);
         return await channel.Node.HelloAsync(new NodeServiceHelloRequest { Hello = hello }, deadline: DateTime.UtcNow + Deadline, cancellationToken: Ct);
+    }
+    private static string ReadShared(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
     }
 }

@@ -30,6 +30,5 @@
     <Project Path="tests/ArcForges.OsSecretStoreTier/ArcForges.OsSecretStoreTier.csproj" />
     <Project Path="tests/ArcForges.Repository.Tests/ArcForges.Repository.Tests.csproj" />
     <Project Path="tests/ArcForges.Tools.Tests/ArcForges.Tools.Tests.csproj" />
-    <Project Path="tests/Shared/LegacyCliFixture/ArcForges.LegacyCliFixture.csproj" />
   </Folder>
 </Solution>

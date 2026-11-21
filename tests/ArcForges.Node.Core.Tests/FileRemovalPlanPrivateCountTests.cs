@@ -21,7 +21,7 @@ public sealed class FileRemovalPlanPrivateCountTests
             var owner = LegacyPlannerHistoryFixture.Owner(node);
             var request = new FileServicePlanRemovalRequest
             {
-                Meta = Tasks.Meta(),
+                Meta = InProcessNode.Command(),
                 WorkspacePath = new FilePath { WorkspaceId = CommandIds.New(), Path = "tree" },
             };
             var error = LegacyPlannerHistoryFixture.Refusal(privateDenial ? ErrorCategory.State : ErrorCategory.Resource,
@@ -85,7 +85,7 @@ public sealed class FileRemovalPlanPrivateCountTests
                 var workspace = LegacyPlannerHistoryFixture.SeedWorkspace(transaction, root);
                 var request = new FileServiceWriteFileRequest
                 {
-                    Meta = Tasks.Meta(),
+                    Meta = InProcessNode.Command(),
                     ExpectedAbsent = true,
                     Data = ByteString.CopyFrom(body),
                     Path = new FilePath { WorkspaceId = workspace, Path = "unwritten" },

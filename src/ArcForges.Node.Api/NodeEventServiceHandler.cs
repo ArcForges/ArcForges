@@ -59,11 +59,6 @@ public sealed class NodeEventServiceHandler : NodeEventService.NodeEventServiceB
             var invalidTopics = Validation.Topics(request.Topics, unique: true, out var topics);
             var invalidCursor = Validation.Cursor(request.HasCursor, request.Cursor, out var cursor);
             var refused = (_node.Lifecycle.IsStopping ? NodeErrors.NodeStopping(_node.Clock.GetUtcNow()) : null) ?? invalidTopics ?? invalidCursor;
-            if (refused is null && request.HasResourcesIntervalMs && request.ResourcesIntervalMs is < 1_000 or > 60_000)
-            {
-                refused = NodeErrors.InvalidArgument("resources_interval_ms: 1,000..60,000");
-            }
-
             using var stop = CancellationTokenSource.CreateLinkedTokenSource(writer.Ended, context.CancellationToken, _node.Stopping);
             if (refused is not null)
             {
@@ -240,14 +235,6 @@ public sealed class NodeEventServiceHandler : NodeEventService.NodeEventServiceB
         if (topics.Contains(EventTopic.Node))
         {
             Add(EventTopic.Node, new NodeEvent { Node = _node.Status() });
-        }
-
-        if (topics.Contains(EventTopic.Tasks))
-        {
-            foreach (var task in ArcForges.Node.Core.Execution.TaskRecords.LiveTasks(reader))
-            {
-                Add(EventTopic.Tasks, new NodeEvent { Task = new TaskChanged { Task = task } });
-            }
         }
 
         if (topics.Contains(EventTopic.Jobs))

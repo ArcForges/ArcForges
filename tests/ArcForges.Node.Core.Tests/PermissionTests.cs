@@ -1,22 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-using System.Security.Cryptography;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Node.Api;
 using ArcForges.Node.Core.Security;
 using ArcForges.Node.Store;
-using Google.Protobuf;
 
 namespace ArcForges.Node.Core.Tests;
 
-/// <summary>
-/// The permission matrix, approvals and the local audit log of 11 section 1 (AF-SEC-01; R-AI-009, R-SEC-002, R-EXE-010): the default matrix
-/// per origin for the supported clients, policy overrides (HUMAN-edited), <c>ExplainPermission</c>, the approval lifecycle (SM-APPROVAL:
-/// raised, denied, withdrawn, expired; a command ID reused for another request), the HUMAN-only <c>retry_safety</c> and <c>permissions</c>
-/// sections, agent assertions under <c>accept_agent_assertions</c>, the client kind verified against the peer, and an audit entry for every
-/// privileged action. Real nodes in the test process, reached through the real client.
-/// </summary>
+/// <summary>The local permission matrix, verified client kind and Node operation audit.</summary>
 public sealed class PermissionTests
 {
     private const PermissionDecision A = PermissionDecision.Allow;
@@ -152,330 +144,9 @@ public sealed class PermissionTests
         Assert.NotNull(PermissionMatrix.Valid(new PermissionOverride { Operation = PermissionMatrix.TaskSubmit, Origin = Origin.Remote, Decision = A }));
     }
 
-    [Fact(Timeout = 120_000)]
-    public async Task ExplainPermissionAnswersTheDecisionAndItsSource()
-    {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        await using var node = await InProcessNode.Create().StartAsync();
-        await using var human = await node.ChannelAsync(helloAsHuman: true);
-        await using var agent = await node.ChannelAsync(kind: ClientKind.McpAdapter);
-        async Task<PolicyServiceExplainPermissionResponse> ExplainAsync(NodeChannel channel, string operation, Origin origin) =>
-            await channel.Policy.ExplainPermissionAsync(new PolicyServiceExplainPermissionRequest { Meta = Tasks.Meta(), Operation = operation, Origin = origin },
-                cancellationToken: Ct);
-
-        var explained = (await ExplainAsync(agent, PermissionMatrix.TaskCancelOthers, Origin.Agent)).Value;
-        Assert.Equal((P, PermissionMatrix.DefaultSource), (explained.Decision, explained.Source));
-        var remote = (await ExplainAsync(agent, PermissionMatrix.TaskCancelOthers, Origin.Remote)).Value;
-        Assert.Equal((PermissionDecision.RemotePolicy, RiskClass.Medium), (remote.Decision, remote.RemoteRisk));
-        Assert.Equal("invalid_argument", (await ExplainAsync(agent, "task.fly", Origin.Agent)).Error?.Code);
-        Assert.Equal("invalid_argument", (await ExplainAsync(agent, PermissionMatrix.TaskSubmit, Origin.Unspecified)).Error?.Code);
-
-        // A HUMAN override shows as its source.
-        Assert.Null((await Sched.ChangePolicyAsync(human, policy => policy.Permissions.Add(new PermissionOverride
-        {
-            Operation = PermissionMatrix.TaskCancelOthers,
-            Origin = Origin.Agent,
-            Decision = D,
-        }))).Error);
-        var overridden = (await ExplainAsync(agent, PermissionMatrix.TaskCancelOthers, Origin.Agent)).Value;
-        Assert.Equal((D, "policy permissions[0]"), (overridden.Decision, overridden.Source));
-
-        // An override of a fixed row or a HUMAN row is an invalid policy.
-        var invalid = await Sched.ChangePolicyAsync(human, policy => policy.Permissions.Add(new PermissionOverride
-        {
-            Operation = PermissionMatrix.ApprovalDecide,
-            Origin = Origin.Agent,
-            Decision = A,
-        }));
-        Assert.Equal("invalid_policy", invalid.Error?.Code);
-    }
-
-    [Fact(Timeout = 120_000)]
-    public async Task ExpiredApprovalsNeverExecute()
-    {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        // Only the expiry scenario uses a shortened TTL. Later deny/withdraw decisions must not race this clock.
-        await using var node = await InProcessNode.Create(seed: transaction => Tasks.SeedPolicy(transaction, policy => policy.Approvals.DefaultTtlMs = 1_500)).StartAsync();
-        await using var human = await node.ChannelAsync(helloAsHuman: true);
-        await using var agent = await node.ChannelAsync(kind: ClientKind.McpAdapter);
-        var late = new QueueServiceCreatePoolRequest { Meta = Tasks.Meta(), Name = "late" };
-        var raised = await agent.Queue.CreatePoolAsync(late, cancellationToken: Ct);
-        Assert.Equal("approval_required", raised.Error?.Code);
-        var expiring = raised.Error!.Details.State.Resource.Id;
-        async Task<Approval> GetAsync()
-        {
-            var response = await human.Approvals.GetApprovalAsync(new ApprovalServiceGetApprovalRequest { Meta = Tasks.Meta(), ApprovalId = expiring },
-                cancellationToken: Ct);
-            Assert.Null(response.Error);
-            return response.Value.Approval;
-        }
-
-        await Tasks.WaitForAsync(() => GetAsync().GetAwaiter().GetResult().State == ApprovalState.Expired, TimeSpan.FromSeconds(20), "the approval to expire");
-        Assert.Equal("expired", (await agent.Queue.CreatePoolAsync(late, cancellationToken: Ct)).Error?.Code);
-        var decision = await human.Approvals.DecideApprovalAsync(new ApprovalServiceDecideApprovalRequest
-        {
-            Meta = Tasks.Meta(),
-            ApprovalId = expiring,
-            Decision = ApprovalDecisionKind.Approve,
-        }, cancellationToken: Ct);
-        Assert.Equal("expired", decision.Error?.Code);
-        var listed = (await agent.Approvals.ListApprovalsAsync(new ApprovalServiceListApprovalsRequest { Meta = Tasks.Meta() }, cancellationToken: Ct)).Value.Approvals;
-        var approval = Assert.Single(listed);
-        Assert.Equal((ApprovalState.Expired, Origin.Agent), (approval.State, approval.Requester.Origin));
-        var pools = (await human.Queue.ListPoolsAsync(new QueueServiceListPoolsRequest { Meta = Tasks.Meta() }, cancellationToken: Ct)).Value.Pools;
-        Assert.DoesNotContain(pools, pool => pool.Name == "late");
-        var audit = node.Runtime.Store.Read(reader => AuditLog.Recent(reader));
-        Assert.Single(audit, entry => entry.Outcome.StartsWith("approval requested", StringComparison.Ordinal));
-        Assert.Contains(audit, entry => entry.Outcome.StartsWith("approval expired", StringComparison.Ordinal));
-        Assert.DoesNotContain(audit, entry => entry.Outcome.StartsWith("executed", StringComparison.Ordinal));
-    }
-
-    /// <summary>
-    /// SM-APPROVAL apart from approval: a denied request is refused to its retry, a withdrawn one too;
-    /// a command ID raised for one request and reused for another is <c>CONFLICT/command_id_reused</c>; only the
-    /// requester or a HUMAN withdraws, only a HUMAN decides; every step is audited, and nothing executed.
-    /// </summary>
-    [Fact(Timeout = 120_000)]
-    public async Task DeniedAndWithdrawnApprovalsNeverExecute()
-    {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        // Denial and withdrawal use the normal policy TTL, independent of the bounded expiry scenario above.
-        await using var node = await InProcessNode.Create().StartAsync();
-        await using var human = await node.ChannelAsync(helloAsHuman: true);
-        await using var script = await node.ChannelAsync();
-        await using var agent = await node.ChannelAsync(kind: ClientKind.McpAdapter);
-        static QueueServiceCreatePoolRequest Pool(string name) => new() { Meta = Tasks.Meta(), Name = name };
-        async Task<ApprovalServiceDecideApprovalResponse> DecideAsync(NodeChannel channel, Id id, ApprovalDecisionKind decision) =>
-            await channel.Approvals.DecideApprovalAsync(new ApprovalServiceDecideApprovalRequest { Meta = Tasks.Meta(), ApprovalId = id, Decision = decision },
-                cancellationToken: Ct);
-
-        // Denied: the AGENT's retry is refused; the pool does not exist.
-        var denied = Pool("denied");
-        var deniedId = (await agent.Queue.CreatePoolAsync(denied, cancellationToken: Ct)).Error!.Details.State.Resource.Id;
-        Assert.Equal("permission_denied", (await DecideAsync(agent, deniedId, ApprovalDecisionKind.Approve)).Error?.Code);
-        Assert.Equal("permission_denied", (await DecideAsync(script, deniedId, ApprovalDecisionKind.Approve)).Error?.Code);
-        var decision = await DecideAsync(human, deniedId, ApprovalDecisionKind.Deny);
-        Assert.Null(decision.Error);
-        Assert.Equal(ApprovalState.Denied, decision.Value.Approval.State);
-
-        // approvals.proto: a second decision returns the first.
-        Assert.Equal(ApprovalState.Denied, (await DecideAsync(human, deniedId, ApprovalDecisionKind.Approve)).Value.Approval.State);
-        var retried = (await agent.Queue.CreatePoolAsync(denied, cancellationToken: Ct)).Error;
-        Assert.Equal("permission_denied", retried?.Code);
-        Assert.Contains("denied", retried!.Details.State.Reason, StringComparison.Ordinal);
-
-        // Withdrawn by its requester (a SCRIPT caller cannot withdraw the AGENT's request; a HUMAN could).
-        var withdrawn = Pool("withdrawn");
-        var withdrawnId = (await agent.Queue.CreatePoolAsync(withdrawn, cancellationToken: Ct)).Error!.Details.State.Resource.Id;
-        Assert.Equal("permission_denied", (await script.Approvals.CancelApprovalAsync(new ApprovalServiceCancelApprovalRequest { Meta = Tasks.Meta(), ApprovalId = withdrawnId },
-            cancellationToken: Ct)).Error?.Code);
-        var cancelled = await agent.Approvals.CancelApprovalAsync(new ApprovalServiceCancelApprovalRequest { Meta = Tasks.Meta(), ApprovalId = withdrawnId }, cancellationToken: Ct);
-        Assert.Null(cancelled.Error);
-        Assert.Equal(ApprovalState.Cancelled, cancelled.Value.Approval.State);
-        Assert.Equal("invalid_state", (await DecideAsync(human, withdrawnId, ApprovalDecisionKind.Approve)).Error?.Code);
-        Assert.Equal("permission_denied", (await agent.Queue.CreatePoolAsync(withdrawn, cancellationToken: Ct)).Error?.Code);
-
-        // A command ID raised for one request and reused with another payload.
-        var reused = new QueueServiceCreatePoolRequest { Meta = withdrawn.Meta, Name = "another" };
-        Assert.Equal("command_id_reused", (await agent.Queue.CreatePoolAsync(reused, cancellationToken: Ct)).Error?.Code);
-
-        // An AGENT sees its own requests; nothing was created.
-        var listed = (await agent.Approvals.ListApprovalsAsync(new ApprovalServiceListApprovalsRequest { Meta = Tasks.Meta() }, cancellationToken: Ct)).Value.Approvals;
-        Assert.Equal(2, listed.Count);
-        Assert.All(listed, approval => Assert.Equal(Origin.Agent, approval.Requester.Origin));
-        Assert.Empty((await script.Approvals.ListApprovalsAsync(new ApprovalServiceListApprovalsRequest { Meta = Tasks.Meta(), States = { ApprovalState.Executed } },
-            cancellationToken: Ct)).Value.Approvals);
-        var pools = (await human.Queue.ListPoolsAsync(new QueueServiceListPoolsRequest { Meta = Tasks.Meta() }, cancellationToken: Ct)).Value.Pools;
-        Assert.DoesNotContain(pools, pool => pool.Name is "denied" or "withdrawn" or "another");
-
-        // R-SEC-002: each request, decision, withdrawal and refused decision is in the audit log.
-        var audit = node.Runtime.Store.Read(reader => AuditLog.Recent(reader));
-        Assert.Equal(2, audit.Count(entry => entry.Outcome.StartsWith("approval requested", StringComparison.Ordinal)));
-        Assert.Contains(audit, entry => entry.Outcome.StartsWith("denied: create pool 'denied'", StringComparison.Ordinal) && entry.Actor.Origin == Origin.Human);
-        Assert.Contains(audit, entry => entry.Outcome.StartsWith("approval withdrawn", StringComparison.Ordinal) && entry.Actor.Origin == Origin.Agent);
-        Assert.Contains(audit, entry => entry.Operation.StartsWith(PermissionMatrix.ApprovalDecide, StringComparison.Ordinal) && entry.Decision == D
-            && entry.Actor.Origin == Origin.Agent);
-        Assert.DoesNotContain(audit, entry => entry.Outcome.StartsWith("executed", StringComparison.Ordinal));
-    }
-
-    /// <summary>
-    /// The approval round trip of policy changes (11 section 1; contracts README section 6): a SCRIPT <c>SetParallelism</c> is captured with its
-    /// command ID; once a HUMAN approves it runs under that ID as the requester, and the retry receives the executed outcome (the revision it
-    /// wrote) without a second revision. Audit: requested, approved, executed.
-    /// </summary>
-    [Fact(Timeout = 120_000)]
-    public async Task AnApprovedPolicyChangeRunsOnceAndItsRetryReceivesTheOutcome()
-    {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        await using var node = await InProcessNode.Create().StartAsync();
-        await using var human = await node.ChannelAsync(helloAsHuman: true);
-        await using var script = await node.ChannelAsync();
-        var request = new QueueServiceSetParallelismRequest { Meta = Tasks.Meta(), Scope = ParallelismScope.Global, Mode = ParallelismMode.Fixed, Fixed = 3 };
-        var raised = (await script.Queue.SetParallelismAsync(request, cancellationToken: Ct)).Error;
-        Assert.Equal("approval_required", raised?.Code);
-        var id = raised!.Details.State.Resource.Id;
-        var pending = (await human.Approvals.GetApprovalAsync(new ApprovalServiceGetApprovalRequest { Meta = Tasks.Meta(), ApprovalId = id }, cancellationToken: Ct)).Value.Approval;
-        Assert.Equal((ApprovalState.Pending, "QueueService.SetParallelism", Origin.Script, RiskClass.Medium), (pending.State, pending.Operation, pending.Requester.Origin, pending.Risk));
-        Assert.Equal("set parallelism global fixed 3", pending.Summary);
-        Assert.Equal(Convert.ToHexStringLower(ArcForges.Node.Store.PayloadDigest.Compute(request)), pending.RequestDigest);
-
-        var decided = (await human.Approvals.DecideApprovalAsync(new ApprovalServiceDecideApprovalRequest
-        {
-            Meta = Tasks.Meta(),
-            ApprovalId = id,
-            Decision = ApprovalDecisionKind.Approve,
-        }, cancellationToken: Ct)).Value.Approval;
-        Assert.Equal(ApprovalState.Executed, decided.State);
-        Assert.Equal(EffectCertainty.Happened, decided.Outcome.Effect);
-        var policy = (await human.Policy.GetPolicyAsync(new PolicyServiceGetPolicyRequest { Meta = Tasks.Meta() }, cancellationToken: Ct)).Value;
-        Assert.Contains(policy.Document.Parallelism, rule => rule.Scope == ParallelismScope.Global && rule.Fixed == 3);
-        var revision = policy.Revision.Revision.Value;
-
-        var retried = await script.Queue.SetParallelismAsync(request, cancellationToken: Ct);
-        Assert.Null(retried.Error);
-        Assert.Equal(revision, retried.Value.PolicyRevision.Value);
-        Assert.Equal(revision, (await human.Policy.GetPolicyAsync(new PolicyServiceGetPolicyRequest { Meta = Tasks.Meta() }, cancellationToken: Ct)).Value.Revision.Revision.Value);
-        var actor = (await human.Policy.ListPolicyRevisionsAsync(new PolicyServiceListPolicyRevisionsRequest { Meta = Tasks.Meta() }, cancellationToken: Ct)).Value.Revisions[0].Actor;
-        Assert.Equal(Origin.Script, actor.Origin);
-
-        var audit = node.Runtime.Store.Read(reader => AuditLog.Recent(reader)).Where(entry => entry.ApprovalId is { } approval
-            && approval.AsSpan().SequenceEqual(id.Value.Span)).ToList();
-        Assert.Contains(audit, entry => entry.Decision == P && entry.Actor.Origin == Origin.Script);
-        Assert.Contains(audit, entry => entry.Outcome.StartsWith("approved", StringComparison.Ordinal) && entry.Actor.Origin == Origin.Human);
-        Assert.Contains(audit, entry => entry.Outcome.StartsWith("done: set parallelism", StringComparison.Ordinal) && entry.Actor.Origin == Origin.Script);
-        Assert.Contains(audit, entry => entry.Outcome == "executed after approval");
-    }
-
-    /// <summary>
-    /// AD-0006 section 4 and 11 section 1: <c>retry_safety</c> and <c>permissions</c> are edited only by HUMAN callers (a change from SCRIPT or
-    /// AGENT is refused outright, never turned into an approval); an AGENT's PURE or IDEMPOTENT assertion is accepted only when
-    /// <c>accept_agent_assertions</c> is true, otherwise the task is UNKNOWN with a warning; a relayed AGENT never gains that allowance
-    /// (AF-CTR-05 decisions B-4). The source is recorded (R-EXE-010).
-    /// </summary>
-    [Fact(Timeout = 120_000)]
-    public async Task RetrySafetyIsHumanEditedAndAgentAssertionsFollowThePolicy()
-    {
-        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
-        await using var node = await InProcessNode.Create().StartAsync();
-        Assert.SkipWhen(node.Runtime.Execution is null, "The node has no execution supervisor.");
-        await using var human = await node.ChannelAsync(helloAsHuman: true);
-        await using var script = await node.ChannelAsync();
-        await using var agent = await node.ChannelAsync(kind: ClientKind.McpAdapter);
-        foreach (var caller in (NodeChannel[])[script, agent])
-        {
-            var rule = await Sched.ChangePolicyAsync(caller, policy => (policy.RetrySafety ??= new RetrySafetyPolicy()).Rules.Add(new RetrySafetyRule
-            {
-                Pattern = "^dotnet build",
-                SideEffect = SideEffectClass.Idempotent,
-            }));
-            Assert.Equal("permission_denied", rule.Error?.Code);
-            Assert.Contains("retry_safety", rule.Error!.Details.State.Reason, StringComparison.Ordinal);
-            Assert.Equal("permission_denied", (await Sched.ChangePolicyAsync(caller, policy => policy.RetrySafety.AcceptAgentAssertions = true)).Error?.Code);
-            var permissions = await Sched.ChangePolicyAsync(caller, policy => policy.Permissions.Add(new PermissionOverride
-            {
-                Operation = PermissionMatrix.ParallelismChange,
-                Origin = Origin.Agent,
-                Decision = A,
-            }));
-            Assert.Equal("permission_denied", permissions.Error?.Code);
-        }
-
-        Assert.Empty((await human.Approvals.ListApprovalsAsync(new ApprovalServiceListApprovalsRequest { Meta = Tasks.Meta() }, cancellationToken: Ct)).Value.Approvals);
-
-        // The original fresh Task assertion classification is preserved at eaaccb8380a2bd265aaad0a67d62c8fab2a8a29a.
-        var store = node.Runtime.Store;
-        var routed = new RoutedCalls(node);
-        var relayedAgent = routed.Relay(Origin.Agent);
-        TaskServiceSubmitTaskRequest Submit(SideEffectClass claim)
-        {
-            var spec = Tasks.Argv(node.Root, "fixture-never-starts");
-            spec.SideEffect = claim;
-            return new TaskServiceSubmitTaskRequest { Meta = Tasks.Meta(), Spec = spec };
-        }
-
-        TaskServiceSubmitTaskResponse Seed(TaskServiceSubmitTaskRequest request, ActorRef owner, SideEffectClass effect, SideEffectSource source) =>
-            store.Write(transaction =>
-            {
-                var task = LegacyTaskHistoryFixture.SeedQueued(transaction, owner);
-                var spec = request.Spec.ToByteArray();
-                transaction.Execute("UPDATE task SET spec = $spec, spec_digest = $digest, side_effect = $effect, side_effect_source = $source WHERE task_id = $id;",
-                    ("$spec", spec), ("$digest", SHA256.HashData(spec)), ("$effect", (int)effect), ("$source", (int)source), ("$id", task.Value.ToByteArray()));
-                var response = new TaskServiceSubmitTaskResponse
-                {
-                    Meta = new ResponseMeta { CorrelationId = request.Meta.CorrelationId },
-                    Value = new TaskServiceSubmitTaskValue
-                    {
-                        TaskId = task,
-                        State = TaskState.Queued,
-                        Receipt = new Receipt { CommandId = request.Meta.CommandId, Effect = EffectCertainty.Happened },
-                    },
-                };
-                if (owner.CenterCaller is not null)
-                {
-                    response.Value.Warnings.Add($"The agent's side-effect class {request.Spec.SideEffect.ToString().ToUpperInvariant()} is not accepted " +
-                        "(retry_safety.accept_agent_assertions is treated as false for a center-routed AGENT); the task is UNKNOWN.");
-                }
-
-                var id = request.Meta.CommandId.Value.Span;
-                Assert.Equal(DedupStatus.Execute, CommandDeduplication.Begin(transaction, id,
-                    "arcforges.node.v1.TaskService/SubmitTask", PayloadDigest.Compute(request), owner.Origin).Status);
-                CommandDeduplication.Complete(transaction, id, response.ToByteArray());
-                RoutedCommandOwnership.Record(transaction, id, owner);
-                return response;
-            }, CommitDurability.Full);
-
-        var historicalAgent = (SideEffectClass[])[SideEffectClass.Pure, SideEffectClass.Idempotent];
-        var relayedHistory = historicalAgent.Select(claim =>
-        {
-            var request = Submit(claim);
-            var actor = new ActorRef { Origin = Origin.Remote, CenterCaller = relayedAgent, RemoteCommandId = request.Meta.CommandId };
-            return (Request: request, Response: Seed(request, actor, SideEffectClass.Unknown, SideEffectSource.Default));
-        }).ToArray();
-        var scriptRequest = Submit(SideEffectClass.Pure);
-        var scriptResponse = Seed(scriptRequest, new ActorRef { Origin = Origin.Script, ClientKind = ClientKind.Cli },
-            SideEffectClass.Pure, SideEffectSource.Caller);
-
-        async Task AssertRetainedPolicyAsync()
-        {
-            var priorReceipts = store.Read(reader => reader.Scalar("SELECT count(*) FROM command_dedup;"));
-            Assert.Equal("local_submission_human_only", (await agent.Tasks.SubmitTaskAsync(Submit(SideEffectClass.Pure), cancellationToken: Ct))
-                .Error?.Details.State.Reason);
-            foreach (var (request, response) in relayedHistory)
-            {
-                var replay = (await routed.SubmitAsync(relayedAgent, request)).Response;
-                Assert.Equal(response, replay);
-                var task = await Tasks.GetAsync(human, response.Value.TaskId);
-                Assert.Equal((SideEffectClass.Unknown, SideEffectSource.Default), (task.SideEffect, task.SideEffectSource));
-                var fresh = (await routed.SubmitAsync(relayedAgent, Submit(request.Spec.SideEffect))).Response;
-                Assert.Equal("legacy_task_outcome_unavailable", fresh?.Error?.Details.State.Reason);
-                Assert.Equal((EffectCertainty.Unknown, RetryMode.Never), (fresh!.Error.Effect, fresh.Error.Retry.Mode));
-            }
-
-            Assert.Equal(scriptResponse, await script.Tasks.SubmitTaskAsync(scriptRequest, cancellationToken: Ct));
-            var local = await Tasks.GetAsync(human, scriptResponse.Value.TaskId);
-            Assert.Equal((SideEffectClass.Pure, SideEffectSource.Caller), (local.SideEffect, local.SideEffectSource));
-            var freshLocal = await script.Tasks.SubmitTaskAsync(Submit(SideEffectClass.Pure), cancellationToken: Ct);
-            Assert.Equal("legacy_task_outcome_unavailable", freshLocal.Error?.Details.State.Reason);
-            Assert.Equal((EffectCertainty.Unknown, RetryMode.Never), (freshLocal.Error!.Effect, freshLocal.Error.Retry.Mode));
-            Assert.Equal(priorReceipts, store.Read(reader => reader.Scalar("SELECT count(*) FROM command_dedup;")));
-            Assert.Equal(3L, store.Read(reader => reader.Scalar("SELECT count(*) FROM task;")));
-            Assert.Equal(0L, store.Read(reader => reader.Scalar("SELECT count(*) FROM attempt;")));
-        }
-
-        await AssertRetainedPolicyAsync();
-        Assert.Null((await Sched.ChangePolicyAsync(human, policy => policy.RetrySafety.AcceptAgentAssertions = true)).Error);
-        await Tasks.WaitForAsync(() => node.Runtime.Execution!.Settings.AcceptAgentAssertions, TimeSpan.FromSeconds(30), "the policy to take effect");
-        await AssertRetainedPolicyAsync();
-
-        // The refusals of the HUMAN-only sections are audited.
-        var audit = node.Runtime.Store.Read(reader => AuditLog.Recent(reader));
-        Assert.Equal(4, audit.Count(entry => entry.Operation.StartsWith(PermissionMatrix.PolicyRetrySafety, StringComparison.Ordinal) && entry.Decision == D));
-        Assert.Equal(2, audit.Count(entry => entry.Operation.StartsWith(PermissionMatrix.PolicyPermissions, StringComparison.Ordinal) && entry.Decision == D));
-    }
-
     /// <summary>
     /// The node's own operations per origin (11 section 1 and node.proto): stopping the node and renaming it are denied to AGENT callers,
-    /// marking notifications read and purging a record are HUMAN-only; each refusal and each privileged action that ran is audited.
+    /// marking notifications read is HUMAN-only; each refusal and each privileged action that ran is audited.
     /// </summary>
     [Fact(Timeout = 120_000)]
     public async Task NodeOperationsFollowTheMatrixAndAreAudited()
@@ -485,48 +156,16 @@ public sealed class PermissionTests
         await using var human = await node.ChannelAsync(helloAsHuman: true);
         await using var script = await node.ChannelAsync();
         await using var agent = await node.ChannelAsync(kind: ClientKind.McpAdapter);
-        Assert.Equal("permission_denied", (await agent.Node.StopNodeAsync(new NodeServiceStopNodeRequest { Meta = Tasks.Meta() }, cancellationToken: Ct)).Error?.Code);
-        Assert.Equal("permission_denied", (await agent.Node.RenameNodeAsync(new NodeServiceRenameNodeRequest { Meta = Tasks.Meta(), Name = "agent's" }, cancellationToken: Ct)).Error?.Code);
-        Assert.Null((await script.Node.RenameNodeAsync(new NodeServiceRenameNodeRequest { Meta = Tasks.Meta(), Name = "script's" }, cancellationToken: Ct)).Error);
+        Assert.Equal("permission_denied", (await agent.Node.StopNodeAsync(new NodeServiceStopNodeRequest { Meta = InProcessNode.Command() }, cancellationToken: Ct)).Error?.Code);
+        Assert.Equal("permission_denied", (await agent.Node.RenameNodeAsync(new NodeServiceRenameNodeRequest { Meta = InProcessNode.Command(), Name = "agent's" }, cancellationToken: Ct)).Error?.Code);
+        Assert.Null((await script.Node.RenameNodeAsync(new NodeServiceRenameNodeRequest { Meta = InProcessNode.Command(), Name = "script's" }, cancellationToken: Ct)).Error);
         var mark = new NodeServiceMarkNotificationsReadRequest { UpTo = ProtoTime.ToInstant(DateTimeOffset.UtcNow) };
         Assert.Equal("permission_denied", (await script.Node.MarkNotificationsReadAsync(mark, cancellationToken: Ct)).Error?.Code);
         Assert.Null((await human.Node.MarkNotificationsReadAsync(mark, cancellationToken: Ct)).Error);
-        var purge = new TaskServicePurgeTaskRecordRequest { Meta = Tasks.Meta(), TaskId = new Id { Value = ByteString.CopyFrom(new byte[16]) } };
-        Assert.Equal("permission_denied", (await script.Tasks.PurgeTaskRecordAsync(purge, cancellationToken: Ct)).Error?.Code);
-        Assert.Equal("not_found", (await human.Tasks.PurgeTaskRecordAsync(purge, cancellationToken: Ct)).Error?.Code);
-        // The old Script adoption gate wrote a refusal audit entry before any dedup row or native effect (eaaccb8380a2bd265aaad0a67d62c8fab2a8a29a).
-        var adoptionOperation = PermissionMatrix.ProcessAdopt + " ResourceService.AdoptProcess";
-        var adoption = new ResourceServiceAdoptProcessRequest
-        {
-            Meta = Tasks.Meta(),
-            Process = new() { Pid = int.MaxValue, StartTime = ProtoTime.ToInstant(DateTimeOffset.UnixEpoch) },
-        };
-        node.Runtime.Store.Write(transaction => AuditLog.Append(transaction, new ActorRef { Origin = Origin.Script, ClientKind = ClientKind.Cli },
-            adoptionOperation, "process", [], D, [], "denied: adopt process 2147483647"), CommitDurability.Full);
-        var explained = await script.Policy.ExplainPermissionAsync(new PolicyServiceExplainPermissionRequest
-        {
-            Meta = Tasks.Meta(),
-            Operation = PermissionMatrix.ProcessAdopt,
-            Origin = Origin.Script,
-        }, cancellationToken: Ct);
-        Assert.Null(explained.Error);
-        Assert.Equal((D, PermissionMatrix.DefaultSource), (explained.Value.Decision, explained.Value.Source));
-        var adoptionResult = await script.Resources.AdoptProcessAsync(adoption, cancellationToken: Ct);
-        Assert.Equal("legacy_adoption_outcome_unavailable", adoptionResult.Error?.Details.State.Reason);
-        Assert.Equal(EffectCertainty.Unknown, adoptionResult.Error!.Effect);
-        Assert.Null(node.Runtime.Store.Read(reader => reader.Scalar("SELECT 1 FROM command_dedup WHERE command_id = $id;",
-            ("$id", adoption.Meta.CommandId.Value.ToByteArray()))));
-
         var audit = node.Runtime.Store.Read(reader => AuditLog.Recent(reader));
         Assert.Contains(audit, entry => entry.Operation == PermissionMatrix.NodeStop + " NodeService.StopNode" && entry.Decision == D && entry.Actor.Origin == Origin.Agent);
         Assert.Contains(audit, entry => entry.Operation == PermissionMatrix.NodeRename + " NodeService.RenameNode" && entry.Decision == D);
         Assert.Contains(audit, entry => entry.Operation == PermissionMatrix.NotificationsMarkRead + " NodeService.MarkNotificationsRead" && entry.Decision == D);
-        Assert.Contains(audit, entry => entry.Operation == PermissionMatrix.TaskPurge + " TaskService.PurgeTaskRecord" && entry.Decision == D);
-        Assert.Contains(audit, entry => entry.Operation == PermissionMatrix.TaskPurge + " TaskService.PurgeTaskRecord" && entry.Decision == A
-            && entry.Outcome.StartsWith("failed (State/not_found)", StringComparison.Ordinal));
-        var historicalAdoption = Assert.Single(audit, entry => entry.Operation == adoptionOperation);
-        Assert.Equal((D, Origin.Script, ClientKind.Cli), (historicalAdoption.Decision, historicalAdoption.Actor.Origin, historicalAdoption.Actor.ClientKind));
-
         // Review round 1: the allowed executions of privileged actions are audited too (RenameNode by SCRIPT, MarkNotificationsRead by HUMAN).
         Assert.Contains(audit, entry => entry.Operation == PermissionMatrix.NodeRename + " NodeService.RenameNode" && entry.Decision == A
             && entry.Actor.Origin == Origin.Script && entry.Outcome == "done: rename the node to 'script's'");
@@ -534,7 +173,7 @@ public sealed class PermissionTests
             && entry.Actor.Origin == Origin.Human && entry.Outcome == "done: mark notifications read up to a time");
 
         // StopNode by a HUMAN runs, audited in its own transaction.
-        Assert.Null((await human.Node.StopNodeAsync(new NodeServiceStopNodeRequest { Meta = Tasks.Meta() }, cancellationToken: Ct)).Error);
+        Assert.Null((await human.Node.StopNodeAsync(new NodeServiceStopNodeRequest { Meta = InProcessNode.Command() }, cancellationToken: Ct)).Error);
         Assert.Equal(0, await node.Exit.WaitAsync(TimeSpan.FromSeconds(30), Ct));
         using var store = ArcForges.Node.Store.NodeStore.Open(new ArcForges.Node.Store.NodeStoreOptions { DataRoot = node.DataRoot, BootIdentity = "audit" });
         Assert.Contains(store.Read(reader => AuditLog.Recent(reader)), entry => entry.Operation == PermissionMatrix.NodeStop + " NodeService.StopNode" && entry.Decision == A
