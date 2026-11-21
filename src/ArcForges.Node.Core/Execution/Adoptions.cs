@@ -87,7 +87,7 @@ public sealed class Adoptions : IDisposable
     }
 
     /// <summary>Re-opens containers of live ADOPTED attempts or records authoritative absence. Unavailable custody leaves the attempt live.</summary>
-    internal async Task RecoverAsync(bool bootChanged)
+    internal async Task RecoverAsync()
     {
         var live = _store.Read(reader =>
         {
@@ -107,7 +107,8 @@ public sealed class Adoptions : IDisposable
             var name = IdText.Format(row.Attempt);
             IAdoptedContainer? container = null;
             string? why = null;
-            if (_execution.OriginalBootEnded(row.Boot, bootChanged))
+            var originalBoot = _execution.OriginalBoot(row.Boot);
+            if (originalBoot == ExecutionSupervisor.LegacyBootProof.EndedOnThisHost)
             {
                 why = "boot_changed: the machine restarted since the process was adopted";
             }
@@ -129,6 +130,11 @@ public sealed class Adoptions : IDisposable
                         new LogField("errorType", exception.GetType().Name),
                         new LogField("error", exception is Win32Exception native ? native.NativeErrorCode : NodeLog.OneLine(exception.Message)));
                     throw new LegacyCustodyUnavailableException("Legacy adoption custody could not be confirmed.", exception);
+                }
+
+                if (container is null && originalBoot != ExecutionSupervisor.LegacyBootProof.Current)
+                {
+                    throw new LegacyCustodyUnavailableException("The original adoption's boot could not be authenticated on this host.");
                 }
 
                 why = ContainerMissing + ": the adoption container " + row.Container + " no longer exists";

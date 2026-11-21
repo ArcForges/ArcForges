@@ -382,8 +382,8 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         var live = _store.Read(TaskRecords.LiveAttempts);
         try
         {
-            await RecoverAttemptsAsync(report, live, cancellationToken).ConfigureAwait(false);
-            await Adoptions.RecoverAsync(report.BootChanged).ConfigureAwait(false);
+            await RecoverAttemptsAsync(live, cancellationToken).ConfigureAwait(false);
+            await Adoptions.RecoverAsync().ConfigureAwait(false);
         }
         catch (LegacyCustodyUnavailableException)
         {
@@ -397,7 +397,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
         Heartbeat.RecoveryDone = true;
     }
 
-    private async Task RecoverAttemptsAsync(RecoveryReport report, List<AttemptRow> live, CancellationToken cancellationToken)
+    private async Task RecoverAttemptsAsync(List<AttemptRow> live, CancellationToken cancellationToken)
     {
         var gapStart = _store.Read(reader => reader.Scalar("SELECT max(at) FROM event_journal WHERE generation < (SELECT journal_generation FROM store_meta);") as long?);
         foreach (var row in live)
@@ -406,7 +406,8 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             var name = IdText.Format(row.AttemptId);
             var files = new AttemptFiles(_dataRoot, name);
             var task = _store.Read(reader => TaskRecords.GetRow(reader, row.TaskId));
-            if (OriginalBootEnded(row.BootIdentity, report.BootChanged))
+            var originalBoot = OriginalBoot(row.BootIdentity);
+            if (originalBoot == LegacyBootProof.EndedOnThisHost)
             {
                 await RecordLostAsync(row, $"boot_changed: boot_id_old={row.BootIdentity}, boot_id_new={_store.Metadata.BootIdentity}", "boot_changed").ConfigureAwait(false);
                 continue;
@@ -443,6 +444,11 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
                 if (custodyError is not null)
                 {
                     throw new LegacyCustodyUnavailableException("Legacy attempt custody could not be confirmed.", custodyError);
+                }
+
+                if (originalBoot != LegacyBootProof.Current)
+                {
+                    throw new LegacyCustodyUnavailableException("The original attempt's boot could not be authenticated on this host.");
                 }
 
                 await RecordLostAsync(row, "container_missing: the attempt's original container no longer exists and no valid exit record was found", "container_missing").ConfigureAwait(false);
@@ -553,17 +559,48 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             ? ExitRecord.Parse(json) : null;
     });
 
-    internal bool OriginalBootEnded(string? recordedBoot, bool previousStoreBootChanged) =>
-        (previousStoreBootChanged || !string.IsNullOrEmpty(recordedBoot))
-        && !string.Equals(recordedBoot, _store.Metadata.BootIdentity, StringComparison.Ordinal);
+    internal enum LegacyBootProof { Unknown, Current, EndedOnThisHost }
+
+    internal LegacyBootProof OriginalBoot(string? recordedBoot)
+    {
+        var currentBoot = _store.Metadata.BootIdentity;
+        if (TryReadWindowsBoot(recordedBoot, out var recordedMachine, out var recordedTime)
+            && TryReadWindowsBoot(currentBoot, out var currentMachine, out var currentTime)
+            && recordedMachine == currentMachine)
+        {
+            return recordedTime == currentTime ? LegacyBootProof.Current : LegacyBootProof.EndedOnThisHost;
+        }
+
+        // Linux records only the boot UUID. Different UUIDs cannot establish that the original and current host are the same.
+        return recordedBoot is { Length: 42 } && string.Equals(recordedBoot, currentBoot, StringComparison.Ordinal)
+            && recordedBoot.StartsWith("linux:", StringComparison.Ordinal)
+            && Guid.TryParseExact(recordedBoot.AsSpan(6), "D", out var linuxBoot) && linuxBoot != Guid.Empty
+            ? LegacyBootProof.Current : LegacyBootProof.Unknown;
+    }
+
+    private static bool TryReadWindowsBoot(string? value, out Guid machine, out long time)
+    {
+        machine = Guid.Empty;
+        time = 0;
+        if (value is null || !value.StartsWith("windows:", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var identity = value.AsSpan(8);
+        var separator = identity.IndexOf(':');
+        return separator == 36 && Guid.TryParseExact(identity[..separator], "D", out machine) && machine != Guid.Empty
+            && long.TryParse(identity[(separator + 1)..], NumberStyles.None, CultureInfo.InvariantCulture, out time)
+            && time > 0 && time <= DateTimeOffset.MaxValue.ToFileTime() / TimeSpan.TicksPerSecond;
+    }
 
     /// <summary>
     /// The exit acknowledgement follows the record's commit, so a node that stopped between the two leaves a holder waiting on an
-    /// attempt the store already records as finished. Retry only for a finished local attempt with its original same-boot exit record.
+    /// attempt the store already records as finished. Retry only when the original same-boot exit matches the committed result.
     /// </summary>
     private void AcknowledgeRecordedAttempts(List<AttemptRow> live)
     {
-        if (Platform is null)
+        if (Platform is null || OriginalBoot(_store.Metadata.BootIdentity) != LegacyBootProof.Current)
         {
             return;
         }
@@ -580,17 +617,24 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             var name = Path.GetFileName(directory);
             if (liveNames.Contains(name) || !IdText.TryParse(name, out var attemptId)
                 || !string.Equals(name, IdText.Format(attemptId), StringComparison.Ordinal)
-                || ReadRecoveryExit(new AttemptFiles(_dataRoot, name)) is null)
+                || ReadRecoveryExit(new AttemptFiles(_dataRoot, name)) is not { } exit)
             {
                 continue;
             }
 
+            var signalled = exit.ExitCodeKind is "killed" or "dumped";
+            var recordedAt = StoreTime.ToMicroseconds(DateTimeOffset.Parse(exit.RecordedAt, CultureInfo.InvariantCulture));
             var finishedHere = _store.Read(reader => reader.Scalar("""
                 SELECT 1 FROM attempt
                 WHERE attempt_id = $attempt AND state = 9 AND kind <> 4
                   AND executor_node_id = (SELECT node_id FROM store_meta WHERE singleton = 1)
-                  AND boot_identity = (SELECT boot_identity FROM store_meta WHERE singleton = 1);
-                """, ("$attempt", attemptId)) is not null);
+                  AND boot_identity = (SELECT boot_identity FROM store_meta WHERE singleton = 1)
+                  AND effect IN ($didNotHappen, $happened) AND termination_reason NOT IN ($lost, $incomplete)
+                  AND exit_code IS $exit AND signal IS $signal AND core_dumped IS $dumped AND finished_at >= $recordedAt;
+                """, ("$attempt", attemptId), ("$didNotHappen", (int)EffectCertainty.DidNotHappen), ("$happened", (int)EffectCertainty.Happened),
+                ("$lost", (int)TerminationReason.Lost), ("$incomplete", (int)TerminationReason.TerminationIncomplete),
+                ("$exit", signalled ? null : exit.ExitStatus), ("$signal", signalled ? exit.ExitStatus : null),
+                ("$dumped", signalled ? (exit.ExitCodeKind == "dumped" ? 1 : 0) : null), ("$recordedAt", recordedAt)) is not null);
             if (!finishedHere)
             {
                 continue;
