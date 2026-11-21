@@ -168,6 +168,37 @@ public sealed class UnitTests
     }
 
     [Fact]
+    public void TheGuardReadsOnlyThePolicyThatNamesItsAttemptDirectory()
+    {
+        const string attempt = "00000000000000000000000001";
+        var root = Directory.CreateTempSubdirectory("arcforges-guard-identity-");
+        var logs = root.CreateSubdirectory("logs");
+        var directory = logs.CreateSubdirectory(attempt);
+        var guardPath = Path.Combine(directory.FullName, AttemptFiles.Guard);
+        try
+        {
+            File.WriteAllText(guardPath, """{"schema":1}""");
+            Assert.Null(GuardSpec.TryReadForAttempt(guardPath, directory.Name));
+
+            var spec = new GuardSpec { AttemptId = "00000000000000000000000002", MaxOutputBytes = 1024 };
+            File.WriteAllText(guardPath, spec.ToJson());
+            Assert.Null(GuardSpec.TryReadForAttempt(guardPath, directory.Name));
+
+            spec.AttemptId = attempt;
+            File.WriteAllText(guardPath, spec.ToJson());
+            var accepted = Assert.IsType<GuardSpec>(GuardSpec.TryReadForAttempt(guardPath, directory.Name));
+            Assert.Equal(spec.ToJson(), accepted.ToJson());
+        }
+        finally
+        {
+            File.Delete(guardPath);
+            directory.Delete();
+            logs.Delete();
+            root.Delete();
+        }
+    }
+
+    [Fact]
     public void TheStepsAndStopFilesRoundTripAndOldRecordsStillParse()
     {
         var steps = new StepsFile

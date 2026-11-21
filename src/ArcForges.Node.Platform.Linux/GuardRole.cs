@@ -151,7 +151,7 @@ public static partial class GuardRole
 
                 if (!attempts.ContainsKey(name))
                 {
-                    if (GuardSpec.TryRead(Path.Combine(directory, AttemptFiles.Guard)) is not { } spec)
+                    if (GuardSpec.TryReadForAttempt(Path.Combine(directory, AttemptFiles.Guard), name) is not { } spec)
                     {
                         continue;
                     }
@@ -247,11 +247,6 @@ public static partial class GuardRole
                 state.ControlGroup.Length > 0 ? ProcFs.CgroupDirectory(state.ControlGroup) : null, (int)state.MainPid,
                 (pid, start, at) =>
                 {
-                    if (spec.AttemptId != attempt.Files.AttemptName)
-                    {
-                        return;
-                    }
-
                     rootSignalObserved = true;
                     UnitControl.RecordRootSignal(attempt.Files.GuardRootSignalPath, new LinuxRootSignalRecord
                     {
@@ -263,7 +258,7 @@ public static partial class GuardRole
                         Signal = Libc.SigKill,
                         At = at,
                     });
-                }, () => rootSignalFallbackAccepted = spec.AttemptId == attempt.Files.AttemptName);
+                }, () => rootSignalFallbackAccepted = true);
             attempt.Stopped = true;
             var kind = rootSignalObserved ? GuardEventKinds.Terminate : GuardEventKinds.TerminateUnconfirmed;
             Append(attempt, kind, "OUTPUT_LIMIT", total, watch, clock, rootSignalObserved,
