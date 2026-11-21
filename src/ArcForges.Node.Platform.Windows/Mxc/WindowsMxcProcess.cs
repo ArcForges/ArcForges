@@ -197,9 +197,9 @@ public static partial class WindowsMxcProcess
             }
             else if (standard is not null)
             {
-                duplicate[0] = ProcessLauncher.InheritableCopy(standard.Input);
-                duplicate[1] = ProcessLauncher.InheritableCopy(standard.Output);
-                duplicate[2] = ProcessLauncher.InheritableCopy(standard.Error);
+                duplicate[0] = Native.DuplicateInheritableHandle(standard.Input);
+                duplicate[1] = Native.DuplicateInheritableHandle(standard.Output);
+                duplicate[2] = Native.DuplicateInheritableHandle(standard.Error);
                 AddAttribute(attributes, Native.ProcThreadAttributeHandleList, duplicate, sizeof(nint) * 3);
                 startup.StartupInfo.Flags = Native.StartfUseStdHandles;
                 startup.StartupInfo.StdInput = duplicate[0];

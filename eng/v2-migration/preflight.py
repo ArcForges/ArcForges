@@ -9,16 +9,19 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import sqlite3
 import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = ROOT / "src/ArcForges.Node.Store/Schema"
-SUPPORTED = 15
+LEGACY_VERSION = 15
+LATEST_VERSION = 19
 MAX_SNAPSHOT_BYTES = 512 * 1024 * 1024
 COUNTS = {
     "unsettled_commands": "SELECT count(*) FROM command_dedup WHERE outcome IS NULL",
+    "nonterminal_tasks": "SELECT count(*) FROM task WHERE state IN (1, 2, 3, 4, 5, 6)",
     "live_attempt_records": "SELECT count(*) FROM attempt WHERE state BETWEEN 1 AND 8 OR leftover_count > 0",
     "unsettled_file_journals": "SELECT count(*) FROM file_operation_journal WHERE phase <> 2 OR held = 1",
     "live_file_workers": "SELECT count(*) FROM file_effect_worker WHERE ended = 0",
@@ -130,26 +133,57 @@ def source_identity() -> dict:
 
 def migration_sources() -> list[dict]:
     steps = json.loads((SCHEMA / "schema-history.json").read_text(encoding="utf-8"))["steps"]
-    if [step["version"] for step in steps] != list(range(1, SUPPORTED + 1)):
+    if [step["version"] for step in steps] != list(range(1, LATEST_VERSION + 1)):
         raise ValueError("source_migration_sequence_invalid")
     for step in steps:
-        content = (SCHEMA / step["file"]).read_text(encoding="utf-8").encode("utf-8")
+        content = (SCHEMA / step["file"]).read_bytes()
         if hashlib.sha256(content).hexdigest() != step["sha256"]:
             raise ValueError("source_migration_checksum_mismatch")
+        step["sql"] = content.decode("utf-8")
     return steps
 
 
 def schema_objects(connection: sqlite3.Connection) -> dict:
-    return {(kind, name): " ".join(sql.split()) for kind, name, sql in connection.execute(
-        "SELECT type, name, sql FROM sqlite_schema WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'"
+    return {(kind, name): sql for kind, name, sql in connection.execute(
+        "SELECT type, name, sql FROM sqlite_schema WHERE sql IS NOT NULL AND name NOT GLOB 'sqlite_*'"
     )}
 
 
 def expected_schema(steps: list[dict]) -> dict:
     with contextlib.closing(sqlite3.connect(":memory:")) as connection:
         for step in steps:
-            connection.executescript((SCHEMA / step["file"]).read_text(encoding="utf-8"))
+            connection.executescript(step["sql"])
         return schema_objects(connection)
+
+
+def expansion_checkpoint_version(connection: sqlite3.Connection, version: int, reader: int, source_sha256: str) -> int | None:
+    row = connection.execute("""
+        SELECT s.version, s.min_reader, m.source_schema, m.backup_identity, m.unresolved_count, m.cohort, m.receipt_sha256
+        FROM schema_version s JOIN migration_checkpoint m
+            ON m.migration_id = 'AFV2-DATA-01/schema16' AND m.target_schema = 16
+            AND m.state = 'EXPANDED_LEGACY_RECONCILIATION_PRESERVED'
+            AND m.cohort = s.cohort AND m.receipt_sha256 = s.migration_receipt
+        WHERE s.singleton = 1
+        """).fetchone()
+    if row is None:
+        return None
+    mirror, mirror_reader, source, backup, unresolved, cohort, receipt = row
+    # Applied step 19 does not update this mirror on upgrade. Fresh creation inserts
+    # the mirror after the full chain, so only those stores record 19 in both tables.
+    if version == 19:
+        if (mirror, mirror_reader) != (18, 18) and not (source == 0 and (mirror, mirror_reader) == (19, 19)):
+            return None
+    elif (mirror, mirror_reader) != (version, reader):
+        return None
+    if source == 0:
+        if backup != "fresh:no-predecessor" or unresolved != 0:
+            return None
+    elif not 1 <= source <= LEGACY_VERSION or re.fullmatch(r"[0-9a-f]{64}", backup) is None:
+        return None
+    # Match NodeStore.RecordV2Migration's step-16 receipt. Internal consistency does
+    # not establish the identity of the installed binary or an independent backup.
+    expected = hashlib.sha256(f"AFV2-DATA-01|{source}|16|{source_sha256}|{backup}|{unresolved}|{cohort}".encode("utf-8")).hexdigest()
+    return mirror if receipt == expected else None
 
 
 def inventory(database: Path, binary: Path | None = None) -> dict:
@@ -221,21 +255,30 @@ def inventory(database: Path, binary: Path | None = None) -> dict:
                 return report
             version, reader, clean = rows[0]
             report["database"].update(schema_version=version, min_reader_version=reader, clean_shutdown_recorded=bool(clean))
-            if version > SUPPORTED or reader > SUPPORTED:
+            if version > LATEST_VERSION or reader > LATEST_VERSION:
                 report["database"]["classification"] = "newer"
                 blockers.append("newer_store_refused")
                 return report
-            if version != SUPPORTED or reader != SUPPORTED:
+            if version < LEGACY_VERSION or reader != steps[version - 1]["minReaderVersion"]:
                 blockers.append("unsupported_store_version")
                 return report
-            if schema_objects(connection) != expected_schema(steps):
-                blockers.append("schema_objects_differ_from_released_node15")
+            if schema_objects(connection) != expected_schema(steps[:version]):
+                blockers.append("schema_objects_differ_from_released_node15" if version == LEGACY_VERSION
+                                else "schema_objects_differ_from_released_node_v2_prefix")
                 return report
-            report["database"]["classification"] = "node15"
+            if version == LEGACY_VERSION:
+                report["database"]["classification"] = "node15"
+                report["database"]["applied_migration_checksum_ledger"] = "not_available_in_node15"
+            else:
+                mirror = expansion_checkpoint_version(connection, version, reader, steps[LEGACY_VERSION]["sha256"])
+                if mirror is None:
+                    blockers.append("inconsistent_v2_expansion_checkpoint")
+                    return report
+                report["database"].update(classification="node_v2_expanded", expansion_metadata_schema_version=mirror,
+                                          expansion_checkpoint_matches=True,
+                                          applied_migration_checksum_ledger="step16_checkpoint_only")
+            report["source"]["migrations"] = report["source"]["migrations"][:version]
             report["database"]["schema_objects_match"] = True
-            # Source checksums prove the source baseline; Node15 has no per-installation
-            # migration checksum ledger. The schema-object comparison is reported separately.
-            report["database"]["applied_migration_checksum_ledger"] = "not_available_in_node15"
             if not clean:
                 blockers.append("node_running_or_unclean_shutdown")
             if connection.execute("PRAGMA foreign_key_check").fetchall():
