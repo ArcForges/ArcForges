@@ -17,6 +17,7 @@ public sealed class TestModeSecretStoreTests
         Assert.Null(Environment.GetEnvironmentVariable(OsSecretStoreGuard.OptInVariable));
         Assert.False(NodeSecretStores.UsesOsSecretStore(testMode: true, optIn: null));
         await using var node = TestNode.Create();
+        MxcRunServiceTests.PrepareDataRoot(node.DataRoot);
         var secrets = new TestDataRootSecretStore(node.DataRoot);
         string? key = null;
         try
