@@ -4,6 +4,7 @@ using System.Globalization;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
+using ArcForges.Node.Api;
 using ArcForges.Node.Core.Events;
 using ArcForges.Node.Core.Execution;
 using ArcForges.Node.Core.Platform;
@@ -15,6 +16,9 @@ namespace ArcForges.Node.Core.Tests;
 /// <summary>Exchanges stored process identities with a simulated platform during legacy Stop recovery.</summary>
 public sealed class EscapedTerminationTests
 {
+    private const string CurrentBoot = "windows:4e7af21b-2fb7-4e3f-b82e-d40ffdefa9f0:200";
+    private const string EarlierBoot = "windows:4e7af21b-2fb7-4e3f-b82e-d40ffdefa9f0:100";
+
     [Fact(Timeout = 120_000)]
     public async Task ARecoveredStopUsesRecordedProcessBirthAndLeavesNaturalExitAlone()
     {
@@ -81,6 +85,108 @@ public sealed class EscapedTerminationTests
         Assert.DoesNotContain("stale-fixture", stopped.Result.Detail, StringComparison.Ordinal);
         Assert.Equal([(exactPid, recordedBirth, ProcessTermination.Terminated), (reusedPid, recordedBirth, ProcessTermination.Gone)],
             platform.Observations.OrderBy(item => item.Pid).ToArray());
+    }
+
+    [Theory(Timeout = 60_000)]
+    [InlineData(CurrentBoot, true)]
+    [InlineData(EarlierBoot, true)]
+    [InlineData("windows:unknown:100", true)]
+    [InlineData(null, true)]
+    [InlineData(CurrentBoot, false)]
+    public async Task ExplicitTerminationRequiresTheRecordedProcessesOriginalLocalBoot(string? recordedBoot, bool localExecutor)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        ct.ThrowIfCancellationRequested();
+        await using var node = InProcessNode.Create();
+        var (_, attempt) = LegacyTaskHistoryFixture.Seed(node, AttemptState.Finished);
+        var attemptId = attempt.Value.ToByteArray();
+        const int pid = 104;
+        const string image = "retained-process-fixture";
+        var birth = DateTimeOffset.UnixEpoch.AddDays(1);
+        using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = node.DataRoot, BootIdentity = CurrentBoot, Clock = node.Clock });
+        var executor = localExecutor ? store.Metadata.NodeId.ToArray() : CommandIds.New().Value.ToByteArray();
+        store.Write(transaction =>
+        {
+            Assert.Equal(1, transaction.Execute("UPDATE attempt SET boot_identity = $boot, executor_node_id = $executor WHERE attempt_id = $id;",
+                ("$boot", recordedBoot), ("$executor", executor), ("$id", attemptId)));
+            RecordProcess(transaction, attempt, pid, birth, image);
+        }, CommitDurability.Full);
+
+        using var platform = new ObservedTerminationPlatform(new Dictionary<int, DateTimeOffset> { [pid] = birth });
+        using var log = new NodeLog(Path.Combine(node.DataRoot, "logs", "node"), LogLevel.Info, node.Clock);
+        using var heartbeat = new NodeHeartbeatWriter(node.DataRoot, log, node.Clock);
+        var journal = EventJournal.Open(store);
+        var hub = new StreamHub();
+        await using var processor = new CommandProcessor(store, journal, hub);
+        await using var execution = new ExecutionSupervisor(new ExecutionOptions
+        {
+            Store = store,
+            Processor = processor,
+            Log = log,
+            Clock = node.Clock,
+            DataRoot = node.DataRoot,
+            Platform = platform,
+            Heartbeat = heartbeat,
+        });
+        using var runtime = new NodeRuntime(store, journal, hub, processor, log,
+            new NodeSettingsManager(node.ConfigPath, node.DataRoot, log), node.DataRoot, "offline-termination-fixture", node.Clock,
+            new RecoveryReport(true, false, null, store.Opening), new CapabilityReport())
+        { Execution = execution };
+        await runtime.TransitionAsync(NodeLifecycleState.Recovering, "fixture").WaitAsync(ct);
+        await runtime.TransitionAsync(NodeLifecycleState.Ready, "fixture").WaitAsync(ct);
+
+        var handler = new ResourceServiceHandler(runtime, new ClientSessions());
+        var human = new Caller(Origin.Human, ClientKind.Cli, null);
+        var request = new ResourceServiceTerminateProcessRequest
+        {
+            Meta = Tasks.Meta(),
+            Process = new() { Pid = pid, StartTime = ProtoTime.ToInstant(birth) },
+        };
+        var result = await handler.TerminateProcess(request, human).WaitAsync(ct);
+        if (localExecutor && recordedBoot == CurrentBoot)
+        {
+            Assert.Null(result.Error);
+            Assert.Equal(request.Meta.CommandId, result.Value.Receipt.CommandId);
+            Assert.Equal(EffectCertainty.Happened, result.Value.Receipt.Effect);
+            Assert.Equal((pid, birth, ProcessTermination.Terminated), Assert.Single(platform.Observations));
+
+            // An exact historical success remains replayable after the recorded boot can no longer authorize an effect.
+            store.Write(transaction => transaction.Execute("UPDATE attempt SET boot_identity = $boot WHERE attempt_id = $id;",
+                ("$boot", EarlierBoot), ("$id", attemptId)), CommitDurability.Full);
+            recordedBoot = EarlierBoot;
+            Assert.Equal(result, await handler.TerminateProcess(request.Clone(), human).WaitAsync(ct));
+            var changed = request.Clone();
+            changed.Reason = "a different request under the same command ID";
+            var refused = await handler.TerminateProcess(changed, human).WaitAsync(ct);
+            Assert.Equal(("not_found", EffectCertainty.DidNotHappen), (refused.Error?.Code, refused.Error?.Effect));
+            Assert.Equal((pid, birth, ProcessTermination.Terminated), Assert.Single(platform.Observations));
+        }
+        else
+        {
+            Assert.Equal(("not_found", EffectCertainty.DidNotHappen), (result.Error?.Code, result.Error?.Effect));
+            Assert.Null(result.Value);
+            Assert.Empty(platform.Observations);
+            Assert.Null(store.Read(reader => reader.Scalar("SELECT 1 FROM command_dedup WHERE command_id = $id;",
+                ("$id", request.Meta.CommandId.Value.ToByteArray()))));
+        }
+
+        store.Read(reader =>
+        {
+            using var command = reader.CreateCommand("""
+                SELECT owner.boot_identity, owner.executor_node_id, process.pid, process.start_at, process.executable, process.label
+                FROM process_record AS process JOIN attempt AS owner ON owner.attempt_id = process.attempt_id
+                WHERE process.attempt_id = $id;
+                """);
+            command.Parameters.AddWithValue("$id", attemptId);
+            using var rows = command.ExecuteReader();
+            Assert.True(rows.Read());
+            Assert.Equal(recordedBoot, rows.IsDBNull(0) ? null : rows.GetString(0));
+            Assert.Equal(executor, (byte[])rows.GetValue(1));
+            Assert.Equal((pid, StoreTime.ToMicroseconds(birth), image, (int)ProcessLabel.Escaped),
+                (rows.GetInt32(2), rows.GetInt64(3), rows.GetString(4), rows.GetInt32(5)));
+            Assert.False(rows.Read());
+            return 0;
+        });
     }
 
     private static void WriteExit(InProcessNode node, Id attempt)
