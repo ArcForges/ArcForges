@@ -53,6 +53,8 @@ def paired_cpu_workload(root, work, start, inspect, follow, direct):
             "sandboxed": {"wallSeconds": sandbox_seconds, "payload": sandbox["measured"]},
             "observedPeakWorkingSetDeltaBytes": sandbox_peak - direct_peak,
             "observedWallDeltaSeconds": sandbox_seconds - reference_seconds,
+            "wallBoundaries": {"direct": "Direct TestLoad process start through exit.",
+                               "sandboxed": "Managed CLI Start through output drain and final Run inspection. Includes setup, transport and verified native cleanup."},
             "scope": "One paired real workload. Working set is the payload's native peak, not aggregate MXC or OS memory."}
 
 
@@ -98,13 +100,17 @@ def slow_output(work, start, inspect, client):
             return False
 
     wait_until(lambda: marked(b"started"), "Slow output workload did not enter its private fixture")
-    viewer = client(False, "run", "logs", run_id, "--follow", "--stream", "stdout",
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    diagnostic_path = work / "slow-observer.stderr"
+    with diagnostic_path.open("xb") as diagnostic:
+        viewer = client(False, "run", "logs", run_id, "--follow", "--stream", "stdout",
+                        stdout=subprocess.PIPE, stderr=diagnostic)
     anchor = b"CORE03 slow viewer \n"
     first = queue.Queue(maxsize=1)
     reader = threading.Thread(target=lambda: first.put(viewer.stdout.read(len(anchor))), daemon=True)
-    reader.start()
+    reader_started = False
     try:
+        reader.start()
+        reader_started = True
         try:
             require(first.get(timeout=10) == anchor, "Slow output observer did not receive the original anchor")
         except queue.Empty as error:
@@ -118,11 +124,21 @@ def slow_output(work, start, inspect, client):
         wait_until(lambda: inspect(run_id).get("exit", {}).get("groupEmptyVerified") is True,
                    "Native Run did not confirm empty while stdout was paused", 8)
         paused = time.monotonic() - paused
-        output, errors = viewer.communicate(timeout=20)
+        output, _ = viewer.communicate(timeout=20)
         require(viewer.returncode == 0, "Slow output observer did not drain its retained stream")
     finally:
-        stop_client(viewer)
+        try:
+            stop_client(viewer)
+        finally:
+            # After the owned writer exits its pipe releases the blocking anchor read.
+            if reader_started:
+                reader.join(timeout=5)
+                require(not reader.is_alive(), "Owned slow-reader anchor did not exit after pipe cancellation")
+            viewer.stdout.close()
 
+    with diagnostic_path.open("rb") as diagnostic:
+        errors = diagnostic.read(65_537)
+    require(len(errors) <= 65_536, "Slow reader diagnostic exceeded the measurement bound")
     gaps = []
     gap_diagnostic = (rb"output GAP \(stdout, (slow_consumer|retention)\)\. Requested offset (\d+)\. "
                       rb"First retained offset (\d+)\.")
