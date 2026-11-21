@@ -21,6 +21,7 @@ internal sealed partial class SandboxManager : IDisposable
     private readonly string _nodeEpoch;
     private readonly string _mxcInstallationRoot;
     private readonly SandboxPrivateRoots _roots;
+    private readonly ISandboxDeletionEffects _deletionEffects;
     private readonly SandboxRunSecrets _runSecrets;
     private readonly SandboxProtectedEndpoint? _protectedEndpoint;
     private readonly Lazy<DurableCommandStore> _receipts;
@@ -29,7 +30,8 @@ internal sealed partial class SandboxManager : IDisposable
 
     internal SandboxManager(NodeStore store, string dataRoot, string ownerId, NodeSecretStore secrets,
         TimeProvider clock, string? nodeEpoch = null, string? mxcInstallationRoot = null,
-        SandboxProtectedEndpoint? protectedEndpoint = null, LinuxSandboxDeletionAuthority? linuxDeletionAuthority = null)
+        SandboxProtectedEndpoint? protectedEndpoint = null, LinuxSandboxDeletionAuthority? linuxDeletionAuthority = null,
+        ISandboxDeletionEffects? deletionEffects = null)
     {
         _store = store;
         _dataRoot = dataRoot;
@@ -38,6 +40,7 @@ internal sealed partial class SandboxManager : IDisposable
         _mxcInstallationRoot = mxcInstallationRoot ?? Path.Combine(AppContext.BaseDirectory, "mxc");
         OwnerId = ownerId;
         _roots = new(dataRoot, linuxDeletionAuthority);
+        _deletionEffects = deletionEffects ?? _roots;
         _runSecrets = new SandboxRunSecrets(secrets, dataRoot, ownerId);
         _protectedEndpoint = protectedEndpoint;
         _receipts = new(() => OpenReceipts(secrets));

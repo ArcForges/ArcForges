@@ -50,6 +50,7 @@ internal sealed class SandboxPrivateRootLease(WorkspacePath dataRoot, WorkspaceP
 
 /// <summary>Creates and reopens private Sandbox data without using a display name or accepting a preexisting root.</summary>
 internal sealed class SandboxPrivateRoots(string dataRoot, LinuxSandboxDeletionAuthority? linuxDeletionAuthority = null)
+    : ISandboxDeletionEffects
 {
     private const string ParentName = "sandboxes";
     internal const string DeletionQuarantineName = "deletion-quarantine";
@@ -57,7 +58,19 @@ internal sealed class SandboxPrivateRoots(string dataRoot, LinuxSandboxDeletionA
     internal static IReadOnlyList<string> OwnedDataDirectoryNames { get; } = Array.AsReadOnly(WritableNames);
     private static readonly string[] ProtectedDirectories = ["store", "control", "credentials"];
 
-    internal void RequireDeletionPlatform(SandboxPrivateRootLease held, string name)
+    public void RequireFreshDeletion(string sandboxId, string originalIdentity)
+    {
+        using var held = Inspect(sandboxId, originalIdentity);
+        RequireDeletionPlatform(held, sandboxId);
+    }
+
+    public void RequireDeletionContinuation(string sandboxId, string originalIdentity, string deletionId, string? quarantineIdentity)
+    {
+        using var held = InspectDeletion(sandboxId, originalIdentity, deletionId, quarantineIdentity);
+        RequireDeletionPlatform(held, quarantineIdentity is null ? sandboxId : deletionId);
+    }
+
+    private void RequireDeletionPlatform(SandboxPrivateRootLease held, string name)
     {
         if (OperatingSystem.IsWindows())
         {
@@ -327,7 +340,7 @@ internal sealed class SandboxPrivateRoots(string dataRoot, LinuxSandboxDeletionA
         }
     }
 
-    internal string QuarantineDeletion(string sandboxId, string originalIdentity, string deletionId, Action applied,
+    public string QuarantineDeletion(string sandboxId, string originalIdentity, string deletionId, Action applied,
         CancellationToken cancellationToken)
     {
         if (!OperatingSystem.IsWindows() && !OperatingSystem.IsLinux())
@@ -364,7 +377,7 @@ internal sealed class SandboxPrivateRoots(string dataRoot, LinuxSandboxDeletionA
         return Identity(deletionId, ReadMarker(sandboxId, originalIdentity), original.OwnedAnchor, quarantine, moved);
     }
 
-    internal string ObserveQuarantinedDeletion(string sandboxId, string originalIdentity, string deletionId)
+    public string ObserveQuarantinedDeletion(string sandboxId, string originalIdentity, string deletionId)
     {
         var marker = ReadMarker(sandboxId, originalIdentity);
         using var anchor = OpenDataRoot(requireControl: true);
@@ -394,7 +407,7 @@ internal sealed class SandboxPrivateRoots(string dataRoot, LinuxSandboxDeletionA
         return Identity(deletionId, marker, anchor, quarantine, root);
     }
 
-    internal void VerifyRecordedRemoval(string sandboxId, string originalIdentity, string deletionId, string quarantineIdentity)
+    public void VerifyRecordedRemoval(string sandboxId, string originalIdentity, string deletionId, string quarantineIdentity)
     {
         var marker = ReadMarker(sandboxId, originalIdentity);
         if (ReadMarker(deletionId, quarantineIdentity) != marker)
@@ -421,7 +434,7 @@ internal sealed class SandboxPrivateRoots(string dataRoot, LinuxSandboxDeletionA
         }
     }
 
-    internal SandboxRemovalBatchResult RemoveDeletionBatch(string sandboxId, string originalIdentity, string deletionId,
+    public SandboxRemovalBatchResult RemoveDeletionBatch(string sandboxId, string originalIdentity, string deletionId,
         string quarantineIdentity, int maximumEntries, Action applied, CancellationToken cancellationToken)
     {
         if (!OperatingSystem.IsWindows() && !OperatingSystem.IsLinux())

@@ -84,6 +84,9 @@ dedicated service account and fresh ext4 storage.
 
 ### Linux protected storage
 
+This development profile is awaiting installed native qualification. Use a
+disposable development instance while the protected Linux qualification is open.
+
 The host administrator reserves a persistent, locked, non-login UID for one
 Node. Install the fixed Node and CLI in a root-controlled location. Protect the
 service configuration and native systemd user manager from ordinary accounts.

@@ -48,11 +48,7 @@ internal sealed partial class SandboxManager
             return DeleteError(meta, Error(meta, ErrorCategory.State, "managed_use", "sandbox_managed_use"));
         }
 
-        using (var held = _roots.Inspect(sandboxId, row.RootIdentity))
-        {
-            _roots.RequireDeletionPlatform(held, sandboxId);
-        }
-
+        _deletionEffects.RequireFreshDeletion(sandboxId, row.RootIdentity);
         cancellationToken.ThrowIfCancellationRequested();
         var command = ToHex(meta.CommandId);
         var detached = DetachDeletionGrants(row.Config);
@@ -89,14 +85,13 @@ internal sealed partial class SandboxManager
     {
         if (journal is { RemovalVerified: true, QuarantineIdentity: { } removed })
         {
-            _roots.VerifyRecordedRemoval(row.SandboxId, journal.RootIdentity, journal.DeletionId, removed);
+            _deletionEffects.VerifyRecordedRemoval(row.SandboxId, journal.RootIdentity, journal.DeletionId, removed);
             return;
         }
 
         try
         {
-            using var held = _roots.InspectDeletion(row.SandboxId, journal.RootIdentity, journal.DeletionId, journal.QuarantineIdentity);
-            _roots.RequireDeletionPlatform(held, journal.QuarantineIdentity is null ? row.SandboxId : journal.DeletionId);
+            _deletionEffects.RequireDeletionContinuation(row.SandboxId, journal.RootIdentity, journal.DeletionId, journal.QuarantineIdentity);
         }
         catch (SandboxPrivateRootException failure) when (journal.QuarantineIdentity is null &&
             (IsMissingDeletionSource(failure) || failure.Reason == "deletion_quarantine_location_occupied"))
@@ -104,7 +99,7 @@ internal sealed partial class SandboxManager
             // A prior attempt may have moved the exact root before the quarantine identity was committed.
             try
             {
-                _ = _roots.ObserveQuarantinedDeletion(row.SandboxId, journal.RootIdentity, journal.DeletionId);
+                _ = _deletionEffects.ObserveQuarantinedDeletion(row.SandboxId, journal.RootIdentity, journal.DeletionId);
             }
             catch (WorkspacePathException missing) when (IsMissingDeletionSource(missing))
             {

@@ -66,7 +66,7 @@ internal sealed partial class SandboxManager
             if (work.Journal.RemovalVerified && quarantine is not null)
             {
                 phase = "verify_removal";
-                _roots.VerifyRecordedRemoval(sandboxId, work.Journal.RootIdentity, work.Journal.DeletionId, quarantine);
+                _deletionEffects.VerifyRecordedRemoval(sandboxId, work.Journal.RootIdentity, work.Journal.DeletionId, quarantine);
                 phase = "tombstone";
                 CompleteDeletion(work, epoch);
                 return;
@@ -79,14 +79,14 @@ internal sealed partial class SandboxManager
                 try
                 {
                     budget.Token.ThrowIfCancellationRequested();
-                    quarantine = _roots.QuarantineDeletion(sandboxId, work.Journal.RootIdentity, work.Journal.DeletionId,
+                    quarantine = _deletionEffects.QuarantineDeletion(sandboxId, work.Journal.RootIdentity, work.Journal.DeletionId,
                         () => moved = true, budget.Token);
                 }
                 catch (Exception failure) when (!moved && IsMissingDeletionSource(failure))
                 {
                     ReportDeletion(sandboxId, originalCommand, phase, "source_missing", DeletionFailureReason(failure));
                     phase = "observe_quarantine";
-                    quarantine = _roots.ObserveQuarantinedDeletion(sandboxId, work.Journal.RootIdentity, work.Journal.DeletionId);
+                    quarantine = _deletionEffects.ObserveQuarantinedDeletion(sandboxId, work.Journal.RootIdentity, work.Journal.DeletionId);
                 }
 
                 phase = "persist_quarantine";
@@ -106,13 +106,13 @@ internal sealed partial class SandboxManager
             {
                 phase = "removing";
                 budget.Token.ThrowIfCancellationRequested();
-                var batch = _roots.RemoveDeletionBatch(sandboxId, work.Journal.RootIdentity, work.Journal.DeletionId,
+                var batch = _deletionEffects.RemoveDeletionBatch(sandboxId, work.Journal.RootIdentity, work.Journal.DeletionId,
                     quarantine, DeleteBatchSize, () => HoldRunFault("hold-delete-during-removal"), budget.Token);
                 if (batch.RootAbsent)
                 {
                     phase = "verify_removal";
                     HoldRunFault("hold-delete-before-removal-proof");
-                    _roots.VerifyRecordedRemoval(sandboxId, work.Journal.RootIdentity, work.Journal.DeletionId, quarantine);
+                    _deletionEffects.VerifyRecordedRemoval(sandboxId, work.Journal.RootIdentity, work.Journal.DeletionId, quarantine);
                     phase = "persist_removal_proof";
                     RecordDeletionRemoval(work, epoch);
                     HoldRunFault("hold-delete-before-tombstone");
