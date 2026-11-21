@@ -5,6 +5,7 @@ using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Node.Store.Migrations;
 using Google.Protobuf;
+using Microsoft.Data.Sqlite;
 
 namespace ArcForges.Node.Store.Tests;
 
@@ -63,15 +64,20 @@ public sealed class MigrationContractionTests
         using var writer = new FileStream(root.Database, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
         if (includeWal)
         {
-            using var sqlite = new Microsoft.Data.Sqlite.SqliteConnection(
-                StorePaths.ConnectionString(root.Database, Microsoft.Data.Sqlite.SqliteOpenMode.ReadWrite));
+            using var sqlite = new SqliteConnection(StorePaths.ConnectionString(root.Database, SqliteOpenMode.ReadWrite));
             sqlite.Open();
             using var command = sqlite.CreateCommand();
-            command.CommandText = "PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; UPDATE store_meta SET clean_shutdown_at=clean_shutdown_at+1;";
+            command.CommandText = "PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;";
             command.ExecuteNonQuery();
-            Assert.True(File.Exists(root.Database + "-wal"));
+            command.CommandText = """
+                INSERT INTO node_setting(name, value_json, updated_at, rev) VALUES('migration-wal-test', '73', 1, 0);
+                """;
+            Assert.Equal(1, command.ExecuteNonQuery());
+            Assert.True(new FileInfo(root.Database + "-wal").Length > 32);
             using var reopened = root.Open(clock, StoreMigrations.Released);
             Assert.Equal(node, reopened.Metadata.NodeId.ToArray());
+            Assert.Equal("73", reopened.Read(reader => reader.Scalar(
+                "SELECT value_json FROM node_setting WHERE name='migration-wal-test';")));
         }
         else
         {
