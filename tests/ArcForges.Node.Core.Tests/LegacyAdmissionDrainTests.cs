@@ -260,49 +260,41 @@ public sealed class LegacyAdmissionDrainTests
         var ct = TestContext.Current.CancellationToken;
         var taskId = StoreIds.NewUuid7(TimeProvider.System);
         var id = new Id { Value = ByteString.CopyFrom(taskId) };
-        var unexpectedAdmission = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var holdAdmission = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        await using var node = InProcessNode.Create(seed: transaction => SeedQueuedTask(transaction, taskId));
-        node.BeforeReady = runtime =>
+        await using var node = await InProcessNode.Create(seed: transaction => SeedQueuedTask(transaction, taskId)).StartAsync();
+        var execution = Assert.IsType<Execution.ExecutionSupervisor>(node.Runtime.Execution);
+        Assert.SkipWhen(execution.Platform is null, "Legacy platform unavailable for the scheduler regression check.");
+        await using var channel = await node.ChannelAsync(helloAsHuman: true);
+        Assert.Equal(TaskState.Queued, (await Tasks.GetAsync(channel, id)).State);
+
+        // Keep the task queued past the former admission loop's two-second polling interval.
+        await Task.Delay(TimeSpan.FromSeconds(3), ct);
+        Assert.Equal(TaskState.Queued, (await Tasks.GetAsync(channel, id)).State);
+        AssertNoAttemptEffects();
+
+        var request = new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = id };
+        var cancel = await channel.Tasks.CancelTaskAsync(request, cancellationToken: ct);
+        Assert.Null(cancel.Error);
+        Assert.Equal(TaskState.Cancelled, cancel.Value.State);
+        Assert.Equal(request.Meta.CommandId, cancel.Value.Receipt.CommandId);
+        Assert.Equal(EffectCertainty.Happened, cancel.Value.Receipt.Effect);
+
+        var replay = await channel.Tasks.CancelTaskAsync(request, cancellationToken: ct);
+        Assert.Null(replay.Error);
+        Assert.Equal(cancel.Value, replay.Value);
+        Assert.Equal(TaskState.Cancelled, (await Tasks.GetAsync(channel, id)).State);
+        AssertNoAttemptEffects();
+
+        void AssertNoAttemptEffects()
         {
-            // Detect the original scheduling path without allowing the fixture to run a workload.
-            var execution = Assert.IsType<Execution.ExecutionSupervisor>(runtime.Execution);
-            execution.BeforeAdmissionRead = () =>
+            Assert.Empty(execution.RunningAttempts);
+            Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM attempt;")));
+            Assert.Equal("node", Path.GetFileName(Assert.Single(Directory.EnumerateDirectories(Path.Combine(node.DataRoot, "logs")))));
+            var temp = Path.Combine(node.DataRoot, "tmp");
+            if (Directory.Exists(temp))
             {
-                unexpectedAdmission.TrySetResult();
-                return holdAdmission.Task;
-            };
-            return Task.CompletedTask;
-        };
-
-        try
-        {
-            await node.StartAsync();
-            Assert.SkipWhen(node.Runtime.Execution?.Platform is null, "Legacy platform unavailable for the scheduler regression check.");
-            await using var channel = await node.ChannelAsync(helloAsHuman: true);
-            Assert.Equal(TaskState.Queued, (await Tasks.GetAsync(channel, id)).State);
-
-            var request = new TaskServiceCancelTaskRequest { Meta = Tasks.Meta(), TaskId = id };
-            var cancel = await channel.Tasks.CancelTaskAsync(request, cancellationToken: ct);
-            Assert.Null(cancel.Error);
-            Assert.Equal(TaskState.Cancelled, cancel.Value.State);
-            Assert.Equal(request.Meta.CommandId, cancel.Value.Receipt.CommandId);
-            Assert.Equal(EffectCertainty.Happened, cancel.Value.Receipt.Effect);
-
-            var replay = await channel.Tasks.CancelTaskAsync(request, cancellationToken: ct);
-            Assert.Null(replay.Error);
-            Assert.Equal(cancel.Value, replay.Value);
-            Assert.Equal(TaskState.Cancelled, (await Tasks.GetAsync(channel, id)).State);
-            Assert.Equal(0L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM attempt WHERE task_id = $id;", ("$id", taskId))));
-
-            var window = Task.Delay(TimeSpan.FromSeconds(1), ct);
-            Assert.Same(window, await Task.WhenAny(unexpectedAdmission.Task, window));
-            await window;
-        }
-        finally
-        {
-            holdAdmission.TrySetResult();
+                Assert.Empty(Directory.EnumerateFileSystemEntries(temp));
+            }
         }
     }
 

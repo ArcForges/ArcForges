@@ -107,9 +107,6 @@ public sealed partial class ExecutionSupervisor
         _ = Settings;
     }
 
-    /// <summary>Retained test hook for older scheduling fixtures. No admission pass runs during drain.</summary>
-    internal Func<Task>? BeforeAdmissionRead { get; set; }
-
     /// <summary>True when a dependency's condition holds (SUCCEEDED: succeeded; FINISHED: any terminal state; READY: the service is ready).</summary>
     public static bool DependencySatisfied(DependencyCondition condition, TaskState state, bool ready) => condition switch
     {
