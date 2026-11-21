@@ -1,320 +1,250 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Security.Cryptography;
-using System.Text;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Contracts.Relay.V1;
+using ArcForges.Node.Api;
 using ArcForges.Node.CloudLink;
-using ArcForges.Node.CloudLink.Tests;
+using ArcForges.Node.Core;
+using ArcForges.Node.Core.Events;
+using ArcForges.Node.Core.Files;
+using ArcForges.Node.Core.Platform;
+using ArcForges.Node.Core.Security;
 using ArcForges.Node.Store;
 using Google.Protobuf;
-using Microsoft.Data.Sqlite;
 using NodeFilePath = ArcForges.Contracts.Node.V1.FilePath;
 
 namespace ArcForges.ClosedLoop.Tests;
 
-/// <summary>Actual Host, native private producer and FULL SQLite. The signed center/caller peer is synthetic.</summary>
+/// <summary>Active custody of a retained named stage through the real store and routed handlers with an offline call fixture.</summary>
 [Trait("loop", "local")]
 public sealed class FileStageProducerHostTests
 {
+    // The native producer and installed-host scenario remain executable at eaaccb8380a2bd265aaad0a67d62c8fab2a8a29a.
     [Fact(Timeout = 180_000)]
-    public async Task DefaultScriptUsesARealIdentityBoundProducerAndPendingApprovalSurvivesActualRestart()
+    public async Task RetainedPrivateStageStaysHiddenAndItsPendingApprovalSurvivesReopen()
     {
         var ct = TestContext.Current.CancellationToken;
-        await using var center = await FakeCenter.StartAsync();
-        center.CommandKeys.Add(center.Channel.CommandPublicKey);
-        await using var node = TestNode.Create();
-        node.Environment[CloudLinkTestHooks.CenterUrl] = center.Endpoint.Url;
-        using var host = await node.StartNodeAsync();
-        Assert.False(host.HasExited);
-        try
+        await using var history = new LegacyFileHostHistory();
+        var workspace = history.Workspace(ct);
+        var caller = history.Caller(Origin.Script);
+        var request = new FileServiceWriteFileRequest
         {
-            await using var human = await node.HumanChannelAsync();
-            var info = await human.Node.GetNodeInfoAsync(new NodeServiceGetNodeInfoRequest(), cancellationToken: ct);
-            Assert.Null(info.Error);
-            Assert.Contains("files.v1", info.Value.Node.Features);
-            var begun = await human.Account.BeginSignInAsync(new AccountServiceBeginSignInRequest
+            Meta = LegacyFileHostHistory.Command(),
+            Path = LegacyFileHostHistory.FilePath(workspace, "destination"),
+            Data = ByteString.CopyFromUtf8("retained-private-stage-fixture"),
+            ExpectedAbsent = true,
+        };
+        var raw = request.ToByteArray();
+        var id = request.Meta.CommandId.Value.ToByteArray();
+        var digest = SHA256.HashData(raw);
+        const string stageName = "retained-stage";
+        var stagePath = Path.Combine(workspace.RootPath, stageName);
+        File.WriteAllBytes(stagePath, request.Data.ToByteArray());
+        File.WriteAllText(Path.Combine(workspace.RootPath, "ordinary-file"), "ordinary fixture body");
+        var root = LegacyFileHostHistory.RootIdentity(workspace.RootPath);
+        var stage = LegacyFileHostHistory.FileIdentity(stagePath);
+        var approvalId = await history.Processor.ExecuteAsync(command =>
+        {
+            var tx = command.Transaction;
+            Assert.Equal(DedupStatus.Execute, CommandDeduplication.Begin(tx, id,
+                "arcforges.node.v1.FileService/WriteFile", digest, Origin.Remote).Status);
+            tx.Execute("""
+                INSERT INTO file_private_stage_reservation
+                    (command_id, workspace_id, kind, correlation_id, relative_path, expected_absent, request_sha256, caller, reserved_bytes, created_at)
+                VALUES ($id, $workspace, 1, $correlation, 'destination', 1, $digest, $caller, $size, $now);
+                """, ("$id", id), ("$workspace", workspace.Id), ("$correlation", request.Meta.CorrelationId.Value.ToByteArray()),
+                ("$digest", digest), ("$caller", caller.ToByteArray()), ("$size", request.Data.Length), ("$now", tx.NowMicroseconds));
+            tx.Execute("""
+                INSERT INTO file_private_stage_object
+                    (command_id, slot, stage_path, expected_size, expected_sha256, phase, identity_platform, native_identity, parent_identity)
+                VALUES ($id, 2, $path, $size, $hash, 3, $platform, $native, $parent);
+                """, ("$id", id), ("$path", stagePath), ("$size", request.Data.Length), ("$hash", SHA256.HashData(request.Data.Span)),
+                ("$platform", stage.Platform), ("$native", stage.Bytes), ("$parent", root.Bytes));
+            var (approval, created, error) = Approvals.Raise(command, new ApprovalCapture
             {
-                Meta = Command(),
-                Method = SignInMethod.DeviceCode,
-            }, cancellationToken: ct);
-            Assert.Null(begun.Error);
-            center.ApproveDevice();
-            await TestNode.WaitAsync(async () => (await human.Account.GetAccountStatusAsync(
-                new AccountServiceGetAccountStatusRequest(), cancellationToken: ct)).Value.Status.Relay == RelayState.Connected,
-                TimeSpan.FromSeconds(30), "the synthetic peer has a real signed channel");
-            var connection = await center.Channel.ProvedAsync();
-            Assert.Contains("files.v1", connection.Hello!.Capabilities);
-            var owner = new CenterCaller
-            {
-                Kind = CenterCallerKind.NodeRelay,
-                AccountId = new Id { Value = ByteString.CopyFrom(connection.AccountId) },
-                RelayingNodeId = info.Value.Node.Node.NodeId.Clone(),
-                LocalOrigin = Origin.Human,
-                LocalSessionId = CommandIds.New(),
-            };
-            var script = owner.Clone();
-            script.LocalOrigin = Origin.Script;
-            script.LocalSessionId = CommandIds.New();
-            var root = Directory.CreateDirectory(Path.Combine(node.Root, "default-script-stage-workspace")).FullName;
-            async Task<(ResultHeader Header, byte[] Payload)> Invoke(RoutedMethod method, IMessage request, Id? id, CenterCaller actor)
-            {
-                var (call, _) = center.Channel.BuildCall(connection, new FakeCallSpec
-                {
-                    Method = method,
-                    Payload = request.ToByteArray(),
-                    CommandId = id,
-                    Caller = actor,
-                    Lifetime = TimeSpan.FromSeconds(30),
-                });
-                await connection.SendCallAsync(call);
-                var result = await connection.ResultOfAsync(call.CallId);
-                await TestNode.WaitAsync(() => connection.VerifiedResults.Any(item => item.Header.CallId.Equals(call.CallId)),
-                    TimeSpan.FromSeconds(15), "the real Host result signature verifies");
-                return (connection.VerifiedResults.Single(item => item.Header.CallId.Equals(call.CallId)).Header,
-                    result.Payload.ToByteArray());
-            }
-            var register = new WorkspaceServiceRegisterWorkspaceRequest { Meta = Command(), Path = root, Name = "script-stage" };
-            var registered = WorkspaceServiceRegisterWorkspaceResponse.Parser.ParseFrom(
-                (await Invoke(RoutedMethod.RegisterNodeWorkspace, register, register.Meta.CommandId, owner)).Payload);
-            Assert.Null(registered.Error);
-            var workspace = registered.Value.Workspace.WorkspaceId;
-            var body = Encoding.UTF8.GetBytes("REAL_STAGE_WORKER_PRIVATE_BODY_a7b1");
-            var write = new FileServiceWriteFileRequest
-            {
-                Meta = Command(),
-                ExpectedAbsent = true,
-                Data = ByteString.CopyFrom(body),
-                Path = new NodeFilePath { WorkspaceId = workspace.Clone(), Path = "approved-later.txt" },
-            };
-            var raw = write.ToByteArray();
-            var (pending, pendingBytes) = await Invoke(RoutedMethod.WriteNodeFile, write, write.Meta.CommandId, script);
-            Assert.Equal(RoutedOutcome.RefusedByPolicy, pending.Outcome);
-            Assert.Equal("approval_required", pending.Error?.Code);
-            Assert.Empty(pendingBytes);
-            var approvalId = pending.Error!.Details.State.Resource.Id;
-            Assert.False(File.Exists(Path.Combine(root, write.Path.Path)));
-            var stageName = ".arcforges-stage-" + Convert.ToHexStringLower(write.Meta.CommandId.Value.Span) + "-2";
-            Assert.Equal(body, File.ReadAllBytes(Path.Combine(root, stageName)));
-            AssertProducer(node.DataRoot, write, script, body);
+                Operation = "FileService.WriteFile", MatrixOperation = PermissionMatrix.FileWrite, Summary = "retained private fixture",
+                Risk = RiskClass.High, Requester = new ActorRef { Origin = Origin.Remote, CenterCaller = caller, RemoteCommandId = request.Meta.CommandId },
+                CommandId = id, RequestDigest = digest, Request = [1, .. id],
+            }, Approvals.DefaultTtl);
+            Assert.True(created);
+            Assert.Null(error);
+            Assert.NotNull(approval);
+            tx.Execute("""
+                INSERT INTO file_private_approval_binding (command_id, approval_id, identity_platform, root_identity, parent_identity)
+                VALUES ($command, $approval, $platform, $root, $root);
+                """, ("$command", id), ("$approval", approval.Id), ("$platform", root.Platform), ("$root", root.Bytes));
+            return approval.Id;
+        }, CommitDurability.Full).WaitAsync(ct);
 
-            var read = new FileServiceReadFileRequest
+        async Task AssertPendingAsync()
+        {
+            var answer = await history.RouteAsync(RoutedMethod.WriteNodeFile, caller, request, request.Meta.CommandId, ct);
+            Assert.NotNull(answer);
+            Assert.Equal(RoutedOutcome.RefusedByPolicy, answer.Outcome);
+            Assert.Null(answer.Response);
+            var denied = Assert.IsType<ArcError>(answer.Error);
+            Assert.Equal("approval_required", denied.Code);
+            Assert.Equal(approvalId, denied.Details.State.Resource.Id.Value.ToByteArray());
+            Assert.True(history.Store.Read(reader => PrivateStageRegistry.HasWorkspaceHold(reader, workspace.Id)));
+            using var handle = File.OpenHandle(stagePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            var native = WorkspacePath.Identity(handle);
+            Assert.True(history.Store.Read(reader => PrivateStageRegistry.ContainsIdentity(reader, native)));
+            var human = caller.Clone();
+            human.LocalOrigin = Origin.Human;
+            human.LocalSessionId = CommandIds.New();
+            var read = await history.RouteAsync(RoutedMethod.ReadNodeFile, human, new FileServiceReadFileRequest
             {
-                Meta = new RequestMeta { CorrelationId = CommandIds.New() },
-                Offset = 0,
-                Length = 128,
-                Path = new NodeFilePath { WorkspaceId = workspace.Clone(), Path = stageName },
-            };
-            var protectedRead = FileServiceReadFileResponse.Parser.ParseFrom((await Invoke(RoutedMethod.ReadNodeFile, read, null, owner)).Payload);
-            Assert.NotNull(protectedRead.Error);
+                Meta = new RequestMeta { CorrelationId = CommandIds.New() }, Offset = 0, Length = 128,
+                Path = LegacyFileHostHistory.FilePath(workspace, stageName),
+            }, null, ct);
+            var protectedRead = FileServiceReadFileResponse.Parser.ParseFrom(read!.Response);
+            Assert.Equal("file_access_denied", protectedRead.Error?.Code);
             Assert.Null(protectedRead.Value);
-            var list = new FileServiceListDirectoryRequest
+            var list = await history.RouteAsync(RoutedMethod.ListNodeDirectory, human, new FileServiceListDirectoryRequest
             {
                 Meta = new RequestMeta { CorrelationId = CommandIds.New() },
-                Path = new NodeFilePath { WorkspaceId = workspace.Clone(), Path = "" },
-            };
-            var listed = FileServiceListDirectoryResponse.Parser.ParseFrom((await Invoke(RoutedMethod.ListNodeDirectory, list, null, owner)).Payload);
+                Path = LegacyFileHostHistory.FilePath(workspace, ""),
+            }, null, ct);
+            var listed = FileServiceListDirectoryResponse.Parser.ParseFrom(list!.Response);
             Assert.Null(listed.Error);
+            Assert.Contains(listed.Value.Entries, entry => entry.Name == "ordinary-file");
             Assert.DoesNotContain(listed.Value.Entries, entry => entry.Name == stageName);
-
-            await node.StopNodeAsync();
-            await TestNode.WaitAsync(() => node.LiveProcesses().Count == 0, TimeSpan.FromSeconds(30), "the exact owned Host and workers exit");
-            foreach (var file in new[] { StorePaths.Database(node.DataRoot), StorePaths.Database(node.DataRoot) + "-wal",
-                         StorePaths.Database(node.DataRoot) + "-shm", node.NodeLog })
-                if (CloudLinkHostTests.ReadAllShared(file) is { } bytes) Assert.Equal(-1, bytes.AsSpan().IndexOf(body));
-            await node.StartNodeAsync();
-            connection = await center.Channel.ProvedAsync(2);
-            var (replayed, replayBytes) = await Invoke(RoutedMethod.WriteNodeFile, write, write.Meta.CommandId, script);
-            Assert.Equal(RoutedOutcome.RefusedByPolicy, replayed.Outcome);
-            Assert.Equal(pending.Error.ToByteArray(), replayed.Error.ToByteArray());
-            Assert.Equal(pendingBytes, replayBytes);
-            AssertProducer(node.DataRoot, write, script, body);
-            await using var restartedHuman = await node.HumanChannelAsync();
-            var denied = await restartedHuman.Approvals.DecideApprovalAsync(new ApprovalServiceDecideApprovalRequest
-            {
-                Meta = Command(),
-                ApprovalId = approvalId.Clone(),
-                Decision = ApprovalDecisionKind.Deny,
-            }, cancellationToken: ct);
-            Assert.Null(denied.Error);
-            Assert.Equal(ApprovalState.Denied, denied.Value.Approval.State);
-            Assert.False(File.Exists(Path.Combine(root, write.Path.Path)));
-            Assert.Equal(body, File.ReadAllBytes(Path.Combine(root, stageName)));
-            // Approved effects consume the identity-checked private stage on each native platform.
-            async Task<byte[]> Approve(IMessage request, RequestMeta meta, RoutedMethod method)
-            {
-                var (header, payload) = await Invoke(method, request, meta.CommandId, script);
-                Assert.Equal(RoutedOutcome.RefusedByPolicy, header.Outcome);
-                Assert.Equal("approval_required", header.Error?.Code);
-                Assert.Empty(payload);
-                var actualApproval = await restartedHuman.Approvals.GetApprovalAsync(new ApprovalServiceGetApprovalRequest
-                {
-                    ApprovalId = header.Error!.Details.State.Resource.Id.Clone(),
-                }, cancellationToken: ct);
-                Assert.Null(actualApproval.Error);
-                var expires = ProtoTime.ToDateTimeOffset(actualApproval.Value.Approval.ExpiresAt)!.Value;
-                var remainingSeconds = (expires - DateTimeOffset.UtcNow).TotalSeconds;
-                TestContext.Current.TestOutputHelper?.WriteLine($"actual approval remaining seconds={remainingSeconds:F3}; execution native budget remains 10 seconds");
-                Assert.True(remainingSeconds > 300); // The real default approval TTL is not a routed signature lifetime.
-                var decision = await restartedHuman.Approvals.DecideApprovalAsync(new ApprovalServiceDecideApprovalRequest
-                {
-                    Meta = Command(),
-                    ApprovalId = header.Error!.Details.State.Resource.Id.Clone(),
-                    Decision = ApprovalDecisionKind.Approve,
-                }, cancellationToken: ct);
-                Assert.Null(decision.Error);
-                var (replayHeader, replay) = await Invoke(method, request, meta.CommandId, script);
-                var error = request is FileServiceWriteFileRequest ? FileServiceWriteFileResponse.Parser.ParseFrom(replay).Error :
-                    FileServiceEditFileResponse.Parser.ParseFrom(replay).Error;
-                TestContext.Current.TestOutputHelper?.WriteLine($"approved state={decision.Value.Approval.State}; outer={replayHeader.Error?.Code}; inner={error?.Code}/{error?.Details?.State?.Reason}");
-                Assert.Equal(ApprovalState.Executed, decision.Value.Approval.State);
-                Assert.Equal(RoutedOutcome.Executed, replayHeader.Outcome);
-                return replay;
-            }
-            var create = write.Clone();
-            create.Meta = Command();
-            create.Path.Path = "script-approved-created.txt";
-            create.Data = ByteString.CopyFromUtf8("REAL_APPROVED_SOURCE_fd28 hello");
-            var created = FileServiceWriteFileResponse.Parser.ParseFrom(await Approve(create, create.Meta, RoutedMethod.WriteNodeFile));
-            Assert.Null(created.Error);
-            Assert.Equal(create.Data.ToByteArray(), File.ReadAllBytes(Path.Combine(root, create.Path.Path)));
-            var ownerBefore = AssertCreatedOwner(node.DataRoot, create, script, create.Data.ToByteArray());
-            var update = new FileServiceWriteFileRequest
-            {
-                Meta = Command(),
-                Path = create.Path.Clone(),
-                ExpectedSha256 = created.Value.Result.Sha256,
-                Data = ByteString.CopyFromUtf8("REAL_APPROVED_SOURCE_fd28 updated hello"),
-            };
-            var updated = FileServiceWriteFileResponse.Parser.ParseFrom(await Approve(update, update.Meta, RoutedMethod.WriteNodeFile));
-            Assert.Null(updated.Error);
-            Assert.Equal(update.Data.ToByteArray(), File.ReadAllBytes(Path.Combine(root, create.Path.Path)));
-            Assert.Equal(ownerBefore, AssertCreatedOwner(node.DataRoot, create, script, update.Data.ToByteArray()));
-            var edit = new FileServiceEditFileRequest
-            {
-                Meta = Command(),
-                Path = create.Path.Clone(),
-                ExpectedSha256 = updated.Value.Result.Sha256,
-                OldText = "hello",
-                NewText = "world",
-                ExpectedOccurrences = 1,
-            };
-            var edited = FileServiceEditFileResponse.Parser.ParseFrom(await Approve(edit, edit.Meta, RoutedMethod.EditNodeFile));
-            Assert.Null(edited.Error);
-            Assert.Equal(1U, edited.Value.Result.Replacements);
-            var final = Encoding.UTF8.GetBytes("REAL_APPROVED_SOURCE_fd28 updated world");
-            Assert.Equal(final, File.ReadAllBytes(Path.Combine(root, create.Path.Path)));
-            Assert.Equal(ownerBefore, AssertCreatedOwner(node.DataRoot, create, script, final));
-            var readFinal = new FileServiceReadFileRequest
-            {
-                Meta = new RequestMeta { CorrelationId = CommandIds.New() },
-                Path = create.Path.Clone(),
-                Offset = 0,
-                Length = checked((uint)final.Length),
-            };
-            var readBack = FileServiceReadFileResponse.Parser.ParseFrom((await Invoke(RoutedMethod.ReadNodeFile, readFinal, null, script)).Payload);
-            Assert.Null(readBack.Error);
-            Assert.Equal(final, readBack.Value.Data.ToByteArray());
-            var plan = new FileServicePlanRemovalRequest { Meta = Command(), WorkspacePath = create.Path.Clone() };
-            var planned = FileServicePlanRemovalResponse.Parser.ParseFrom((await Invoke(
-                RoutedMethod.PlanNodeRemoval, plan, plan.Meta.CommandId, script)).Payload);
-            Assert.Null(planned.Error);
-            // SCRIPT provenance is durable but does not grant AGENT-only unattended owner verification or cleanup.
-            Assert.False(Assert.Single(planned.Value.Plan.Items).OwnerVerified);
-            Assert.True(planned.Value.Plan.RequiresApproval);
-            Assert.True(planned.Value.Plan.QuarantineAvailable);
-            Assert.Empty(connection.UnverifiedResults);
+            Assert.Equal(0L, history.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_operation_journal;")));
+            Assert.Equal(0L, history.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_stage_worker;")));
+            Assert.Equal(request.Data.ToByteArray(), File.ReadAllBytes(stagePath));
+            Assert.False(File.Exists(Path.Combine(workspace.RootPath, "destination")));
         }
-        finally
+
+        await AssertPendingAsync();
+        await history.ReopenAsync();
+        await AssertPendingAsync();
+        foreach (var file in new[] { history.Store.DatabasePath, history.Store.DatabasePath + "-wal" })
         {
-            if (node.Descriptor() is { } descriptor && descriptor.ProcessIsAlive())
-            {
-                await using var cleanup = await node.HumanChannelAsync();
-                Assert.Null((await cleanup.Account.SignOutAsync(new AccountServiceSignOutRequest { Meta = Command() },
-                    deadline: DateTime.UtcNow.AddSeconds(15), cancellationToken: CancellationToken.None)).Error);
-                await node.StopNodeAsync();
-            }
+            if (CloudLinkHostTests.ReadAllShared(file) is { } bytes)
+                Assert.Equal(-1, bytes.AsSpan().IndexOf(request.Data.Span));
         }
     }
+}
 
-    private static void AssertProducer(string dataRoot, FileServiceWriteFileRequest write, CenterCaller caller, byte[] body)
+internal sealed class LegacyFileHostHistory : IAsyncDisposable
+{
+    private readonly DirectoryInfo _directory = Directory.CreateTempSubdirectory("arcforges-file-history-");
+    private NodeLog _log = null!;
+    private NodeRuntime _runtime = null!;
+    private RoutedDispatcher _dispatcher = null!;
+
+    internal LegacyFileHostHistory() => Open();
+
+    internal string Root => _directory.FullName;
+    internal NodeStore Store { get; private set; } = null!;
+    internal CommandProcessor Processor { get; private set; } = null!;
+    internal static RequestMeta Command() => new() { CommandId = CommandIds.New(), CorrelationId = CommandIds.New() };
+
+    internal RegisteredWorkspace Workspace(CancellationToken token) => new RegisteredWorkspaces(Store).RegisterFromVerifiedHuman(
+        Directory.CreateDirectory(Path.Combine(Root, "workspace")).FullName, cancellationToken: token);
+
+    internal static NodeFilePath FilePath(RegisteredWorkspace workspace, string path) =>
+        new() { WorkspaceId = new Id { Value = ByteString.CopyFrom(workspace.Id) }, Path = path };
+
+    internal CenterCaller Caller(Origin origin) => new()
     {
-        using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
-        {
-            DataSource = StorePaths.Database(dataRoot),
-            Mode = SqliteOpenMode.ReadOnly,
-            Pooling = false,
-        }.ToString());
-        connection.Open();
-        using var query = connection.CreateCommand();
-        query.CommandText = """
-            SELECT p.request_sha256, p.caller, p.active, p.object_count, p.reserved_bytes,
-                   o.phase, o.native_identity, o.expected_size, o.expected_sha256, w.ended, w.process_id,
-                   w.start_ticks, w.worker_nonce, w.producer_nonce, p.producer_nonce, s.phase, s.native_identity,
-                   (SELECT count(*) FROM file_operation_journal WHERE command_id = p.command_id)
-            FROM file_stage_production p JOIN file_stage_produced_object o ON o.command_id = p.command_id
-            JOIN file_stage_worker w ON w.command_id = o.command_id AND w.slot = o.slot
-            JOIN file_private_stage_object s ON s.command_id = o.command_id AND s.slot = o.slot
-            WHERE p.command_id = $id;
-            """;
-        query.Parameters.AddWithValue("$id", write.Meta.CommandId.Value.ToByteArray());
-        using var row = query.ExecuteReader();
-        Assert.True(row.Read(), "The real public SCRIPT request must create the producer records.");
-        Assert.Equal(SHA256.HashData(write.ToByteArray()), (byte[])row.GetValue(0));
-        Assert.Equal(caller, CenterCaller.Parser.ParseFrom((byte[])row.GetValue(1)));
-        Assert.Equal(0, row.GetInt32(2));
-        Assert.Equal(1, row.GetInt32(3));
-        Assert.Equal(body.Length, row.GetInt64(4));
-        Assert.Equal(2, row.GetInt32(5));
-        Assert.Equal(OperatingSystem.IsLinux() ? 53 : 33, ((byte[])row.GetValue(6)).Length);
-        Assert.Equal(body.Length, row.GetInt64(7));
-        Assert.Equal(SHA256.HashData(body), (byte[])row.GetValue(8));
-        Assert.Equal(1, row.GetInt32(9));
-        Assert.True(row.GetInt32(10) > 1);
-        Assert.True(row.GetInt64(11) > 0);
-        Assert.Equal(16, ((byte[])row.GetValue(12)).Length);
-        Assert.Equal((byte[])row.GetValue(14), (byte[])row.GetValue(13));
-        Assert.Equal(3, row.GetInt32(15));
-        Assert.Equal((byte[])row.GetValue(6), (byte[])row.GetValue(16));
-        Assert.Equal(0, row.GetInt64(17)); // Stage reservation is not a fabricated target PREPARED.
-        Assert.False(row.Read());
+        Kind = CenterCallerKind.NodeRelay,
+        AccountId = CommandIds.New(),
+        RelayingNodeId = new Id { Value = ByteString.CopyFrom(_runtime.NodeId.Span) },
+        LocalOrigin = origin,
+        LocalSessionId = CommandIds.New(),
+    };
+
+    internal static RegisteredWorkspaces.RootIdentity RootIdentity(string path)
+    {
+        using var root = WorkspacePath.OpenRoot(path);
+        return RegisteredWorkspaces.RootIdentity.Encode(root.RootIdentity);
     }
 
-    private static byte[] AssertCreatedOwner(string dataRoot, FileServiceWriteFileRequest create, CenterCaller caller, byte[] body)
+    internal static RegisteredWorkspaces.RootIdentity FileIdentity(string path)
     {
-        using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
-        {
-            DataSource = StorePaths.Database(dataRoot),
-            Mode = SqliteOpenMode.ReadOnly,
-            Pooling = false,
-        }.ToString());
-        connection.Open();
-        using var query = connection.CreateCommand();
-        query.CommandText = """
-            SELECT c.caller, c.object_identity, c.creation_marker, c.last_written_size, c.last_written_sha256,
-                   j.phase, j.held, w.ended FROM file_creation_ownership c
-            JOIN file_operation_journal j ON j.command_id = c.creation_command_id
-            LEFT JOIN file_effect_worker w ON w.command_id = j.command_id
-            WHERE c.creation_command_id = $id AND c.workspace_id = $workspace AND c.relative_path = $path;
-            """;
-        query.Parameters.AddWithValue("$id", create.Meta.CommandId.Value.ToByteArray());
-        query.Parameters.AddWithValue("$workspace", create.Path.WorkspaceId.Value.ToByteArray());
-        query.Parameters.AddWithValue("$path", create.Path.Path);
-        using var row = query.ExecuteReader();
-        Assert.True(row.Read(), "Only a real approved creation can generate its durable provenance.");
-        Assert.Equal(caller, CenterCaller.Parser.ParseFrom((byte[])row.GetValue(0)));
-        var identity = (byte[])row.GetValue(1);
-        Assert.Equal(OperatingSystem.IsLinux() ? 53 : 33, identity.Length);
-        Assert.Equal(32, ((byte[])row.GetValue(2)).Length);
-        Assert.Equal(body.Length, row.GetInt64(3));
-        Assert.Equal(SHA256.HashData(body), (byte[])row.GetValue(4));
-        Assert.Equal(2, row.GetInt32(5));
-        Assert.Equal(0, row.GetInt32(6));
-        if (OperatingSystem.IsLinux()) Assert.Equal(1, row.GetInt32(7));
-        Assert.False(row.Read());
-        return identity;
+        using var handle = File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        return RegisteredWorkspaces.RootIdentity.Encode(WorkspacePath.Identity(handle), directory: false);
     }
 
-    private static RequestMeta Command() => new() { CommandId = CommandIds.New(), CorrelationId = CommandIds.New() };
+    internal static FileJournalIntent PrepareMutation(StoreTransaction tx, RegisteredWorkspace workspace, CenterCaller caller,
+        FileOperationKind kind, RequestMeta meta, string path, byte[] raw, byte[]? original, byte[] intended)
+    {
+        var root = RootIdentity(workspace.RootPath);
+        var target = original is null ? null : FileIdentity(Path.Combine(workspace.RootPath, path));
+        // Identity encodings model already released anonymous stages. No stage bytes or live handles are needed for replay.
+        byte[] Stage(byte tag)
+        {
+            var identity = new byte[root.Bytes.Length];
+            identity[0] = 1;
+            identity[1] = tag;
+            return identity;
+        }
+
+        var intent = new FileJournalIntent(kind, meta.CommandId.Value.ToByteArray(), meta.CorrelationId.Value.ToByteArray(), caller,
+            workspace.Id, path, root.Platform, root.Bytes, root.Bytes, target?.Bytes, original?.Length,
+            original is null ? null : SHA256.HashData(original), original is null ? null : Stage(2),
+            intended.Length, SHA256.HashData(intended), Stage(3));
+        Assert.Equal(FileJournalPreparation.Prepared, FileMutationJournal.Prepare(tx, intent, raw));
+        return intent;
+    }
+
+    internal Task<RoutedAnswer?> RouteAsync(RoutedMethod method, CenterCaller caller, IMessage request, Id? command, CancellationToken token)
+    {
+        var raw = request.ToByteString();
+        var now = Store.Clock.GetUtcNow();
+        var header = new CallHeader
+        {
+            CallId = CommandIds.New(), Kid = "offline-file-history", Caller = caller.Clone(), AccountId = caller.AccountId.Clone(),
+            TargetNodeId = new Id { Value = ByteString.CopyFrom(_runtime.NodeId.Span) },
+            CenterUrlSha256 = ByteString.CopyFrom(new byte[32]), Method = method, CommandId = command?.Clone(),
+            RequestSha256 = ByteString.CopyFrom(SHA256.HashData(raw.Span)), RequestSize = (uint)raw.Length,
+            IssuedAt = ProtoTime.ToInstant(now), ExpiresAt = ProtoTime.ToInstant(now.AddMinutes(1)), Deadline = ProtoTime.ToInstant(now.AddSeconds(10)),
+        };
+        return _dispatcher.DispatchAsync(new VerifiedCall(header, raw, 0), new OfflineLink(), token);
+    }
+
+    internal async Task ReopenAsync()
+    {
+        await CloseAsync();
+        Open();
+    }
+
+    private void Open()
+    {
+        var data = Path.Combine(Root, "data");
+        Store = NodeStore.Open(new NodeStoreOptions { DataRoot = data, BootIdentity = BootIdentity.Read() });
+        _log = new NodeLog(Path.Combine(data, "logs", "node"), LogLevel.Info, Store.Clock);
+        var journal = EventJournal.Open(Store);
+        var hub = new StreamHub();
+        Processor = new CommandProcessor(Store, journal, hub);
+        _runtime = new NodeRuntime(Store, journal, hub, Processor, _log,
+            new NodeSettingsManager(Path.Combine(Root, "node.json"), data, _log), data, "offline-file-history", Store.Clock,
+            new RecoveryReport(false, false, null, Store.Opening), new CapabilityReport());
+        _dispatcher = new RoutedDispatcher(_runtime);
+        _dispatcher.Bind(new TaskServiceHandler(_runtime, new ClientSessions()), new WorkspaceServiceHandler(_runtime), new FileServiceHandler(_runtime));
+    }
+
+    private async Task CloseAsync()
+    {
+        _dispatcher.Dispose();
+        _runtime.Dispose();
+        await Processor.DisposeAsync();
+        _log.Dispose();
+        Store.Dispose();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await CloseAsync();
+        _directory.Delete(recursive: true);
+    }
+
+    private sealed class OfflineLink : IRoutedLink
+    {
+        public bool Usable => true;
+        public bool Stopping => false;
+    }
 }

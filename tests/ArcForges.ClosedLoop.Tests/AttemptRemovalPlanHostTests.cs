@@ -1,459 +1,166 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Security.Cryptography;
-using System.Text;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Contracts.Relay.V1;
-using ArcForges.Node.CloudLink;
-using ArcForges.Node.CloudLink.Tests;
+using ArcForges.Node.Core.Files;
+using ArcForges.Node.Core.Platform;
 using ArcForges.Node.Store;
 using Google.Protobuf;
-using Microsoft.Data.Sqlite;
 using NodeShapes = ArcForges.Contracts.Node.Shapes.ContractShapeValidation;
 
 namespace ArcForges.ClosedLoop.Tests;
 
-/// <summary>
-/// A real Windows Host and task producer with native files, SQLite and signed channel. The Center peer and
-/// account custody are isolated fixtures; this is not actual Center routing or strict cleanup acceptance.
-/// </summary>
 [Trait("loop", "local")]
 public sealed class AttemptRemovalPlanHostTests
 {
+    // Native Attempt/temp production and Plan collection remain executable at eaaccb8380a2bd265aaad0a67d62c8fab2a8a29a.
     [Fact(Timeout = 180_000)]
     [Trait("env", "windows-real")]
-    public async Task SignedActualAttemptPlanAndReceiptSurviveRestartWithoutFileEffects()
+    public async Task ACompletedWindowsAttemptPlanReplaysWithoutReinspectingItsTree()
     {
-        Assert.SkipUnless(OperatingSystem.IsWindows(), "Attempt create provenance is Windows native.");
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "The retained plan uses Windows identity encoding.");
         var ct = TestContext.Current.CancellationToken;
-        await using var center = await FakeCenter.StartAsync();
-        center.CommandKeys.Add(center.Channel.CommandPublicKey);
-        await using var node = TestNode.Create();
-        node.Environment[CloudLinkTestHooks.CenterUrl] = center.Endpoint.Url;
-        using var host = await node.StartNodeAsync();
-        Assert.False(host.HasExited);
-        try
+        await using var history = new LegacyFileHostHistory();
+        var owner = history.Caller(Origin.Agent);
+        var request = new FileServicePlanRemovalRequest { Meta = LegacyFileHostHistory.Command(), AttemptId = SeedFinishedAttempt(history, owner) };
+        var path = Path.Combine(history.Root, "retained-attempt");
+        var nested = Directory.CreateDirectory(Path.Combine(path, "later")).FullName;
+        var file = Path.Combine(path, "keep.txt");
+        File.WriteAllText(file, "retained root file");
+        File.WriteAllText(Path.Combine(nested, "child.txt"), "retained child file");
+        WorkspaceRemovalSnapshot snapshot;
+        using (var root = WorkspacePath.OpenRoot(path))
         {
-            await using var human = await node.HumanChannelAsync();
-            var info = await human.Node.GetNodeInfoAsync(new NodeServiceGetNodeInfoRequest(), cancellationToken: ct);
-            Assert.Null(info.Error);
-            Assert.Contains("files.v1", info.Value.Node.Features);
-            var nodeId = info.Value.Node.Node.NodeId;
-            var begun = await human.Account.BeginSignInAsync(new AccountServiceBeginSignInRequest
-            {
-                Meta = Command(),
-                Method = SignInMethod.DeviceCode,
-            }, cancellationToken: ct);
-            Assert.Null(begun.Error);
-            center.ApproveDevice();
-            await TestNode.WaitAsync(async () => (await human.Account.GetAccountStatusAsync(
-                new AccountServiceGetAccountStatusRequest(), cancellationToken: ct)).Value.Status.Relay == RelayState.Connected,
-                TimeSpan.FromSeconds(30), "the isolated center peer is connected");
-            var channel = await center.Channel.ProvedAsync();
-            var caller = new CenterCaller
-            {
-                Kind = CenterCallerKind.NodeRelay,
-                AccountId = new Id { Value = ByteString.CopyFrom(channel.AccountId) },
-                RelayingNodeId = nodeId.Clone(),
-                LocalOrigin = Origin.Agent,
-                LocalSessionId = CommandIds.New(),
-            };
-
-            async Task<byte[]> Invoke(RoutedMethod method, IMessage request, Id command, CenterCaller source)
-            {
-                var built = center.Channel.BuildCall(channel, new FakeCallSpec
-                {
-                    Method = method,
-                    Payload = request.ToByteArray(),
-                    Caller = source,
-                    CommandId = command,
-                    Lifetime = TimeSpan.FromSeconds(30),
-                });
-                await channel.SendCallAsync(built.Call);
-                var frame = await channel.ResultOfAsync(built.Call.CallId);
-                await TestNode.WaitAsync(() => channel.VerifiedResults.Any(value => value.Header.CallId.Equals(built.Call.CallId)),
-                    TimeSpan.FromSeconds(15), "the real Host result signature verifies");
-                Assert.Equal(RoutedOutcome.Executed, channel.VerifiedResults.Single(value => value.Header.CallId.Equals(built.Call.CallId)).Header.Outcome);
-                return frame.Payload.ToByteArray();
-            }
-
-            var submit = new TaskServiceSubmitTaskRequest
-            {
-                Meta = Command(),
-                Spec = new TaskSpec
-                {
-                    Command = new CommandSpec
-                    {
-                        Shell = new ShellCommand { Kind = ShellKind.Cmd, Script = "echo retained>\"%TEMP%\\keep.txt\"" },
-                    },
-                    WorkingDirectory = node.Root,
-                    Environment = new EnvironmentSpec { Inherit = EnvironmentInherit.Node },
-                },
-            };
-            var submitted = TaskServiceSubmitTaskResponse.Parser.ParseFrom(
-                await Invoke(RoutedMethod.SubmitNodeTask, submit, submit.Meta.CommandId, caller));
-            Assert.Null(submitted.Error);
-            var waited = await human.Tasks.WaitTaskAsync(new TaskServiceWaitTaskRequest
-            {
-                Meta = Command(),
-                TaskId = submitted.Value.TaskId,
-                Target = WaitTarget.Terminal,
-                WaitMs = 50_000,
-            }, cancellationToken: ct);
-            Assert.Null(waited.Error);
-            Assert.Equal(TaskState.Succeeded, waited.Value.Task.State);
-            var attempt = waited.Value.Task.CurrentAttempt.AttemptId;
-            await TestNode.WaitAsync(() => AttemptIsIdle(node.DataRoot, attempt),
-                TimeSpan.FromSeconds(20), "the actual native attempt identity and idle transition");
-
-            var root = Path.Combine(node.DataRoot, "tmp", IdText.Format(attempt));
-            var file = Path.Combine(root, "keep.txt");
-            Assert.Equal("retained", File.ReadAllText(file).Trim());
-            const string body = "signed-host-attempt-content-not-persisted-5189";
-            File.WriteAllText(file, body);
-            var directory = Directory.CreateDirectory(Path.Combine(root, "later")).FullName;
-            File.WriteAllText(Path.Combine(directory, "child.txt"), "child-fixture");
-
-            var request = new FileServicePlanRemovalRequest { Meta = Command(), AttemptId = attempt.Clone() };
-            var raw = request.ToByteArray();
-            var first = await Invoke(RoutedMethod.PlanNodeRemoval, request, request.Meta.CommandId, caller);
-            Assert.Equal(-1, first.AsSpan().IndexOf(Encoding.UTF8.GetBytes(body)));
-            var response = FileServicePlanRemovalResponse.Parser.ParseFrom(first);
-            Assert.True(NodeShapes.IsValid(response));
-            Assert.Null(response.Error);
-            var plan = response.Value.Plan;
-            Assert.Equal(attempt, plan.AttemptId);
-            Assert.Null(plan.WorkspacePath);
-            Assert.Equal(RiskClass.High, plan.Risk);
-            Assert.True(plan.RequiresApproval);
-            Assert.True(plan.QuarantineAvailable);
-            Assert.Equal(4, plan.Items.Count);
-            Assert.Equal((ulong)(new FileInfo(file).Length + new FileInfo(Path.Combine(directory, "child.txt")).Length), plan.TotalBytes);
-            Assert.Equal("", plan.Items[0].Path);
-            Assert.Equal(FileEntryKind.Directory, plan.Items[0].Kind);
-            Assert.True(plan.Items[0].OwnerVerified);
-            Assert.Contains(plan.Items, item => item.Path == "later/child.txt");
-            Assert.All(plan.Items.Skip(1), item => Assert.False(item.OwnerVerified));
-            Assert.True(response.Audit is null || response.Audit.Observations.Count == 0);
-            AssertPersisted(node.DataRoot, request.Meta.CommandId, raw, first, caller, attempt);
-
-            // Only these association rows are fixtures: the Host producer, FULL refusal/audit and signature are real.
-            var unknownSession = CommandIds.New().Value.ToByteArray();
-            FixtureWrite(node.DataRoot, """
-                INSERT INTO session (session_id, client, source, state, started_at, last_activity_at, rev)
-                VALUES ($id, 1, 1, 1, $now, $now, 0);
-                """, ("$id", unknownSession), ("$now", StoreTime.ToMicroseconds(DateTimeOffset.UtcNow)));
-            var unknownRequest = new FileServicePlanRemovalRequest { Meta = Command(), AttemptId = attempt.Clone() };
-            var unknownFirst = await Invoke(RoutedMethod.PlanNodeRemoval, unknownRequest, unknownRequest.Meta.CommandId, caller);
-            AssertQualification(unknownFirst, "attempt_references_unverified");
-            FixtureWrite(node.DataRoot, "UPDATE session SET state = 3 WHERE session_id = $id;", ("$id", unknownSession));
-            Assert.Equal(unknownFirst, await Invoke(RoutedMethod.PlanNodeRemoval, unknownRequest, unknownRequest.Meta.CommandId, caller));
-
-            // A missing root association cannot be invented by tracking classification.
-            var unknownDirectory = CommandIds.New().Value.ToByteArray();
-            var recordsRoot = FixtureScalar(node.DataRoot, "SELECT path FROM root_location WHERE root_class = 'records';") as string;
-            FixtureWrite(node.DataRoot, """
-                DELETE FROM root_location WHERE root_class = 'records';
-                INSERT INTO managed_directory
-                  (directory_id, owner_kind, owner_id, root_class, relative_path, created_at, last_used_at, pinned, state, rev)
-                VALUES ($id, 5, $owner, 'records', 'unresolved-reference', $now, $now, 0, 2, 0);
-                """, ("$id", unknownDirectory), ("$owner", nodeId.Value.ToByteArray()),
-                ("$now", StoreTime.ToMicroseconds(DateTimeOffset.UtcNow)));
-            var trackingRequest = new FileServicePlanRemovalRequest { Meta = Command(), AttemptId = attempt.Clone() };
-            var trackingFirst = await Invoke(RoutedMethod.PlanNodeRemoval, trackingRequest, trackingRequest.Meta.CommandId, caller);
-            AssertQualification(trackingFirst, "attempt_tracking_unverified");
-            FixtureWrite(node.DataRoot, "UPDATE managed_directory SET state = 5 WHERE directory_id = $id;", ("$id", unknownDirectory));
-            if (recordsRoot is not null) FixtureWrite(node.DataRoot,
-                "INSERT INTO root_location (root_class, path) VALUES ('records', $path);", ("$path", recordsRoot));
-            Assert.Equal(trackingFirst, await Invoke(RoutedMethod.PlanNodeRemoval, trackingRequest, trackingRequest.Meta.CommandId, caller));
-            Assert.Equal(1L, FixtureScalar(node.DataRoot, "SELECT count(*) FROM file_removal_plan;"));
-            Assert.Equal(0L, FixtureScalar(node.DataRoot, "SELECT count(*) FROM file_operation_journal;"));
-
-            var foreign = caller.Clone();
-            foreign.LocalSessionId = CommandIds.New();
-            var foreignRequest = new FileServicePlanRemovalRequest { Meta = Command(), AttemptId = attempt.Clone() };
-            var foreignReply = FileServicePlanRemovalResponse.Parser.ParseFrom(
-                await Invoke(RoutedMethod.PlanNodeRemoval, foreignRequest, foreignRequest.Meta.CommandId, foreign));
-            Assert.Equal("not_found", foreignReply.Error.Code);
-            File.WriteAllText(file, body + "-after-plan");
-            Assert.Equal(first, await Invoke(RoutedMethod.PlanNodeRemoval, request, request.Meta.CommandId, caller));
-            await node.StopNodeAsync();
-            await node.StartNodeAsync();
-            channel = await center.Channel.ProvedAsync(2);
-            Assert.Equal(first, await Invoke(RoutedMethod.PlanNodeRemoval, request, request.Meta.CommandId, caller));
-            Assert.Equal(unknownFirst, await Invoke(RoutedMethod.PlanNodeRemoval, unknownRequest, unknownRequest.Meta.CommandId, caller));
-            Assert.Equal(trackingFirst, await Invoke(RoutedMethod.PlanNodeRemoval, trackingRequest, trackingRequest.Meta.CommandId, caller));
-            AssertPersisted(node.DataRoot, request.Meta.CommandId, raw, first, caller, attempt);
-            Assert.Equal(body + "-after-plan", File.ReadAllText(file));
-            Assert.True(Directory.Exists(directory));
-            Assert.Empty(channel.UnverifiedResults);
-            foreach (var path in new[] { StorePaths.Database(node.DataRoot), StorePaths.Database(node.DataRoot) + "-wal", node.NodeLog })
-            {
-                if (CloudLinkHostTests.ReadAllShared(path) is not { } bytes) continue;
-                Assert.Equal(-1, bytes.AsSpan().IndexOf(Encoding.UTF8.GetBytes(body)));
-            }
+            var identity = RegisteredWorkspaces.RootIdentity.Encode(root.RootIdentity);
+            snapshot = WorkspaceRemovalPlan.CaptureCheckedRoot(root, identity.Platform, identity.Bytes, ct);
         }
-        finally
+        var raw = request.ToByteArray();
+        var digest = SHA256.HashData(raw);
+        var receipt = history.Store.Write(tx =>
         {
-            if (node.Descriptor() is { } descriptor && descriptor.ProcessIsAlive())
+            var caller = new ActorRef { Origin = Origin.Remote, CenterCaller = owner, RemoteCommandId = request.Meta.CommandId };
+            var prepared = FileRemovalPlans.PrepareAttempt(tx, request.Meta.CommandId.Value.Span, digest, owner, caller, request.AttemptId,
+                path, snapshot, tx.NowMicroseconds,
+                new Dictionary<string, AttemptDirectoryTracking>(StringComparer.Ordinal) { [""] = AttemptDirectoryTracking.Tracked, ["later"] = AttemptDirectoryTracking.Untracked },
+                quarantineAvailable: true);
+            FileRemovalPlans.RecordAttempt(tx, prepared);
+            return Retain(tx, request, owner, new FileServicePlanRemovalResponse
             {
-                await using var cleanup = await node.HumanChannelAsync();
-                var signedOut = await cleanup.Account.SignOutAsync(new AccountServiceSignOutRequest { Meta = Command() },
-                    deadline: DateTime.UtcNow.AddSeconds(15), cancellationToken: CancellationToken.None);
-                Assert.Null(signedOut.Error);
-                await node.StopNodeAsync();
-            }
-        }
+                Meta = new ResponseMeta { CorrelationId = request.Meta.CorrelationId },
+                Value = new FileServicePlanRemovalValue { Plan = prepared.Plan },
+            });
+        }, CommitDurability.Full);
+
+        var first = await history.RouteAsync(RoutedMethod.PlanNodeRemoval, owner, request, request.Meta.CommandId, ct);
+        Assert.Equal(receipt, first?.Response?.ToByteArray());
+        var plan = FileServicePlanRemovalResponse.Parser.ParseFrom(receipt).Value.Plan;
+        Assert.Equal(request.AttemptId, plan.AttemptId);
+        Assert.Null(plan.WorkspacePath);
+        Assert.True(plan.RequiresApproval);
+        Assert.True(plan.QuarantineAvailable);
+        Assert.Equal(RiskClass.High, plan.Risk);
+        Assert.Equal(snapshot.TotalBytes, plan.TotalBytes);
+        Assert.Equal(4, plan.Items.Count);
+        Assert.True(plan.Items[0].OwnerVerified);
+        Assert.All(plan.Items.Skip(1), item => Assert.False(item.OwnerVerified));
+
+        File.WriteAllText(file, "later fixture bytes");
+        await history.ReopenAsync();
+        var replay = await history.RouteAsync(RoutedMethod.PlanNodeRemoval, owner, request, request.Meta.CommandId, ct);
+        Assert.Equal(receipt, replay?.Response?.ToByteArray());
+        var foreign = owner.Clone();
+        foreign.LocalSessionId = CommandIds.New();
+        var refused = await history.RouteAsync(RoutedMethod.PlanNodeRemoval, foreign, request, request.Meta.CommandId, ct);
+        Assert.Equal("command_id_reused", FileServicePlanRemovalResponse.Parser.ParseFrom(refused!.Response).Error.Code);
+        Assert.Equal(1L, history.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_removal_plan;")));
+        Assert.Equal(0L, history.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_operation_journal;")));
+        Assert.Equal("later fixture bytes", File.ReadAllText(file));
+        Assert.Equal("retained child file", File.ReadAllText(Path.Combine(nested, "child.txt")));
     }
 
     [Fact(Timeout = 180_000)]
     [Trait("env", "linux-real")]
-    public async Task SignedRealLinuxAttemptWithoutProvenanceRefusesAndReplays()
+    public async Task ARecordedLinuxQualificationRefusalReplaysWithoutCreatingAPlan()
     {
-        Assert.SkipUnless(OperatingSystem.IsLinux(), "Linux producer does not record native-create provenance.");
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "The historical refusal describes unavailable Linux attempt provenance.");
         var ct = TestContext.Current.CancellationToken;
-        await using var center = await FakeCenter.StartAsync();
-        center.CommandKeys.Add(center.Channel.CommandPublicKey);
-        await using var node = TestNode.Create();
-        node.Environment[CloudLinkTestHooks.CenterUrl] = center.Endpoint.Url;
-        using var host = await node.StartNodeAsync();
-        Assert.False(host.HasExited);
-        try
+        await using var history = new LegacyFileHostHistory();
+        var owner = history.Caller(Origin.Agent);
+        var request = new FileServicePlanRemovalRequest { Meta = LegacyFileHostHistory.Command(), AttemptId = SeedFinishedAttempt(history, owner) };
+        var path = Directory.CreateDirectory(Path.Combine(history.Root, "retained-attempt")).FullName;
+        var file = Path.Combine(path, "keep.txt");
+        File.WriteAllText(file, "retained without provenance");
+        var receipt = history.Store.Write(tx => Retain(tx, request, owner, new FileServicePlanRemovalResponse
         {
-            await using var human = await node.HumanChannelAsync();
-            var info = await human.Node.GetNodeInfoAsync(new NodeServiceGetNodeInfoRequest(), cancellationToken: ct);
-            Assert.Null(info.Error);
-            Assert.Contains("files.v1", info.Value.Node.Features);
-            var begun = await human.Account.BeginSignInAsync(new AccountServiceBeginSignInRequest
+            Meta = new ResponseMeta { CorrelationId = request.Meta.CorrelationId },
+            Error = new ArcError
             {
-                Meta = Command(),
-                Method = SignInMethod.DeviceCode,
-            }, cancellationToken: ct);
-            Assert.Null(begun.Error);
-            center.ApproveDevice();
-            await TestNode.WaitAsync(async () => (await human.Account.GetAccountStatusAsync(
-                new AccountServiceGetAccountStatusRequest(), cancellationToken: ct)).Value.Status.Relay == RelayState.Connected,
-                TimeSpan.FromSeconds(30), "the isolated center peer is connected");
-            var channel = await center.Channel.ProvedAsync();
-            var caller = new CenterCaller
-            {
-                Kind = CenterCallerKind.NodeRelay,
-                AccountId = new Id { Value = ByteString.CopyFrom(channel.AccountId) },
-                RelayingNodeId = info.Value.Node.Node.NodeId.Clone(),
-                LocalOrigin = Origin.Agent,
-                LocalSessionId = CommandIds.New(),
-            };
+                Category = ErrorCategory.State, Code = "file_access_denied", MessageKey = "error.state.file_access_denied",
+                Effect = EffectCertainty.DidNotHappen, Retry = new RetryAdvice { Mode = RetryMode.Never },
+                CorrelationId = request.Meta.CorrelationId,
+                Details = new ErrorDetails { State = new StateFailure { State = "file", Reason = "identity_unavailable" } },
+            },
+        }), CommitDurability.Full);
 
-            async Task<byte[]> Invoke(RoutedMethod method, IMessage request, Id command)
-            {
-                var built = center.Channel.BuildCall(channel, new FakeCallSpec
-                {
-                    Method = method,
-                    Payload = request.ToByteArray(),
-                    Caller = caller,
-                    CommandId = command,
-                    Lifetime = TimeSpan.FromSeconds(30),
-                });
-                await channel.SendCallAsync(built.Call);
-                var frame = await channel.ResultOfAsync(built.Call.CallId);
-                await TestNode.WaitAsync(() => channel.VerifiedResults.Any(value => value.Header.CallId.Equals(built.Call.CallId)),
-                    TimeSpan.FromSeconds(15), "the real Host result signature verifies");
-                Assert.Equal(RoutedOutcome.Executed, channel.VerifiedResults.Single(value => value.Header.CallId.Equals(built.Call.CallId)).Header.Outcome);
-                return frame.Payload.ToByteArray();
-            }
+        var first = await history.RouteAsync(RoutedMethod.PlanNodeRemoval, owner, request, request.Meta.CommandId, ct);
+        Assert.Equal(receipt, first?.Response?.ToByteArray());
+        var error = FileServicePlanRemovalResponse.Parser.ParseFrom(receipt).Error;
+        Assert.Equal(("identity_unavailable", EffectCertainty.DidNotHappen, RetryMode.Never),
+            (error.Details.State.Reason, error.Effect, error.Retry.Mode));
+        await history.ReopenAsync();
+        var replay = await history.RouteAsync(RoutedMethod.PlanNodeRemoval, owner, request, request.Meta.CommandId, ct);
+        Assert.Equal(receipt, replay?.Response?.ToByteArray());
 
-            var argv = new ArgvCommand();
-            argv.Argv.Add("/bin/sh");
-            argv.Argv.Add("-c");
-            argv.Argv.Add("printf retained > \"$TMPDIR/keep.txt\"");
-            var submit = new TaskServiceSubmitTaskRequest
-            {
-                Meta = Command(),
-                Spec = new TaskSpec
-                {
-                    Command = new CommandSpec { Argv = argv },
-                    WorkingDirectory = node.Root,
-                    Environment = new EnvironmentSpec { Inherit = EnvironmentInherit.Node },
-                },
-            };
-            var submitted = TaskServiceSubmitTaskResponse.Parser.ParseFrom(
-                await Invoke(RoutedMethod.SubmitNodeTask, submit, submit.Meta.CommandId));
-            Assert.Null(submitted.Error);
-            var waited = await human.Tasks.WaitTaskAsync(new TaskServiceWaitTaskRequest
-            {
-                Meta = Command(),
-                TaskId = submitted.Value.TaskId,
-                Target = WaitTarget.Terminal,
-                WaitMs = 50_000,
-            }, cancellationToken: ct);
-            Assert.Null(waited.Error);
-            Assert.Equal(TaskState.Succeeded, waited.Value.Task.State);
-            var attempt = waited.Value.Task.CurrentAttempt.AttemptId;
-            var file = Path.Combine(node.DataRoot, "tmp", IdText.Format(attempt), "keep.txt");
-            Assert.Equal("retained", File.ReadAllText(file));
-            var request = new FileServicePlanRemovalRequest { Meta = Command(), AttemptId = attempt.Clone() };
-            var raw = request.ToByteArray();
-            var first = await Invoke(RoutedMethod.PlanNodeRemoval, request, request.Meta.CommandId);
-            var refusal = FileServicePlanRemovalResponse.Parser.ParseFrom(first);
-            Assert.True(NodeShapes.IsValid(refusal));
-            Assert.Equal(ErrorCategory.State, refusal.Error.Category);
-            Assert.Equal("file_access_denied", refusal.Error.Code);
-            Assert.Equal("identity_unavailable", refusal.Error.Details.State.Reason);
-            Assert.Equal(EffectCertainty.DidNotHappen, refusal.Error.Effect);
-            Assert.Equal(RetryMode.Never, refusal.Error.Retry.Mode);
-            Assert.True(refusal.Audit is null || refusal.Audit.Observations.Count == 0);
-            AssertNoAttemptPlan(node.DataRoot, request.Meta.CommandId, raw, first, attempt);
-            Assert.Equal(first, await Invoke(RoutedMethod.PlanNodeRemoval, request, request.Meta.CommandId));
-            await node.StopNodeAsync();
-            await node.StartNodeAsync();
-            channel = await center.Channel.ProvedAsync(2);
-            Assert.Equal(first, await Invoke(RoutedMethod.PlanNodeRemoval, request, request.Meta.CommandId));
-            AssertNoAttemptPlan(node.DataRoot, request.Meta.CommandId, raw, first, attempt);
-            Assert.Equal("retained", File.ReadAllText(file));
-            Assert.Empty(channel.UnverifiedResults);
-        }
-        finally
+        var changed = request.Clone();
+        changed.Meta.CorrelationId = CommandIds.New();
+        var refused = await history.RouteAsync(RoutedMethod.PlanNodeRemoval, owner, changed, request.Meta.CommandId, ct);
+        Assert.Equal("command_id_reused", FileServicePlanRemovalResponse.Parser.ParseFrom(refused!.Response).Error.Code);
+        Assert.Equal(0L, history.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_removal_plan;")));
+        Assert.Equal(0L, history.Store.Read(reader => reader.Scalar("SELECT count(*) FROM file_operation_journal;")));
+        Assert.Equal("retained without provenance", File.ReadAllText(file));
+    }
+
+    private static byte[] Retain(StoreTransaction tx, FileServicePlanRemovalRequest request, CenterCaller owner, FileServicePlanRemovalResponse reply)
+    {
+        Assert.True(NodeShapes.IsValid(reply));
+        var id = request.Meta.CommandId.Value.ToByteArray();
+        Assert.Equal(DedupStatus.Execute, CommandDeduplication.Begin(tx, id, "arcforges.node.v1.FileService/PlanRemoval",
+            SHA256.HashData(request.ToByteArray()), Origin.Remote).Status);
+        tx.Execute("INSERT INTO file_removal_command_owner (command_id, caller) VALUES ($id, $caller);",
+            ("$id", id), ("$caller", owner.ToByteArray()));
+        var response = reply.ToByteArray();
+        CommandDeduplication.Complete(tx, id, response);
+        return response;
+    }
+
+    private static Id SeedFinishedAttempt(LegacyFileHostHistory history, CenterCaller owner) => history.Store.Write(tx =>
+    {
+        var task = StoreIds.NewUuid7(tx.Clock);
+        var attempt = StoreIds.NewUuid7(tx.Clock);
+        var spec = new TaskSpec
         {
-            if (node.Descriptor() is { } descriptor && descriptor.ProcessIsAlive())
-            {
-                await using var cleanup = await node.HumanChannelAsync();
-                var signedOut = await cleanup.Account.SignOutAsync(new AccountServiceSignOutRequest { Meta = Command() },
-                    deadline: DateTime.UtcNow.AddSeconds(15), cancellationToken: CancellationToken.None);
-                Assert.Null(signedOut.Error);
-                await node.StopNodeAsync();
-            }
-        }
-    }
-
-    private static void AssertQualification(byte[] encoded, string reason)
-    {
-        var response = FileServicePlanRemovalResponse.Parser.ParseFrom(encoded);
-        Assert.True(NodeShapes.IsValid(response));
-        Assert.Null(response.Value);
-        Assert.Equal(ErrorCategory.State, response.Error.Category);
-        Assert.Equal("invalid_state", response.Error.Code);
-        Assert.Equal("file", response.Error.Details.State.State);
-        Assert.Equal(reason, response.Error.Details.State.Reason);
-        Assert.Equal(EffectCertainty.DidNotHappen, response.Error.Effect);
-        Assert.Equal(RetryMode.Never, response.Error.Retry.Mode);
-        Assert.Null(response.Error.Retry.RetryAt);
-        Assert.False(response.Error.Retry.HasReconciliationOperation);
-        Assert.Null(response.Error.Details.State.Resource);
-        Assert.Null(response.Error.Details.State.Native);
-    }
-
-    // Isolated metadata fixtures only. Never used with a production database or to manufacture an effect result.
-    private static void FixtureWrite(string dataRoot, string sql, params (string Name, object? Value)[] parameters)
-    {
-        using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
-        {
-            DataSource = StorePaths.Database(dataRoot),
-            Mode = SqliteOpenMode.ReadWrite,
-        }.ToString());
-        connection.Open();
-        using var setting = connection.CreateCommand();
-        setting.CommandText = "PRAGMA synchronous=FULL;";
-        setting.ExecuteNonQuery();
-        using var transaction = connection.BeginTransaction();
-        using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = sql;
-        foreach (var (name, value) in parameters) command.Parameters.AddWithValue(name, value ?? DBNull.Value);
-        command.ExecuteNonQuery();
-        transaction.Commit();
-    }
-
-    private static object? FixtureScalar(string dataRoot, string sql)
-    {
-        using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
-        {
-            DataSource = StorePaths.Database(dataRoot),
-            Mode = SqliteOpenMode.ReadOnly,
-        }.ToString());
-        connection.Open();
-        using var command = connection.CreateCommand();
-        command.CommandText = sql;
-        return command.ExecuteScalar();
-    }
-
-    private static void AssertNoAttemptPlan(string dataRoot, Id command, byte[] raw, byte[] response, Id attempt)
-    {
-        var builder = new SqliteConnectionStringBuilder { DataSource = StorePaths.Database(dataRoot), Mode = SqliteOpenMode.ReadOnly };
-        using var connection = new SqliteConnection(builder.ToString());
-        connection.Open();
-        using var query = connection.CreateCommand();
-        query.CommandText = """
-            SELECT d.payload_digest, d.outcome,
-                   (SELECT count(*) FROM file_removal_plan WHERE command_id = d.command_id),
-                   (SELECT count(*) FROM file_attempt_temp_identity WHERE attempt_id = $attempt),
-                   (SELECT count(*) FROM file_workspace_audit f JOIN audit_log a ON a.seq = f.audit_seq
-                    WHERE f.attempt_id = $attempt AND a.operation = 'cleanup.plan FileService.PlanRemoval'
-                      AND a.outcome_summary = 'refused: file_access_denied')
-            FROM command_dedup d WHERE d.command_id = $id;
-            """;
-        query.Parameters.AddWithValue("$id", command.Value.ToByteArray());
-        query.Parameters.AddWithValue("$attempt", attempt.Value.ToByteArray());
-        using var row = query.ExecuteReader();
-        Assert.True(row.Read());
-        Assert.Equal(SHA256.HashData(raw), (byte[])row.GetValue(0));
-        Assert.Equal(response, (byte[])row.GetValue(1));
-        Assert.Equal(0L, row.GetInt64(2));
-        Assert.Equal(0L, row.GetInt64(3));
-        Assert.Equal(1L, row.GetInt64(4));
-        Assert.False(row.Read());
-    }
-
-    private static RequestMeta Command() => new() { CommandId = CommandIds.New(), CorrelationId = CommandIds.New() };
-
-    private static bool AttemptIsIdle(string dataRoot, Id attempt)
-    {
-        var builder = new SqliteConnectionStringBuilder { DataSource = StorePaths.Database(dataRoot), Mode = SqliteOpenMode.ReadOnly };
-        using var connection = new SqliteConnection(builder.ToString());
-        connection.Open();
-        using var query = connection.CreateCommand();
-        query.CommandText = """
-            SELECT count(*) FROM file_attempt_temp_identity p
-            JOIN managed_directory m ON m.directory_id = p.directory_id
-            JOIN attempt a ON a.attempt_id = p.attempt_id
-            WHERE p.attempt_id = $id AND m.state = 2 AND a.state = 9;
-            """;
-        query.Parameters.AddWithValue("$id", attempt.Value.ToByteArray());
-        return (long)query.ExecuteScalar()! == 1;
-    }
-
-    private static void AssertPersisted(string dataRoot, Id command, byte[] raw, byte[] response, CenterCaller caller, Id attempt)
-    {
-        var builder = new SqliteConnectionStringBuilder { DataSource = StorePaths.Database(dataRoot), Mode = SqliteOpenMode.ReadOnly };
-        using var connection = new SqliteConnection(builder.ToString());
-        connection.Open();
-        using var query = connection.CreateCommand();
-        query.CommandText = """
-            SELECT p.target_kind, p.attempt_id, p.request_sha256, p.caller, d.outcome,
-                   (SELECT count(*) FROM file_removal_plan_item i WHERE i.plan_id = p.plan_id),
-                   (SELECT count(*) FROM file_removal_plan_item i WHERE i.plan_id = p.plan_id AND i.owner_verified = 1),
-                   (SELECT count(*) FROM audit_log WHERE operation = 'cleanup.plan FileService.PlanRemoval' AND outcome_summary = 'planned'),
-                   (SELECT c.item_class FROM cleanup_item c JOIN file_removal_plan_item i
-                    ON i.plan_id = c.plan_id AND i.item_id = c.item_id WHERE i.plan_id = p.plan_id AND i.ordinal = 0),
-                   (SELECT count(*) FROM cleanup_item c JOIN file_removal_plan_item i
-                    ON i.plan_id = c.plan_id AND i.item_id = c.item_id
-                    WHERE i.plan_id = p.plan_id AND i.ordinal > 0 AND c.item_class = 10)
-            FROM file_removal_plan p JOIN command_dedup d ON d.command_id = p.command_id WHERE p.command_id = $id;
-            """;
-        query.Parameters.AddWithValue("$id", command.Value.ToByteArray());
-        using var row = query.ExecuteReader();
-        Assert.True(row.Read());
-        Assert.Equal(2, row.GetInt32(0));
-        Assert.Equal(attempt.Value.ToByteArray(), (byte[])row.GetValue(1));
-        Assert.Equal(SHA256.HashData(raw), (byte[])row.GetValue(2));
-        Assert.Equal(caller, CenterCaller.Parser.ParseFrom((byte[])row.GetValue(3)));
-        Assert.Equal(response, (byte[])row.GetValue(4));
-        Assert.Equal(4L, row.GetInt64(5));
-        Assert.Equal(1L, row.GetInt64(6));
-        Assert.Equal(1L, row.GetInt64(7));
-        Assert.Equal(1, row.GetInt32(8));
-        Assert.Equal(1L, row.GetInt64(9)); // only the unrecorded directory, not either ordinary file
-
-        Assert.False(row.Read());
-    }
+            Kind = TaskKind.Command, Command = new CommandSpec { Argv = new ArgvCommand { Argv = { "fixture-never-starts" } } },
+        }.ToByteArray();
+        var digest = SHA256.HashData(spec);
+        var actor = new ActorRef { Origin = Origin.Remote, CenterCaller = owner };
+        tx.Execute("""
+            INSERT INTO task (task_id, state, kind, title, command_summary, spec, spec_digest, owner, owner_origin,
+                              pool, priority, effective_priority, side_effect, side_effect_source, command_fingerprint,
+                              command_digest, created_at, started_at, finished_at, current_attempt_id, attempt_count, rev)
+            VALUES ($task, $state, 1, 'retained history', 'retained history', $spec, $digest, $owner, $origin,
+                    'default', 3, 3, 4, 1, 'retained history', $digest, $now, $now, $now, $attempt, 1, 0);
+            """, ("$task", task), ("$state", (int)TaskState.Succeeded), ("$spec", spec), ("$digest", digest), ("$owner", actor.ToByteArray()),
+            ("$origin", (int)Origin.Remote), ("$now", tx.NowMicroseconds), ("$attempt", attempt));
+        tx.Execute("""
+            INSERT INTO attempt (attempt_id, task_id, number, kind, state, executor_node_id, boot_identity,
+                                 request_cpu_millicores, request_mem_expected_bytes, request_mem_ceiling_bytes, request_source,
+                                 accounted_mem_bytes, created_at, started_at, finished_at, exit_code, termination_reason, effect, rev)
+            VALUES ($attempt, $task, 1, 1, 9, $node, $boot, 100, 67108864, 67108864, 1, 67108864,
+                    $now, $now, $now, 0, $reason, $effect, 0);
+            """, ("$attempt", attempt), ("$task", task), ("$node", history.Store.Metadata.NodeId.ToArray()), ("$boot", BootIdentity.Read()),
+            ("$now", tx.NowMicroseconds), ("$reason", (int)TerminationReason.Exited), ("$effect", (int)EffectCertainty.Happened));
+        return new Id { Value = ByteString.CopyFrom(attempt) };
+    }, CommitDurability.Full);
 }
