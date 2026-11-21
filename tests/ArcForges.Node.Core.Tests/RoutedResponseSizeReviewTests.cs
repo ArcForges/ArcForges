@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Security.Cryptography;
+using System.Text.Json;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
@@ -188,9 +190,13 @@ public sealed class RoutedResponseSizeReviewTests
 
     private static List<Id> SeedQueuedTasks(InProcessNode node, TaskSpec spec, int count)
     {
-        // Materialize the same bounded spec/labels that were stored by historical admission.
+        // Materialize the stored spec and labels from historical admission at eaaccb8380a2bd265aaad0a67d62c8fab2a8a29a.
         spec.Kind = TaskKind.Command;
-        var storage = PreparedSubmitStorage.Create(SubmittedEnvironment.Split(spec, SecretNameMatcher.Default));
+        var redacted = SubmittedEnvironment.Split(spec, SecretNameMatcher.Default).RedactedSpec;
+        var specBytes = redacted.ToByteArray();
+        var specDigest = SHA256.HashData(specBytes);
+        var labels = JsonSerializer.Serialize(new Dictionary<string, string>(redacted.Labels, StringComparer.Ordinal),
+            ExecutionJsonContext.Default.DictionaryStringString);
         var summary = CommandText.Summary(spec.Command, SecretNameMatcher.Default);
         var fingerprint = CommandText.Fingerprint(spec.Command);
         var commandDigest = CommandText.Digest(spec, []);
@@ -205,7 +211,7 @@ public sealed class RoutedResponseSizeReviewTests
                     UPDATE task SET spec = $spec, spec_digest = $digest, labels_json = $labels, title = $summary, command_summary = $summary,
                                     command_fingerprint = $fingerprint, command_digest = $commandDigest
                     WHERE task_id = $id;
-                    """, ("$spec", storage.Spec), ("$digest", storage.Digest), ("$labels", storage.Labels), ("$summary", summary),
+                    """, ("$spec", specBytes), ("$digest", specDigest), ("$labels", labels), ("$summary", summary),
                     ("$fingerprint", fingerprint), ("$commandDigest", commandDigest), ("$id", task.Value.ToByteArray())));
                 tasks.Add(task);
             }

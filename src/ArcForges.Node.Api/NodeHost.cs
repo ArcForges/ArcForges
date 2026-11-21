@@ -417,7 +417,6 @@ public static class NodeHost
             Clock = clock,
             DataRoot = dataRoot,
             Platform = platform,
-            Secrets = new TaskSecrets(store, keys),
             KeysReady = keyLoad,
             Tools = options.ToolConcurrency,
             Faults = faults,

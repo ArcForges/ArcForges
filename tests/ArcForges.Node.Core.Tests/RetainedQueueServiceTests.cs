@@ -24,7 +24,6 @@ public sealed class RetainedQueueServiceTests
         using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = fixture.DataRoot, BootIdentity = "retained-queue-fixture", Clock = fixture.Clock });
         using var log = new NodeLog(Path.Combine(fixture.DataRoot, "logs", "node"), LogLevel.Info, fixture.Clock);
         using var heartbeat = new NodeHeartbeatWriter(fixture.DataRoot, log, fixture.Clock);
-        using var keys = new NodeDataKeyRing(store, fixture.Secrets.Selection);
         var journal = EventJournal.Open(store);
         var hub = new StreamHub();
         await using var processor = new CommandProcessor(store, journal, hub);
@@ -35,7 +34,6 @@ public sealed class RetainedQueueServiceTests
             Log = log,
             Clock = fixture.Clock,
             DataRoot = fixture.DataRoot,
-            Secrets = new TaskSecrets(store, keys),
             Heartbeat = heartbeat,
         });
         using var runtime = new NodeRuntime(store, journal, hub, processor, log,

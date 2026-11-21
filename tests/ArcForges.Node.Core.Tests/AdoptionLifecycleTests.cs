@@ -208,7 +208,6 @@ public sealed class AdoptionLifecycleTests
         using var platform = new RecoveredPlatform(root, containerAvailable);
         using var log = new NodeLog(Path.Combine(node.DataRoot, "logs", "node"), LogLevel.Info, node.Clock);
         using var heartbeat = new NodeHeartbeatWriter(node.DataRoot, log, node.Clock);
-        using var keys = new NodeDataKeyRing(store, node.Secrets.Selection);
         var journal = EventJournal.Open(store);
         var hub = new StreamHub();
         await using var processor = new CommandProcessor(store, journal, hub);
@@ -222,7 +221,6 @@ public sealed class AdoptionLifecycleTests
             DataRoot = node.DataRoot,
             Platform = platform,
             Sampler = platform,
-            Secrets = new TaskSecrets(store, keys),
             Heartbeat = heartbeat,
         });
         using var runtime = new NodeRuntime(store, journal, hub, processor, log,

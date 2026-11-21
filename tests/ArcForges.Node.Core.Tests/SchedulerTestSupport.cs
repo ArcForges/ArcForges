@@ -2,15 +2,12 @@
 using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
-using System.Security.Cryptography;
 using System.Text.Json;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
-using ArcForges.Node.Core.Execution;
 using ArcForges.Node.Core.Scheduling;
 using ArcForges.Node.Store;
-using Google.Protobuf;
 
 namespace ArcForges.Node.Core.Tests;
 
@@ -235,33 +232,6 @@ internal static class Sched
             "INSERT INTO session (session_id, client, source, state, started_at, last_activity_at, rev) VALUES ($id, 1, 1, 1, $now, $now, 0);",
             ("$id", id), ("$now", transaction.NowMicroseconds));
         return id;
-    }
-
-    /// <summary>
-    /// Submits through the supervisor as a session's task (the node sets the owner from the connection, and sessions arrive with
-    /// AF-AI-01: this test seam submits with the owner a session's connection will carry; admission, launch and records are the node's own).
-    /// </summary>
-    public static async Task<Id> SubmitAsSessionAsync(InProcessNode node, TaskSpec spec, byte[] session, string pool = "default")
-    {
-        var execution = node.Runtime.Execution!;
-        var settings = execution.Settings;
-        var parts = SubmittedEnvironment.Split(spec, settings.SecretNames);
-        var plan = new SubmitPlan
-        {
-            Parts = parts,
-            Storage = PreparedSubmitStorage.Create(parts),
-            Owner = new ActorRef { Origin = Origin.Agent, ClientKind = ClientKind.McpAdapter, SessionId = new Id { Value = ByteString.CopyFrom(session) } },
-            Title = "fair share",
-            Summary = CommandText.Summary(spec.Command, settings.SecretNames),
-            Fingerprint = CommandText.Fingerprint(spec.Command),
-            CommandDigest = SHA256.HashData(spec.ToByteArray()),
-            Pool = pool,
-            SessionId = session,
-            CommandId = CommandIds.New(),
-        };
-        var value = await node.Runtime.Processor.ExecuteAsync(context => execution.Submit(context, plan));
-        execution.Submitted(value.TaskId.Value.Span, null);
-        return value.TaskId;
     }
 
     /// <summary>The node log's events named <paramref name="name"/>.</summary>

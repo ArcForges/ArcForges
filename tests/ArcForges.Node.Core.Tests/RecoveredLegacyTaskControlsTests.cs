@@ -223,7 +223,6 @@ public sealed class RecoveredLegacyTaskControlsTests
         using var platform = new ReopenedPlatform(IdText.Format(store.Metadata.NodeId.Span), name, root, phase == AttemptState.Paused);
         using var log = new NodeLog(Path.Combine(node.DataRoot, "logs", "node"), LogLevel.Info, clock);
         using var heartbeat = new NodeHeartbeatWriter(node.DataRoot, log, clock);
-        using var keys = new NodeDataKeyRing(store, node.Secrets.Selection);
         var journal = EventJournal.Open(store);
         var hub = new StreamHub();
         await using var processor = new CommandProcessor(store, journal, hub);
@@ -236,7 +235,6 @@ public sealed class RecoveredLegacyTaskControlsTests
             Clock = clock,
             DataRoot = node.DataRoot,
             Platform = platform,
-            Secrets = new TaskSecrets(store, keys),
             Heartbeat = heartbeat,
         });
         using var runtime = new NodeRuntime(store, journal, hub, processor, log,

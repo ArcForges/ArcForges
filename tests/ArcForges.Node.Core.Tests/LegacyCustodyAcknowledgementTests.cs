@@ -148,7 +148,6 @@ public sealed class LegacyCustodyAcknowledgementTests
     {
         using var log = new NodeLog(Path.Combine(node.DataRoot, "logs", "node"), LogLevel.Info, node.Clock);
         using var heartbeat = new NodeHeartbeatWriter(node.DataRoot, log, node.Clock);
-        using var keys = new NodeDataKeyRing(store, node.Secrets.Selection);
         await using var processor = new CommandProcessor(store, EventJournal.Open(store), new StreamHub());
         await using var execution = new ExecutionSupervisor(new ExecutionOptions
         {
@@ -158,7 +157,6 @@ public sealed class LegacyCustodyAcknowledgementTests
             Clock = node.Clock,
             DataRoot = node.DataRoot,
             Platform = platform,
-            Secrets = new TaskSecrets(store, keys),
             Heartbeat = heartbeat,
         });
         await verify(execution, processor, heartbeat);

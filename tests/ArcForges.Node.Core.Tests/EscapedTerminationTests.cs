@@ -50,7 +50,6 @@ public sealed class EscapedTerminationTests
         });
         using var log = new NodeLog(Path.Combine(node.DataRoot, "logs", "node"), LogLevel.Info, node.Clock);
         using var heartbeat = new NodeHeartbeatWriter(node.DataRoot, log, node.Clock);
-        using var keys = new NodeDataKeyRing(store, node.Secrets.Selection);
         var journal = EventJournal.Open(store);
         await using var processor = new CommandProcessor(store, journal, new StreamHub());
         await using var execution = new ExecutionSupervisor(new ExecutionOptions
@@ -61,7 +60,6 @@ public sealed class EscapedTerminationTests
             Clock = node.Clock,
             DataRoot = node.DataRoot,
             Platform = platform,
-            Secrets = new TaskSecrets(store, keys),
             Heartbeat = heartbeat,
         });
         await execution.RecoverAsync(new RecoveryReport(true, false, null, store.Opening), processor, ct);

@@ -32,7 +32,6 @@ public sealed partial class LaunchFaultTests
         });
         using var log = new NodeLog(Path.Combine(fixture.DataRoot, "logs", "node"), LogLevel.Info, fixture.Clock);
         using var heartbeat = new NodeHeartbeatWriter(fixture.DataRoot, log, fixture.Clock);
-        using var keys = new NodeDataKeyRing(store, fixture.Secrets.Selection);
         var journal = EventJournal.Open(store);
         var hub = new StreamHub();
         await using var processor = new CommandProcessor(store, journal, hub);
@@ -44,7 +43,6 @@ public sealed partial class LaunchFaultTests
             Log = log,
             Clock = fixture.Clock,
             DataRoot = fixture.DataRoot,
-            Secrets = new TaskSecrets(store, keys),
             Heartbeat = heartbeat,
         });
         using var runtime = new NodeRuntime(store, journal, hub, processor, log,
