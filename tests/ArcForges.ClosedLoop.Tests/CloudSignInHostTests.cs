@@ -172,12 +172,13 @@ public sealed class CloudSignInHostTests
             },
         };
         center.Script("ListNodeTasks", new FakeFault.Raw([.. FakeCenter.DataFrame(response), .. FakeCenter.TrailerFrame(0, null)]));
-        using var cli = node.Start(TestNode.LegacyCli, [NodeLocations.TestModeOption, "tasks", "list"]);
+        using var cli = node.Start(TestNode.LegacyCli, [NodeLocations.TestModeOption, "tasks", "list", "--json"]);
         Assert.Equal(Path.GetFullPath(TestNode.LegacyCli), Path.GetFullPath(cli.StartInfo.FileName), comparer);
         var result = await TestNode.CompleteAsync(cli, TimeSpan.FromSeconds(30));
         Assert.True(result.ExitCode == 0, result.ToString());
-        Assert.Contains(IdText.Format(retainedTask.TaskId), result.Output, StringComparison.Ordinal);
-        Assert.Contains(retainedTask.Title, result.Output, StringComparison.Ordinal);
+        var displayed = Assert.Single(result.Json().GetProperty("tasks").EnumerateArray());
+        Assert.Equal(IdText.Format(retainedTask.TaskId), displayed.GetProperty("taskId").GetString());
+        Assert.Equal(retainedTask.Title, displayed.GetProperty("title").GetString());
         var request = FleetServiceListNodeTasksRequest.Parser.ParseFrom(FakeCenter.Payload(Assert.Single(center.CallsOf("ListNodeTasks")).Body));
         Assert.Equal(nodeId, request.NodeId);
         Assert.Equal(Origin.Script, request.Caller.LocalOrigin);
