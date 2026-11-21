@@ -297,7 +297,6 @@ public sealed class FileRemovalPlanConsumerTests
         Assert.True(NodeShapes.IsValid(plan));
         Assert.All(plan.Items, item => Assert.True(NodeShapes.IsValid(item)));
         Assert.True(NodeShapes.IsValid(response));
-        Assert.True(FileServiceHandler.RemovalPlanResponseFits(response));
         var outer = new FleetServicePlanNodeRemovalResponse
         {
             Meta = new ResponseMeta { CorrelationId = meta.CorrelationId.Clone() },
@@ -315,11 +314,15 @@ public sealed class FileRemovalPlanConsumerTests
         });
         Assert.True(NodeShapes.IsValid(withAudit.Audit));
         Assert.True(withAudit.CalculateSize() > maximum);
-        Assert.False(FileServiceHandler.RemovalPlanResponseFits(withAudit));
+        outer.Value.Response = withAudit.ToByteString();
+        Assert.Equal(withAudit.CalculateSize(), outer.Value.Response.Length);
+        Assert.False(RoutedFileResponseValidation.PlanRemoval(outer, target, request));
         var withMeta = response.Clone();
         withMeta.Meta.Warnings.Add("x");
         Assert.True(withMeta.CalculateSize() > maximum);
-        Assert.False(FileServiceHandler.RemovalPlanResponseFits(withMeta));
+        outer.Value.Response = withMeta.ToByteString();
+        Assert.Equal(withMeta.CalculateSize(), outer.Value.Response.Length);
+        Assert.False(RoutedFileResponseValidation.PlanRemoval(outer, target, request));
 
         plan.Items[^1].Path += "x";
         Assert.Equal(maximum + 1, response.CalculateSize());
@@ -327,7 +330,6 @@ public sealed class FileRemovalPlanConsumerTests
         Assert.True(NodeShapes.IsValid(plan));
         Assert.All(plan.Items, item => Assert.True(NodeShapes.IsValid(item)));
         Assert.False(NodeShapes.IsValid(response));
-        Assert.False(FileServiceHandler.RemovalPlanResponseFits(response));
         outer.Value.Response = response.ToByteString();
         Assert.False(RoutedFileResponseValidation.PlanRemoval(outer, target, request));
     }
