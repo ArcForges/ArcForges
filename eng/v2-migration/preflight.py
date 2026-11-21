@@ -21,13 +21,21 @@ LATEST_VERSION = 19
 MAX_SNAPSHOT_BYTES = 512 * 1024 * 1024
 COUNTS = {
     "unsettled_commands": "SELECT count(*) FROM command_dedup WHERE outcome IS NULL",
+    # PENDING or APPROVED can exist without a dedup row. An offline read never expires an approval.
+    "unsettled_approvals": "SELECT count(*) FROM approval WHERE state IN (1, 2)",
     "nonterminal_tasks": "SELECT count(*) FROM task WHERE state IN (1, 2, 3, 4, 5, 6)",
     "live_attempt_records": "SELECT count(*) FROM attempt WHERE state BETWEEN 1 AND 8 OR leftover_count > 0",
     "unsettled_file_journals": "SELECT count(*) FROM file_operation_journal WHERE phase <> 2 OR held = 1",
     "live_file_workers": "SELECT count(*) FROM file_effect_worker WHERE ended = 0",
+    # A released active slot can still retain a named stage object and its terminal fence.
+    "active_private_stage_reservations": "SELECT count(*) FROM file_private_stage_reservation WHERE active = 1",
+    "retained_inactive_private_stage_reservations": "SELECT count(*) FROM file_private_stage_reservation WHERE active = 0",
     "active_stage_production": "SELECT count(*) FROM file_stage_production WHERE active = 1 OR released = 0",
     "live_stage_workers": "SELECT count(*) FROM file_stage_worker WHERE ended = 0",
     "retained_quarantine": "SELECT count(*) FROM quarantine_entry WHERE restored_at IS NULL AND purged_at IS NULL",
+    # An exact removal plan gets its lifecycle state from the corresponding cleanup plan.
+    "unsettled_removal_plans": """SELECT count(*) FROM file_removal_plan AS removal
+        JOIN cleanup_plan AS cleanup ON cleanup.plan_id = removal.plan_id WHERE cleanup.state IN (1, 2, 3)""",
     "retained_removal_plans": "SELECT count(*) FROM file_removal_plan",
 }
 PREREQUISITES = [

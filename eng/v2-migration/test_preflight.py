@@ -194,6 +194,69 @@ class InventoryTests(unittest.TestCase):
         self.assertIn("nonterminal_tasks", result["blockers"])
         self.assertFalse(result["destructive_contraction_allowed"])
 
+    def test_legacy_approval_stage_and_removal_custody_is_counted_without_changing_the_snapshot(self):
+        for version, classification in [(15, "node15"), (19, "node_v2_expanded")]:
+            with self.subTest(version=version):
+                database = self.root / f"custody-{version}.db"
+                fixture(database, version=version)
+                workspace = b"w" * 16
+                active_stage, retained_stage = b"a" * 16, b"r" * 16
+                with contextlib.closing(sqlite3.connect(database)) as connection:
+                    connection.execute("PRAGMA foreign_keys=ON")
+                    connection.execute("""INSERT INTO workspace
+                        (workspace_id,kind,state,name,root_path,created_at,last_used_at,rev)
+                        VALUES(?,1,1,'fixture','fixture',1,1,0)""", (workspace,))
+                    # Pending and approved records do not need an executing or completed command.
+                    connection.executemany("""INSERT INTO approval
+                        (approval_id,state,operation,summary,details_json,risk,requester,command_id,request,
+                         request_digest,created_at,expires_at,rev)
+                        VALUES(?,?,'TaskService.RetryTask','fixture','{}',1,x'01',?,x'01',zeroblob(32),0,1,0)""",
+                        [(bytes([state]) * 16, state, bytes([state + 8]) * 16) for state in (1, 2, 3, 4, 5)])
+                    connection.executemany("""INSERT INTO command_dedup
+                        VALUES(?,'arcforges.node.v1.FileService/WriteFile',zeroblob(32),4,NULL,0,1)""",
+                        [(active_stage,), (retained_stage,)])
+                    connection.executemany("""INSERT INTO file_private_stage_reservation
+                        (command_id,workspace_id,kind,correlation_id,relative_path,expected_absent,
+                         request_sha256,caller,reserved_bytes,created_at)
+                        VALUES(?,?,1,zeroblob(16),'fixture-private-stage',1,zeroblob(32),x'01',16,0)""",
+                        [(active_stage, workspace), (retained_stage, workspace)])
+                    # A terminal pre-effect reservation can still hold its named object after releasing its active slot.
+                    connection.execute("""INSERT INTO file_private_stage_object
+                        (command_id,slot,stage_path,expected_size,expected_sha256,phase,
+                         identity_platform,native_identity,parent_identity)
+                        VALUES(?,1,'fixture-private-stage',16,zeroblob(32),2,1,zeroblob(33),zeroblob(33))""",
+                        (retained_stage,))
+                    connection.execute("INSERT INTO file_private_stage_terminal VALUES(?,1,1)", (retained_stage,))
+                    connection.execute("UPDATE file_private_stage_reservation SET active=0 WHERE command_id=?", (retained_stage,))
+                    connection.execute("UPDATE command_dedup SET outcome=x'01' WHERE command_id=?", (retained_stage,))
+                    connection.executemany("""INSERT INTO cleanup_plan
+                        (plan_id,state,digest,planned_by,total_bytes,item_count,created_at,expires_at,rev)
+                        VALUES(?,?,zeroblob(32),x'01',1,1,0,1,0)""",
+                        [(bytes([state + 16]) * 16, state) for state in range(1, 8)] + [(b"g" * 16, 3)])
+                    connection.executemany("""INSERT INTO file_removal_plan
+                        (plan_id,command_id,request_sha256,caller,target_kind,workspace_id,workspace_path,
+                         root_platform,root_identity,requires_approval,quarantine_available)
+                        VALUES(?,?,zeroblob(32),x'01',1,?,'fixture',1,zeroblob(33),0,0)""",
+                        [(bytes([state + 16]) * 16, bytes([state + 24]) * 16, workspace) for state in range(1, 8)])
+                    connection.commit()
+                before = {file.name: file.read_bytes() for file in self.root.iterdir()}
+                result = preflight.inventory(database)
+                self.assertEqual(classification, result["database"]["classification"])
+                expected = {
+                    "unsettled_commands": 1,
+                    "unsettled_approvals": 2,
+                    "active_private_stage_reservations": 1,
+                    "retained_inactive_private_stage_reservations": 1,
+                    "unsettled_removal_plans": 3,
+                    "retained_removal_plans": 7,
+                }
+                self.assertEqual({key: value for key, value in result["counts"].items() if value}, expected)
+                self.assertTrue(expected.keys() <= set(result["blockers"]))
+                self.assertIn("native_scope_and_exclusive_owner_proof_required", result["blockers"])
+                self.assertFalse(result["destructive_contraction_allowed"])
+                self.assertNotIn("fixture-private-stage", json.dumps(result))
+                self.assertEqual(before, {file.name: file.read_bytes() for file in self.root.iterdir()})
+
     def test_schema_drift_is_not_hidden_by_version15(self):
         fixture(self.database)
         with contextlib.closing(sqlite3.connect(self.database)) as connection:

@@ -14,6 +14,14 @@ retained unresolved legacy journal count. Fresh creation records that no prior
 backup exists. The caller's cohort defaults to the honest local-development
 identity `local`; it is not a claim of a released artifact.
 
+The offline `preflight.py` report counts pending and approved legacy approvals
+and both active and retained inactive named-stage reservations. Releasing a
+reservation's active slot can leave its named object and terminal fence in
+custody. The report counts exact file-removal plans in planned, awaiting
+approval or executing states separately from the total retained count.
+Preserve the retained records before contraction. The report requires separate
+native scope and exclusive owner evidence even when every count is zero.
+
 The target DDL is a logical model, not an upgrade script. Only the existing V1
 name collision is adapted: logical V2 `resource_sample` is physically
 `v2_resource_sample`. The old `resource_sample` columns, primary key and consumers
