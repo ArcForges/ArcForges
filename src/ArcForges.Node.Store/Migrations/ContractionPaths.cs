@@ -12,6 +12,8 @@ internal static partial class ContractionPaths
     private const int LinuxPathOnly = 0x200000;
     private const int LinuxCloseOnExec = 0x80000;
     private const int LinuxNonBlocking = 0x800;
+    private const int LinuxGetFileStatus = 3; // F_GETFL
+    private const int LinuxSetFileStatus = 4; // F_SETFL
     private const ushort LinuxDirectory = 0x4000;
     private const ushort LinuxRegular = 0x8000;
     private const uint LinuxStatMask = 0x1109; // STATX_TYPE | STATX_UID | STATX_INO | STATX_MNT_ID
@@ -35,6 +37,15 @@ internal static partial class ContractionPaths
         {
             if (ReadNamedRegular(handle, directory.Last) != expected)
                 throw Refused("source_file_identity_changed");
+
+            if (OperatingSystem.IsLinux())
+            {
+                // Keep nonblocking mode until the opened descriptor is verified as a regular file.
+                // A FileStream over a nonblocking Linux descriptor uses sequential reads in .NET 11.
+                int flags = GetOrSetFileStatus(handle, LinuxGetFileStatus, 0);
+                if (flags < 0 || GetOrSetFileStatus(handle, LinuxSetFileStatus, flags & ~LinuxNonBlocking) != 0)
+                    throw Refused("source_file_seekable_read_unavailable");
+            }
 
             return new FileStream(handle, FileAccess.Read);
         }
@@ -350,6 +361,9 @@ internal static partial class ContractionPaths
 
     [LibraryImport("libc", EntryPoint = "openat", StringMarshalling = StringMarshalling.Utf8, SetLastError = true)]
     private static partial int OpenAt(int directory, string path, int flags, uint mode);
+
+    [LibraryImport("libc", EntryPoint = "fcntl")]
+    private static partial int GetOrSetFileStatus(SafeFileHandle file, int command, int flags);
 
     [LibraryImport("libc", EntryPoint = "statx", StringMarshalling = StringMarshalling.Utf8, SetLastError = true)]
     private static partial int Statx(int directory, string path, int flags, uint mask, out LinuxStat status);

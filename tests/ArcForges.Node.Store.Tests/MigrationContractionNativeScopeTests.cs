@@ -19,6 +19,27 @@ public sealed class MigrationContractionNativeScopeTests
     private const string NativeRefusal = "node_contraction_native_scope_refused: ";
     private static readonly TimeSpan CommandBound = TimeSpan.FromSeconds(10);
 
+    [Fact]
+    [Trait("env", "linux-real")]
+    public void TheHeldRegularFileCanBeHashedCopiedAndRehashed()
+    {
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "Exercises native Linux descriptor flags.");
+        using var root = new TemporaryDataRoot();
+        Directory.CreateDirectory(Path.GetDirectoryName(root.Database)!);
+        byte[] expected = RandomNumberGenerator.GetBytes(17_921);
+        File.WriteAllBytes(root.Database, expected);
+        byte[] digest = SHA256.HashData(expected);
+
+        using var input = ContractionPaths.OpenRegularRead(root.Database);
+        Assert.Equal(digest, SHA256.HashData(input));
+        input.Position = 0;
+        using var copy = new MemoryStream();
+        input.CopyTo(copy);
+        Assert.Equal(expected, copy.ToArray());
+        input.Position = 0;
+        Assert.Equal(digest, SHA256.HashData(input));
+    }
+
     [Theory(Timeout = 90_000, DisableParallelization = true)]
     [InlineData(false)]
     [InlineData(true)]
