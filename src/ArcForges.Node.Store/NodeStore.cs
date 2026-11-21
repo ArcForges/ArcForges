@@ -561,7 +561,7 @@ public sealed partial class NodeStore : IDisposable
         }
     }
 
-    private static string? ImmutableStoreUri(string path)
+    internal static string? ImmutableStoreUri(string path)
     {
         string prefix = "file://";
         if (OperatingSystem.IsWindows())
