@@ -347,8 +347,8 @@ public sealed class NodeServiceTests
             var failed = await channel.Node.StopNodeAsync(new NodeServiceStopNodeRequest { Meta = failedCommand },
                 deadline: DateTime.UtcNow + Deadline, cancellationToken: ct);
             Assert.Equal("internal", Assert.IsType<ArcError>(failed.Error).Code);
-            Assert.Null(node.Runtime.Store.Read(reader => reader.Scalar(
-                "SELECT outcome FROM command_dedup WHERE command_id = $id;", ("$id", failedId))));
+            Assert.Equal(0L, Assert.IsType<long>(node.Runtime.Store.Read(reader => reader.Scalar(
+                "SELECT COUNT(*) FROM command_dedup WHERE command_id = $id;", ("$id", failedId)))));
             Assert.Equal(InProcessNode.ExpectedState, node.Runtime.Lifecycle.State);
             Assert.False(node.Runtime.Stopping.IsCancellationRequested);
 
