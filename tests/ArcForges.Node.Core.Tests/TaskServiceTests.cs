@@ -224,8 +224,12 @@ public sealed class TaskServiceTests
             store.Write(transaction =>
             {
                 StoreSpec(transaction, older, request.Spec);
-                transaction.Execute("UPDATE task SET created_at = $at WHERE task_id = $id;",
-                    ("$at", transaction.NowMicroseconds - 1_000_000), ("$id", older.Value.ToByteArray()));
+                // Anchor ordering to the seeded rows so listener startup time cannot move the older row forward.
+                Assert.Equal(1, transaction.Execute("""
+                    UPDATE task
+                    SET created_at = MIN(created_at, (SELECT created_at FROM task WHERE task_id = $newer) - 1)
+                    WHERE task_id = $older;
+                    """, ("$newer", newer.Value.ToByteArray()), ("$older", older.Value.ToByteArray())));
                 RecordPrior(transaction, "SubmitTask", request.Meta, request, original);
             }, CommitDurability.Full);
             Assert.Equal(original, await channel.Tasks.SubmitTaskAsync(request, cancellationToken: Ct));
