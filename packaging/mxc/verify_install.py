@@ -9,7 +9,6 @@ import mmap
 import ntpath
 import os
 from pathlib import Path
-import shutil
 import struct
 import subprocess
 import sys
@@ -19,7 +18,7 @@ import zipfile
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "native"))
-from signed import archive_digest, authenticate, openssl_path
+from signed import archive_digest, authenticate, openssl_path, read_bounded
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "eng" / "mxc"))
 from stage import LICENSE, NATIVE, PACKAGE, RELEASE, SBOM, SCHEMA, SOURCE, VERSION
@@ -31,6 +30,11 @@ MAX_EXPANDED_BYTES = 512 * 1024 * 1024
 MAX_METADATA_BYTES = 4 * 1024 * 1024
 MAX_ZIP_CENTRAL_BYTES = 1024 * 1024
 COPY_BYTES = 1024 * 1024
+ZIP_FOOTER = struct.Struct("<4s4H2IH")
+ZIP_CENTRAL = struct.Struct("<4s6H3I5H2I")
+ZIP_LOCAL = struct.Struct("<4s5H3I2H")
+ZIP_EXTRA = struct.Struct("<HH")
+ZIP_METHODS = {zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED}
 
 
 class Expansion:
@@ -46,17 +50,64 @@ class Expansion:
         require(self.total <= MAX_EXPANDED_BYTES, "Archive exceeds the expanded size limit")
 
 
-def check_zip_directory(source):
+def check_zip_extra(data):
+    offset = 0
+    while offset < len(data):
+        require(len(data) - offset >= ZIP_EXTRA.size, "Invalid ZIP extra field")
+        field, size = ZIP_EXTRA.unpack_from(data, offset)
+        require(field != 0x0001, "ZIP64 metadata is not supported")
+        offset += ZIP_EXTRA.size + size
+        require(offset <= len(data), "Invalid ZIP extra field")
+
+
+def check_zip_directory(source, expansion):
     # Native packaging produces a single, ordinary ZIP without comments or
     # ZIP64. Refuse an oversized directory before ZipFile reads its entries.
-    footer_size = 22
     archive_size = source.seek(0, os.SEEK_END)
-    require(archive_size >= footer_size, "Invalid signed ZIP footer")
-    source.seek(-footer_size, os.SEEK_END)
-    end, disk, central_disk, local_count, count, size, offset, comment = struct.unpack("<4s4H2LH", source.read(footer_size))
+    require(archive_size >= ZIP_FOOTER.size, "Invalid ZIP footer")
+    footer_offset = archive_size - ZIP_FOOTER.size
+    if footer_offset >= 20:
+        source.seek(footer_offset - 20)
+        require(source.read(4) != b"PK\x06\x07", "ZIP64 locator is not supported")
+    source.seek(footer_offset)
+    end, disk, central_disk, local_count, count, size, offset, comment = ZIP_FOOTER.unpack(source.read(ZIP_FOOTER.size))
+    require(count != 0xffff and local_count != 0xffff and size != 0xffffffff and offset != 0xffffffff,
+            "ZIP64 directory is not supported")
     require(end == b"PK\x05\x06" and disk == central_disk == comment == 0
-            and count == local_count and offset + size == archive_size - footer_size, "Unsupported signed ZIP layout")
-    require(count <= MAX_MEMBERS and size <= MAX_ZIP_CENTRAL_BYTES, "Signed ZIP directory exceeds the limit")
+            and count == local_count and offset + size == footer_offset, "Unsupported ZIP layout")
+    require(count <= MAX_MEMBERS and size <= MAX_ZIP_CENTRAL_BYTES, "ZIP directory exceeds the limit")
+    source.seek(offset)
+    directory = source.read(size)
+    position = 0
+    for _ in range(count):
+        require(len(directory) - position >= ZIP_CENTRAL.size, "Incomplete ZIP directory entry")
+        entry = ZIP_CENTRAL.unpack_from(directory, position)
+        marker, _, version, flags, method = entry[:5]
+        compressed, expanded, name_size, extra_size, comment_size, member_disk = entry[8:14]
+        local_offset = entry[-1]
+        require(marker == b"PK\x01\x02" and member_disk == 0, "Invalid ZIP directory entry")
+        require(method in ZIP_METHODS, "Unsupported ZIP compression method")
+        require(version < 45 and 0xffffffff not in (compressed, expanded, local_offset), "ZIP64 entry is not supported")
+        expansion.admit(expanded)
+        extra_start = position + ZIP_CENTRAL.size + name_size
+        position = extra_start + extra_size + comment_size
+        require(position <= len(directory), "Incomplete ZIP directory entry")
+        check_zip_extra(directory[extra_start:extra_start + extra_size])
+
+        require(local_offset + ZIP_LOCAL.size <= offset, "ZIP local header lies outside member data")
+        source.seek(local_offset)
+        local = ZIP_LOCAL.unpack(source.read(ZIP_LOCAL.size))
+        local_marker, local_version, local_flags, local_method = local[:4]
+        local_compressed, local_expanded, local_name, local_extra = local[7:]
+        require(local_marker == b"PK\x03\x04" and local_flags == flags and local_method == method,
+                "ZIP local header differs from its directory")
+        require(local_version < 45 and 0xffffffff not in (local_compressed, local_expanded),
+                "ZIP64 local header is not supported")
+        data_offset = local_offset + ZIP_LOCAL.size + local_name
+        require(data_offset + local_extra + compressed <= offset, "ZIP member data lies outside its archive")
+        source.seek(data_offset)
+        check_zip_extra(source.read(local_extra))
+    require(position == len(directory), "ZIP directory has unexpected records")
     source.seek(0)
     return count
 
@@ -93,7 +144,7 @@ def member_path(name):
     return Path(*parts)
 
 
-def copy_member(root, seen, name, kind, stream=None, mode=0, size=None):
+def copy_member(root, seen, name, kind, stream=None, mode=0, size=0):
     path = member_path(name)
     key = path.as_posix().casefold()
     require(key not in seen, f"Duplicate archive member: {name}")
@@ -104,46 +155,38 @@ def copy_member(root, seen, name, kind, stream=None, mode=0, size=None):
     else:
         target.parent.mkdir(parents=True, exist_ok=True)
         with stream, target.open("xb") as output:
-            if size is None:
-                shutil.copyfileobj(stream, output)
-            else:
-                remaining = size
-                while remaining:
-                    chunk = stream.read(min(remaining, COPY_BYTES))
-                    require(0 < len(chunk) <= remaining, "Archive member differs from its declared size")
-                    output.write(chunk)
-                    remaining -= len(chunk)
-                require(not stream.read(1), "Archive member differs from its declared size")
+            remaining = size
+            while remaining:
+                chunk = stream.read(min(remaining, COPY_BYTES))
+                require(0 < len(chunk) <= remaining, "Archive member differs from its declared size")
+                output.write(chunk)
+                remaining -= len(chunk)
+            require(not stream.read(1), "Archive member differs from its declared size")
         if os.name == "posix":
             target.chmod(0o600 | (mode & 0o100))
 
 
-def extract(archive, rid, root, *, source=None, bounded=False):
+def extract(archive, rid, root, *, source):
     seen = set()
-    expansion = Expansion() if bounded else None
+    expansion = Expansion()
     if rid == "win-x64":
         require(archive.name.endswith(".zip"), "The Windows archive must be a ZIP")
-        expected = check_zip_directory(source) if bounded else None
-        with zipfile.ZipFile(archive if source is None else source) as package:
-            if bounded:
-                require(len(package.infolist()) == expected, "Signed ZIP member count differs from its directory")
-                for item in package.infolist():
-                    expansion.admit(item.file_size)
-                    require(not item.is_dir() or item.file_size == 0, "Directory has unexpected archive bytes")
+        expected = check_zip_directory(source, expansion)
+        with zipfile.ZipFile(source) as package:
+            require(len(package.infolist()) == expected, "ZIP member count differs from its directory")
             for item in package.infolist():
                 kind = (item.external_attr >> 16) & 0o170000
                 require(kind in (0, 0o040000, 0o100000), f"Unexpected ZIP member type: {item.filename}")
                 if item.is_dir():
+                    require(item.file_size == 0, "Directory has unexpected archive bytes")
                     copy_member(root, seen, item.filename, "directory")
                 else:
-                    copy_member(root, seen, item.filename, "file", package.open(item),
-                                size=item.file_size if bounded else None)
+                    copy_member(root, seen, item.filename, "file", package.open(item), size=item.file_size)
     else:
         require(archive.name.endswith(".tar.gz"), "The Linux archive must be a tar.gz")
-        tar_options = {"tarinfo": bounded_tar_info(expansion)} if bounded else {}
-        with tarfile.open(name=str(archive), mode="r:gz", fileobj=source, **tar_options) as package:
+        with tarfile.open(name=str(archive), mode="r:gz", fileobj=source, tarinfo=bounded_tar_info(expansion)) as package:
             for item in package:
-                require(not bounded or not item.isdir() or item.size == 0, "Directory has unexpected archive bytes")
+                require(not item.isdir() or item.size == 0, "Directory has unexpected archive bytes")
                 if item.name in (".", "./") and item.isdir():
                     continue
                 require(item.isfile() or item.isdir(), f"Unexpected tar member type: {item.name}")
@@ -153,8 +196,7 @@ def extract(archive, rid, root, *, source=None, bounded=False):
                 if item.isdir():
                     copy_member(root, seen, item.name, "directory")
                 else:
-                    copy_member(root, seen, item.name, "file", package.extractfile(item), item.mode,
-                                size=item.size if bounded else None)
+                    copy_member(root, seen, item.name, "file", package.extractfile(item), item.mode, size=item.size)
 
 
 def unique_object(pairs):
@@ -281,7 +323,7 @@ def check_signed(args):
             snapshot.seek(0)
             root = staging / "cohort"
             root.mkdir(mode=0o700)
-            extract(archive, args.rid, root, source=snapshot, bounded=True)
+            extract(archive, args.rid, root, source=snapshot)
         result = verify(root, args.rid, producer["commit"], distribution="signed-mxc-cohort")
         evidence = {
             "build-info.json": "buildInfoSha256",
@@ -314,17 +356,20 @@ def check_unsigned(args):
             and not any(os.path.lexists(f"{args.archive}{extension}") or os.path.lexists(f"{archive}{extension}")
                         for extension in (".manifest.json", ".manifest.sig")),
             "Supply the separately trusted public key for a signed distribution or explicitly allow an unsigned preview")
-    sha = digest(archive)
-    require(Path(f"{archive}.sha256").read_text(encoding="ascii").splitlines() == [f"{sha}  {archive.name}"],
-            "Archive SHA-256 sidecar does not match")
+    sidecar = read_bounded(Path(f"{archive}.sha256"), 4096).decode("ascii").splitlines()
     output = args.output.absolute() if args.output is not None else None
     parent = output.parent if output is not None else installation_temp_parent()
     with tempfile.TemporaryDirectory(prefix="verified MXC 安装 ", dir=parent) as directory:
         staging = Path(directory)
         protect_install_root(staging)
-        root = staging / "cohort"
-        root.mkdir(mode=0o700)
-        extract(archive, args.rid, root)
+        with tempfile.TemporaryFile(dir=staging) as snapshot:
+            observed = archive_digest(archive, copy=snapshot)
+            sha = observed["sha256"]
+            require(sidecar == [f"{sha}  {archive.name}"], "Archive SHA-256 sidecar does not match")
+            snapshot.seek(0)
+            root = staging / "cohort"
+            root.mkdir(mode=0o700)
+            extract(archive, args.rid, root, source=snapshot)
         result = verify(root, args.rid, args.commit, distribution="unsigned-development-preview")
         if output is not None:
             protect_install_root(root)

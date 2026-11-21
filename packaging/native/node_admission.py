@@ -307,9 +307,11 @@ def sign_archive(args):
         with tempfile.TemporaryFile(dir=root) as snapshot:
             archive = archive_digest(args.archive, copy=snapshot)
             snapshot.seek(0)
-            extract(args.archive, args.rid, root, source=snapshot, bounded=True)
+            extract(args.archive, args.rid, root, source=snapshot)
         verify(root, args.rid, record["source"]["commit"], distribution="signed-mxc-cohort")
         verify_stage_publish(root, args.rid, record["nativeBuild"])
+        require(digest(root / "sbom.spdx.json") == record["sbom"]["sha256"],
+                "The archived SBOM differs from the admitted inventory")
         require(all(digest(root / name) == digest(args.stage / name) for name in evidence_names.values()),
                 "The archived evidence differs from the verified staging")
         require(all(digest(root / name) == sha for name, sha in record["lockfiles"].items()),

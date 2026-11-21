@@ -12,7 +12,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
-from zipfile import ZipFile
+from zipfile import ZIP_LZMA, ZipFile
 
 sys.dont_write_bytecode = True
 from node_admission import NODE_REPO, main_ancestry
@@ -129,6 +129,23 @@ class SignedDistributionTests(unittest.TestCase):
         self.assertIn("selected authentication", result.stderr)
         self.assertFalse(self.output.exists())
 
+    def test_preview_reads_the_checked_private_copy(self):
+        expected = self.archive.read_bytes()
+        sha = self.manifest["archive"]["sha256"]
+        Path(f"{self.archive}.sha256").write_text(f"{sha}  {self.archive.name}\n", encoding="ascii")
+        args = SimpleNamespace(archive=self.archive, rid=self.rid, output=self.output, commit=None, tree=None,
+                               allow_unsigned_preview=True, allow_candidate=False, admitted_archive_sha256=None)
+
+        def observe_copy(archive, _rid, _root, *, source):
+            archive.write_bytes(b"later replacement")
+            self.assertEqual(expected, source.read())
+            raise ValueError("checked snapshot observed")
+
+        with patch.object(verify_install, "extract", side_effect=observe_copy):
+            with self.assertRaisesRegex(ValueError, "checked snapshot observed"):
+                verify_install.check_unsigned(args)
+        self.assertFalse(self.output.exists())
+
     def test_archive_limits_include_directories_and_actual_member_declarations(self):
         archive = self.root / "bounded.zip"
         with ZipFile(archive, "w") as package:
@@ -137,11 +154,32 @@ class SignedDistributionTests(unittest.TestCase):
             package.writestr("ordinary", b"1234")
         with patch.object(verify_install, "MAX_MEMBERS", 2):
             with archive.open("rb") as source, self.assertRaisesRegex(ValueError, "ZIP directory exceeds"):
-                verify_install.extract(archive, "win-x64", self.output, source=source, bounded=True)
+                verify_install.extract(archive, "win-x64", self.output, source=source)
         self.assertFalse(self.output.exists())
         with patch.object(verify_install, "MAX_MEMBER_BYTES", 3):
             with archive.open("rb") as source, self.assertRaisesRegex(ValueError, "member exceeds"):
-                verify_install.extract(archive, "win-x64", self.output, source=source, bounded=True)
+                verify_install.extract(archive, "win-x64", self.output, source=source)
+        self.assertFalse(self.output.exists())
+
+    def test_zip64_local_header_is_refused_before_zip_parser(self):
+        archive = self.root / "test.zip"
+        with ZipFile(archive, "w") as writer:
+            with writer.open("ordinary.txt", "w", force_zip64=True) as member:
+                member.write(b"fixture")
+        with patch.object(verify_install.zipfile, "ZipFile") as reader, archive.open("rb") as source:
+            with self.assertRaisesRegex(ValueError, "ZIP64"):
+                verify_install.extract(archive, "win-x64", self.output, source=source)
+        reader.assert_not_called()
+        self.assertFalse(self.output.exists())
+
+    def test_other_zip_compression_is_refused_before_zip_parser(self):
+        archive = self.root / "test.zip"
+        with ZipFile(archive, "w", compression=ZIP_LZMA) as writer:
+            writer.writestr("ordinary.txt", b"fixture")
+        with patch.object(verify_install.zipfile, "ZipFile") as reader, archive.open("rb") as source:
+            with self.assertRaisesRegex(ValueError, "Unsupported ZIP compression"):
+                verify_install.extract(archive, "win-x64", self.output, source=source)
+        reader.assert_not_called()
         self.assertFalse(self.output.exists())
 
     def test_tar_declarations_are_bounded_before_reading_member_contents(self):
@@ -153,7 +191,7 @@ class SignedDistributionTests(unittest.TestCase):
                 package.addfile(member, io.BytesIO(b"1234"))
         with patch.object(verify_install, "MAX_EXPANDED_BYTES", 7):
             with archive.open("rb") as source, self.assertRaisesRegex(ValueError, "expanded size limit"):
-                verify_install.extract(archive, "linux-x64", self.output, source=source, bounded=True)
+                verify_install.extract(archive, "linux-x64", self.output, source=source)
         self.assertEqual(b"1234", (self.output / "first").read_bytes())
         self.assertFalse((self.output / "second").exists())
 
