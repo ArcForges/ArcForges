@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Security.Cryptography;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Node.Store.Migrations;
+using ArcForges.Node.Store.Policy;
 using Google.Protobuf;
 using Microsoft.Data.Sqlite;
 
@@ -95,7 +97,8 @@ public sealed partial class DurableCommandStoreTests
         Id NewId() => new() { Value = ByteString.CopyFrom(StoreIds.NewUuid7(clock)) };
         var legacyRetry = new TaskServiceRetryTaskRequest
         {
-            Meta = new() { CommandId = NewId(), CorrelationId = NewId() }, TaskId = NewId(),
+            Meta = new() { CommandId = NewId(), CorrelationId = NewId() },
+            TaskId = NewId(),
         };
         var knownLegacy = legacyRetry.Meta.CommandId.Value.ToByteArray();
         var knownDigest = PayloadDigest.Compute(legacyRetry);
@@ -109,10 +112,25 @@ public sealed partial class DurableCommandStoreTests
         var fileDigest = new byte[32];
         // Supplied history metadata. Native ownership and owned-path restore are separate evidence.
         byte[] historicalIdentity = [1, .. new byte[32]];
+        var initialPolicy = DefaultPolicy.Create();
+        var revisedPolicy = initialPolicy.Clone();
+        revisedPolicy.Resources.GlobalMaxRunning = 2;
+        var policyAuthor = new ActorRef { Origin = Origin.Human, SessionId = NewId() };
+        const string policyComment = "Set the local concurrency limit before expansion.";
+        var initialPolicyAt = StoreTime.ToMicroseconds(clock.GetUtcNow());
+        long revisedPolicyAt;
         using (var legacy = source.Open(clock, oldPlan))
         {
+            clock.Advance(TimeSpan.FromSeconds(1));
+            revisedPolicyAt = StoreTime.ToMicroseconds(clock.GetUtcNow());
             legacy.Write(tx =>
             {
+                tx.Execute("UPDATE policy_document SET is_current = 0 WHERE revision = 1 AND is_current = 1;");
+                tx.Execute("""
+                    INSERT INTO policy_document (revision, document, digest, created_at, actor, comment, is_current)
+                    VALUES (2, $document, $digest, $at, $actor, $comment, 1);
+                    """, ("$document", revisedPolicy.ToByteArray()), ("$digest", PolicyDocuments.Digest(revisedPolicy)),
+                    ("$at", revisedPolicyAt), ("$actor", policyAuthor.ToByteArray()), ("$comment", policyComment));
                 Assert.Equal(DedupStatus.Execute, CommandDeduplication.Begin(tx, knownLegacy, retryMethod, knownDigest, Origin.Human).Status);
                 CommandDeduplication.Complete(tx, knownLegacy, originalReply);
                 tx.Execute("INSERT INTO workspace(workspace_id,kind,state,name,root_path,created_at,last_used_at,rev) VALUES($w,1,2,'historical','/fixture',0,0,0);",
@@ -128,6 +146,54 @@ public sealed partial class DurableCommandStoreTests
             }, CommitDurability.Full);
         }
 
+        void AssertPolicyLineage(StoreReader reader)
+        {
+            var revisions = new (long Revision, PolicyDocument Document, long At, ActorRef Actor, string Comment, long Current)[]
+            {
+                (1, initialPolicy, initialPolicyAt, new ActorRef { Origin = Origin.Node }, PolicyDocuments.DefaultComment, 0),
+                (2, revisedPolicy, revisedPolicyAt, policyAuthor, policyComment, 1),
+            };
+            using var query = reader.CreateCommand("""
+                SELECT revision, document, digest, created_at, actor, comment, is_current
+                FROM policy_document ORDER BY revision;
+                """);
+            using var row = query.ExecuteReader();
+            foreach (var revision in revisions)
+            {
+                Assert.True(row.Read());
+                Assert.Equal(revision.Revision, row.GetInt64(0));
+                Assert.Equal(revision.Document.ToByteArray(), (byte[])row.GetValue(1));
+                Assert.Equal(PolicyDocuments.Digest(revision.Document), (byte[])row.GetValue(2));
+                Assert.Equal(revision.At, row.GetInt64(3));
+                Assert.Equal(revision.Actor.ToByteArray(), (byte[])row.GetValue(4));
+                Assert.Equal(revision.Comment, row.GetString(5));
+                Assert.Equal(revision.Current, row.GetInt64(6));
+            }
+
+            Assert.False(row.Read());
+        }
+
+        void AssertLegacyHistory(StoreReader reader)
+        {
+            var legacyOutcome = CommandDeduplication.ReadRetained(reader, knownLegacy, retryMethod, knownDigest, reader.NowMicroseconds);
+            Assert.NotNull(legacyOutcome);
+            Assert.Equal(DedupStatus.Replay, legacyOutcome.Status);
+            Assert.Equal(originalReply, legacyOutcome.Outcome!.Value.ToArray());
+            Assert.Equal((long)Origin.Human, reader.Scalar("SELECT origin FROM command_dedup WHERE command_id = $id;", ("$id", knownLegacy)));
+            Assert.Equal(1L, reader.Scalar("""
+                SELECT count(*) FROM command_dedup AS d JOIN routed_file_command_retention AS r USING (command_id)
+                WHERE d.command_id = $id AND d.method = $method AND d.payload_digest = $digest AND d.outcome IS NULL
+                  AND r.delete_permitted = 0;
+                """, ("$id", unresolvedFile), ("$method", fileMethod), ("$digest", fileDigest)));
+            Assert.Equal(historicalIdentity, reader.Scalar("""
+                SELECT intended_stage_identity FROM file_operation_journal
+                WHERE command_id = $id AND workspace_id = $w AND phase = 3 AND held = 1 AND acknowledged = 0;
+                """, ("$id", unresolvedFile), ("$w", workspace)) as byte[]);
+            Assert.Equal(2L, reader.Scalar("SELECT count(*) FROM command_dedup;"));
+        }
+
+        string frozenBackup;
+        byte[] frozenBytes;
         DurableIntent known;
         DurableIntent uncertain;
         DurableReceipt knownReceipt;
@@ -136,6 +202,27 @@ public sealed partial class DurableCommandStoreTests
         using (var owner = Commands(expanded, source.Path))
         {
             Assert.Equal(15, expanded.Opening.MigratedFrom);
+            frozenBackup = Assert.IsType<string>(expanded.Opening.BackupPath);
+            frozenBytes = File.ReadAllBytes(frozenBackup);
+            using (var snapshot = StoreCreationTests.Open(frozenBackup))
+            {
+                var reader = new StoreReader(snapshot, null, clock);
+                Assert.Equal("ok", reader.Scalar("PRAGMA integrity_check;"));
+                Assert.Equal(15L, reader.Scalar("SELECT schema_version FROM store_meta WHERE singleton = 1;"));
+                Assert.Equal(15L, reader.Scalar("SELECT min_reader_version FROM store_meta WHERE singleton = 1;"));
+                Assert.Equal(0L, reader.Scalar("""
+                    SELECT count(*) FROM sqlite_schema WHERE name IN ('sandbox', 'owner_epoch', 'command_receipt', 'migration_checkpoint');
+                    """));
+                AssertPolicyLineage(reader);
+                AssertLegacyHistory(reader);
+            }
+
+            var frozenDigest = Convert.ToHexStringLower(SHA256.HashData(frozenBytes));
+            Assert.Equal(1L, expanded.Read(reader => reader.Scalar("""
+                SELECT count(*) FROM migration_checkpoint
+                WHERE migration_id = 'AFV2-DATA-01/schema16' AND source_schema = 15 AND target_schema = 16
+                  AND backup_identity = $digest AND unresolved_count = 1;
+                """, ("$digest", frozenDigest))));
             known = Intent(owner, body: "fixture-known");
             uncertain = Intent(owner, body: "fixture-uncertain");
             Assert.Equal(DurableDecision.Execute, owner.Admit(known).Decision);
@@ -149,6 +236,7 @@ public sealed partial class DurableCommandStoreTests
         var backupBytes = File.ReadAllBytes(backup.Database);
         DurableCommandStore.RestoreBackup(backup.Path, backupSecrets, source.Path, sourceSecrets, destination.Path, destinationSecrets);
         Assert.Equal(sourceBytes, File.ReadAllBytes(source.Database));
+        Assert.Equal(frozenBytes, File.ReadAllBytes(frozenBackup));
         Assert.Equal(backupBytes, File.ReadAllBytes(backup.Database));
         Assert.Equal(backupBytes, File.ReadAllBytes(destination.Database));
 
@@ -159,18 +247,10 @@ public sealed partial class DurableCommandStoreTests
         Assert.Equal(new DurableAdmission(DurableDecision.InProgress, uncertainReceipt), restoredOwner.Admit(uncertain));
         restored.Read(reader =>
         {
-            var legacyOutcome = CommandDeduplication.ReadRetained(reader, knownLegacy, retryMethod, knownDigest, reader.NowMicroseconds);
-            Assert.NotNull(legacyOutcome);
-            Assert.Equal(DedupStatus.Replay, legacyOutcome.Status);
-            Assert.Equal(originalReply, legacyOutcome.Outcome!.Value.ToArray());
-            Assert.Equal((long)Origin.Human, reader.Scalar("SELECT origin FROM command_dedup WHERE command_id = $id;", ("$id", knownLegacy)));
+            AssertPolicyLineage(reader);
+            AssertLegacyHistory(reader);
             Assert.True(RoutedFileRetention.IsHeld(reader, unresolvedFile));
             Assert.Equal(DedupStatus.InProgress, CommandDeduplication.ReadRetained(reader, unresolvedFile, fileMethod, fileDigest, reader.NowMicroseconds)?.Status);
-            Assert.Equal(historicalIdentity, reader.Scalar("""
-                SELECT intended_stage_identity FROM file_operation_journal
-                WHERE command_id = $id AND workspace_id = $w AND phase = 3 AND held = 1 AND acknowledged = 0;
-                """, ("$id", unresolvedFile), ("$w", workspace)) as byte[]);
-            Assert.Equal(2L, reader.Scalar("SELECT count(*) FROM command_dedup;"));
             Assert.Equal(2L, reader.Scalar("SELECT count(*) FROM command_receipt;"));
             return 0;
         });
