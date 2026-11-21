@@ -81,7 +81,18 @@ public sealed class AdoptionTests
             Assert.EndsWith("/" + sourceSlice + "/" + scope, ProcFs.CgroupOf(pid)!, StringComparison.Ordinal);
 
             reopened.Terminate();
-            LinuxHarness.WaitFor(() => reopened.Processes().Count == 0, Bound, "the reopened scope to end");
+            LinuxHarness.WaitFor(() =>
+            {
+                try
+                {
+                    return reopened.Processes().Count == 0;
+                }
+                catch (LegacyCustodyUnavailableException)
+                {
+                    // The direct member list can empty before the whole scope is confirmed empty.
+                    return false;
+                }
+            }, Bound, "confirmed empty membership of the reopened scope");
             Assert.True(run.WaitForExit(Bound));
             Assert.Null(ProcFs.StartOf(pid));
             Assert.Null(ProcFs.StartOf(child));
