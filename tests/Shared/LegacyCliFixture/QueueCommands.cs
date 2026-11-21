@@ -37,7 +37,7 @@ internal static class QueueCommands
     private static Command Show(Func<ParseResult, Cli> factory)
     {
         var pool = new Option<string?>("--pool") { Description = "Only this pool", HelpName = "p" };
-        var command = new Command("show", "The pools, the queued tasks in admission order and the budget") { pool };
+        var command = new Command("show", "The pools, retained queued tasks and the budget") { pool };
         Actions.Set(command, factory, async (cli, result, cancellationToken) =>
         {
             await using var session = await cli.ConnectAsync(autoStart: false, cancellationToken).ConfigureAwait(false);
@@ -79,13 +79,13 @@ internal static class QueueCommands
 
             cli.Output.Table(["POS", "TASK", "POOL", "CLASS", "WAITS FOR", "MEM", "CPU", "WAITED", "TITLE"], [.. response.Value.Entries.Select(entry => (IReadOnlyList<string>)
             [
-                entry.Queue.Position.ToString(CultureInfo.InvariantCulture),
+                entry.Queue.HasPosition ? entry.Queue.Position.ToString(CultureInfo.InvariantCulture) : "-",
                 IdText.Format(entry.TaskId)[..8],
                 entry.Pool,
                 entry.EffectivePriority.ToString().ToUpperInvariant() + (entry.Aged ? " (aged)" : string.Empty),
                 entry.Queue.BlockingReason + (entry.ReservedForLarge ? " (reserved)" : string.Empty),
-                StatusCommands.Size(entry.Request.MemExpectedBytes),
-                Cores(entry.Request.CpuMillicores),
+                entry.Request is { HasMemExpectedBytes: true } memory ? StatusCommands.Size(memory.MemExpectedBytes) : "-",
+                entry.Request is { HasCpuMillicores: true } cpu ? Cores(cpu.CpuMillicores) : "-",
                 Waited(TimeSpan.FromMilliseconds(entry.Queue.WaitedMs)),
                 entry.Title,
             ])]);

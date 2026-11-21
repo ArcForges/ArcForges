@@ -52,7 +52,12 @@ public sealed class SchedulingCliTests
         var show = await node.CliAsync("queue", "show");
         Assert.True(show.ExitCode == 0, show.ToString());
         Assert.Contains("budget", show.Output, StringComparison.Ordinal);
-        Assert.Equal(0, (await node.CliAsync("queue", "show", "--json")).ExitCode);
+        var showJson = await node.CliAsync("queue", "show", "--json");
+        Assert.True(showJson.ExitCode == 0, showJson.ToString());
+        var queued = Assert.Single(showJson.Json().GetProperty("entries").EnumerateArray());
+        var recordedQueue = queued.GetProperty("queue");
+        Assert.Equal("legacy_admission_retired", recordedQueue.GetProperty("blockingReason").GetString());
+        Assert.False(recordedQueue.TryGetProperty("position", out _));
 
         // Pools and parallelism.
         var pools = await node.CliAsync("queue", "pools");
