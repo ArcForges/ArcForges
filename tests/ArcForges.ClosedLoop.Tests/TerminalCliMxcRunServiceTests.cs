@@ -130,10 +130,21 @@ public sealed partial class MxcRunServiceTests
         Assert.DoesNotContain(signalLines, line => line.StartsWith("error ", StringComparison.Ordinal));
         Assert.NotEqual("user_stop", result.Exit.TerminationReason);
         Assert.NotEqual("pressure_preempted", result.Exit.TerminationReason);
-        if (OperatingSystem.IsWindows() && !signalLines.Contains("sigint", StringComparer.Ordinal))
+        const int windowsControlExit = unchecked((int)0xC000013A);
+        var handledInterrupt = signalLines.Contains("sigint", StringComparer.Ordinal);
+        var payloadRestored = signalLines.Contains("restored", StringComparer.Ordinal);
+        TestContext.Current.TestOutputHelper?.WriteLine(
+            $"Foreground interrupt: source {result.Exit.Source}, raw code present {result.Exit.HasRawCode}, raw code {result.Exit.RawCode}, CLI status {status}, signal marker {handledInterrupt}, restore marker {payloadRestored}.");
+        // Observe the payload handling and the recorded executor exit independently.
+        if (OperatingSystem.IsWindows() && result.Exit.HasRawCode && result.Exit.RawCode == windowsControlExit)
         {
+            if (handledInterrupt)
+            {
+                Assert.Contains("restored", signalLines);
+            }
+
             Assert.Equal(ExitSource.OfficialExecutor, result.Exit.Source);
-            RequireObservedCliExit(result, unchecked((int)0xC000013A));
+            RequireObservedCliExit(result, windowsControlExit);
             Assert.Equal(result.Exit.RawCode, status);
         }
         else
