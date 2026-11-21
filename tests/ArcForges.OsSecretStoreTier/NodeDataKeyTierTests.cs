@@ -3,6 +3,7 @@ using System.Runtime.Versioning;
 using System.Security.Cryptography;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Node.Store;
+using ArcForges.Node.Store.Migrations;
 using ArcForges.Node.Store.Proto;
 using ArcForges.Security.Secrets;
 using Google.Protobuf;
@@ -44,7 +45,9 @@ public sealed class NodeDataKeyTierTests(OsSecretStoreTier tier) : IClassFixture
         try
         {
             var dataRoot = Path.Combine(root, "data");
-            using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = dataRoot, BootIdentity = "os-secret-store-tier" });
+            // The sealed Task used to verify the native key belongs to the expanded archive schema.
+            using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = dataRoot, BootIdentity = "os-secret-store-tier" },
+                StoreMigrations.Expanded);
 
             // The production selection (no --test-mode): only constructs the adapter, no store call.
             var selected = NodeSecretStores.ForNode(dataRoot, testMode: false);
