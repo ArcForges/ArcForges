@@ -98,10 +98,18 @@ public sealed class CloudLinkHostTests
         center.Revoke(kept.RefreshToken);
         await using (var human = await node.HumanChannelAsync())
         {
-            await TestNode.WaitAsync(async () => !(await human.Account.GetAccountStatusAsync(new AccountServiceGetAccountStatusRequest(), cancellationToken: ct)).Value.Status.SignedIn,
-                TimeSpan.FromSeconds(45), "signed out after the revocation");
-            var notifications = await human.Node.ListNotificationsAsync(new NodeServiceListNotificationsRequest(), cancellationToken: ct);
-            Assert.Contains(notifications.Value.Notifications, item => item.Kind == "account_signed_out");
+            await TestNode.WaitAsync(async () =>
+            {
+                var status = await human.Account.GetAccountStatusAsync(new AccountServiceGetAccountStatusRequest(), cancellationToken: ct);
+                if (status.Value.Status.SignedIn)
+                {
+                    return false;
+                }
+
+                // Credential retirement publishes the signed-out snapshot before the notification commits to the journal.
+                var notifications = await human.Node.ListNotificationsAsync(new NodeServiceListNotificationsRequest(), cancellationToken: ct);
+                return notifications.Value.Notifications.Any(item => item.Kind == "account_signed_out");
+            }, TimeSpan.FromSeconds(45), "signed out with the committed notification after the revocation");
             Assert.False((await human.Node.GetNodeInfoAsync(new NodeServiceGetNodeInfoRequest(), cancellationToken: ct)).Value.Node.AccountLinked);
         }
 

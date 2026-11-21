@@ -1026,7 +1026,6 @@ public sealed class RoutedDispatchTests
         using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = files.DataRoot, BootIdentity = fixtureBoot, Clock = files.Clock });
         using var log = new NodeLog(Path.Combine(files.DataRoot, "logs", "node"), LogLevel.Info, files.Clock);
         using var heartbeat = new NodeHeartbeatWriter(files.DataRoot, log, files.Clock);
-        using var keys = new NodeDataKeyRing(store, files.Secrets.Selection);
         var journal = EventJournal.Open(store);
         var hub = new StreamHub();
         await using var processor = new CommandProcessor(store, journal, hub);
@@ -1054,7 +1053,6 @@ public sealed class RoutedDispatchTests
             Clock = files.Clock,
             DataRoot = files.DataRoot,
             Platform = platform,
-            Secrets = new TaskSecrets(store, keys),
             Heartbeat = heartbeat,
         });
         var recovery = new RecoveryReport(!seed, false, null, store.Opening);

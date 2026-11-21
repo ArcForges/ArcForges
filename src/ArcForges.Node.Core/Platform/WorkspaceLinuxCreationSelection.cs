@@ -57,19 +57,3 @@ internal sealed partial class WorkspacePath
         return new WorkspaceLinuxCreationSelection(parent, preparedParent, Check);
     }
 }
-
-internal sealed partial class WorkspaceWriteGuard
-{
-    internal static void TransferLinuxCreationSource(LinuxOwnedPeer peer, SafeFileHandle root, SafeFileHandle parent,
-        WorkspaceWriteGuard source)
-    {
-        ArgumentNullException.ThrowIfNull(peer);
-        if (!OperatingSystem.IsLinux() || !source._privateStage)
-            throw new WorkspacePathException("file_guard_unavailable");
-        lock (source._sync)
-        {
-            source.CheckLocked();
-            peer.SendDescriptorsOnce([root, parent, source._file!]);
-        }
-    }
-}

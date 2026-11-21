@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-using System.ComponentModel;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Text;
 using ArcForges.Contracts.Node.V1;
-using Microsoft.Win32.SafeHandles;
 using Tmds.DBus.Protocol;
 
 namespace ArcForges.Node.Platform.Linux;
@@ -38,12 +36,6 @@ public sealed class LinuxPlatformOptions
 
     /// <summary>The node's own files that attempt units must not reach (the store and the secret stores of the data root).</summary>
     public IReadOnlyList<string> ProtectedPaths { get; init; } = [];
-
-    /// <summary>
-    /// Tests only: entries added to every attempt unit's <c>Environment=</c> outside the resolved environment, standing in for a variable
-    /// the user manager passes to its services (the command must never see them).
-    /// </summary>
-    internal IReadOnlyList<string> ExtraUnitEnvironment { get; init; } = [];
 }
 
 /// <summary>
@@ -53,7 +45,7 @@ public sealed class LinuxPlatformOptions
 /// <c>MemoryMax</c>, <c>MemorySwapMax</c>, <c>TasksMax</c>) set through the user manager; a transient slice when no unit file
 /// defines it. Startup verifies enforcement with a probe unit whose cgroup files must carry its limits.</item>
 /// <item>Each attempt is the transient service <c>arcforges-a-&lt;attempt&gt;.service</c> (see <see cref="LinuxAttemptHandle"/>).</item>
-/// <item>Attempt launch requires a systemd user manager. A controller missing from the manager's delegation makes that resource observe only.</item>
+/// <item>Reopening a recorded unit requires a systemd user manager. A controller missing from its delegation makes that resource observe only.</item>
 /// </list>
 /// </summary>
 [SupportedOSPlatform("linux")]
@@ -68,15 +60,6 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
     /// <summary>The prefix of attempt units.</summary>
     public const string UnitPrefix = "arcforges-a-";
 
-    /// <summary>The conventional soft open-file limit passed to attempts (the kernel default a login shell has).</summary>
-    public const ulong DefaultNoFileSoft = 1024;
-
-    /// <summary>
-    /// Added to <c>TimeoutStopSec</c> beyond the end-step budget and <c>leftover_grace</c>: the <c>exec-stop</c> role's own start and the
-    /// write of <c>stop.json</c>, so systemd never stops the role while it records the leftovers.
-    /// </summary>
-    public const int StopRecordMarginMs = 5_000;
-
     /// <summary>The prefix of adoption scopes (04 section 10).</summary>
     public const string AdoptionPrefix = "arcforges-x-";
 
@@ -85,9 +68,6 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
 
     /// <summary>How far two reads of a process's start time may differ (clock ticks of 10 ms).</summary>
     private static readonly TimeSpan IdentityTolerance = TimeSpan.FromMilliseconds(20);
-
-    /// <summary>The .NET runtime's switch for its diagnostic endpoints (framework-dependent helpers only).</summary>
-    internal const string DiagnosticsVariable = "DOTNET_EnableDiagnostics";
 
     private readonly LinuxPlatformOptions _options;
     private readonly Lock _gate = new();
@@ -260,8 +240,6 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
             report.PauseReason = why;
             report.KillTree = KillTreeGuarantee.Unspecified;
             report.KillTreeReason = "legacy attempt tree control requires the systemd user manager: " + why;
-            report.Adopt = AdoptSupport.Unsupported;
-            report.AdoptReason = "adoption needs a transient scope of the systemd user manager: " + why;
             report.RestartSurvival = false;
             report.RestartSurvivalReason = "native legacy attempt recovery requires the systemd user manager: " + why;
         }
@@ -291,13 +269,12 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
             report.KillTree = failed is null ? KillTreeGuarantee.Guaranteed : KillTreeGuarantee.BestEffort;
             report.KillTreeReason = (failed
                 ?? "every process of an attempt is in its unit's cgroup, which the node freezes and kills; no process can leave it without the user manager") + SameUserQualifier;
-            report.Adopt = failed is null ? AdoptSupport.Limited : AdoptSupport.Unsupported;
-            report.AdoptReason = failed ?? "a same-user process and its children move into a transient scope in the node's slice through the user manager, which "
-                + "moves any same-user process there, outside its own subtree too, through the system manager's AttachProcessesToUnit (systemd 257, L-29); "
-                + "a process of another user is refused before systemd is asked; the moved process's earlier memory charges stay behind";
             report.RestartSurvival = failed is null;
             report.RestartSurvivalReason = failed ?? "attempts are transient units of the user manager, never children of the node, with a durable exit record from ExecStopPost (L-13)";
         }
+
+        report.Adopt = AdoptSupport.Unsupported;
+        report.AdoptReason = "New legacy process adoption has been retired. Cleanup of recorded adoptions requires confirmed custody.";
 
         report.PlatformFacts.Add(Fact("unit_hardening", HardeningReport));
         report.PlatformFacts.Add(Fact("os", RuntimeInformation.OSDescription));
@@ -523,217 +500,6 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
         }
     }
 
-    /// <summary>Adopts an existing process for the legacy Linux platform fixtures.</summary>
-    public AdoptionResult Adopt(AdoptionRequest request)
-    {
-        ArgumentNullException.ThrowIfNull(request);
-        if (_manager is null || _selfTest is not null)
-        {
-            throw new AdoptionRefusedException(_managerReason ?? _selfTest ?? "no systemd user manager is connected");
-        }
-
-        var pid = request.Pid;
-
-        // Review round 1 (TOCTOU): the process is named by a pidfd from here on. Its identity is checked after the descriptor was opened, so
-        // the checked process is the one the descriptor names, and the user manager is given the descriptor (PIDFDs), never the reusable ID.
-        using var identity = OpenPidfd(pid);
-        if (identity is null || ProcFs.StartOf(pid) is not { } start || (start.Start - request.Start).Duration() > IdentityTolerance)
-        {
-            throw new AdoptionRefusedException($"no process {pid.ToString(CultureInfo.InvariantCulture)} started at that time") { NotFound = true };
-        }
-
-        if (ProcFs.OwnerOf(pid) != ProcFs.UserId)
-        {
-            throw new AdoptionRefusedException("the process runs as another user (adoption is same-user only, R-RES-013)");
-        }
-
-        if (_sliceCgroup is { } slice && ProcFs.CgroupOf(pid) is { } cgroup && cgroup.StartsWith(slice + "/", StringComparison.Ordinal))
-        {
-            throw new AdoptionRefusedException("the process is already in a container of this node") { AlreadyManaged = true };
-        }
-
-        // The children that exist now (descendants by parent ID, each created no earlier than its parent), adopted one by one afterwards.
-        var table = ProcFs.AllProcesses().Select(candidate => (Pid: candidate, Stat: ProcFs.Stat(candidate))).Where(entry => entry.Stat is { State: not ('Z' or 'X') })
-            .ToDictionary(entry => entry.Pid, entry => (Parent: entry.Stat!.Value.ParentPid, Start: entry.Stat.Value.StartTicks));
-        var children = new List<(int Pid, long Start)>();
-        var frontier = new Queue<(int Pid, long Start)>([(pid, start.Ticks)]);
-        while (frontier.TryDequeue(out var parent) && children.Count < 4096)
-        {
-            foreach (var (child, (owner, created)) in table.Where(entry => entry.Value.Parent == parent.Pid && entry.Value.Start >= parent.Start && entry.Key != pid))
-            {
-                if (!children.Exists(known => known.Pid == child))
-                {
-                    children.Add((child, created));
-                    frontier.Enqueue((child, created));
-                }
-            }
-        }
-
-        var name = AdoptionPrefix + request.AttemptName + ".scope";
-        var manager = Manager;
-        try
-        {
-            var job = StartScope(manager, name, "ArcForges adopted process " + pid.ToString(CultureInfo.InvariantCulture), Slice, pid, identity, delegated: true);
-            if (manager.WaitJob(job, TimeSpan.FromSeconds(10)) is not "done" || manager.ScopeControlGroup(name) is not { Length: > 0 } controlGroup)
-            {
-                throw new AdoptionRefusedException("the user manager did not start the adoption scope with the process");
-            }
-
-            if (!Alive(identity))
-            {
-                // The process ended while it was being adopted. Where only its ID could be passed, another process may have taken the ID and been
-                // moved: it is released into a scope of its own that the user manager abandons (never terminated), and the adoption is refused.
-                var released = ProcFs.CgroupOf(pid) == controlGroup ? "; " + ReleaseStranger(manager, pid) : string.Empty;
-                StopQuietly(manager, name);
-                throw new AdoptionRefusedException($"process {pid.ToString(CultureInfo.InvariantCulture)} ended while it was being adopted{released}") { NotFound = true };
-            }
-
-            if (ProcFs.CgroupOf(pid) != controlGroup)
-            {
-                // A refusal is reported, never forced (R-RES-013): the scope started without the process.
-                StopQuietly(manager, name);
-                throw new AdoptionRefusedException("the user manager did not move the process into the adoption scope");
-            }
-
-            var directory = ProcFs.CgroupDirectory(controlGroup);
-            var results = new List<string>();
-            var adopted = 0;
-            foreach (var (child, created) in children)
-            {
-                var image = ProcFs.Image(child);
-                var label = child.ToString(CultureInfo.InvariantCulture);
-
-                // AttachProcessesToUnit takes IDs only: the child is held by a pidfd, its start checked through it, and after the move a child that
-                // ended in between (its ID possibly taken by another process, which is released again) is reported as not adopted.
-                using var held = OpenPidfd(child);
-                if (held is null || ProcFs.Stat(child) is not { } stat || stat.StartTicks != created)
-                {
-                    results.Add($"{image} ({label}): not adopted (it ended before the move)");
-                    continue;
-                }
-
-                try
-                {
-                    if (ProcFs.CgroupOf(child) != controlGroup)
-                    {
-                        manager.AttachProcessesToUnit(name, [(uint)child]);
-                    }
-
-                    if (!Alive(held))
-                    {
-                        var released = ProcFs.CgroupOf(child) == controlGroup ? "; " + ReleaseStranger(manager, child) : string.Empty;
-                        results.Add($"{image} ({label}): not adopted (it ended during the move{released})");
-                        continue;
-                    }
-
-                    adopted++;
-                    results.Add($"{image} ({label}): adopted");
-                }
-                catch (DBusErrorReplyException exception)
-                {
-                    results.Add($"{image} ({label}): not adopted ({OneLine(exception.Message)})");
-                }
-            }
-
-            return new AdoptionResult(new LinuxAdoptedScope(this, name, directory), ResolveImage(pid), adopted, children.Count - adopted, results);
-        }
-        catch (DBusErrorReplyException exception)
-        {
-            // L-29: the user manager moves any same-user process (through the system manager when it lies outside its subtree); what it still
-            // refuses is reported as it answered.
-            throw new AdoptionRefusedException($"the user manager refused to move the process ({exception.ErrorName}: {OneLine(exception.Message)})", exception);
-        }
-    }
-
-    /// <summary>How the last adoption scope named its process: by pidfd (<c>PIDFDs</c>), by ID (<c>PIDs</c>, then checked), or not yet.</summary>
-    internal bool? ScopesByPidfd { get; private set; }
-
-    /// <summary>A pidfd for <paramref name="pid"/> (closed on dispose), or <see langword="null"/> when the process does not exist.</summary>
-    private static SafeFileHandle? OpenPidfd(int pid)
-    {
-        var descriptor = Libc.PidfdOpen(pid);
-        return descriptor < 0 ? null : new SafeFileHandle((IntPtr)descriptor, ownsHandle: true);
-    }
-
-    /// <summary>True while the process a pidfd names has not ended (signal 0 through the descriptor).</summary>
-    private static bool Alive(SafeFileHandle pidfd) => Libc.PidfdSendSignal((int)pidfd.DangerousGetHandle(), 0) == 0;
-
-    /// <summary>
-    /// Starts a scope with the process named by <paramref name="pidfd"/> (<c>PIDFDs</c>, systemd 253 and later); a user manager that does not
-    /// know the property gets the ID (<c>PIDs</c>), and the caller checks the pidfd afterwards.
-    /// </summary>
-    private string StartScope(SystemdManager manager, string name, string description, string? slice, int pid, SafeFileHandle pidfd, bool delegated)
-    {
-        List<UnitProperty> properties = [new("Description", description)];
-        if (slice is not null)
-        {
-            properties.Add(new("Slice", slice));
-        }
-
-        if (delegated)
-        {
-            // AttachProcessesToUnit (the children, one by one) is available only on delegated units.
-            properties.Add(new("Delegate", true));
-            properties.Add(new("CPUAccounting", true));
-            properties.Add(new("MemoryAccounting", true));
-            properties.Add(new("TasksAccounting", true));
-        }
-
-        // The message carries its own duplicate of the descriptor.
-        using var passed = OpenPidfdDuplicate(pidfd);
-        try
-        {
-            if (passed is not null)
-            {
-                var job = manager.StartTransientUnit(name, [.. properties, new("PIDFDs", (SafeHandle[])[passed])]);
-                ScopesByPidfd = true;
-                return job;
-            }
-        }
-        catch (DBusErrorReplyException exception) when (exception.ErrorName is "org.freedesktop.DBus.Error.InvalidArgs" or "org.freedesktop.DBus.Error.PropertyReadOnly"
-            && exception.Message.Contains("PIDFDs", StringComparison.Ordinal))
-        {
-            // A user manager before systemd 253: the ID is passed, and the caller checks the pidfd afterwards.
-        }
-
-        ScopesByPidfd = false;
-        return manager.StartTransientUnit(name, [.. properties, new("PIDs", (uint[])[(uint)pid])]);
-    }
-
-    private static SafeFileHandle? OpenPidfdDuplicate(SafeFileHandle pidfd)
-    {
-        var duplicate = Libc.Dup((int)pidfd.DangerousGetHandle());
-        return duplicate < 0 ? null : new SafeFileHandle((IntPtr)duplicate, ownsHandle: true);
-    }
-
-    /// <summary>
-    /// A process that took the ID of one being adopted and was moved instead (only possible where the ID had to be passed): it is moved into a
-    /// scope of its own, which the user manager then abandons, so it keeps running and is never part of the adoption or its termination.
-    /// </summary>
-    private string ReleaseStranger(SystemdManager manager, int pid)
-    {
-        using var stranger = OpenPidfd(pid);
-        if (stranger is null)
-        {
-            return "no other process took its ID";
-        }
-
-        var name = "arcforges-released-" + Guid.NewGuid().ToString("N")[..12] + ".scope";
-        try
-        {
-            if (manager.WaitJob(StartScope(manager, name, "A process released from an ArcForges adoption", slice: null, pid, stranger, delegated: false), TimeSpan.FromSeconds(10)) is "done")
-            {
-                manager.AbandonScope(name);
-            }
-
-            return $"the process that took its ID was released into {name}";
-        }
-        catch (Exception exception) when (exception is DBusExceptionBase or TimeoutException or InvalidOperationException)
-        {
-            return $"the process that took its ID could not be released ({OneLine(exception.Message)})";
-        }
-    }
-
     /// <inheritdoc />
     public IAdoptedContainer? ReopenAdopted(string containerName)
     {
@@ -790,70 +556,11 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
         }
     }
 
-    private static void StopQuietly(SystemdManager manager, string unit)
-    {
-        try
-        {
-            manager.StopUnit(unit);
-        }
-        catch (Exception exception) when (exception is DBusExceptionBase or TimeoutException)
-        {
-        }
-    }
-
-    private static string ResolveImage(int pid)
-    {
-        try
-        {
-            return File.ResolveLinkTarget(Path.Combine("/proc", pid.ToString(CultureInfo.InvariantCulture), "exe"), returnFinalTarget: false)?.FullName ?? ProcFs.Image(pid);
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            return ProcFs.Image(pid);
-        }
-    }
-
     /// <summary>True when attempt units can be frozen (<c>cgroup.freeze</c>) and the self-test passed (03 section 8 <c>pause</c>).</summary>
     internal bool Freezer => _freezer && _selfTest is null && _manager is not null;
 
     /// <inheritdoc />
     public bool Listens(int port, IReadOnlyCollection<int> processIds) => ListeningSockets.Listens(port, processIds);
-
-    /// <summary>Starts a new legacy attempt for the Linux platform fixtures.</summary>
-    public IAttemptHandle Launch(AttemptLaunch launch)
-    {
-        ArgumentNullException.ThrowIfNull(launch);
-        if (_manager is null)
-        {
-            throw new InvalidOperationException("Cannot start a legacy Linux attempt: " + (_managerReason ?? "no systemd user manager is connected."));
-        }
-
-        var files = launch.Files;
-        Directory.CreateDirectory(files.Directory);
-        Directory.CreateDirectory(files.TempDirectory);
-        if (launch.Command.ScriptFile is { } scriptFile)
-        {
-            File.WriteAllText(scriptFile, launch.Command.ScriptContent ?? string.Empty, new UTF8Encoding(false));
-        }
-
-        HelperFiles.WriteAtomically(files.StepsPath, new StepsFile
-        {
-            AttemptId = files.AttemptName,
-            LaunchSteps = [.. launch.LaunchSteps],
-            EndSteps = [.. launch.EndSteps],
-            LeftoverGraceMs = launch.LeftoverGraceMs,
-            EnvironmentNames = [.. launch.Environment.Select(entry => entry[..Math.Max(0, entry.IndexOf('=', StringComparison.Ordinal))]).Distinct(StringComparer.Ordinal)],
-        }.ToJson());
-
-        try
-        {
-            return LinuxAttemptHandle.Start(this, launch);
-        }
-        catch (Exception exception) when (exception is DBusExceptionBase or TimeoutException)
-        {
-            throw new IOException("The systemd user manager did not start the attempt unit: " + OneLine(exception.Message), exception);
-        }
-    }
 
     /// <inheritdoc />
     public IAttemptHandle? Reopen(string nodeName, AttemptFiles files, RootProcess? root, bool stopping = false)
@@ -952,213 +659,6 @@ public sealed class LinuxExecutionPlatform : IExecutionPlatform
         {
             _manager?.Dispose();
         }
-    }
-
-    /// <summary>The unit properties of an attempt (AD-0005 Linux section 2; 03 section 5.2; 04 section 3).</summary>
-    internal List<UnitProperty> AttemptProperties(AttemptLaunch launch, string[] managerEnvironment, SafeHandle stdin, SafeHandle stdout, SafeHandle stderr)
-    {
-        var files = launch.Files;
-        var limits = launch.Limits;
-        var resolved = launch.Environment.Select(entry => entry[..Math.Max(0, entry.IndexOf('=', StringComparison.Ordinal))]).ToHashSet(StringComparer.Ordinal);
-        var nofileHard = Libc.GetRLimit(Libc.RlimitNofile, out var nofile) == 0 ? nofile.Maximum : 524_288UL;
-        var nofileSoft = Math.Min(DefaultNoFileSoft, nofileHard);
-        List<string> start =
-        [
-            _helper, "node", "exec-launch", "--attempt", files.AttemptName, "--dir", files.Directory, "--cwd", launch.WorkingDirectory,
-            "--program", launch.Command.Application, "--nofile", nofileSoft.ToString(CultureInfo.InvariantCulture),
-        ];
-        foreach (var name in ExecLaunchRole.ManagerAddedVariables.Where(name => !resolved.Contains(name)))
-        {
-            start.Add("--unset");
-            start.Add(name);
-        }
-
-        var helperDiagnosticsOff = HelperRuntime is not null && !resolved.Contains(DiagnosticsVariable);
-        if (HelperRuntime is not null && !resolved.Contains("DOTNET_ROOT"))
-        {
-            // A framework-dependent helper (the JIT build next to the tests) gets DOTNET_ROOT for itself only.
-            start.Add("--unset");
-            start.Add("DOTNET_ROOT");
-        }
-
-        if (helperDiagnosticsOff)
-        {
-            start.Add("--unset");
-            start.Add(DiagnosticsVariable);
-        }
-
-        start.Add("--");
-        start.AddRange(launch.Command.Argv);
-        var properties = new List<UnitProperty>
-        {
-            new("Description", "ArcForges attempt " + files.AttemptName),
-            new("Slice", Slice),
-            new("Type", "exec"),
-            new("ExecStartEx", (IReadOnlyList<ExecCommand>)[HelperCommand(start, false, helperDiagnosticsOff)]),
-            new("ExecStopEx", (IReadOnlyList<ExecCommand>)[HelperCommand([_helper, "node", "exec-stop", "--attempt", files.AttemptName, "--dir", files.Directory], true,
-                helperDiagnosticsOff)]),
-            new("ExecStopPostEx", (IReadOnlyList<ExecCommand>)[HelperCommand([_helper, "node", "exit-record", "--attempt", files.AttemptName, "--dir", files.Directory], false,
-                helperDiagnosticsOff)]),
-            // Every exit status and signal is a success of the unit, so ExecStop (the end steps) runs after any exit; the attempt's result
-            // is taken from $EXIT_CODE and $EXIT_STATUS by exit-record (04 section 3).
-            new("SuccessExitStatus", new ExitStatusSet([.. Enumerable.Range(1, 255)],
-                [.. Enumerable.Range(1, 31), .. Enumerable.Range(Libc.SigRtMin, Libc.SigRtMax - Libc.SigRtMin + 1)])),
-            new("WorkingDirectory", "-" + launch.WorkingDirectory),
-            new("Environment", (string[])[.. UnitEnvironment(launch.Environment), .. _options.ExtraUnitEnvironment]),
-            new("UnsetEnvironment", managerEnvironment.Select(entry => entry[..Math.Max(0, entry.IndexOf('=', StringComparison.Ordinal))])
-                .Where(name => name.Length > 0 && !resolved.Contains(name)).Distinct(StringComparer.Ordinal).ToArray()),
-            new("StandardInputFileDescriptor", stdin),
-            new("StandardOutputFileDescriptor", stdout),
-            new("StandardErrorFileDescriptor", stderr),
-            new("LimitNOFILE", nofileHard),
-            new("LimitNOFILESoft", nofileSoft),
-            new("KillMode", "control-group"),
-            new("TimeoutStopUSec", (ulong)(new StepsFile().EndStepBudgetMs + launch.LeftoverGraceMs + StopRecordMarginMs) * 1000),
-            // Failed units stay loaded (an OOM kill while ExecStopPost runs ends exit-record too), so the node records them from the unit.
-            new("CollectMode", "inactive"),
-            new("IgnoreSIGPIPE", false),
-            new("CPUAccounting", true),
-            new("MemoryAccounting", true),
-            new("TasksAccounting", true),
-        };
-        if (_hardening is { } hardening)
-        {
-            // AD-0007 section 8: only after the probe read it back as applied; each unit is read back again after its start.
-            properties.AddRange(hardening);
-        }
-
-        foreach (var (resource, name) in (ReadOnlySpan<(int, string)>)[(Libc.RlimitCore, "LimitCORE"), (Libc.RlimitStack, "LimitSTACK")])
-        {
-            if (Libc.GetRLimit(resource, out var limit) == 0)
-            {
-                properties.Add(new(name, limit.Maximum));
-                properties.Add(new(name + "Soft", limit.Current));
-            }
-        }
-
-        if (_controllers.Contains("cpu"))
-        {
-            properties.Add(new("CPUWeight", (ulong)CpuWeight(limits.CpuWeight)));
-            if (limits.CpuRateCap is { } cap)
-            {
-                properties.Add(new("CPUQuotaPerSecUSec", (ulong)cap * (ulong)Capacity.LogicalProcessors * 100UL));
-            }
-        }
-
-        if (_controllers.Contains("memory"))
-        {
-            if (limits.MemoryHighBytes > 0)
-            {
-                properties.Add(new("MemoryHigh", (ulong)limits.MemoryHighBytes));
-            }
-
-            if (limits.MemoryMaxBytes > 0)
-            {
-                properties.Add(new("MemoryMax", (ulong)limits.MemoryMaxBytes));
-            }
-
-            if (limits.SwapMaxBytes is { } swap)
-            {
-                properties.Add(new("MemorySwapMax", (ulong)swap));
-            }
-
-            // stop, never kill (AD-0005 Linux section 2, L-27): kill sets memory.oom.group, and a group kill also signals the user
-            // manager's posix_spawn child while it still shares the manager's address space, which kills the user manager.
-            properties.Add(new("OOMPolicy", "stop"));
-        }
-
-        if (_controllers.Contains("pids"))
-        {
-            properties.Add(new("TasksMax", (ulong)(limits.ActiveProcessLimit ?? limits.TasksMax)));
-        }
-
-        if (launch.KillWithNode && _nodeUnit is { } nodeUnit)
-        {
-            // kill_with_node: bound to the node's own unit, so it stops with the node (13 section 3.4).
-            properties.Add(new("BindsTo", new[] { nodeUnit }));
-            properties.Add(new("After", new[] { nodeUnit }));
-        }
-
-        return properties;
-    }
-
-    /// <summary>
-    /// The .NET location a framework-dependent helper needs (the JIT build of the tests: an <c>arcforges.dll</c> beside it), or null for
-    /// the Native AOT executable, which needs nothing.
-    /// </summary>
-    internal string? HelperRuntime => File.Exists(Path.ChangeExtension(_helper, ".dll")) ? Environment.GetEnvironmentVariable("DOTNET_ROOT") : null;
-
-    /// <summary>
-    /// A helper command line; a framework-dependent helper is started through <c>env DOTNET_ROOT=...</c>, and without the runtime's
-    /// diagnostic endpoints (<c>DOTNET_EnableDiagnostics=0</c>, unless the attempt sets it), so a helper that becomes the command
-    /// (<c>execve</c>) or is killed leaves no IPC socket behind in the temporary directory.
-    /// </summary>
-    private ExecCommand HelperCommand(List<string> argv, bool ignoreFailure, bool diagnosticsOff) => HelperRuntime is { } runtime && File.Exists("/usr/bin/env")
-        ? new ExecCommand("/usr/bin/env", ["env", "DOTNET_ROOT=" + runtime, .. diagnosticsOff ? (string[])[DiagnosticsVariable + "=0"] : [], .. argv], ignoreFailure)
-        : new ExecCommand(_helper, argv, ignoreFailure);
-
-    /// <summary>
-    /// The unit's <c>Environment=</c>: systemd accepts only names of letters, digits and underscores (not starting with a digit) and
-    /// values without other control characters than tab and newline, so any other entry (for example a bash function
-    /// <c>BASH_FUNC_x%%</c>, a name with a dash) travels in <see cref="ExecLaunchRole.CarrierVariable"/> (base64 of the NUL-separated
-    /// entries), which <c>exec-launch</c> unpacks into the command's environment and removes, so the command still gets exactly the
-    /// resolved environment. A caller's own variable of that name is carried the same way, and the carrier is always set (empty when
-    /// nothing is carried); <c>exec-launch</c> then keeps only the resolved names (<see cref="StepsFile.EnvironmentNames"/>).
-    /// </summary>
-    internal static string[] UnitEnvironment(IReadOnlyList<string> environment)
-    {
-        var accepted = new List<string>();
-        var carried = new List<string>();
-        foreach (var entry in environment)
-        {
-            (SystemdAccepts(entry) ? accepted : carried).Add(entry);
-        }
-
-        // Always set, empty when nothing is carried: a carrier variable of the user manager's own never reaches exec-launch.
-        accepted.Add(ExecLaunchRole.CarrierVariable + "="
-            + (carried.Count == 0 ? string.Empty : Convert.ToBase64String(Encoding.UTF8.GetBytes(string.Join('\0', carried)))));
-        return [.. accepted];
-    }
-
-    private static bool SystemdAccepts(string entry)
-    {
-        var equals = entry.IndexOf('=', StringComparison.Ordinal);
-        if (equals <= 0 || char.IsAsciiDigit(entry[0]))
-        {
-            return false;
-        }
-
-        // A caller's own variable with the carrier's name travels inside the carrier, like any entry systemd refuses.
-        if (entry.AsSpan(0, equals).SequenceEqual(ExecLaunchRole.CarrierVariable))
-        {
-            return false;
-        }
-
-        for (var index = 0; index < equals; index++)
-        {
-            if (!(char.IsAsciiLetterOrDigit(entry[index]) || entry[index] == '_'))
-            {
-                return false;
-            }
-        }
-
-        for (var index = equals + 1; index < entry.Length; index++)
-        {
-            var character = entry[index];
-            if (char.IsHighSurrogate(character) && index + 1 < entry.Length && char.IsLowSurrogate(entry[index + 1]))
-            {
-                index++;
-                continue;
-            }
-
-            // A lone surrogate is not valid UTF-8; other control characters than tab and newline are refused.
-            if (char.IsSurrogate(character) || (char.IsControl(character) && character is not ('\t' or '\n')))
-            {
-                return false;
-            }
-        }
-
-        return true;
     }
 
     /// <summary>The <c>CPUWeight</c> of a priority weight (03 section 5.2: 9, 7, 5, 3, 1 to 400, 200, 100, 50, 10).</summary>

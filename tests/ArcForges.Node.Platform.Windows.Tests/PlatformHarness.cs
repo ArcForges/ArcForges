@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using System.Text;
 using ArcForges.Node.Platform;
 using ArcForges.Node.Platform.Windows;
+using Microsoft.Win32.SafeHandles;
 
 namespace ArcForges.Node.Platform.Windows.Tests;
 
@@ -68,7 +71,7 @@ internal sealed partial class PlatformHarness : IDisposable
         return new AttemptFiles(DataRoot, name);
     }
 
-    /// <summary>Launches <paramref name="argv"/> (resolved like the node does) in a new attempt.</summary>
+    /// <summary>Launches <paramref name="argv"/> with an explicit fixture program in a new attempt.</summary>
     public WindowsAttemptHandle Launch(IReadOnlyList<string> argv, ContainerLimits? limits = null, IReadOnlyList<StepSpec>? launchSteps = null,
         IReadOnlyList<StepSpec>? endSteps = null, bool killWithNode = false, string? workingDirectory = null, int leftoverGraceMs = 5_000,
         IReadOnlyDictionary<string, string>? environment = null)
@@ -77,23 +80,225 @@ internal sealed partial class PlatformHarness : IDisposable
         var env = environment ?? Environment.GetEnvironmentVariables().Cast<System.Collections.DictionaryEntry>()
             .ToDictionary(entry => (string)entry.Key, entry => (string?)entry.Value ?? string.Empty, StringComparer.OrdinalIgnoreCase);
         var cwd = workingDirectory ?? Root;
-        var prepared = WindowsCommands.Prepare(new CommandRequest { Argv = argv, WorkingDirectory = cwd, Environment = env, TempDirectory = files.TempDirectory });
-        var handle = (WindowsAttemptHandle)Platform.Launch(new AttemptLaunch
+        if (argv.Count == 0 || !Path.IsPathFullyQualified(argv[0]))
         {
-            NodeName = NodeName,
-            Files = files,
-            Command = prepared,
+            throw new ArgumentException("The fixture program must have an absolute path.", nameof(argv));
+        }
+
+        var program = argv[0];
+        var application = program;
+        var batch = WindowsProgramResolver.IsBatch(program);
+        if (batch)
+        {
+            var shell = WindowsProgramResolver.Value(env, "ComSpec");
+            application = shell is not null && File.Exists(shell)
+                ? shell
+                : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe");
+        }
+
+        var spec = new HolderSpec
+        {
+            AttemptId = files.AttemptName,
+            Application = application,
+            CommandLine = batch ? WindowsCommandLine.BuildBatch(application, program, argv) : WindowsCommandLine.Build(argv),
             Environment = [.. env.Select(pair => pair.Key + "=" + pair.Value)],
             WorkingDirectory = cwd,
-            Limits = limits ?? new ContainerLimits(),
-            KillWithNode = killWithNode,
-            LaunchSteps = launchSteps ?? [],
-            EndSteps = endSteps ?? [],
+            LaunchSteps = [.. (launchSteps ?? [])],
+            EndSteps = [.. (endSteps ?? [])],
             LeftoverGraceMs = leftoverGraceMs,
-        });
+            AttemptDirectory = files.Directory,
+        };
+        var handle = LaunchFixtureAttempt(files, spec, limits ?? new ContainerLimits(), killWithNode);
         _handles.Add(handle);
         return handle;
     }
+
+    private WindowsAttemptHandle LaunchFixtureAttempt(AttemptFiles files, HolderSpec spec, ContainerLimits limits, bool killWithNode)
+    {
+        var root = Platform.RootJob ?? throw new InvalidOperationException("The platform has not started.");
+        Directory.CreateDirectory(files.Directory);
+        Directory.CreateDirectory(files.TempDirectory);
+        var job = JobObject.Create(WindowsExecutionPlatform.JobName(NodeName, files.AttemptName));
+        WindowsAttemptHandle? handle = null;
+        SafeFileHandle? stdout = null, stderr = null;
+        SafeHandle? stdin = null;
+        try
+        {
+            job.SetLimits(limits.CommitLimitBytes, limits.ActiveProcessLimit, killOnClose: killWithNode,
+                priorityClass: WindowsExecutionPlatform.AttemptPriorityClass);
+            if (limits.CommitLimitBytes > 0)
+            {
+                job.SetMemoryNotification(limits.CommitNotificationBytes > 0 ? limits.CommitNotificationBytes : limits.CommitLimitBytes);
+            }
+
+            if (limits.CpuRateCap is { } cap)
+            {
+                job.SetCpuHardCap(cap);
+            }
+            else
+            {
+                job.SetCpuWeight(limits.CpuWeight);
+            }
+
+            stdout = File.OpenHandle(files.StdoutPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
+            stderr = File.OpenHandle(files.StderrPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
+            stdin = ProcessLauncher.OpenNull(write: false);
+            handle = Platform.CreateAttemptHandle(job, files, root: null);
+            Platform.ObserveAttemptJob(handle, clearFirst: false);
+            if (killWithNode)
+            {
+                StartDirect(handle, spec, root, job, stdin, stdout, stderr);
+                stdout = null;
+                stderr = null;
+            }
+            else
+            {
+                StartHolder(handle, spec, root, job, stdin, stdout, stderr);
+            }
+
+            return handle;
+        }
+        catch
+        {
+            if (handle is not null)
+            {
+                Platform.Forget(handle.CompletionKey);
+            }
+
+            job.Terminate(AttemptRunner.TerminatedExitCode);
+            handle?.Dispose();
+            job.Dispose();
+            throw;
+        }
+        finally
+        {
+            stdin?.Dispose();
+            stdout?.Dispose();
+            stderr?.Dispose();
+        }
+    }
+
+    private void StartHolder(WindowsAttemptHandle handle, HolderSpec spec, JobObject root, JobObject job, SafeHandle stdin, SafeHandle stdout, SafeHandle stderr)
+    {
+        var ack = Native.CreateEvent(0, manualReset: true, initialState: false, WindowsExecutionPlatform.AckName(NodeName, handle.Files.AttemptName));
+        if (ack.IsInvalid)
+        {
+            var error = Native.LastError;
+            ack.Dispose();
+            throw new Win32Exception(error, "CreateEvent(ack) failed.");
+        }
+
+        handle.Ack = ack;
+        var attributes = new Native.SecurityAttributes { Length = Marshal.SizeOf<Native.SecurityAttributes>() };
+        if (!Native.CreatePipe(out var specRead, out var specWrite, ref attributes, 64 * 1024))
+        {
+            throw new Win32Exception(Native.LastError, "CreatePipe(spec) failed.");
+        }
+
+        if (!Native.CreatePipe(out var reportRead, out var reportWrite, ref attributes, 16 * 1024))
+        {
+            var error = Native.LastError;
+            Native.CloseHandle(specRead);
+            Native.CloseHandle(specWrite);
+            throw new Win32Exception(error, "CreatePipe(report) failed.");
+        }
+
+        using var specReadHandle = new SafeKernelHandle(specRead, ownsHandle: true);
+        using var reportWriteHandle = new SafeKernelHandle(reportWrite, ownsHandle: true);
+        var reportStream = new FileStream(new SafeFileHandle(reportRead, ownsHandle: true), FileAccess.Read, 1, isAsync: false);
+        var specStream = new FileStream(new SafeFileHandle(specWrite, ownsHandle: true), FileAccess.Write, 1, isAsync: false);
+        var inheritable = new List<nint>();
+        try
+        {
+            using var nulError = ProcessLauncher.OpenNull(write: true);
+            nint Copy(SafeHandle source)
+            {
+                var copy = ProcessLauncher.InheritableCopy(source);
+                inheritable.Add(copy);
+                return copy;
+            }
+
+            var arguments = new List<string>
+            {
+                TestPrograms.Host, "node", "exec-wrap", "--attempt", handle.Files.AttemptName,
+                "--job", Text(Copy(job.Handle)), "--root-job", Text(Copy(root.Handle)),
+                "--stdin", Text(Copy(stdin)), "--stdout", Text(Copy(stdout)), "--stderr", Text(Copy(stderr)),
+                "--ack", Text(Copy(ack)),
+            };
+            var holder = ProcessLauncher.Start(new LaunchOptions
+            {
+                Application = TestPrograms.Host,
+                CommandLine = WindowsCommandLine.Build(arguments),
+                WorkingDirectory = Path.GetDirectoryName(TestPrograms.Host),
+                Flags = Native.DetachedProcess,
+                StdInput = specReadHandle,
+                StdOutput = reportWriteHandle,
+                StdError = nulError,
+                InheritableHandles = inheritable,
+            });
+            holder.Resume();
+            handle.Holder = holder;
+        }
+        catch
+        {
+            reportStream.Dispose();
+            specStream.Dispose();
+            throw;
+        }
+        finally
+        {
+            foreach (var copy in inheritable)
+            {
+                Native.CloseHandle(copy);
+            }
+        }
+
+        handle.ReadReports(reportStream);
+        try
+        {
+            specStream.Write(Encoding.UTF8.GetBytes(spec.ToJson()));
+        }
+        finally
+        {
+            specStream.Dispose();
+        }
+    }
+
+    private static void StartDirect(WindowsAttemptHandle handle, HolderSpec spec, JobObject root, JobObject job, SafeHandle stdin, SafeFileHandle stdout,
+        SafeFileHandle stderr)
+    {
+        // The fixture is the holder. The runner keeps its own stdio handles, and the job has KILL_ON_JOB_CLOSE.
+        var stdinCopy = new SafeKernelHandle(ProcessLauncher.InheritableCopy(stdin), ownsHandle: true);
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                var runner = new AttemptRunner(spec, root, job, stdinCopy, stdout, stderr, handle.OnReport);
+                runner.Run(guard: false);
+            }
+            catch (ObjectDisposedException)
+            {
+                // The node closed the job (kill-on-close ended the attempt): nothing is left to record.
+            }
+            catch (Exception exception) when (exception is Win32Exception or IOException or UnauthorizedAccessException)
+            {
+                handle.OnReport(new HolderReport { Event = "spawn_failed", Error = exception.Message });
+            }
+            finally
+            {
+                stdinCopy.Dispose();
+                stdout.Dispose();
+                stderr.Dispose();
+            }
+        })
+        {
+            IsBackground = true,
+            Name = "arcforges-attempt-" + spec.AttemptId,
+        };
+        thread.Start();
+    }
+
+    private static string Text(nint handle) => ((long)handle).ToString(CultureInfo.InvariantCulture);
 
     /// <summary>A step that runs <paramref name="argv"/> (an absolute program).</summary>
     public static StepSpec Step(string name, params string[] argv) => new()

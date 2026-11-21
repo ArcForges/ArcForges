@@ -57,6 +57,7 @@ def offline_file(path: Path):
     """Hold native read protection without opening a writable handle or creating a lock file."""
     if os.name == "nt":
         import ctypes
+        import msvcrt
         from ctypes import wintypes
 
         kernel = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -69,10 +70,17 @@ def offline_file(path: Path):
         if handle == wintypes.HANDLE(-1).value:
             raise InspectionRefused("snapshot_locked_or_unreadable")
         try:
-            with path.open("rb") as stream:
+            fd = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+        except (OSError, ValueError):
+            kernel.CloseHandle(handle)
+            raise
+        # The descriptor owns the native handle. Keep the lock and the snapshot read
+        # on that same file even if the path is redirected after CreateFileW.
+        try:
+            with os.fdopen(fd, "rb", closefd=False) as stream:
                 yield stream
         finally:
-            kernel.CloseHandle(handle)
+            os.close(fd)
     else:
         import fcntl
 
@@ -95,6 +103,15 @@ def stream_identity(stream) -> tuple:
     return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, digest.hexdigest()
 
 
+def require_no_pending_journal(path: Path) -> None:
+    for suffix in ("-wal", "-journal"):
+        try:
+            Path(str(path) + suffix).lstat()
+        except FileNotFoundError:
+            continue
+        raise InspectionRefused("live_or_uncheckpointed_store_requires_consistent_offline_backup")
+
+
 @contextlib.contextmanager
 def offline_database(path: Path):
     with offline_file(path) as snapshot:
@@ -108,22 +125,23 @@ def offline_database(path: Path):
         before = stream_identity(snapshot)
         if before[2] > MAX_SNAPSHOT_BYTES:
             raise InspectionRefused("snapshot_exceeds_512_mib_inspection_bound")
-        if any(Path(str(path) + suffix).exists() for suffix in ("-wal", "-journal")):
-            raise InspectionRefused("live_or_uncheckpointed_store_requires_consistent_offline_backup")
+        require_no_pending_journal(path)
         # Deserialize bytes read from the protected handle, never reopen the path in SQLite.
         # A concurrent rename cannot redirect the inspected database to an unprotected inode.
         snapshot.seek(0)
         content = snapshot.read(MAX_SNAPSHOT_BYTES + 1)
-        if len(content) != before[2] or hashlib.sha256(content).hexdigest() != before[4]:
+        snapshot_sha256 = hashlib.sha256(content).hexdigest()
+        if len(content) != before[2] or snapshot_sha256 != before[4]:
             raise InspectionRefused("snapshot_changed_during_inspection")
         with contextlib.closing(sqlite3.connect(":memory:")) as connection:
             connection.deserialize(content)
-            yield connection
+            yield connection, snapshot_sha256
             if before != stream_identity(snapshot):
                 raise InspectionRefused("snapshot_changed_during_inspection")
             current = path.stat(follow_symlinks=False)
             if (current.st_dev, current.st_ino) != before[:2] or path.is_symlink():
                 raise InspectionRefused("snapshot_path_identity_changed")
+            require_no_pending_journal(path)
 
 
 def digest_file(path: Path) -> str:
@@ -237,13 +255,11 @@ def inventory(database: Path, binary: Path | None = None) -> dict:
         # A WAL/hot rollback journal needs the product's consistent backup procedure. An immutable
         # connection would ignore its commits, while a normal WAL reader may create/change sidecars.
         # Refuse both here, preserving every source byte and never reporting stale main-file data.
-        if any(Path(str(database) + suffix).exists() for suffix in ("-wal", "-journal")):
-            blockers.append("live_or_uncheckpointed_store_requires_consistent_offline_backup")
-            return report
+        require_no_pending_journal(database)
         # The supplied file is an operator-selected offline snapshot. SQLite receives only
         # protected-handle bytes in memory: it never opens, recovers or checkpoints the source.
         # This does not prove process absence, hence contraction is never authorized here.
-        with offline_database(database) as connection:
+        with offline_database(database) as (connection, snapshot_sha256):
             connection.execute("PRAGMA query_only=ON")
             connection.execute("PRAGMA trusted_schema=OFF")
             if connection.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
@@ -298,6 +314,9 @@ def inventory(database: Path, binary: Path | None = None) -> dict:
                 if count:
                     blockers.append(name)
             blockers.append("native_scope_and_exclusive_owner_proof_required")
+        # This identifies the inspected bytes after the protected snapshot checks, without
+        # authenticating a backup manifest or establishing native ownership.
+        report["database"]["snapshot_sha256"] = snapshot_sha256
         report["source"]["migrations"] = report["source"]["migrations"][:version]
     except (InspectionRefused, OSError, sqlite3.Error, ValueError, KeyError, TypeError, AttributeError) as error:
         # Snapshot identity must still match on exit before any derived result can be used.

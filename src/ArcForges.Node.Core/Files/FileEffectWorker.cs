@@ -9,7 +9,7 @@ namespace ArcForges.Node.Core.Files;
 /// Metadata-only lifetime fence for a Linux effect worker. It does not authorize a worker or perform an effect:
 /// the caller must complete peer/capability binding and commit PREPARED before any effect can be permitted.
 /// </summary>
-internal static partial class FileEffectWorker
+internal static class FileEffectWorker
 {
     /// <summary>
     /// Records a challenge-sealed live child against the exact PREPARED intent, in the same FULL transaction in which
@@ -49,18 +49,6 @@ internal static partial class FileEffectWorker
             VALUES ($id, $boot, $namespace, $pid, $start, 0);
             """, ("$id", intent.CommandId), ("$boot", identity.BootId.ToString("D")),
             ("$namespace", identity.PidNamespace), ("$pid", identity.ProcessId), ("$start", identity.StartTicks));
-    }
-
-    /// <summary>
-    /// Produces the immutable worker payload only after registering the exact prepared intent. The caller must commit
-    /// this FULL transaction and independently recheck live authority before sending any effect permission.
-    /// </summary>
-    internal static LinuxFileEffectBinding BindPreparedChild(StoreTransaction transaction, FileJournalIntent intent,
-        ReadOnlySpan<byte> transmitted, LinuxOwnedPidfd worker, long deadline, long expiryMicroseconds)
-    {
-        if (!OperatingSystem.IsLinux()) throw new InvalidOperationException("The Linux worker is unavailable.");
-        RecordPreparedChild(transaction, intent, transmitted, worker);
-        return LinuxFileEffectBinding.FromPrepared(intent, transmitted, deadline, expiryMicroseconds);
     }
 
     /// <summary>Releases the worker fence only when its original process identity is actually no longer present.</summary>

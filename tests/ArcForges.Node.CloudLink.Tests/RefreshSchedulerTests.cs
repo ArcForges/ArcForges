@@ -114,6 +114,44 @@ public sealed class RefreshSchedulerTests
     }
 
     [Fact]
+    public async Task AChannelRefreshPublishesTheRevocationNoticeBeforeTheScheduledRefresh()
+    {
+        await using var link = await LinkFixture.CreateAsync();
+        await link.StartAsync();
+        using (link.Keys.Create(link.NodeId, link.Center.Endpoint.Origin, link.Clock))
+        {
+        }
+
+        var issued = await link.SignInAsync();
+        await Eventually.TrueAsync(() => link.Center.CallsOf("ReportNodeInfo").Count == 1 && link.Service.Idle,
+            "the initial report to finish and the scheduler to wait");
+        var before = link.Clock.GetTimestamp();
+        Assert.Empty(link.Center.CallsOf(Refresh));
+        Assert.Empty(link.Notices());
+        link.Center.Revoke(issued.RefreshToken);
+
+        // Call the channel's refresh entry point while the manual clock keeps the scheduled refresh pending.
+        await ((IChannelHost)link.Service).RefreshAsync(link.Service.Generation, TestContext.Current.CancellationToken);
+
+        Assert.Equal(before, link.Clock.GetTimestamp());
+        Assert.Single(link.Center.CallsOf(Refresh));
+        Assert.Equal(CloudLinkPhase.SignedOut, link.Service.Phase);
+        Assert.Equal("credential_revoked", link.Service.LastError);
+        lock (link.Publications)
+        {
+            var publication = Assert.Single(link.Publications, item => item.Notice is not null);
+            Assert.False(publication.Status.SignedIn);
+            Assert.Equal(CloudLinkService.Notices.Revoked, publication.Notice);
+        }
+
+        Assert.Null(link.StoredRecord());
+        Assert.False(File.Exists(link.Storage.LinkPath));
+        Assert.False(File.Exists(link.Storage.KeysPath));
+        Assert.Null(link.Keys.Recorded());
+        Assert.Empty(link.Secrets.Names());
+    }
+
+    [Fact]
     public async Task AnExpiredFamilySignsTheNodeOutWithItsOwnNotice()
     {
         await using var link = await LinkFixture.CreateAsync();

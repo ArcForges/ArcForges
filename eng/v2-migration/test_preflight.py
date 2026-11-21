@@ -73,8 +73,17 @@ class InventoryTests(unittest.TestCase):
     def test_missing_store_is_fresh_without_creating_any_file(self):
         result = preflight.inventory(self.database)
         self.assertEqual("fresh", result["database"]["classification"])
+        self.assertNotIn("snapshot_sha256", result["database"])
         self.assertEqual([], list(self.root.iterdir()))
         self.assertFalse(result["destructive_contraction_allowed"])
+
+    @unittest.skipUnless(os.name == "nt", "Windows native read protection")
+    def test_windows_reads_the_native_handle_without_reopening_the_path(self):
+        fixture(self.database)
+        content = self.database.read_bytes()
+        with mock.patch.object(Path, "open", side_effect=AssertionError("snapshot path reopened")):
+            with preflight.offline_file(self.database) as stream:
+                self.assertEqual(content, stream.read())
 
     def test_real_schema15_snapshot_is_unchanged_and_cohort_stays_unknown(self):
         fixture(self.database)
@@ -82,10 +91,14 @@ class InventoryTests(unittest.TestCase):
         result = preflight.inventory(self.database)
         self.assertEqual("node15", result["database"]["classification"])
         self.assertTrue(result["database"]["schema_objects_match"])
+        self.assertEqual(hashlib.sha256(before[self.database.name]).hexdigest(),
+                         result["database"]["snapshot_sha256"])
         self.assertEqual("not_available_in_node15", result["database"]["applied_migration_checksum_ledger"])
         self.assertEqual(list(range(1, 16)), [step["version"] for step in result["source"]["migrations"]])
         self.assertTrue(all(value == 0 for value in result["counts"].values()))
         self.assertIn("installed_cohort_unknown", result["blockers"])
+        self.assertIn("native_scope_and_exclusive_owner_proof_required", result["blockers"])
+        self.assertFalse(result["destructive_contraction_allowed"])
         self.assertEqual(before, {p.name: p.read_bytes() for p in self.root.iterdir()})
 
     def test_unknown_journal_survives_real_migrations_and_blocks_contraction(self):
@@ -104,6 +117,7 @@ class InventoryTests(unittest.TestCase):
             connection.commit()
         result = preflight.inventory(self.database)
         self.assertEqual("newer", result["database"]["classification"])
+        self.assertNotIn("snapshot_sha256", result["database"])
         self.assertEqual({}, result["counts"])
 
     def test_expanded_prefixes_keep_legacy_reconciliation_and_leave_snapshot_unchanged(self):
@@ -114,6 +128,8 @@ class InventoryTests(unittest.TestCase):
                 before = {p.name: p.read_bytes() for p in self.root.iterdir()}
                 result = preflight.inventory(database)
                 self.assertEqual("node_v2_expanded", result["database"]["classification"])
+                self.assertEqual(hashlib.sha256(before[database.name]).hexdigest(),
+                                 result["database"]["snapshot_sha256"])
                 self.assertEqual(version, result["database"]["schema_version"])
                 self.assertEqual(min(version, 18), result["database"]["expansion_metadata_schema_version"])
                 self.assertEqual("step16_checkpoint_only", result["database"]["applied_migration_checksum_ledger"])
@@ -151,6 +167,34 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(list(range(1, 20)), [step["version"] for step in result["source"]["migrations"]])
         self.assertEqual({"state": "bytes_observed_provenance_unproven", "binary_sha256": preflight.digest_file(binary)},
                          result["installation"])
+
+    def test_late_sidecar_discards_snapshot_digest_and_inventory(self):
+        fixture(self.database, journal=True, version=19)
+        before = self.database.read_bytes()
+        stream_identity = preflight.stream_identity
+        sidecar_bytes = b"temporary fixture sidecar"
+
+        for suffix in ("-wal", "-journal"):
+            with self.subTest(suffix=suffix):
+                sidecar = self.database.with_name(self.database.name + suffix)
+
+                def observe(stream):
+                    identity = stream_identity(stream)
+                    if observer.call_count == 2:
+                        sidecar.write_bytes(sidecar_bytes)
+                    return identity
+
+                with mock.patch.object(preflight, "stream_identity", side_effect=observe) as observer:
+                    result = preflight.inventory(self.database)
+                self.assertEqual(2, observer.call_count)
+                self.assertEqual("unknown", result["database"]["classification"])
+                self.assertNotIn("snapshot_sha256", result["database"])
+                self.assertEqual({}, result["counts"])
+                self.assertIn("live_or_uncheckpointed_store_requires_consistent_offline_backup", result["blockers"])
+                self.assertFalse(result["destructive_contraction_allowed"])
+                self.assertEqual(before, self.database.read_bytes())
+                self.assertEqual(sidecar_bytes, sidecar.read_bytes())
+                sidecar.unlink()
 
     def test_expanded_metadata_cannot_describe_a_legacy_layout(self):
         fixture(self.database)
@@ -334,7 +378,7 @@ class InventoryTests(unittest.TestCase):
         replacement = self.root / "replacement.db"
         fixture(replacement, version=16)
         with self.assertRaisesRegex(preflight.InspectionRefused, "snapshot_path_identity_changed"):
-            with preflight.offline_database(self.database) as connection:
+            with preflight.offline_database(self.database) as (connection, _):
                 self.database.rename(self.root / "original.db")
                 replacement.rename(self.database)
                 # Reads remain bound to the protected old inode, never the new version16 path.

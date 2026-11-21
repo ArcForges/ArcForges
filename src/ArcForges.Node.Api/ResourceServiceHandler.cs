@@ -271,11 +271,12 @@ public sealed class ResourceServiceHandler : ResourceService.ResourceServiceBase
             ?? (request.FindingId is { } finding && finding.Value.Length is not (0 or 16) ? NodeErrors.InvalidArgument("finding_id: a 16-byte ID") : null)
             ?? (platform is null ? NodeErrors.EnforcementUnavailable("no execution platform could be started on this node (see the node log)") : null);
         ProcessTarget? target = null;
+        var historicalMatch = false;
         if (refused is null)
         {
             try
             {
-                target = Classify(pid, start);
+                (target, historicalMatch) = Classify(pid, start);
             }
             catch (LegacyCustodyUnavailableException)
             {
@@ -287,6 +288,16 @@ public sealed class ResourceServiceHandler : ResourceService.ResourceServiceBase
             // resources.proto: never unrelated processes.
             refused = NodeErrors.ProcessNotFound(string.Create(CultureInfo.InvariantCulture,
                 $"process {pid}: not a process this node manages, adopted or classified (MANAGED, ADOPTED, ESCAPED or a leftover)"));
+            if (historicalMatch)
+            {
+                // Unproved historical ownership can no longer authorize a native effect. Keep exact previously authorized receipts readable.
+                var retained = _api.ReadRetained(request, request.Meta, caller, "TerminateProcess", ResourceServiceTerminateProcessResponse.Parser,
+                    error => new ResourceServiceTerminateProcessResponse { Meta = ApiCommands.Meta(request.Meta), Error = error }, refused);
+                if (retained.Retained)
+                {
+                    return retained.Response;
+                }
+            }
         }
 
         var gate = new GateRequest(PermissionMatrix.ProcessTerminate, "ResourceService.TerminateProcess",
@@ -341,13 +352,14 @@ public sealed class ResourceServiceHandler : ResourceService.ResourceServiceBase
     /// <summary>
     /// What the node knows about the process (<paramref name="pid"/>, <paramref name="start"/>): a member of a running attempt's container
     /// (MANAGED), of an adoption container (ADOPTED), or a process the node recorded for an attempt (an ESCAPED process found by the ancestry
-    /// scan, or another recorded process of an attempt, such as a leftover); or <see langword="null"/>.
+    /// scan, or another recorded process of an attempt, such as a leftover). A historical match needs a local owning attempt and proof
+    /// that it ran during the current boot.
     /// </summary>
-    private ProcessTarget? Classify(int pid, DateTimeOffset start)
+    private (ProcessTarget? Target, bool HistoricalMatch) Classify(int pid, DateTimeOffset start)
     {
         if (_node.Execution is not { } execution)
         {
-            return null;
+            return (null, false);
         }
 
         foreach (var attempt in execution.RunningAttempts)
@@ -356,7 +368,7 @@ public sealed class ResourceServiceHandler : ResourceService.ResourceServiceBase
             {
                 if (attempt.Handle?.Processes().FirstOrDefault(process => process.Pid == pid) is { } member)
                 {
-                    return new ProcessTarget("MANAGED", attempt.AttemptId, member.Image);
+                    return (new ProcessTarget("MANAGED", attempt.AttemptId, member.Image), false);
                 }
             }
             catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or IOException or InvalidOperationException or ObjectDisposedException)
@@ -369,23 +381,39 @@ public sealed class ResourceServiceHandler : ResourceService.ResourceServiceBase
         {
             if (adopted.Container.Processes().Contains(pid))
             {
-                return new ProcessTarget("ADOPTED", adopted.AttemptId, "adopted process");
+                return (new ProcessTarget("ADOPTED", adopted.AttemptId, "adopted process"), false);
             }
         }
 
         var micros = StoreTime.ToMicroseconds(start);
         var tolerance = (long)StartTolerance.TotalMicroseconds;
-        return _node.Store.Read(reader =>
+        return _node.Store.Read<(ProcessTarget? Target, bool HistoricalMatch)>(reader =>
         {
-            using var command = reader.CreateCommand(
-                "SELECT attempt_id, executable, label FROM process_record WHERE pid = $pid AND start_at BETWEEN $from AND $to ORDER BY last_seen DESC LIMIT 1;");
+            using var command = reader.CreateCommand("""
+                SELECT process.attempt_id, process.executable, process.label, owner.boot_identity,
+                       owner.executor_node_id = (SELECT node_id FROM store_meta WHERE singleton = 1)
+                FROM process_record AS process
+                JOIN attempt AS owner ON owner.attempt_id = process.attempt_id
+                WHERE process.pid = $pid AND process.start_at BETWEEN $from AND $to
+                ORDER BY process.last_seen DESC;
+                """);
             command.Parameters.AddWithValue("$pid", pid);
             command.Parameters.AddWithValue("$from", micros - tolerance);
             command.Parameters.AddWithValue("$to", micros + tolerance);
             using var rows = command.ExecuteReader();
-            return rows.Read()
-                ? new ProcessTarget((ProcessLabel)rows.GetInt32(2) == ProcessLabel.Escaped ? "ESCAPED" : "leftover", (byte[])rows.GetValue(0), rows.GetString(1))
-                : null;
+            var historicalMatch = false;
+            while (rows.Read())
+            {
+                historicalMatch = true;
+                if (rows.GetBoolean(4) && !rows.IsDBNull(3) &&
+                    execution.OriginalBoot(rows.GetString(3)) == ExecutionSupervisor.LegacyBootProof.Current)
+                {
+                    var label = (ProcessLabel)rows.GetInt32(2) == ProcessLabel.Escaped ? "ESCAPED" : "leftover";
+                    return (new ProcessTarget(label, (byte[])rows.GetValue(0), rows.GetString(1)), true);
+                }
+            }
+
+            return (null, historicalMatch);
         });
     }
 

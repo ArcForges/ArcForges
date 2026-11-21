@@ -45,7 +45,6 @@ public sealed class RetainedResourceRecoveryTests
         HelperFiles.WriteAtomically(files.ExitPath, exit.ToJson());
         using var log = new NodeLog(Path.Combine(fixture.DataRoot, "logs", "node"), LogLevel.Info, clock);
         using var heartbeat = new NodeHeartbeatWriter(fixture.DataRoot, log, clock);
-        using var keys = new NodeDataKeyRing(store, fixture.Secrets.Selection);
         await using var processor = new CommandProcessor(store, EventJournal.Open(store), new StreamHub());
         await using var execution = new ExecutionSupervisor(new ExecutionOptions
         {
@@ -54,7 +53,6 @@ public sealed class RetainedResourceRecoveryTests
             Log = log,
             Clock = clock,
             DataRoot = fixture.DataRoot,
-            Secrets = new TaskSecrets(store, keys),
             Heartbeat = heartbeat,
         });
         await execution.RecoverAsync(new RecoveryReport(true, false, null, store.Opening), processor, ct);

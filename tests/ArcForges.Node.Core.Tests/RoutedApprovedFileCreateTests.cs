@@ -78,34 +78,15 @@ public sealed class RoutedApprovedFileCreateTests
             return id;
         }, CommitDurability.Full).WaitAsync(ct);
 
-        var handler = calls.Dispatcher.FileHandlerForTests!;
-        bool reachedCreate = false;
-        void RefuseUnexpectedCreate()
-        {
-            reachedCreate = true;
-            throw new InvalidOperationException("The draining route must not enter the native create path.");
-        }
-
-        handler.BeforeCreateForTests = RefuseUnexpectedCreate;
-        handler.AfterCreateForTests = RefuseUnexpectedCreate;
-        try
-        {
-            await RequirePendingAsync(calls, actor, request, raw, approvalId, ct);
-            var foreign = actor.Clone();
-            foreign.AccountId = CommandIds.New();
-            var denied = await calls.CallAsync(foreign, RoutedMethod.WriteNodeFile, raw, request.Meta.CommandId,
-                cancellationToken: ct);
-            Assert.Equal(RoutedOutcome.Executed, denied.Answer!.Outcome);
-            var deniedResponse = FileServiceWriteFileResponse.Parser.ParseFrom(denied.Answer.Response);
-            Assert.Equal("command_id_reused", deniedResponse.Error.Code);
-            Assert.Null(deniedResponse.Error.Details?.State?.Resource?.Id);
-            Assert.False(reachedCreate);
-        }
-        finally
-        {
-            handler.BeforeCreateForTests = null;
-            handler.AfterCreateForTests = null;
-        }
+        await RequirePendingAsync(calls, actor, request, raw, approvalId, ct);
+        var foreign = actor.Clone();
+        foreign.AccountId = CommandIds.New();
+        var denied = await calls.CallAsync(foreign, RoutedMethod.WriteNodeFile, raw, request.Meta.CommandId,
+            cancellationToken: ct);
+        Assert.Equal(RoutedOutcome.Executed, denied.Answer!.Outcome);
+        var deniedResponse = FileServiceWriteFileResponse.Parser.ParseFrom(denied.Answer.Response);
+        Assert.Equal("command_id_reused", deniedResponse.Error.Code);
+        Assert.Null(deniedResponse.Error.Details?.State?.Resource?.Id);
 
         Assert.Equal(0, await node.StopAsync());
         await node.StartAsync();

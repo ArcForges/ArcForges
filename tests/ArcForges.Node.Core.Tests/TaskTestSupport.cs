@@ -176,12 +176,6 @@ internal static class Tasks
     /// <summary>The attempt's files under the node's data root.</summary>
     public static AttemptFiles Files(InProcessNode node, Id attemptId) => new(node.DataRoot, IdText.Format(attemptId));
 
-    /// <summary>A launch step provider returning fixed synthetic steps.</summary>
-    public sealed class FixedSteps(Func<AttemptFiles, IReadOnlyList<StepSpec>> launch, Func<AttemptFiles, IReadOnlyList<StepSpec>> end) : ArcForges.Node.Core.Execution.ILaunchStepProvider
-    {
-        public (IReadOnlyList<StepSpec> Launch, IReadOnlyList<StepSpec> End) StepsFor(TaskSpec spec, AttemptFiles files) => (launch(files), end(files));
-    }
-
     /// <summary>The lines of an <c>arcforges-testload signal</c> marker: (event, pid, unix ms).</summary>
     public static List<(string Event, int Pid, long At)> Marker(string path)
     {
