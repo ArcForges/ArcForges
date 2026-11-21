@@ -389,7 +389,9 @@ public sealed class MigrationContractionTests
     private static void AssertOldReaderRefuses(TemporaryDataRoot root, ManualClock clock)
     {
         string originalDigest = HashFile(root.Database);
-        var refusal = Assert.Throws<StoreIncompatibleException>(() => root.Open(clock, StoreMigrations.Expanded));
+        var refusal = Assert.Throws<StoreIncompatibleException>(() => NodeStore.OpenForV2Runtime(
+            new NodeStoreOptions { DataRoot = root.Path, BootIdentity = NodeContractionScope.ReadCurrentBootIdentity(), Clock = clock },
+            StoreMigrations.Expanded));
         Assert.Contains("schema version 20", refusal.Message, StringComparison.Ordinal);
         Assert.Equal(originalDigest, HashFile(root.Database));
         Assert.False(File.Exists(root.Database + "-wal"));

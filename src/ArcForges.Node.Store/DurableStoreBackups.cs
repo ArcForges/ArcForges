@@ -91,7 +91,8 @@ internal sealed partial class DurableCommandStore
     // The latest authority is retained independently of the backup being restored. Without
     // that outside evidence (or after any missing admission/effect observation), remain offline.
     internal static void RestoreBackup(string backupRoot, NodeSecretStore backupSecrets, string latestAuthorityRoot,
-        NodeSecretStore latestAuthoritySecrets, string destinationRoot, NodeSecretStore destinationSecrets)
+        NodeSecretStore latestAuthoritySecrets, string destinationRoot, NodeSecretStore destinationSecrets,
+        NodeContractionScope? offlineScope = null)
     {
         if (!Path.IsPathFullyQualified(backupRoot) || !Path.IsPathFullyQualified(latestAuthorityRoot)
             || !Path.IsPathFullyQualified(destinationRoot) || Directory.Exists(destinationRoot))
@@ -103,6 +104,9 @@ internal sealed partial class DurableCommandStore
         if (latestAuthorityRoot.Equals(backupRoot, comparison)
             || latestAuthorityRoot.StartsWith(backupRoot + Path.DirectorySeparatorChar, comparison))
             throw new DurableStoreMaintenanceException();
+        if (offlineScope is not null && !latestAuthorityRoot.Equals(offlineScope.DataRoot, comparison))
+            throw new DurableStoreMaintenanceException();
+        offlineScope?.VerifyHeld();
         var locks = new List<FileStream>();
         var keys = new Dictionary<string, byte[]>(StringComparer.Ordinal);
         try
@@ -130,8 +134,11 @@ internal sealed partial class DurableCommandStore
                 throw new DurableStoreMaintenanceException();
             foreach (string owner in manifest.Epochs.Select(entry => entry.Owner).Distinct(StringComparer.Ordinal))
                 locks.Add(DurableEpochFence.OpenPrivate(DurableEpochFence.PathFor(latestAuthorityRoot, owner) + ".lock", FileMode.Open));
+            string authorityDatabase = StorePaths.Database(latestAuthorityRoot);
+            string authoritySource = offlineScope is null ? authorityDatabase
+                : NodeStore.ImmutableStoreUri(authorityDatabase) ?? throw new DurableStoreMaintenanceException();
             using (var latest = new Microsoft.Data.Sqlite.SqliteConnection(StorePaths.ConnectionString(
-                StorePaths.Database(latestAuthorityRoot), Microsoft.Data.Sqlite.SqliteOpenMode.ReadOnly)))
+                authoritySource, Microsoft.Data.Sqlite.SqliteOpenMode.ReadOnly)))
             {
                 latest.Open();
                 // The independent latest catalogue must be complete/readable. Never substitute

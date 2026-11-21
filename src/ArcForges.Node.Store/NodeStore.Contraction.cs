@@ -25,7 +25,7 @@ public sealed partial class NodeStore
     ];
 
     // The archive owns the private staged identity and the original source lease until publication.
-    internal static void ContractVerifiedCopy(VerifiedNodeContractionArchive archive, TimeProvider clock)
+    internal static void ContractVerifiedCopy(VerifiedNodeContractionArchive archive, TimeProvider clock, Action? beforeCommit = null)
     {
         ArgumentNullException.ThrowIfNull(archive);
         ArgumentNullException.ThrowIfNull(clock);
@@ -37,7 +37,10 @@ public sealed partial class NodeStore
         Pragma(writer, "PRAGMA foreign_keys=ON;");
         Pragma(writer, "PRAGMA secure_delete=ON;");
         InTransaction(writer, CommitDurability.Full, transaction =>
-            ApplyContraction(new StoreTransaction(writer, transaction, clock, CommitDurability.Full), archive));
+        {
+            ApplyContraction(new StoreTransaction(writer, transaction, clock, CommitDurability.Full), archive);
+            beforeCommit?.Invoke();
+        });
     }
 
     private static void ApplyContraction(StoreTransaction transaction, VerifiedNodeContractionArchive archive)

@@ -47,7 +47,7 @@ internal sealed class VerifiedNodeContractionArchive
         string manifestDigest = Digest(Manifest(backupRoot));
 
         // Authenticate the archive against the latest owner and prove it can be restored into a distinct root.
-        DurableCommandStore.RestoreBackup(backupRoot, backupSecrets, source.DataRoot, sourceSecrets, stagingRoot, stagingSecrets);
+        DurableCommandStore.RestoreBackup(backupRoot, backupSecrets, source.DataRoot, sourceSecrets, stagingRoot, stagingSecrets, source);
         RequireCheckpointed(staging);
         string stagingDigest = Digest(staging);
         if (!string.Equals(historyDigest, stagingDigest, StringComparison.Ordinal))
@@ -83,8 +83,8 @@ internal sealed class VerifiedNodeContractionArchive
         using var original = OpenSnapshot(source);
         using var restored = OpenSnapshot(restore);
         var originalSchema = Schema(original);
-        if (!originalSchema.SequenceEqual(Schema(restored)))
-            throw new StoreIncompatibleException("The original and restored database schemas differ.");
+        if (!originalSchema.SequenceEqual(ExpandedSchema()) || !originalSchema.SequenceEqual(Schema(restored)))
+            throw new StoreIncompatibleException("The original and restored schemas must match the released expanded store.");
 
         foreach (var table in originalSchema.Where(entry => entry.Type == "table"))
         {
@@ -151,6 +151,21 @@ internal sealed class VerifiedNodeContractionArchive
         while (rows.Read())
             definitions.Add((rows.GetString(0), rows.GetString(1), rows.IsDBNull(2) ? null : rows.GetString(2)));
         return [.. definitions];
+    }
+
+    private static (string Type, string Name, string? Sql)[] ExpandedSchema()
+    {
+        using var database = new SqliteConnection("Data Source=:memory:;Pooling=False");
+        database.Open();
+        database.CreateFunction<long>("arcforges_store_reader_version", () => StoreMigrations.ExpandedSchemaVersion);
+        using var step = database.CreateCommand();
+        foreach (var migration in StoreMigrations.Expanded.Steps)
+        {
+            step.CommandText = migration.Sql;
+            step.ExecuteNonQuery();
+        }
+
+        return Schema(database);
     }
 
     private static SqliteConnection OpenSnapshot(string path)

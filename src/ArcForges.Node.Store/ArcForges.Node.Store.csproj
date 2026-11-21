@@ -9,6 +9,7 @@
   <PropertyGroup>
     <RootNamespace>ArcForges.Node.Store</RootNamespace>
     <IsAotCompatible>true</IsAotCompatible>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <!-- The RIDs of the executables that carry the store, so a RID-specific publish keeps this project's lock file consistent. -->
     <RuntimeIdentifiers>win-x64;win-arm64;linux-x64;linux-arm64</RuntimeIdentifiers>
   </PropertyGroup>
@@ -45,6 +46,7 @@
     <!-- The arcforges host applies the test-mode tripwire at startup (NodeSecretStores.ApplyTestModeTripwire). -->
     <InternalsVisibleTo Include="arcforges" />
     <InternalsVisibleTo Include="arcforges-bench" />
+    <InternalsVisibleTo Include="arcforges-migrate-node" />
     <InternalsVisibleTo Include="ArcForges.Node.Core.Tests" />
     <InternalsVisibleTo Include="ArcForges.ClosedLoop.Tests" />
     <InternalsVisibleTo Include="ArcForges.OsSecretStoreTier" />

@@ -173,7 +173,8 @@ public sealed partial class NodeStore : IDisposable
     internal static NodeStore Open(NodeStoreOptions options, MigrationPlan plan) => Open(options, plan, requireV2Runtime: false);
 
     /// <summary>Opens a fresh store or an existing store without retired execution or file custody.</summary>
-    internal static NodeStore OpenForV2Runtime(NodeStoreOptions options) => Open(options, StoreMigrations.Released, requireV2Runtime: true);
+    internal static NodeStore OpenForV2Runtime(NodeStoreOptions options, MigrationPlan? runtimePlan = null) =>
+        Open(options, runtimePlan ?? StoreMigrations.Released, requireV2Runtime: true);
 
     private static NodeStore Open(NodeStoreOptions options, MigrationPlan plan, bool requireV2Runtime)
     {

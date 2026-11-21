@@ -27,6 +27,7 @@ def record_expansion(connection, step, source, unresolved):
     connection.execute("""INSERT INTO schema_version
         SELECT 1,schema_version,min_reader_version,?,? FROM store_meta WHERE singleton=1""", (cohort, receipt))
     connection.execute("""INSERT INTO migration_checkpoint
+        (migration_id,source_schema,target_schema,backup_identity,state,cohort,unresolved_count,receipt_sha256,created_utc)
         VALUES('AFV2-DATA-01/schema16',?,16,?,'EXPANDED_LEGACY_RECONCILIATION_PRESERVED',?,?,?,'2026-01-01T00:00:00Z')""",
         (source, backup, cohort, unresolved, receipt))
 
@@ -112,13 +113,33 @@ class InventoryTests(unittest.TestCase):
     def test_newer_store_is_not_opened_as_supported(self):
         fixture(self.database)
         with contextlib.closing(sqlite3.connect(self.database)) as connection:
-            connection.create_function("arcforges_store_reader_version", 0, lambda: 20)
-            connection.execute("UPDATE store_meta SET schema_version=20,min_reader_version=20")
+            version = preflight.LATEST_VERSION + 1
+            connection.create_function("arcforges_store_reader_version", 0, lambda: version)
+            connection.execute("UPDATE store_meta SET schema_version=?,min_reader_version=?", (version, version))
             connection.commit()
         result = preflight.inventory(self.database)
         self.assertEqual("newer", result["database"]["classification"])
         self.assertNotIn("snapshot_sha256", result["database"])
         self.assertEqual({}, result["counts"])
+
+    def test_contracted_store_reports_only_a_matching_checkpoint(self):
+        fixture(self.database, version=20, fresh=True)
+        with contextlib.closing(sqlite3.connect(self.database)) as connection:
+            cohort = connection.execute("SELECT cohort FROM schema_version").fetchone()[0]
+            step = preflight.migration_sources()[19]
+            identity = f"AFV2-MIG-02/schema20|0|{step['sha256']}|CONTRACTED_FRESH|fresh:no-predecessor|||||{cohort}"
+            receipt = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+            connection.execute("""INSERT INTO migration_checkpoint
+                (migration_id,source_schema,target_schema,backup_identity,state,cohort,unresolved_count,receipt_sha256,created_utc)
+                VALUES('AFV2-MIG-02/schema20',0,20,'fresh:no-predecessor','CONTRACTED_FRESH',?,0,?,'2026-01-01T00:00:00Z')""",
+                (cohort, receipt))
+            connection.commit()
+        before = self.database.read_bytes()
+        result = preflight.inventory(self.database)
+        self.assertEqual("node_v2_contracted", result["database"]["classification"])
+        self.assertTrue(result["database"]["contraction_checkpoint_matches"])
+        self.assertEqual({}, result["counts"])
+        self.assertEqual(before, self.database.read_bytes())
 
     def test_expanded_prefixes_keep_legacy_reconciliation_and_leave_snapshot_unchanged(self):
         for version in range(16, 20):
@@ -164,7 +185,7 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual({}, result["counts"])
         self.assertEqual(["snapshot_changed_during_inspection"], result["blockers"])
         self.assertFalse(result["destructive_contraction_allowed"])
-        self.assertEqual(list(range(1, 20)), [step["version"] for step in result["source"]["migrations"]])
+        self.assertEqual(list(range(1, preflight.LATEST_VERSION + 1)), [step["version"] for step in result["source"]["migrations"]])
         self.assertEqual({"state": "bytes_observed_provenance_unproven", "binary_sha256": preflight.digest_file(binary)},
                          result["installation"])
 

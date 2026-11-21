@@ -17,7 +17,8 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = ROOT / "src/ArcForges.Node.Store/Schema"
 LEGACY_VERSION = 15
-LATEST_VERSION = 19
+EXPANDED_VERSION = 19
+LATEST_VERSION = 20
 MAX_SNAPSHOT_BYTES = 512 * 1024 * 1024
 COUNTS = {
     "unsettled_commands": "SELECT count(*) FROM command_dedup WHERE outcome IS NULL",
@@ -200,8 +201,8 @@ def expansion_checkpoint_version(connection: sqlite3.Connection, version: int, r
     mirror, mirror_reader, source, backup, unresolved, cohort, receipt = row
     # Applied step 19 does not update this mirror on upgrade. Fresh creation inserts
     # the mirror after the full chain, so only those stores record 19 in both tables.
-    if version == 19:
-        if (mirror, mirror_reader) != (18, 18) and not (source == 0 and (mirror, mirror_reader) == (19, 19)):
+    if version == EXPANDED_VERSION:
+        if (mirror, mirror_reader) != (18, 18) and not (source == 0 and (mirror, mirror_reader) == (EXPANDED_VERSION, EXPANDED_VERSION)):
             return None
     elif (mirror, mirror_reader) != (version, reader):
         return None
@@ -214,6 +215,30 @@ def expansion_checkpoint_version(connection: sqlite3.Connection, version: int, r
     # not establish the identity of the installed binary or an independent backup.
     expected = hashlib.sha256(f"AFV2-DATA-01|{source}|16|{source_sha256}|{backup}|{unresolved}|{cohort}".encode("utf-8")).hexdigest()
     return mirror if receipt == expected else None
+
+
+def contraction_checkpoint_matches(connection: sqlite3.Connection, step: dict) -> bool:
+    row = connection.execute("""
+        SELECT m.source_schema,m.state,m.cohort,m.backup_identity,m.source_database_sha256,m.history_archive_sha256,
+               m.restore_database_sha256,m.scope_receipt_sha256,m.receipt_sha256
+        FROM migration_checkpoint m JOIN schema_version s ON s.singleton=1 AND s.cohort=m.cohort
+        WHERE m.migration_id='AFV2-MIG-02/schema20' AND m.target_schema=20 AND m.unresolved_count=0
+            AND s.version=20 AND s.min_reader=20
+        """).fetchone()
+    if row is None:
+        return False
+    source, state, cohort, backup, original, history, restore, scope, receipt = row
+    evidence = [original, history, restore, scope]
+    if source == 0:
+        valid = state == "CONTRACTED_FRESH" and backup == "fresh:no-predecessor" and all(item is None for item in evidence)
+    else:
+        valid = source == EXPANDED_VERSION and state == "CONTRACTED_VERIFIED_ARCHIVE" and all(
+            isinstance(item, str) and re.fullmatch(r"[0-9a-f]{64}", item) for item in [backup, *evidence])
+    if not valid:
+        return False
+    fields = "|".join(item or "" for item in evidence)
+    identity = f"AFV2-MIG-02/schema20|{source}|{step['sha256']}|{state}|{backup}|{fields}|{cohort}"
+    return receipt == hashlib.sha256(identity.encode("utf-8")).hexdigest()
 
 
 def inventory(database: Path, binary: Path | None = None) -> dict:
@@ -304,20 +329,30 @@ def inventory(database: Path, binary: Path | None = None) -> dict:
                 if mirror is None:
                     blockers.append("inconsistent_v2_expansion_checkpoint")
                     return report
-                report["database"].update(classification="node_v2_expanded", expansion_metadata_schema_version=mirror,
-                                          expansion_checkpoint_matches=True,
-                                          applied_migration_checksum_ledger="step16_checkpoint_only")
+                if version > EXPANDED_VERSION:
+                    if not contraction_checkpoint_matches(connection, steps[EXPANDED_VERSION]):
+                        blockers.append("inconsistent_v2_contraction_checkpoint")
+                        return report
+                    report["database"].update(classification="node_v2_contracted", contraction_checkpoint_matches=True,
+                                              applied_migration_checksum_ledger="step16_and_step20_checkpoints")
+                else:
+                    report["database"].update(classification="node_v2_expanded",
+                                              applied_migration_checksum_ledger="step16_checkpoint_only")
+                report["database"].update(expansion_metadata_schema_version=mirror, expansion_checkpoint_matches=True)
             report["database"]["schema_objects_match"] = True
             if not clean:
                 blockers.append("node_running_or_unclean_shutdown")
             if connection.execute("PRAGMA foreign_key_check").fetchall():
                 blockers.append("foreign_key_integrity_failed")
-            for name, query in COUNTS.items():
-                count = connection.execute(query).fetchone()[0]
-                report["counts"][name] = count
-                if count:
-                    blockers.append(name)
-            blockers.append("native_scope_and_exclusive_owner_proof_required")
+            if version <= EXPANDED_VERSION:
+                for name, query in COUNTS.items():
+                    count = connection.execute(query).fetchone()[0]
+                    report["counts"][name] = count
+                    if count:
+                        blockers.append(name)
+                blockers.append("native_scope_and_exclusive_owner_proof_required")
+            else:
+                blockers.append("store_already_contracted")
         # This identifies the inspected bytes after the protected snapshot checks, without
         # authenticating a backup manifest or establishing native ownership.
         report["database"]["snapshot_sha256"] = snapshot_sha256
