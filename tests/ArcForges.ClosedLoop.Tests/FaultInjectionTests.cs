@@ -45,7 +45,7 @@ public sealed class FaultInjectionTests
         await events.WaitForExitAsync(Ct);
 
         await TestNode.WaitAsync(async () => await HealthAsync(node) == before, Bound, "the Node to release the killed event client");
-        Assert.Equal(0, (await node.ProductCliAsync("node", "status")).ExitCode);
+        await node.WaitReadyAsync();
         Assert.Equal(pid, node.NodePid());
     }
 
@@ -131,7 +131,7 @@ public sealed class FaultInjectionTests
         supervisor.Kill();
         await supervisor.WaitForExitAsync(Ct);
 
-        Assert.Equal(0, (await node.ProductCliAsync("node", "status")).ExitCode);
+        await node.WaitReadyAsync();
         Assert.Equal(nodePid, node.NodePid());
         await node.StopNodeAsync();
     }
