@@ -122,7 +122,7 @@ internal sealed partial class DurableCommandStore
         {
             RequireUnaliasedAuthorityRoot(Path.GetDirectoryName(StorePaths.Database(backupRoot))!);
             RequireUnaliasedAuthorityRoot(Path.GetDirectoryName(StorePaths.Database(latestAuthorityRoot))!);
-            using var catalogue = DurableEpochFence.OpenCatalogueLock(latestAuthorityRoot);
+            using var catalogue = DurableEpochFence.OpenCatalogueLock(latestAuthorityRoot, existingOnly: offlineScope is not null);
             byte[] signed;
             using (var manifestFile = File.OpenRead(Path.Combine(backupRoot, "v2-backup.manifest")))
             {
