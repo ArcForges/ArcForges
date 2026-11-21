@@ -14,6 +14,8 @@ namespace ArcForges.Node.Platform.Windows;
 [SupportedOSPlatform("windows")]
 public sealed class WindowsAttemptHandle : IAttemptHandle
 {
+    private const uint TerminatedJobExitCode = 1;
+
     private readonly WindowsExecutionPlatform _platform;
     private readonly nuint _key;
     private readonly JobObject _job;
@@ -173,7 +175,7 @@ public sealed class WindowsAttemptHandle : IAttemptHandle
     public bool CrossesVmBoundary => _members.VmLauncher is not null;
 
     /// <inheritdoc />
-    public void Terminate() => _job.Terminate(AttemptRunner.TerminatedExitCode);
+    public void Terminate() => _job.Terminate(TerminatedJobExitCode);
 
     /// <inheritdoc />
     public GracefulOutcome RequestGracefulStop()
