@@ -1,203 +1,98 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
-using ArcForges.Node.Core.Execution;
 using ArcForges.Node.Core.Files;
-using ArcForges.Node.Core.Scheduling;
-using Google.Protobuf;
+using ArcForges.Node.Store;
 
 namespace ArcForges.Node.Core.Tests;
 
-/// <summary>Real local TaskService, registered roots and SQLite transaction ordering; the callback only coordinates the actual race.</summary>
+/// <summary>Retained Task ownership and native workspace identities without starting a Node or a Task.</summary>
 [Trait("feature", "workspace-submit-registry")]
 public sealed class WorkspaceSubmitRegistryTests
 {
-    [Theory(Timeout = 120_000)]
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task UnregisterBeforeRealSubmitTransactionUsesOnlyCurrentWorkspaceAndPolicy(bool registerChild)
+    public async Task RetainedTaskHoldsItsOriginalWorkspaceWhenNestedRegistrationChanges(bool registerChild)
     {
-        var cancellation = TestContext.Current.CancellationToken;
-        cancellation.ThrowIfCancellationRequested();
-        await using var node = await InProcessNode.Create().StartAsync();
-        Assert.NotNull(node.Runtime.Execution?.Platform);
-        await using var human = await node.ChannelAsync(helloAsHuman: true);
-        await using var script = await node.ChannelAsync();
-        Assert.Null((await human.Queue.PausePoolAsync(new QueueServicePausePoolRequest { Meta = Tasks.Meta(), All = true }, cancellationToken: cancellation)).Error);
+        var ct = TestContext.Current.CancellationToken;
+        await using var fixture = InProcessNode.Create();
+        using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = fixture.DataRoot, BootIdentity = "workspace-history-fixture" });
+        var manager = new RegisteredWorkspaces(store);
+        var parent = Directory.CreateDirectory(Path.Combine(fixture.Root, "parent"));
+        var child = parent.CreateSubdirectory("child");
+        var marker = Path.Combine(child.FullName, "preserved");
+        File.WriteAllText(marker, "owned data");
+        var original = manager.RegisterFromVerifiedHuman(parent.FullName, cancellationToken: ct);
+        var task = SeedRetainedTask(store, original, TaskState.Queued);
 
-        var parent = Directory.CreateDirectory(Path.Combine(node.Root, "workspace")).FullName;
-        var child = Directory.CreateDirectory(Path.Combine(parent, "child")).FullName;
-        var manager = new RegisteredWorkspaces(node.Runtime.Store);
-        var old = manager.RegisterFromVerifiedHuman(parent, cancellationToken: cancellation);
-        var selectedBefore = node.Runtime.Store.Read(reader => ExecutionSupervisor.WorkspaceOf(reader, child));
-        Assert.Equal(old.Id, selectedBefore);
-
-        // The old root has a rule that must not be applied to the later, different workspace selection.
-        var policy = await Sched.ChangePolicyAsync(human, document =>
+        if (registerChild)
         {
-            document.RetrySafety ??= new RetrySafetyPolicy();
-            document.RetrySafety.Rules.Add(new RetrySafetyRule
-            {
-                Pattern = ".*hold.*",
-                WorkspaceId = new Id { Value = ByteString.CopyFrom(old.Id) },
-                SideEffect = SideEffectClass.Idempotent,
-            });
-        });
-        Assert.Null(policy.Error);
-        Assert.Equal(SideEffectClass.Idempotent,
-            PolicyRules.RetrySafety(node.Runtime.Execution!.Settings.RetrySafetyRules, "hold", old.Id));
-
-        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var resume = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var execution = node.Runtime.Execution!;
-        execution.BeforeSubmitTransactionForTests = async token =>
-        {
-            entered.TrySetResult();
-            await resume.Task.WaitAsync(token).ConfigureAwait(false);
-        };
-        var request = new TaskServiceSubmitTaskRequest
-        {
-            Meta = Tasks.Meta(),
-            Spec = Tasks.Argv(child, Tasks.TestLoad, "hold", "--hold-ms", "60000"),
-        };
-        var pending = script.Tasks.SubmitTaskAsync(request, deadline: DateTime.UtcNow.AddSeconds(30), cancellationToken: cancellation).ResponseAsync;
-        RegisteredWorkspace? current = null;
-        try
-        {
-            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10), cancellation);
-            manager.UnregisterFromVerifiedHuman(old.Id, cancellation);
-            if (registerChild)
-            {
-                current = manager.RegisterFromVerifiedHuman(child, cancellationToken: cancellation);
-                node.Runtime.Store.Write(transaction => transaction.Execute(
-                    "UPDATE workspace SET concurrency_mode = $mode WHERE workspace_id = $id;",
-                    ("$mode", (int)WorkspaceConcurrency.Serial), ("$id", current.Id)));
-            }
-
-            var currentBeforeCommit = node.Runtime.Store.Read(reader => ExecutionSupervisor.WorkspaceOf(reader, child));
-            Assert.Equal(current?.Id, currentBeforeCommit);
-        }
-        finally
-        {
-            resume.TrySetResult();
+            var nested = manager.RegisterFromVerifiedHuman(child.FullName, cancellationToken: ct);
+            manager.UnregisterFromVerifiedHuman(nested.Id, ct);
         }
 
-        var response = await pending.WaitAsync(TimeSpan.FromSeconds(15), cancellation);
-        execution.BeforeSubmitTransactionForTests = null;
-        Assert.Null(response.Error);
-        Assert.Equal(EffectCertainty.Happened, response.Value.Receipt.Effect);
-        var taskId = response.Value.TaskId.Value.ToByteArray();
-        var actual = node.Runtime.Store.Read(reader =>
-        {
-            using var command = reader.CreateCommand("SELECT workspace_id, state, side_effect, side_effect_source FROM task WHERE task_id=$id;");
-            command.Parameters.AddWithValue("$id", taskId);
-            using var rows = command.ExecuteReader();
-            Assert.True(rows.Read());
-            return (Workspace: rows.IsDBNull(0) ? null : (byte[])rows.GetValue(0), State: rows.GetInt32(1),
-                SideEffect: rows.GetInt32(2), Source: rows.GetInt32(3));
-        });
-        Assert.Equal(current?.Id, actual.Workspace);
-        Assert.NotEqual(Convert.ToHexString(old.Id), actual.Workspace is null ? string.Empty : Convert.ToHexString(actual.Workspace));
-        Assert.Equal((int)TaskState.Queued, actual.State);
-        Assert.Equal((int)SideEffectClass.Unknown, actual.SideEffect);
-        Assert.Equal((int)SideEffectSource.Default, actual.Source);
-        if (current is not null)
-        {
-            Assert.Equal("workspace_in_use", Assert.Throws<RegisteredWorkspaceException>(
-                () => manager.UnregisterFromVerifiedHuman(current.Id, cancellation)).Reason);
-        }
-
-        var cancelled = await script.Tasks.CancelTaskAsync(new TaskServiceCancelTaskRequest
-        {
-            Meta = Tasks.Meta(),
-            TaskId = response.Value.TaskId,
-        }, cancellationToken: cancellation);
-        Assert.Null(cancelled.Error);
-        Assert.Equal(TaskState.Cancelled, cancelled.Value.State);
-        if (current is not null)
-        {
-            manager.UnregisterFromVerifiedHuman(current.Id, cancellation);
-        }
-
-        // The real command receipt replays without inserting the task a second time, even after unregistration.
-        var replay = await script.Tasks.SubmitTaskAsync(request, deadline: DateTime.UtcNow.AddSeconds(15), cancellationToken: cancellation);
-        Assert.Null(replay.Error);
-        Assert.Equal(response.Value.TaskId, replay.Value.TaskId);
-        Assert.Equal(1L, node.Runtime.Store.Read(reader => reader.Scalar("SELECT count(*) FROM task WHERE task_id=$id;", ("$id", taskId))));
-    }
-    [Fact(Timeout = 120_000)]
-    public async Task UnregisteringAChildReselectsTheParentAndItsFirstApplicablePreparedRule()
-    {
-        var cancellation = TestContext.Current.CancellationToken;
-        cancellation.ThrowIfCancellationRequested();
-        await using var node = await InProcessNode.Create().StartAsync();
-        await using var human = await node.ChannelAsync(helloAsHuman: true);
-        await using var script = await node.ChannelAsync();
-        Assert.Null((await human.Queue.PausePoolAsync(new QueueServicePausePoolRequest { Meta = Tasks.Meta(), All = true }, cancellationToken: cancellation)).Error);
-        var parent = Directory.CreateDirectory(Path.Combine(node.Root, "workspace")).FullName;
-        var child = Directory.CreateDirectory(Path.Combine(parent, "child")).FullName;
-        var manager = new RegisteredWorkspaces(node.Runtime.Store);
-        var parentRegistration = manager.RegisterFromVerifiedHuman(parent, cancellationToken: cancellation);
-        var childRegistration = manager.RegisterFromVerifiedHuman(child, cancellationToken: cancellation);
-        var policy = await Sched.ChangePolicyAsync(human, document =>
-        {
-            document.RetrySafety ??= new RetrySafetyPolicy();
-            document.RetrySafety.Rules.Add(new RetrySafetyRule
-            {
-                Pattern = ".*hold.*",
-                WorkspaceId = new Id { Value = ByteString.CopyFrom(childRegistration.Id) },
-                SideEffect = SideEffectClass.Pure,
-            });
-            document.RetrySafety.Rules.Add(new RetrySafetyRule
-            {
-                Pattern = ".*hold.*",
-                WorkspaceId = new Id { Value = ByteString.CopyFrom(parentRegistration.Id) },
-                SideEffect = SideEffectClass.Idempotent,
-            });
-            document.RetrySafety.Rules.Add(new RetrySafetyRule { Pattern = ".*hold.*", SideEffect = SideEffectClass.Pure });
-        });
-        Assert.Null(policy.Error);
-        Assert.Equal(childRegistration.Id, node.Runtime.Store.Read(reader => ExecutionSupervisor.WorkspaceOf(reader, child)));
-        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var resume = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var execution = node.Runtime.Execution!;
-        execution.BeforeSubmitTransactionForTests = async token =>
-        {
-            entered.TrySetResult();
-            await resume.Task.WaitAsync(token).ConfigureAwait(false);
-        };
-        var request = new TaskServiceSubmitTaskRequest
-        {
-            Meta = Tasks.Meta(),
-            Spec = Tasks.Argv(child, Tasks.TestLoad, "hold", "--hold-ms", "60000"),
-        };
-        var pending = script.Tasks.SubmitTaskAsync(request, deadline: DateTime.UtcNow.AddSeconds(30), cancellationToken: cancellation).ResponseAsync;
-        try
-        {
-            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10), cancellation);
-            manager.UnregisterFromVerifiedHuman(childRegistration.Id, cancellation);
-        }
-        finally
-        {
-            resume.TrySetResult();
-        }
-
-        var response = await pending.WaitAsync(TimeSpan.FromSeconds(15), cancellation);
-        execution.BeforeSubmitTransactionForTests = null;
-        Assert.Null(response.Error);
-        var actual = node.Runtime.Store.Read(reader =>
-        {
-            using var command = reader.CreateCommand("SELECT workspace_id, side_effect, side_effect_source FROM task WHERE task_id=$id;");
-            command.Parameters.AddWithValue("$id", response.Value.TaskId.Value.ToByteArray());
-            using var rows = command.ExecuteReader();
-            Assert.True(rows.Read());
-            return (Workspace: (byte[])rows.GetValue(0), SideEffect: rows.GetInt32(1), Source: rows.GetInt32(2));
-        });
-        Assert.Equal(parentRegistration.Id, actual.Workspace);
-        Assert.Equal((int)SideEffectClass.Idempotent, actual.SideEffect);
-        Assert.Equal((int)SideEffectSource.Policy, actual.Source);
         Assert.Equal("workspace_in_use", Assert.Throws<RegisteredWorkspaceException>(
-            () => manager.UnregisterFromVerifiedHuman(parentRegistration.Id, cancellation)).Reason);
+            () => manager.UnregisterFromVerifiedHuman(original.Id, ct)).Reason);
+        AssertRetainedTask(store, task, original, TaskState.Queued);
+
+        store.Write(transaction => Assert.Equal(1, transaction.Execute(
+            "UPDATE task SET state = $state WHERE task_id = $task;",
+            ("$state", (int)TaskState.Cancelled), ("$task", task))), CommitDurability.Full);
+        manager.UnregisterFromVerifiedHuman(original.Id, ct);
+
+        AssertRetainedTask(store, task, original, TaskState.Cancelled);
+        Assert.Equal("owned data", File.ReadAllText(marker));
+    }
+
+    [Fact]
+    public async Task ReleasedChildHistoryIsNeverReassignedToItsParentOrReplacement()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var fixture = InProcessNode.Create();
+        using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = fixture.DataRoot, BootIdentity = "workspace-history-fixture" });
+        var manager = new RegisteredWorkspaces(store);
+        var parent = Directory.CreateDirectory(Path.Combine(fixture.Root, "parent"));
+        var child = parent.CreateSubdirectory("child");
+        var marker = Path.Combine(child.FullName, "preserved");
+        File.WriteAllText(marker, "owned data");
+        var enclosing = manager.RegisterFromVerifiedHuman(parent.FullName, cancellationToken: ct);
+        var original = manager.RegisterFromVerifiedHuman(child.FullName, cancellationToken: ct);
+        var task = SeedRetainedTask(store, original, TaskState.Cancelled);
+
+        manager.UnregisterFromVerifiedHuman(original.Id, ct);
+        var replacement = manager.RegisterFromVerifiedHuman(child.FullName, cancellationToken: ct);
+        Assert.False(original.Id.AsSpan().SequenceEqual(replacement.Id));
+        manager.UnregisterFromVerifiedHuman(replacement.Id, ct);
+        manager.UnregisterFromVerifiedHuman(enclosing.Id, ct);
+
+        Assert.Equal(1L, store.Read(reader => reader.Scalar("""
+            SELECT count(*) FROM workspace_root_identity WHERE workspace_id = $id AND released_at IS NOT NULL;
+            """, ("$id", original.Id))));
+        AssertRetainedTask(store, task, original, TaskState.Cancelled);
+        Assert.Equal("owned data", File.ReadAllText(marker));
+    }
+
+    private static byte[] SeedRetainedTask(NodeStore store, RegisteredWorkspace workspace, TaskState state) =>
+        store.Write(transaction =>
+        {
+            var id = LegacyTaskHistoryFixture.SeedQueued(transaction, new ActorRef { Origin = Origin.Human }).Value.ToByteArray();
+            Assert.Equal(1, transaction.Execute("""
+                UPDATE task SET workspace_id = $workspace, state = $state, side_effect = $effect, side_effect_source = $source
+                WHERE task_id = $task;
+                """, ("$workspace", workspace.Id), ("$state", (int)state), ("$effect", (int)SideEffectClass.Idempotent),
+                ("$source", (int)SideEffectSource.Policy), ("$task", id)));
+            return id;
+        }, CommitDurability.Full);
+
+    private static void AssertRetainedTask(NodeStore store, byte[] task, RegisteredWorkspace owner, TaskState state)
+    {
+        Assert.Equal(1L, store.Read(reader => reader.Scalar("""
+            SELECT count(*) FROM task WHERE task_id = $task AND workspace_id = $workspace AND state = $state
+              AND side_effect = $effect AND side_effect_source = $source;
+            """, ("$task", task), ("$workspace", owner.Id), ("$state", (int)state), ("$effect", (int)SideEffectClass.Idempotent),
+            ("$source", (int)SideEffectSource.Policy))));
+        Assert.Equal(1L, store.Read(reader => reader.Scalar("SELECT count(*) FROM task;")));
+        Assert.Equal(0L, store.Read(reader => reader.Scalar("SELECT count(*) FROM attempt;")));
     }
 }
