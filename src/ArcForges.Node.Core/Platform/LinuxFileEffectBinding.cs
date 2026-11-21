@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Runtime.Versioning;
-using System.Security.Cryptography;
 using ArcForges.Contracts.Node.V1;
-using ArcForges.Node.Core.Files;
-using Google.Protobuf;
 
 namespace ArcForges.Node.Core.Platform;
 
@@ -18,28 +15,6 @@ internal sealed record LinuxFileEffectBinding(
     byte[] IntendedStageIdentity, long OriginalSize, byte[] OriginalSha256, long IntendedSize,
     byte[] IntendedSha256, long Deadline, long ExpiryMicroseconds, bool DurableStages = false)
 {
-    internal static LinuxFileEffectBinding FromApproved(PrivateStageApprovedPlan plan, long deadline, long expiryMicroseconds)
-    {
-        if (!plan.Active) throw new InvalidOperationException("The approved stage reservation is inactive.");
-        return FromIntent(plan.Intent, plan.RequestSha256, deadline, expiryMicroseconds, durableStages: true);
-    }
-
-    private static LinuxFileEffectBinding FromIntent(FileJournalIntent intent, byte[] requestDigest, long deadline,
-        long expiryMicroseconds, bool durableStages)
-    {
-        if (intent.IdentityPlatform != 2 || intent.TargetIdentity is null || intent.OriginalStageIdentity is null ||
-            intent.OriginalSize is null || intent.OriginalSha256 is null)
-            throw new InvalidOperationException("Only a prepared existing Linux target can use this worker.");
-        var remaining = deadline - LinuxFatalDeadline.MonotonicNanoseconds();
-        if (remaining is <= 0 or > 10_000_000_000)
-            throw new InvalidOperationException("The original monotonic deadline is unavailable.");
-        return new LinuxFileEffectBinding(intent.Kind, intent.CommandId.ToArray(), requestDigest.ToArray(),
-            SHA256.HashData(FileMutationJournal.Sanitize(intent.Caller).ToByteArray()),
-            intent.RootIdentity.ToArray(), intent.ParentIdentity.ToArray(), intent.TargetIdentity.ToArray(),
-            intent.OriginalStageIdentity.ToArray(), intent.IntendedStageIdentity.ToArray(), intent.OriginalSize.Value,
-            intent.OriginalSha256.ToArray(), intent.IntendedSize, intent.IntendedSha256.ToArray(), deadline, expiryMicroseconds, durableStages);
-    }
-
     internal void Write(BinaryWriter writer)
     {
         Validate();

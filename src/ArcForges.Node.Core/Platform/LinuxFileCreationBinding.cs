@@ -1,10 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Runtime.Versioning;
-using System.Security.Cryptography;
 using System.Text;
-using ArcForges.Contracts.Node.V1;
-using ArcForges.Node.Core.Files;
-using Google.Protobuf;
 
 namespace ArcForges.Node.Core.Platform;
 
@@ -20,39 +16,6 @@ internal sealed record LinuxFileCreationBinding(
     long IntendedSize, byte[] IntendedSha256, long Deadline, long ExpiryMicroseconds)
 {
     private static readonly UTF8Encoding Utf8 = new(false, true);
-
-    /// <summary>
-    /// An approved command retains its exact transmitted digest, not its old content-bearing request. The FULL
-    /// coordinator must independently read and bind the current APPROVED record; no request is reserialized here.
-    /// </summary>
-    internal static LinuxFileCreationBinding FromApproved(PrivateStageApprovedPlan plan, long deadline,
-        long expiryMicroseconds)
-    {
-        ArgumentNullException.ThrowIfNull(plan);
-        if (!plan.Active) throw new InvalidOperationException("The approved stage reservation is inactive.");
-        return FromIntent(plan.Intent, plan.RequestSha256, durableStage: true, deadline, expiryMicroseconds);
-    }
-
-    private static LinuxFileCreationBinding FromIntent(FileJournalIntent intent, ReadOnlySpan<byte> requestDigest,
-        bool durableStage, long deadline, long expiryMicroseconds)
-    {
-        ArgumentNullException.ThrowIfNull(intent);
-        if (intent.Kind != FileOperationKind.Write || intent.IdentityPlatform != 2 ||
-            intent.TargetIdentity is not null || intent.OriginalSize is not null || intent.OriginalSha256 is not null ||
-            intent.OriginalStageIdentity is not null)
-            throw new InvalidOperationException("Only a prepared expected-absent Linux write can use this worker.");
-        var remaining = deadline - LinuxFatalDeadline.MonotonicNanoseconds();
-        if (remaining is <= 0 or > 10_000_000_000)
-            throw new InvalidOperationException("The original monotonic deadline is unavailable.");
-        var names = WorkspacePath.Components(intent.RelativePath);
-        var result = new LinuxFileCreationBinding(intent.CommandId.ToArray(), requestDigest.ToArray(),
-            SHA256.HashData(FileMutationJournal.Sanitize(intent.Caller).ToByteArray()), intent.WorkspaceId.ToArray(),
-            intent.CorrelationId.ToArray(), intent.RootIdentity.ToArray(), intent.ParentIdentity.ToArray(),
-            intent.IntendedStageIdentity.ToArray(), names[^1], durableStage, intent.IntendedSize,
-            intent.IntendedSha256.ToArray(), deadline, expiryMicroseconds);
-        result.Validate();
-        return result;
-    }
 
     internal void Write(BinaryWriter writer)
     {
