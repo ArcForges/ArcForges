@@ -31,8 +31,11 @@ public sealed class ResourceRunJobTests
             Assert.Equal(0ul, empty.ResidentBytes);
             Assert.Null(empty.MemoryBytes);
 
-            var image = TestPrograms.TestLoad;
-            var explicitImage = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("ARCFORGES_TESTLOAD_PATH"));
+            var configuredImage = Environment.GetEnvironmentVariable("ARCFORGES_TESTLOAD_PATH");
+            var explicitImage = !string.IsNullOrEmpty(configuredImage);
+            var image = explicitImage ? configuredImage : Path.Combine(AppContext.BaseDirectory, "arcforges-testload.exe");
+            Assert.NotNull(image);
+            Assert.True(Path.IsPathFullyQualified(image) && File.Exists(image), "TestLoad must be an existing absolute executable path.");
             var environment = WindowsMxcProcess.TrustedEnvironment(root.FullName).ToList();
             if (!explicitImage)
             {
@@ -54,13 +57,22 @@ public sealed class ResourceRunJobTests
             {
                 job.RequireMember(process);
                 WindowsMxcProcess.Resume(process);
-                PlatformHarness.WaitFor(() =>
+                var observationStarted = Stopwatch.GetTimestamp();
+                while (true)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     Assert.False(process.WaitForExit(TimeSpan.Zero), $"TestLoad exited before measurement (0x{process.ExitCode:x8}).");
-                    return (ulong)job.Observe().Accounting.PeakJobMemory >= allocatedBytes
-                        && job.ObserveResources() is { ResidentBytes: > 0 };
-                }, bound, "the held TestLoad's native Job commit and resident observations");
+                    if ((ulong)job.Observe().Accounting.PeakJobMemory >= allocatedBytes
+                        && job.ObserveResources() is { ResidentBytes: > 0 })
+                    {
+                        break;
+                    }
+
+                    Assert.True(Stopwatch.GetElapsedTime(observationStarted) < bound,
+                        "Timed out waiting for the held TestLoad's native Job commit and resident observations.");
+                    await Task.Delay(TimeSpan.FromMilliseconds(25), cancellationToken);
+                }
+
                 var sampler = new WindowsResourceSampler();
                 var residentBefore = ReadPrivateResident(sampler, process);
                 var started = Stopwatch.GetTimestamp();

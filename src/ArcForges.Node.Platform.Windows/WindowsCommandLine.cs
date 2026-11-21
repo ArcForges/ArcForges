@@ -6,21 +6,8 @@ using System.Text;
 namespace ArcForges.Node.Platform.Windows;
 
 /// <summary>
-/// Windows command lines from argument vectors (architecture 04 section 2), pure logic that runs on every OS:
-/// <list type="bullet">
-/// <item>Ordinary programs: each argument is quoted with the rules inverse to <c>CommandLineToArgvW</c> (and the MSVC runtime): an
-/// argument is quoted when it is empty or holds a space, tab or quote; backslashes are doubled only where they precede a quote or
-/// the closing quote; an inner quote becomes <c>\"</c>. The program token is quoted without escapes (the first token has no escape
-/// processing) and may not contain a quote.</item>
-/// <item>Batch files (<c>.bat</c>, <c>.cmd</c>) run through <c>cmd.exe /d /s /c "..."</c>, whose own parsing sees the whole line. The
-/// rules fail closed (T-03): an argument that holds a quote, a line break or NUL, or a <c>!</c> (delayed expansion may be on in the
-/// user's registry) is refused with <c>VALIDATION/unsafe_batch_argument</c>, the class of risk behind CVE-2024-24576. A quote cannot
-/// be represented so that both cmd and a program receiving the batch file's <c>%*</c> read it back, so none is accepted, with or
-/// without metacharacters. Other arguments are quoted when they hold a space, tab, metacharacter or cmd delimiter; backslashes before
-/// the closing quote are doubled, so an argument ending in <c>\</c> (for example <c>C:\dir with space\</c>) does not merge with the next
-/// one when the batch file passes <c>%*</c> on to a program; and every <c>%</c> is followed by <c>%cd:~,%</c> (an expansion to nothing),
-/// so cmd never expands a variable from argument text.</item>
-/// </list>
+/// Windows command lines from argument vectors (architecture 04 section 2). Arguments use the rules inverse to
+/// <c>CommandLineToArgvW</c> and the MSVC runtime. The program token has no escape processing and cannot contain a quote.
 /// The whole command line must fit Windows' limit of 32,767 characters including the terminator.
 /// </summary>
 public static class WindowsCommandLine
@@ -28,9 +15,7 @@ public static class WindowsCommandLine
     /// <summary>The longest command line <c>CreateProcessW</c> accepts, without the terminating NUL.</summary>
     public const int MaxLength = 32_766;
 
-    private static readonly SearchValues<char> BatchRefused = SearchValues.Create("\"!\r\n\0");
     private static readonly SearchValues<char> QuoteTriggers = SearchValues.Create(" \t\n\v\"");
-    private static readonly SearchValues<char> BatchQuoteTriggers = SearchValues.Create(" \t\"^&|<>(),;=%");
 
     /// <summary>Quotes one argument (not the program token) for <c>CommandLineToArgvW</c>.</summary>
     public static string QuoteArgument(string argument)
@@ -60,104 +45,6 @@ public static class WindowsCommandLine
         }
 
         return Checked(builder);
-    }
-
-    /// <summary>The index of the first argument a batch file cannot receive safely (index 0 is the script), or -1.</summary>
-    public static int FindUnsafeBatchArgument(IReadOnlyList<string> argv)
-    {
-        ArgumentNullException.ThrowIfNull(argv);
-        for (var index = 0; index < argv.Count; index++)
-        {
-            if (!IsBatchSafe(argv[index]))
-            {
-                return index;
-            }
-        }
-
-        return -1;
-    }
-
-    /// <summary>Whether a batch file can receive <paramref name="argument"/> through cmd.exe without its parsing acting on it.</summary>
-    public static bool IsBatchSafe(string argument)
-    {
-        ArgumentNullException.ThrowIfNull(argument);
-        return argument.AsSpan().IndexOfAny(BatchRefused) < 0;
-    }
-
-    /// <summary>
-    /// The command line that runs the batch file <paramref name="script"/> (resolved, absolute) with the arguments of
-    /// <paramref name="argv"/> after its program token: <c>cmd.exe /d /s /c ""script" args"</c>.
-    /// </summary>
-    /// <exception cref="CommandRefusedException"><c>unsafe_batch_argument</c> with the argument index, or a too long line.</exception>
-    public static string BuildBatch(string cmd, string script, IReadOnlyList<string> argv)
-    {
-        ArgumentNullException.ThrowIfNull(cmd);
-        ArgumentNullException.ThrowIfNull(script);
-        ArgumentNullException.ThrowIfNull(argv);
-        var unsafeIndex = FindUnsafeBatchArgument(argv);
-        if (unsafeIndex >= 0)
-        {
-            throw new CommandRefusedException("unsafe_batch_argument", unsafeIndex.ToString(CultureInfo.InvariantCulture));
-        }
-
-        if (!IsBatchSafe(script))
-        {
-            throw new CommandRefusedException("unsafe_batch_argument", "0");
-        }
-
-        var builder = new StringBuilder();
-        AppendProgram(builder, cmd);
-        builder.Append(" /d /s /c \"");
-        builder.Append('"');
-        AppendBatchText(builder, script);
-        builder.Append('"');
-        for (var index = 1; index < argv.Count; index++)
-        {
-            builder.Append(' ');
-            AppendBatchArgument(builder, argv[index]);
-        }
-
-        builder.Append('"');
-        return Checked(builder);
-    }
-
-    /// <summary>The command line of a cmd.exe shell script: <c>cmd.exe /d /s /c "script"</c> (the script runs as the user wrote it).</summary>
-    public static string BuildCmdScript(string cmd, string script)
-    {
-        ArgumentNullException.ThrowIfNull(cmd);
-        ArgumentNullException.ThrowIfNull(script);
-        var builder = new StringBuilder();
-        AppendProgram(builder, cmd);
-        builder.Append(" /d /s /c \"").Append(script).Append('"');
-        return Checked(builder);
-    }
-
-    /// <summary>
-    /// The Unicode environment block of <paramref name="entries"/> (<c>NAME=value</c>), sorted by name in upper-case ordinal order as
-    /// Windows expects, double-NUL terminated.
-    /// </summary>
-    public static char[] EnvironmentBlock(IReadOnlyList<string> entries)
-    {
-        ArgumentNullException.ThrowIfNull(entries);
-        var sorted = entries.OrderBy(entry => entry.AsSpan()[..Math.Max(0, entry.IndexOf('=', 1))].ToString().ToUpperInvariant(), StringComparer.Ordinal).ToList();
-        var builder = new StringBuilder();
-        foreach (var entry in sorted)
-        {
-            if (entry.Contains('\0', StringComparison.Ordinal))
-            {
-                throw new ArgumentException("Environment entries cannot contain NUL.", nameof(entries));
-            }
-
-            builder.Append(entry).Append('\0');
-        }
-
-        if (sorted.Count == 0)
-        {
-            builder.Append('\0');
-        }
-
-        builder.Append('\0');
-        return builder.ToString().ToCharArray();
     }
 
     /// <summary>Parses a command line the way <c>CommandLineToArgvW</c> does (used by tests and diagnostics).</summary>
@@ -321,42 +208,6 @@ public static class WindowsCommandLine
         // Backslashes before the closing quote are doubled so they stay literal.
         builder.Append('\\', backslashes * 2);
         builder.Append('"');
-    }
-
-    private static void AppendBatchArgument(StringBuilder builder, string argument)
-    {
-        var quote = argument.Length == 0 || argument.AsSpan().IndexOfAny(BatchQuoteTriggers) >= 0;
-        if (quote)
-        {
-            builder.Append('"');
-        }
-
-        AppendBatchText(builder, argument);
-        if (quote)
-        {
-            // Backslashes before the closing quote are doubled: a program reading the batch file's %* (CommandLineToArgvW) then sees
-            // them as literal backslashes and the quote as the end of the argument.
-            var trailing = argument.Length - argument.TrimEnd('\\').Length;
-            builder.Append('\\', trailing);
-            builder.Append('"');
-        }
-    }
-
-    private static void AppendBatchText(StringBuilder builder, string text)
-    {
-        foreach (var character in text)
-        {
-            switch (character)
-            {
-                case '%':
-                    // %cd:~,% expands to nothing, so this % never pairs with a later one into a variable reference.
-                    builder.Append("%%cd:~,%");
-                    break;
-                default:
-                    builder.Append(character);
-                    break;
-            }
-        }
     }
 
     private static string Checked(StringBuilder builder)
