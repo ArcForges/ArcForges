@@ -88,7 +88,7 @@ public sealed class LegacyCustodyAcknowledgementTests
     [InlineData(WindowsCurrent, "windows:" + Machine + ":9223372036854775807")]
     [InlineData(WindowsCurrent, "windows:c8f75b9b-07c3-4965-abbf-93a8447372cd:100")]
     [InlineData(LinuxCurrent, "linux:c8f75b9b-07c3-4965-abbf-93a8447372cd")]
-    public async Task ACurrentHostLookupCannotSettleAnUnauthenticatedOriginalBoot(string currentBoot, string? recordedBoot)
+    public async Task AnUnauthenticatedOriginalBootDoesNotReopenEvenAMatchingContainerName(string currentBoot, string? recordedBoot)
     {
         var ct = TestContext.Current.CancellationToken;
         await using var node = InProcessNode.Create();
@@ -96,7 +96,7 @@ public sealed class LegacyCustodyAcknowledgementTests
         using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = node.DataRoot, BootIdentity = currentBoot, Clock = node.Clock });
         store.Write(transaction => transaction.Execute("UPDATE attempt SET boot_identity = $boot WHERE attempt_id = $id;",
             ("$boot", recordedBoot), ("$id", attemptId.Value.ToByteArray())), CommitDurability.Full);
-        using var platform = new RecordingPlatform(confirmedMissing: true);
+        using var platform = new RecordingPlatform(IdText.Format(attemptId));
         ManagedTask? ReadTask() => store.Read(reader => TaskRecords.GetTask(reader, taskId.Value.Span, full: true));
         var original = ReadTask();
         Assert.NotNull(original);
@@ -105,9 +105,53 @@ public sealed class LegacyCustodyAcknowledgementTests
             await Assert.ThrowsAsync<LegacyCustodyUnavailableException>(() =>
                 execution.RecoverAsync(new RecoveryReport(true, true, null, store.Opening), processor, ct));
             Assert.Equal(original, ReadTask());
-            Assert.Equal([IdText.Format(attemptId)], platform.Queried);
+            Assert.Empty(platform.Queried);
             Assert.Empty(platform.Acknowledged);
+            Assert.Empty(execution.RunningAttempts);
             Assert.False(heartbeat.RecoveryDone);
+        });
+    }
+
+    [Fact(Timeout = 30_000)]
+    public async Task AnUnauthenticatedOriginalBootCanReconcileItsExactExitWithoutNativeCustody()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var node = InProcessNode.Create();
+        var (taskId, attemptId) = LegacyTaskHistoryFixture.Seed(node, AttemptState.Stopping);
+        using var store = NodeStore.Open(new NodeStoreOptions { DataRoot = node.DataRoot, BootIdentity = WindowsCurrent, Clock = node.Clock });
+        store.Write(transaction =>
+        {
+            var id = attemptId.Value.ToByteArray();
+            Assert.Equal(1, transaction.Execute("UPDATE attempt SET boot_identity = NULL WHERE attempt_id = $id;", ("$id", id)));
+            transaction.Execute("""
+                INSERT INTO process_record (attempt_id, pid, start_at, executable, first_seen, last_seen, label)
+                VALUES ($id, 101, $now, 'old-escaped-fixture', $now, $now, $escaped);
+                """, ("$id", id), ("$now", transaction.NowMicroseconds), ("$escaped", (int)ProcessLabel.Escaped));
+        }, CommitDurability.Full);
+        WriteExit(node, attemptId, attemptId, status: 23);
+        var name = IdText.Format(attemptId);
+        using var platform = new RecordingPlatform(name);
+        await WithSupervisorAsync(node, store, platform, async (execution, processor, heartbeat) =>
+        {
+            await execution.RecoverAsync(new RecoveryReport(true, true, null, store.Opening), processor, ct);
+            var recovered = Assert.Single(execution.RunningAttempts);
+            Assert.Equal(name, recovered.Name);
+            Assert.Null(recovered.Handle);
+            var exit = Assert.IsType<ExitRecord>(recovered.RecoveredExit);
+            Assert.Equal((name, 23, "exited"), (exit.AttemptId, exit.ExitStatus, exit.ExitCodeKind));
+            Assert.True(heartbeat.RecoveryDone);
+
+            var finalized = recovered.Changed.Next;
+            execution.Start();
+            await finalized.WaitAsync(ct);
+            var settled = Assert.IsType<ManagedTask>(store.Read(reader => TaskRecords.GetTask(reader, taskId.Value.Span, full: true)));
+            Assert.Equal(TaskState.Cancelled, settled.State);
+            Assert.Equal(attemptId, settled.CurrentAttempt.AttemptId);
+            Assert.Equal(23, settled.CurrentAttempt.Result.ExitCode);
+            Assert.Empty(execution.RunningAttempts);
+            Assert.Empty(platform.Queried);
+            Assert.Empty(platform.Acknowledged);
+            Assert.Empty(platform.Terminated);
         });
     }
 
@@ -180,10 +224,11 @@ public sealed class LegacyCustodyAcknowledgementTests
         public override DateTimeOffset GetUtcNow() => new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
     }
 
-    private sealed class RecordingPlatform(bool confirmedMissing = false) : IExecutionPlatform
+    private sealed class RecordingPlatform(string? matchingContainer = null) : IExecutionPlatform, IAttemptHandle
     {
         public List<string> Queried { get; } = [];
         public List<string> Acknowledged { get; } = [];
+        public List<int> Terminated { get; } = [];
         public string Name => "legacy-custody-ack-fixture";
         public MachineCapacity Capacity => new(4, 1L << 30);
         public CapabilityReport Evaluate() => new();
@@ -194,13 +239,14 @@ public sealed class LegacyCustodyAcknowledgementTests
         public IAttemptHandle? Reopen(string nodeName, AttemptFiles files, RootProcess? root, bool stopping)
         {
             Queried.Add(files.AttemptName);
-            return confirmedMissing ? null : throw new LegacyCustodyUnavailableException("The precise fixture scope cannot be queried.");
+            return string.Equals(files.AttemptName, matchingContainer, StringComparison.Ordinal)
+                ? this : throw new LegacyCustodyUnavailableException("The precise fixture scope cannot be queried.");
         }
 
         public IAdoptedContainer? ReopenAdopted(string containerName)
         {
             Queried.Add(containerName);
-            return confirmedMissing ? null : throw new LegacyCustodyUnavailableException("The precise fixture adoption scope cannot be queried.");
+            throw new LegacyCustodyUnavailableException("The precise fixture adoption scope cannot be queried.");
         }
 
         public bool AcknowledgeRecorded(string nodeName, string attemptName)
@@ -208,5 +254,27 @@ public sealed class LegacyCustodyAcknowledgementTests
             Acknowledged.Add(attemptName);
             return true;
         }
+
+        public ProcessTermination TerminateProcess(int pid, DateTimeOffset start)
+        {
+            Terminated.Add(pid);
+            return ProcessTermination.Terminated;
+        }
+
+        public string ContainerName => matchingContainer ?? throw new InvalidOperationException("No fixture container was configured.");
+        public RootProcess? Root => null;
+        public Task<RootProcess?> Started => Task.FromResult(Root);
+        public Stream? StdinWriter => null;
+        public bool RootRunning => true;
+        public bool MemoryLimitHit => false;
+        public event Action? Changed { add { } remove { } }
+        public ExitRecord? TryReadExit() => null;
+        public LaunchRecord? TryReadLaunchFailure() => null;
+        public IReadOnlyList<ContainerProcess> Processes() => throw new NotSupportedException();
+        public ContainerAccounting Accounting() => throw new NotSupportedException();
+        public void Terminate() => throw new NotSupportedException();
+        public GracefulOutcome RequestGracefulStop() => throw new NotSupportedException();
+        public IReadOnlyList<EscapedProcess> ScanEscaped() => throw new NotSupportedException();
+        public void Acknowledge() => throw new NotSupportedException();
     }
 }

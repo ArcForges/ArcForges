@@ -51,6 +51,9 @@ public sealed class RunningAttempt : IDisposable
     // Used only when recovery has an exact durable exit record and no native scope handle.
     internal ExitRecord? RecoveredExit { get; init; }
 
+    // A durable exit may settle the history without establishing authority over current platform objects or processes.
+    internal bool HasCurrentBootProof { get; init; }
+
     /// <summary>Pulsed when output was indexed or the attempt changed.</summary>
     public AsyncPulse Changed { get; } = new();
 

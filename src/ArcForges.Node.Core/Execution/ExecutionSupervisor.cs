@@ -296,29 +296,32 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
                 continue;
             }
 
-            var root = row.RootPid is { } pid && row.RootStart is { } start ? new RootProcess(pid, StoreTime.FromMicroseconds(start)) : null;
-
             // The node was stopping it: the stop continues below, and a launch the node no longer controls may still start the command, so the
             // platform awaits that start (only then: any other recovered attempt completes its start at once, and a forced phase that stops it
             // later watches such a launch, TerminateEachLaunchProcess).
             var stopping = row.State is AttemptState.Stopping or AttemptState.Finalizing;
             IAttemptHandle? handle = null;
             Exception? custodyError = null;
-            try
+            // Reopening can affect a live container. Its name is only usable after authenticating the original boot.
+            if (originalBoot == LegacyBootProof.Current)
             {
-                if (OperatingSystem.IsLinux() && row.ContainerName?.StartsWith("pgid:", StringComparison.Ordinal) == true)
+                var root = row.RootPid is { } pid && row.RootStart is { } start ? new RootProcess(pid, StoreTime.FromMicroseconds(start)) : null;
+                try
                 {
-                    throw new LegacyCustodyUnavailableException("The retired direct-process scope cannot be reopened through systemd.");
-                }
+                    if (OperatingSystem.IsLinux() && row.ContainerName?.StartsWith("pgid:", StringComparison.Ordinal) == true)
+                    {
+                        throw new LegacyCustodyUnavailableException("The retired direct-process scope cannot be reopened through systemd.");
+                    }
 
-                var platform = Platform ?? throw new LegacyCustodyUnavailableException("The legacy execution platform is unavailable.");
-                handle = platform.Reopen(NodeName, files, root, stopping);
-            }
-            catch (Exception exception) when (exception is Win32Exception or IOException or TimeoutException or InvalidOperationException or UnauthorizedAccessException)
-            {
-                custodyError = exception;
-                _log.Warning("execution.recover.reopen_failed", new LogField("attempt", name), new LogField("errorType", exception.GetType().Name),
-                    new LogField("error", exception is Win32Exception native ? native.NativeErrorCode : NodeLog.OneLine(exception.Message)));
+                    var platform = Platform ?? throw new LegacyCustodyUnavailableException("The legacy execution platform is unavailable.");
+                    handle = platform.Reopen(NodeName, files, root, stopping);
+                }
+                catch (Exception exception) when (exception is Win32Exception or IOException or TimeoutException or InvalidOperationException or UnauthorizedAccessException)
+                {
+                    custodyError = exception;
+                    _log.Warning("execution.recover.reopen_failed", new LogField("attempt", name), new LogField("errorType", exception.GetType().Name),
+                        new LogField("error", exception is Win32Exception native ? native.NativeErrorCode : NodeLog.OneLine(exception.Message)));
+                }
             }
 
             var recoveredExit = handle is null ? ReadRecoveryExit(files) : null;
@@ -342,6 +345,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
             {
                 Handle = handle,
                 RecoveredExit = recoveredExit,
+                HasCurrentBootProof = originalBoot == LegacyBootProof.Current,
                 NodeGap = true,
                 ApproximateNext = true,
                 RootRecorded = row.RootPid is not null,
@@ -1741,7 +1745,7 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
     /// </summary>
     private void TerminateEscaped(RunningAttempt attempt, TerminationReason reason)
     {
-        if (reason == TerminationReason.NodeShutdown || Platform is not { } platform)
+        if (!attempt.HasCurrentBootProof || reason == TerminationReason.NodeShutdown || Platform is not { } platform)
         {
             return;
         }
@@ -2139,6 +2143,11 @@ public sealed partial class ExecutionSupervisor : INodeRecoveryParticipant, IAsy
     /// </summary>
     private void Acknowledge(RunningAttempt attempt, IAttemptHandle? handle)
     {
+        if (!attempt.HasCurrentBootProof)
+        {
+            return;
+        }
+
         try
         {
             if (handle is not null)
