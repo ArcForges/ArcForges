@@ -23,6 +23,7 @@ public sealed class RoutedOwnershipReviewTests
     [Fact(Timeout = 30_000)]
     public async Task RecordedErrorsAndApprovalsBelongToTheRequesterAcrossStoreReopen()
     {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         await using var files = InProcessNode.Create();
         var owner = RoutedCalls.Session();
         var foreign = OtherUser();
@@ -121,6 +122,7 @@ public sealed class RoutedOwnershipReviewTests
     [Fact(Timeout = 30_000)]
     public async Task MissingOwnershipAndDigestMismatchRefuseAndExpiryDoesNotAdmitAReplacement()
     {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         await using var files = InProcessNode.Create();
         await using var node = new HistoricalNode(files);
         var owner = RoutedCalls.Session();
@@ -162,6 +164,7 @@ public sealed class RoutedOwnershipReviewTests
     [Fact(Timeout = 30_000)]
     public async Task CapturedPendingApprovalCannotBeReusedForAnotherMethodPayloadOrRequester()
     {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         await using var files = InProcessNode.Create();
         await using var node = new HistoricalNode(files);
         var owner = RoutedCalls.Session();
@@ -214,6 +217,7 @@ public sealed class RoutedOwnershipReviewTests
     [Fact(Timeout = 30_000)]
     public async Task OwnershipSharesTheOutcomeTransactionAndRetentionProtectsLiveRows()
     {
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         await using var files = InProcessNode.Create();
         await using var node = new HistoricalNode(files);
         var owner = RoutedCalls.Session();

@@ -32,7 +32,7 @@ public sealed class RoutedWaitTailReviewTests
     [InlineData(Origin.Agent, false, Origin.Agent)]
     public async Task WaitOmitsTailWhenTheOutputPermissionIsNarrowed(Origin relayOrigin, bool own, Origin deniedOrigin)
     {
-        Ct.ThrowIfCancellationRequested();
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         await using var files = InProcessNode.Create();
         var (taskId, attemptId) = LegacyTaskHistoryFixture.Seed(files, AttemptState.Finished);
         var output = SeedOutput(files, attemptId);
@@ -101,7 +101,7 @@ public sealed class RoutedWaitTailReviewTests
     [Fact(Timeout = 15_000)]
     public async Task WaitObservesTheReceivedDeadlineAndRefusesOversizedRequestsWithoutAnEffect()
     {
-        Ct.ThrowIfCancellationRequested();
+        TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         await using var files = InProcessNode.Create();
         await WithFixtureAsync(files, async fixture =>
         {
