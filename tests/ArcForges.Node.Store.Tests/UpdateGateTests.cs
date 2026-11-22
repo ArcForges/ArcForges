@@ -114,13 +114,13 @@ public sealed class UpdateGateTests
             previousAuthority: authority with { NodeId = new string('c', 32) }));
         Assert.Equal(original, File.ReadAllBytes(StorePaths.Database(dataRoot)));
         Assert.Throws<StoreIncompatibleException>(() => NodeStore.CaptureNativeUpdateBackup(
-            dataRoot, owner, boot, authority, Guid.NewGuid(), 19, compatibleSupervisors: false, testMode: true));
+            dataRoot, owner, boot, authority, Guid.NewGuid(), 19, testMode: true));
         Assert.Equal(original, File.ReadAllBytes(StorePaths.Database(dataRoot)));
 
         var checkpoint = NodeStore.CaptureNativeUpdateBackup(
-            dataRoot, owner, boot, authority, Guid.NewGuid(), 20, compatibleSupervisors: false, testMode: true);
+            dataRoot, owner, boot, authority, Guid.NewGuid(), 20, testMode: true);
         Assert.NotNull(checkpoint.BackupRoot);
-        Assert.Empty(checkpoint.RetainedRuns!);
+        Assert.True(checkpoint.DrainConfirmed);
         DurableCommandStore.VerifyNativeUpdateBackup(checkpoint, testMode: true);
         DurableCommandStore.RestoreBackup(checkpoint.BackupRoot, NodeSecretStores.ForTestDataRoot(checkpoint.BackupRoot), dataRoot, secrets,
             restored.Path, NodeSecretStores.ForTestDataRoot(restored.Path), verifyNativeOffline: true);
@@ -133,6 +133,44 @@ public sealed class UpdateGateTests
 
         File.AppendAllText(StorePaths.Database(checkpoint.BackupRoot), "invalid fixture bytes");
         Assert.Throws<DurableStoreMaintenanceException>(() => DurableCommandStore.VerifyNativeUpdateBackup(checkpoint, testMode: true));
+    }
+
+    [Fact]
+    public void AStartingRunRefusesBackupBeforeCreatingOutputOrWritingTheStore()
+    {
+        using var parent = new TemporaryDataRoot();
+        string dataRoot = Path.Combine(parent.Path, "live");
+        const string owner = "update-fixture-owner";
+        const string boot = "stable-fixture-boot";
+        var options = new NodeStoreOptions { DataRoot = dataRoot, BootIdentity = boot };
+        string sandboxId = Guid.NewGuid().ToString("N");
+        string runId = Guid.NewGuid().ToString("N");
+        string epoch = Guid.NewGuid().ToString("N");
+        string hash = new('a', 64);
+        var now = DateTimeOffset.UtcNow;
+        NativeUpdateAuthority authority;
+        using (var store = NodeStore.OpenForV2Runtime(options))
+        using (var commands = new DurableCommandStore(store, owner, NodeSecretStores.ForTestDataRoot(dataRoot)))
+        {
+            authority = new(Convert.ToHexStringLower(store.Metadata.NodeId.Span), Convert.ToHexStringLower(commands.OwnerEpoch.Span),
+                null, store.Metadata.SchemaVersion, store.Metadata.MinReaderVersion, null);
+            var sandbox = new StoredSandbox(sandboxId, owner, "fixture", "fixture", 1, StoredSandboxState.Creating,
+                "sandboxes/" + sandboxId, SandboxRecords.PendingRootIdentity, 1, now, now, new("profile", "1", "{}", hash));
+            var run = new StoredRun(runId, sandboxId, 1, 1, StoredRunState.Starting, epoch, hash, "{}", StoredPayloadStart.Unknown, now);
+            store.Write(tx =>
+            {
+                SandboxRecords.Reserve(tx, sandbox);
+                Assert.True(SandboxRecords.SettleCreation(tx, owner, sandboxId, "fixture-root", StoredSandboxState.Ready));
+                Assert.True(RunRecords.InsertStarting(tx, owner, run));
+            }, CommitDurability.Full);
+        }
+
+        byte[] before = File.ReadAllBytes(StorePaths.Database(dataRoot));
+        var refusal = Assert.Throws<StoreIncompatibleException>(() => NodeStore.CaptureNativeUpdateBackup(
+            dataRoot, owner, boot, authority, Guid.NewGuid(), 20, testMode: true));
+        Assert.Equal("native_update_supervisor_drain_required", refusal.Message);
+        Assert.Equal(before, File.ReadAllBytes(StorePaths.Database(dataRoot)));
+        Assert.Single(Directory.EnumerateFileSystemEntries(parent.Path));
     }
 
     [Fact]

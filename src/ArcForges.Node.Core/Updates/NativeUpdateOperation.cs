@@ -81,8 +81,7 @@ internal static class NativeUpdateOperation
                 }
                 else
                 {
-                    if (prior.SupervisorProtocol != proposed.SupervisorProtocol)
-                        await ConfirmPredecessorDrainAsync(session, cancellationToken).ConfigureAwait(false);
+                    await ConfirmRunDrainAsync(session, cancellationToken).ConfigureAwait(false);
                     state = NativeUpdateGate.Begin(dataRoot, Guid.NewGuid(), Cohort(previous), Cohort(candidate), authority);
                 }
             }
@@ -103,8 +102,14 @@ internal static class NativeUpdateOperation
             if (request.Action == NodeUpdateAction.Rollback && state.Phase != NativeUpdatePhase.RolledBack)
             {
                 RequireParticipatingPredecessor(recorded);
-                if (state.Phase == NativeUpdatePhase.Completed && NodeVersionSelection.Read(appRoot) == state.Candidate.ArchiveSha256)
-                    RequirePreviousFloor(dataRoot, recorded, online: true);
+                if (state.Phase == NativeUpdatePhase.Completed)
+                {
+                    if (NodeVersionSelection.Read(appRoot) != state.Candidate.ArchiveSha256)
+                        throw Refused("native_update_selection_changed");
+                    RequirePreviousFloor(dataRoot, recorded, online: true, verifyAuthority: true);
+                    await ConfirmCurrentDrainBeforeRollbackAsync(Installation(state.Candidate), recorded, dataRoot, request.TestMode, cancellationToken)
+                        .ConfigureAwait(false);
+                }
                 state = NativeUpdateGate.BeginRollback(dataRoot, state.OperationId);
             }
 
@@ -227,7 +232,7 @@ internal static class NativeUpdateOperation
         try
         {
             // Ask the authenticated V2 control plane to prove native drain while the original owner can still stop Runs.
-            await ConfirmPredecessorDrainAsync(session, ct).ConfigureAwait(false);
+            await ConfirmRunDrainAsync(session, ct).ConfigureAwait(false);
         }
         catch (Exception failure) when (IsOperatorFailure(failure))
         {
@@ -352,13 +357,12 @@ internal static class NativeUpdateOperation
             if (proposed.RuntimeSchema != authority.PreviousSchema)
                 throw Refused("native_update_store_requires_prepared_offline_migration");
 
-            bool compatible = authority.PreviousSupervisorProtocol == proposed.SupervisorProtocol;
-            await StopObservedAsync(previous, candidate, testMode, permitCandidate: false, authority.PreviousSelection is null, ct,
-                requireDrain: !compatible).ConfigureAwait(false);
+            await StopAfterDrainAsync(previous, candidate, authority, testMode, permitCandidate: false, authority.PreviousSelection is null, ct)
+                .ConfigureAwait(false);
             using var offline = AcquireOffline(testMode, dataRoot);
             var owner = currentOwner() ?? throw Refused("native_update_local_owner_unconfirmed");
             var checkpoint = NodeStore.CaptureNativeUpdateBackup(dataRoot, owner, BootIdentity.Read(), authority, state.OperationId,
-                proposed.SchemaReader, compatible, testMode, proposed.SupervisorProtocol);
+                proposed.SchemaReader, testMode, proposed.SupervisorProtocol);
             state = NativeUpdateGate.Prepare(dataRoot, state.OperationId, checkpoint);
         }
 
@@ -368,13 +372,17 @@ internal static class NativeUpdateOperation
             throw Refused("native_update_selection_changed");
         if (selected != candidate.ArchiveSha256)
         {
-            await StopObservedAsync(previous, candidate, testMode, permitCandidate: true, authority.PreviousSelection is null, ct).ConfigureAwait(false);
+            await StopAfterDrainAsync(previous, candidate, authority, testMode, permitCandidate: true, authority.PreviousSelection is null, ct)
+                .ConfigureAwait(false);
+            using (AcquireOffline(testMode, dataRoot))
+                RequirePreviousFloor(dataRoot, authority, online: false, requireDrain: true, verifyAuthority: true);
+
             using var probe = NodeUpdateLauncher.StartCandidate(candidate, testMode);
             try
             {
                 await using var session = await NodeUpdateLauncher.WaitForBoundReadyAsync(candidate, testMode, probe.Id, ct).ConfigureAwait(false);
                 var proof = await RequireReadyAsync(session, state, candidate, probe, ct).ConfigureAwait(false);
-                RequireActivationFloor(dataRoot, state.Checkpoint!, authority.OwnerEpoch);
+                RequireActivationFloor(dataRoot, state.Checkpoint!, authority);
                 state = NativeUpdateGate.MarkReady(dataRoot, state.OperationId, proof);
                 await NodeUpdateLauncher.StopBoundAsync(session, probe, ct).ConfigureAwait(false);
             }
@@ -391,7 +399,7 @@ internal static class NativeUpdateOperation
         }
 
         var ready = await StartAndCheckManagedAsync(candidate, state, testMode, ct).ConfigureAwait(false);
-        RequireActivationFloor(dataRoot, state.Checkpoint!, authority.OwnerEpoch);
+        RequireActivationFloor(dataRoot, state.Checkpoint!, authority);
         NodeUpdateLauncher.RebindWindowsStartup(previous, candidate, testMode);
         return NativeUpdateGate.Complete(dataRoot, state.OperationId, ready);
     }
@@ -418,25 +426,24 @@ internal static class NativeUpdateOperation
         if (selected == candidate.ArchiveSha256)
             RequirePreviousFloor(dataRoot, authority, online: true);
 
-        bool requireDrain = state.Checkpoint is { } checkpoint && authority.PreviousSupervisorProtocol != checkpoint.CandidateSupervisorProtocol;
-        await StopObservedAsync(previous, candidate, testMode, permitCandidate: true, authority.PreviousSelection is null, ct,
-            requireDrain).ConfigureAwait(false);
+        await StopAfterDrainAsync(previous, candidate, authority, testMode, permitCandidate: true, authority.PreviousSelection is null, ct)
+            .ConfigureAwait(false);
         using (AcquireOffline(testMode, dataRoot))
         {
-            RequirePreviousFloor(dataRoot, authority, online: false, requireDrain);
+            RequirePreviousFloor(dataRoot, authority, online: false, requireDrain: true, verifyAuthority: true);
             if (selected != previous.ArchiveSha256)
                 NodeVersionSelection.Select(appRoot, selected, previous.ArchiveSha256);
         }
 
         var ready = await StartAndCheckManagedAsync(previous, state, testMode, ct).ConfigureAwait(false);
-        _ = NodeStore.InspectNativeUpdateFloor(dataRoot, onlineObservation: true, expectedBindings: state.Checkpoint, ownerEpoch: authority.OwnerEpoch);
+        RequirePreviousFloor(dataRoot, authority, online: true, requireDrain: true, verifyAuthority: true);
         NodeUpdateLauncher.RebindWindowsStartup(candidate, previous, testMode);
         return NativeUpdateGate.MarkRolledBack(dataRoot, state.OperationId, ready);
     }
 
-    private static void RequireActivationFloor(string dataRoot, NativeUpdateCheckpoint checkpoint, string ownerEpoch)
+    private static void RequireActivationFloor(string dataRoot, NativeUpdateCheckpoint checkpoint, NativeUpdateAuthority authority)
     {
-        var floor = NodeStore.InspectNativeUpdateFloor(dataRoot, onlineObservation: true, expectedBindings: checkpoint, ownerEpoch: ownerEpoch);
+        var floor = NodeStore.InspectNativeUpdateFloor(dataRoot, onlineObservation: true, requireDrained: true, previousAuthority: authority);
         if (floor.Schema != checkpoint.StoreSchema || floor.MinimumReader < checkpoint.MinimumReader)
             throw Refused("native_update_observed_store_floor_mismatch");
         NativeUpdateGate.RequireCompatibleReader(floor.Schema, floor.MinimumReader, checkpoint.CandidateReader);
@@ -465,7 +472,25 @@ internal static class NativeUpdateOperation
         return await RequireReadyAsync(session, state, cohort, process, ct).ConfigureAwait(false);
     }
 
-    private static async Task ConfirmPredecessorDrainAsync(NodeSession session, CancellationToken ct)
+    private static async Task ConfirmCurrentDrainBeforeRollbackAsync(NodeUpdateInstallation current, NativeUpdateAuthority authority,
+        string dataRoot, bool testMode, CancellationToken ct)
+    {
+        await using var session = await TryConnectAsync(testMode, ct).ConfigureAwait(false);
+        if (session is null)
+        {
+            using var offline = AcquireOffline(testMode, dataRoot);
+            RequirePreviousFloor(dataRoot, authority, online: false, requireDrain: true, verifyAuthority: true);
+            return;
+        }
+
+        using var process = NodeUpdateLauncher.ReadBoundProcess(session, current, expectedPid: null, allowVerifiedCopy: false);
+        var live = await ReadAuthorityAsync(session, ct).ConfigureAwait(false);
+        if (authority.NodeId != live.NodeId || authority.OwnerEpoch != live.OwnerEpoch)
+            throw Refused("native_update_rollback_owner_changed");
+        await ConfirmRunDrainAsync(session, ct).ConfigureAwait(false);
+    }
+
+    private static async Task ConfirmRunDrainAsync(NodeSession session, CancellationToken ct)
     {
         using var pin = NodeUpdateLauncher.PinBoundSession(session);
         var sandboxes = new V2.SandboxService.SandboxServiceClient(session.Channel.CallInvoker);
@@ -501,8 +526,8 @@ internal static class NativeUpdateOperation
         } while (cursor.Length != 0);
     }
 
-    private static async Task StopObservedAsync(NodeUpdateInstallation previous, NodeUpdateInstallation candidate, bool testMode,
-        bool permitCandidate, bool allowPreviousCopy, CancellationToken ct, bool requireDrain = false)
+    private static async Task StopAfterDrainAsync(NodeUpdateInstallation previous, NodeUpdateInstallation candidate,
+        NativeUpdateAuthority authority, bool testMode, bool permitCandidate, bool allowPreviousCopy, CancellationToken ct)
     {
         await using var session = await TryConnectAsync(testMode, ct).ConfigureAwait(false);
         if (session is null)
@@ -520,8 +545,10 @@ internal static class NativeUpdateOperation
 
         using (process)
         {
-            if (requireDrain)
-                await ConfirmPredecessorDrainAsync(session, ct).ConfigureAwait(false);
+            var live = await ReadAuthorityAsync(session, ct).ConfigureAwait(false);
+            if (live.NodeId != authority.NodeId || live.OwnerEpoch != authority.OwnerEpoch)
+                throw Refused("native_update_shutdown_owner_changed");
+            await ConfirmRunDrainAsync(session, ct).ConfigureAwait(false);
             await NodeUpdateLauncher.StopBoundAsync(session, process, ct).ConfigureAwait(false);
         }
     }
@@ -572,21 +599,6 @@ internal static class NativeUpdateOperation
         if (!owner.DefaultProfileAdmitted ||
             !health.Checks.Any(check => check.CheckId == "node.v2_run_profile" && check.Status == V1.CheckStatus.Pass))
             throw Refused("native_update_default_mxc_profile_unconfirmed");
-
-        using var inspection = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        inspection.CancelAfter(TimeSpan.FromSeconds(30));
-        var runs = new V2.RunService.RunServiceClient(session.Channel.CallInvoker);
-        foreach (var run in state.Checkpoint?.RetainedRuns ?? [])
-        {
-            var id = new Id { Value = Google.Protobuf.ByteString.CopyFrom(Convert.FromHexString(run.RunId)) };
-            using var call = runs.InspectAsync(new V2.RunServiceInspectRequest { Meta = Meta(), RunId = id },
-                deadline: DateTime.UtcNow + RpcDeadline, cancellationToken: inspection.Token);
-            var observed = (await call.ResponseAsync.ConfigureAwait(false)).Value?.Run;
-            if (observed is null || !id.Equals(observed.RunId) || observed.Epoch != run.Epoch || observed.LaunchSha256 != run.LaunchSha256 ||
-                observed.State == V2.RunState.RecoveryRequired ||
-                (observed.State is V2.RunState.Exited or V2.RunState.Failed && observed.Exit?.GroupEmptyVerified != true))
-                throw Refused("native_update_original_run_recovery_unconfirmed");
-        }
 
         if (process.HasExited)
             throw Refused("native_update_ready_process_exited");
@@ -701,7 +713,8 @@ internal static class NativeUpdateOperation
         ["minimumReader"] = state?.Checkpoint?.MinimumReader ?? state?.Authority?.PreviousMinimumReader,
         ["backupRoot"] = state?.Checkpoint?.BackupRoot,
         ["backupManifestSha256"] = state?.Checkpoint?.BackupManifestSha256,
-        ["retainedRuns"] = state?.Checkpoint?.RetainedRuns?.Length,
+        ["drainConfirmed"] = state?.Checkpoint?.DrainConfirmed,
+        ["supervisorProtocol"] = state?.Checkpoint?.CandidateSupervisorProtocol,
         ["candidateProbe"] = ReadinessReport(state?.CandidateProbe),
         ["activatedOwner"] = ReadinessReport(state?.ActivatedOwner),
         ["restoredOwner"] = ReadinessReport(state?.RestoredOwner),
