@@ -166,7 +166,10 @@ internal static class NodeUpdateSystemdHandoff
     {
         var start = new ProcessStartInfo(program)
         {
-            UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = true,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            RedirectStandardInput = true,
             WorkingDirectory = "/",
         };
         // Use the standard bus of the native user runtime, not an alternate session bus from the caller's shell.

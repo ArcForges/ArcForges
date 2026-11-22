@@ -7,8 +7,8 @@ using System.Text.Json.Nodes;
 using ArcForges.Client;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Node.Core.Platform;
-using ArcForges.Node.Core.Security;
 using ArcForges.Node.Core.Sandboxes;
+using ArcForges.Node.Core.Security;
 using ArcForges.Node.Store;
 using ArcForges.Node.Store.Migrations;
 using Microsoft.Data.Sqlite;
@@ -61,7 +61,7 @@ internal static class NativeUpdateOperation
                     ?? throw Refused("native_update_candidate_protocol_unconfirmed");
                 var prior = await ProbeCompatibilityAsync(previous, request.TestMode, cancellationToken).ConfigureAwait(false);
                 await using var session = await NodeClient.WaitForReadyAsync(new NodeConnectOptions
-                    { TestMode = request.TestMode, AutoStart = false, ReadinessTimeout = RpcDeadline }, cancellationToken).ConfigureAwait(false);
+                { TestMode = request.TestMode, AutoStart = false, ReadinessTimeout = RpcDeadline }, cancellationToken).ConfigureAwait(false);
                 using var process = NodeUpdateLauncher.ReadBoundProcess(session, previous, expectedPid: null, allowVerifiedCopy: priorSelection is null);
                 if (priorSelection is not null)
                     await NodeUpdateLauncher.RequireManagedProcessAsync(previous, process, started: null, request.TestMode, cancellationToken)
@@ -524,8 +524,13 @@ internal static class NativeUpdateOperation
                 string runCursor = "";
                 do
                 {
-                    using var check = runs.ListAsync(new V2.RunServiceListRequest { Meta = Meta(), SandboxId = sandbox.SandboxId,
-                        Limit = 200, Cursor = runCursor }, deadline: deadline, cancellationToken: ct);
+                    using var check = runs.ListAsync(new V2.RunServiceListRequest
+                    {
+                        Meta = Meta(),
+                        SandboxId = sandbox.SandboxId,
+                        Limit = 200,
+                        Cursor = runCursor
+                    }, deadline: deadline, cancellationToken: ct);
                     var page = (await check.ResponseAsync.ConfigureAwait(false)).Value
                         ?? throw Refused("native_update_predecessor_drain_unconfirmed");
                     if (page.Runs.Any(run => run is not { State: V2.RunState.Exited or V2.RunState.Failed, Exit.GroupEmptyVerified: true }))

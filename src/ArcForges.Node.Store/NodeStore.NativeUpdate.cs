@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Security.Cryptography;
-using Microsoft.Data.Sqlite;
 using ArcForges.Node.Store.Migrations;
+using Microsoft.Data.Sqlite;
 
 namespace ArcForges.Node.Store;
 
