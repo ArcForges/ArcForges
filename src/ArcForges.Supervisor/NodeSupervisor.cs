@@ -81,6 +81,20 @@ internal sealed class NodeSupervisor
         var crashes = new Queue<DateTimeOffset>();
         while (true)
         {
+            try
+            {
+                if (!_locations.OwnsSelection())
+                {
+                    _log.Write("supervisor.selection_changed");
+                    return 0;
+                }
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                _log.Write("supervisor.selection_refused", ("reason", error.Message));
+                return 1;
+            }
+
             var exit = RunNodeOnce();
             switch (exit)
             {
@@ -92,13 +106,6 @@ internal sealed class NodeSupervisor
                     return 0;
                 case NodeUpdateRestart:
                     _log.Write("node.update_restart");
-                    if (!string.Equals(_locations.NodeExecutable, _locations.CurrentNodeExecutable(), StringComparison.OrdinalIgnoreCase))
-                    {
-                        // The next startup uses the selected immutable holder. This holder may only restart its own cohort.
-                        _log.Write("supervisor.selection_changed");
-                        return 0;
-                    }
-
                     continue;
             }
 

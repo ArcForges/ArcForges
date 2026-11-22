@@ -14,7 +14,7 @@ namespace ArcForges.Supervisor;
 /// supervisor stays a small executable (15 section 1: at most 4 MB).
 /// </summary>
 /// <param name="TestMode">The test hooks apply and <c>--test-mode</c> is passed to the node.</param>
-/// <param name="NodeExecutable">The selected <c>arcforges.exe</c>, or its local sibling for a standalone installation.</param>
+/// <param name="NodeExecutable">The immutable <c>arcforges.exe</c> beside this holder.</param>
 /// <param name="DataRoot">The node's data root (the supervisor log goes to <c>logs/supervisor</c>).</param>
 /// <param name="InstanceKey">The user hash, with the endpoint override's hash in test mode.</param>
 [SupportedOSPlatform("windows")]
@@ -26,9 +26,9 @@ internal sealed record SupervisorLocations(bool TestMode, string NodeExecutable,
 
     internal string? ApplicationRoot { get; init; }
 
-    internal string CurrentNodeExecutable() => ApplicationRoot is { } app && NodeVersionSelection.SelectedInstallation(app) is { } selection
-        ? Path.Combine(selection, "arcforges.exe")
-        : NodeExecutable;
+    internal bool OwnsSelection() => ApplicationRoot is not { } app
+        || NodeVersionSelection.SelectedInstallation(app) is not { } selected
+        || string.Equals(selected, Path.GetDirectoryName(NodeExecutable), StringComparison.OrdinalIgnoreCase);
 
     /// <summary>The supervisor's single-instance mutex.</summary>
     public string MutexName => @"Local\ArcForges.Supervisor." + InstanceKey;
@@ -54,8 +54,7 @@ internal sealed record SupervisorLocations(bool TestMode, string NodeExecutable,
         }
 
         var app = Path.Combine(testMode ? configDirectory : local, "app");
-        var selection = NodeVersionSelection.SelectedInstallation(app);
-        var executable = Path.Combine(selection ?? AppContext.BaseDirectory, "arcforges.exe");
+        var executable = Path.Combine(AppContext.BaseDirectory, "arcforges.exe");
         return new SupervisorLocations(testMode, executable, Path.TrimEndingDirectorySeparator(Path.GetFullPath(dataRoot)), key)
         {
             ApplicationRoot = app,
