@@ -19,6 +19,7 @@ internal static class UpdateCommands
         update.Subcommands.Add(Operate("resume", "Resume the recorded update checkpoint", NodeUpdateAction.Resume, factory, runner));
         update.Subcommands.Add(Operate("status", "Show the recorded update checkpoint and selected installation", NodeUpdateAction.Status, factory, runner));
         update.Subcommands.Add(Operate("rollback", "Return to the compatible previously selected installation", NodeUpdateAction.Rollback, factory, runner));
+        update.Subcommands.Add(Restore(factory, runner));
         update.Subcommands.Add(Operate("compatibility", "Report this executable's supported store and supervisor protocol", NodeUpdateAction.Compatibility, factory, runner));
         return update;
     }
@@ -85,6 +86,63 @@ internal static class UpdateCommands
         var command = new Command(name, description);
         V2Cli.Set(command, factory, async (cli, _, ct) => Print(cli, await runner(new NodeUpdateRequest(action, cli.TestMode), ct).ConfigureAwait(false)));
         return command;
+    }
+
+    private static Command Restore(Func<ParseResult, Cli> factory, NodeUpdateRunner runner)
+    {
+        var destination = Required("--destination", "Fresh absolute directory for the verified isolated store and authority restore");
+        var command = new Command("restore", "Restore the recorded update backup to a separate offline directory") { destination };
+        V2Cli.Set(command, factory, async (cli, result, ct) =>
+        {
+            try
+            {
+                var path = result.GetRequiredValue(destination);
+                if (!Path.IsPathFullyQualified(path))
+                {
+                    throw new UsageException("--destination requires a fresh absolute directory.");
+                }
+
+                path = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+                var active = NodeLocations.ResolveDataRoot(cli.TestMode);
+                if (Contains(active, path) || Contains(path, active))
+                {
+                    throw new UsageException("--destination must be separate from the active Node data root.");
+                }
+
+                if (Path.GetDirectoryName(path) is not { } parent
+                    || (File.GetAttributes(parent) & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != FileAttributes.Directory)
+                {
+                    throw new UsageException("--destination requires an existing real parent directory.");
+                }
+
+                try
+                {
+                    _ = File.GetAttributes(path);
+                    throw new UsageException("--destination already exists. Choose a fresh directory.");
+                }
+                catch (FileNotFoundException)
+                {
+                    // The offline restore may create this fresh leaf after its native custody checks.
+                }
+
+                return Print(cli, await runner(new NodeUpdateRequest(NodeUpdateAction.Restore, cli.TestMode, RestoreDestination: path), ct).ConfigureAwait(false));
+            }
+            catch (ArgumentException error)
+            {
+                throw new UsageException(error.Message);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                return Refuse(cli, error.Message);
+            }
+        });
+        return command;
+    }
+
+    private static bool Contains(string root, string path)
+    {
+        var relative = Path.GetRelativePath(root, path);
+        return !Path.IsPathRooted(relative) && relative != ".." && !relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal);
     }
 
     private static Option<string> Required(string name, string description) => new(name) { Required = true, Description = description };

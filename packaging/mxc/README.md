@@ -117,4 +117,8 @@ preparing and verifying a managed prior installation before its switch.
 `arcforges update status --json` reports the selected version and saved update
 checkpoint. Use `arcforges update resume` for an interrupted checkpoint or
 `arcforges update rollback` for a compatible preceding cohort. A reader refusal
-keeps the checkpoint fenced for the documented isolated restore procedure.
+keeps the checkpoint fenced. To prepare a verified offline restore, run
+`arcforges update restore --destination <fresh-absolute-directory>`. The
+receipt identifies the isolated store and authority files that were restored.
+The active Node data directory and its selection remain in place. Private
+Sandbox contents stored outside the backup require a separately verified copy.

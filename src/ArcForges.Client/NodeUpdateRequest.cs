@@ -5,11 +5,11 @@ using ArcForges.Contracts.Foundation.V1;
 namespace ArcForges.Client;
 
 /// <summary>Local operator actions handled by the Node composition.</summary>
-public enum NodeUpdateAction { Apply, Resume, Status, Rollback, Compatibility }
+public enum NodeUpdateAction { Apply, Resume, Status, Rollback, Compatibility, Restore }
 
 /// <summary>Only Apply supplies already verified cohort identities.</summary>
 public sealed record NodeUpdateRequest(NodeUpdateAction Action, bool TestMode, NodeUpdateInstallation? Candidate = null,
-    NodeUpdateInstallation? Previous = null);
+    NodeUpdateInstallation? Previous = null, string? RestoreDestination = null);
 
 /// <summary>An exact update outcome or refusal.</summary>
 public sealed record NodeUpdateResponse(JsonObject Report, string? Refusal = null, EffectCertainty RefusalEffect = EffectCertainty.Unknown);
