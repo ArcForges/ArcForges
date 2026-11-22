@@ -138,9 +138,15 @@ internal sealed partial class WorkspacePath
                     remaining -= listing.Names.Count + 1;
                     if (listing.Names.Count == 0)
                     {
-                        SetWindowsSandboxRemovalDisposition(current.Parent, current.Name,
-                            current.Identity, owner, current.Handle, applied, cancellationToken);
+                        // Give disposition a fresh lease on the same directory after closing its enumeration handle.
                         pending.Pop().Dispose();
+                        cancellationToken.ThrowIfCancellationRequested();
+                        using (var removal = OpenWindowsSandboxRemovalLease(current.Parent, current.Name,
+                            current.Identity, owner, flushAccess: false))
+                        {
+                            SetWindowsSandboxRemovalDisposition(current.Parent, current.Name,
+                                current.Identity, owner, removal, applied, cancellationToken);
+                        }
                         RequireWindowsSandboxRemovalNameAbsent(current.Parent, current.Name);
                         removed++;
                         continue;
