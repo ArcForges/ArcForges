@@ -16,6 +16,7 @@
     <EmbeddedResource Include="../../packaging/mxc/verify_install.py" LogicalName="ArcForges.Update.VerifyInstall" />
     <EmbeddedResource Include="../../packaging/native/signed.py" LogicalName="ArcForges.Update.Signed" />
     <EmbeddedResource Include="../../eng/mxc/stage.py" LogicalName="ArcForges.Update.MxcStage" />
+    <Compile Include="../ArcForges.Supervisor/AutostartRegistration.cs" Link="AutostartRegistration.cs" />
     <PackageReference Include="ArcForges.Contracts.Node" />
     <PackageReference Include="ArcForges.Contracts.Foundation" />
     <PackageReference Include="ArcForges.LocalRpc" />

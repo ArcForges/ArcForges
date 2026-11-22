@@ -92,6 +92,13 @@ internal sealed class NodeSupervisor
                     return 0;
                 case NodeUpdateRestart:
                     _log.Write("node.update_restart");
+                    if (!string.Equals(_locations.NodeExecutable, _locations.CurrentNodeExecutable(), StringComparison.OrdinalIgnoreCase))
+                    {
+                        // The next startup uses the selected immutable holder. This holder may only restart its own cohort.
+                        _log.Write("supervisor.selection_changed");
+                        return 0;
+                    }
+
                     continue;
             }
 

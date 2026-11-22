@@ -9,6 +9,7 @@ import mmap
 import ntpath
 import os
 from pathlib import Path
+import stat
 import struct
 import subprocess
 import sys
@@ -293,9 +294,37 @@ def installation_temp_parent():
     return Path.home()
 
 
-def expose_installation(staged, output):
+def sync_directory(path):
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def sync_installation(root):
+    def reject(error):
+        raise error
+
+    for parent, _, files in os.walk(root, topdown=False, onerror=reject):
+        for file in files:
+            with (Path(parent) / file).open("r+b" if os.name == "nt" else "rb") as stream:
+                os.fsync(stream.fileno())
+        if os.name != "nt":
+            sync_directory(parent)
+
+
+def expose_installation(staged, output, *, durable=False):
     if os.name == "nt":
-        os.rename(staged, output)
+        if not durable:
+            os.rename(staged, output)
+            return
+        from ctypes import wintypes
+        move = ctypes.WinDLL("kernel32", use_last_error=True).MoveFileExW
+        move.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD]
+        move.restype = wintypes.BOOL
+        if not move(str(staged), str(output), 8):  # MOVEFILE_WRITE_THROUGH, no replacement
+            raise ctypes.WinError(ctypes.get_last_error())
         return
     # Linux rename must not replace a directory created after verification.
     libc = ctypes.CDLL(None, use_errno=True)
@@ -305,6 +334,32 @@ def expose_installation(staged, output):
     if rename(-100, os.fsencode(staged), -100, os.fsencode(output), 1) != 0:
         error = ctypes.get_errno()
         raise OSError(error, os.strerror(error), output)
+    if durable:
+        sync_directory(output.parent)
+
+
+def require_matching_installation(verified, existing):
+    observed = existing.lstat()
+    reparse = getattr(observed, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+    require(stat.S_ISDIR(observed.st_mode) and not reparse, "Existing update installation is not an owned directory")
+    if os.name != "nt":
+        require(observed.st_uid == os.geteuid() and observed.st_mode & 0o022 == 0,
+                "Existing update installation has an untrusted owner or mode")
+    expected = {entry.name: entry for entry in verified.iterdir()}
+    for entry in existing.iterdir():
+        reference = expected.pop(entry.name, None)
+        require(reference is not None, "Existing update installation has unexpected files")
+        if reference.is_dir():
+            require_matching_installation(reference, entry)
+            continue
+        actual = entry.lstat()
+        reparse = getattr(actual, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+        signed = reference.stat()
+        require(stat.S_ISREG(actual.st_mode) and not reparse and actual.st_nlink == 1 and actual.st_size == signed.st_size
+                and (os.name == "nt" or (actual.st_uid == os.geteuid() and actual.st_mode & 0o022 == 0
+                                        and actual.st_mode & 0o100 == signed.st_mode & 0o100))
+                and digest(reference) == digest(entry), "Existing update installation differs from the authenticated extraction")
+    require(not expected, "Existing update installation is missing authenticated files")
 
 
 def check_signed(args):
@@ -342,10 +397,16 @@ def check_signed(args):
         require(info.get("tree") == producer["tree"] and info.get("dirty") is False
                 and info.get("qualification") == manifest["qualification"], "Signed build producer does not match")
         result.update(archiveSha256=observed["sha256"], authentication="ed25519", tree=producer["tree"],
+                      digestManifestSha256=digest(root / "digests.json"),
                       qualification=manifest["qualification"])
         if output is not None:
-            protect_install_root(root, args.powershell)
-            expose_installation(root, output)
+            if args.reuse_verified and os.path.lexists(output):
+                require_matching_installation(root, output)
+            else:
+                protect_install_root(root, args.powershell)
+                if args.durable:
+                    sync_installation(root)
+                expose_installation(root, output, durable=args.durable)
             result["installRoot"] = str(output)
     return result
 
@@ -393,10 +454,15 @@ def main():
     parser.add_argument("--openssl", type=Path, help="explicit trusted OpenSSL executable")
     parser.add_argument("--powershell", type=Path, help="explicit trusted PowerShell executable for Windows install protection")
     parser.add_argument("--output", type=Path, help="retain the verified extraction in a fresh trusted directory")
+    parser.add_argument("--durable", action="store_true", help="flush a fresh signed update before exposing its installation")
+    parser.add_argument("--reuse-verified", action="store_true", help="reuse existing immutable bytes only after authenticating a fresh copy")
     try:
         args = parser.parse_args()
         require(args.powershell is None or (os.name == "nt" and args.powershell.is_absolute() and args.trusted_key is not None),
                 "Windows PowerShell selection requires an absolute executable for a signed installation")
+        require(not args.durable or (args.output is not None and args.trusted_key is not None),
+                "Durable staging requires a fresh signed installation")
+        require(not args.reuse_verified or args.durable, "Reusing a verified installation requires durable staging")
         result = check_signed(args) if args.trusted_key is not None else check_unsigned(args)
         print(json.dumps(result), flush=True)
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError, zipfile.BadZipFile, tarfile.TarError) as error:

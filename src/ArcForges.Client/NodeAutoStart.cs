@@ -21,7 +21,11 @@ public enum AutoStartOutcome
 }
 
 /// <summary>The result of <see cref="NodeAutoStart.Start"/>.</summary>
-public sealed record AutoStartResult(AutoStartOutcome Outcome, string Detail);
+public sealed record AutoStartResult(AutoStartOutcome Outcome, string Detail)
+{
+    /// <summary>The exact Windows holder created for this start.</summary>
+    public int? SupervisorProcessId { get; init; }
+}
 
 /// <summary>
 /// Starts the node detached when it is absent (architecture 02 section 3):
@@ -163,7 +167,10 @@ public static partial class NodeAutoStart
 
         CloseHandle(process.Thread);
         CloseHandle(process.Process);
-        return new AutoStartResult(AutoStartOutcome.Started, $"{SupervisorFileName} (pid {process.ProcessId})");
+        return new AutoStartResult(AutoStartOutcome.Started, $"{SupervisorFileName} (pid {process.ProcessId})")
+        {
+            SupervisorProcessId = checked((int)process.ProcessId),
+        };
     }
 
     private static AutoStartResult StartLinux(bool testMode)
@@ -177,11 +184,7 @@ public static partial class NodeAutoStart
         };
         if (systemd)
         {
-            var unit = NodeLocations.NodeUnit(testMode);
-            var (exit, error) = Run(FindOnPath("systemctl") ?? "systemctl", ["--user", "start", "--no-block", unit]);
-            return exit == 0
-                ? new AutoStartResult(AutoStartOutcome.Started, $"systemctl --user start {unit}")
-                : new AutoStartResult(AutoStartOutcome.Failed, $"systemctl --user start {unit} failed: {error.Trim()}");
+            return StartSystemdService(testMode, FindOnPath("systemctl") ?? "systemctl");
         }
 
         var setsid = FindOnPath("setsid");
@@ -212,6 +215,15 @@ public static partial class NodeAutoStart
         return code == 0
             ? new AutoStartResult(AutoStartOutcome.Started, "setsid arcforges node run")
             : new AutoStartResult(AutoStartOutcome.Failed, $"setsid failed ({code}): {message.Trim()}");
+    }
+
+    internal static AutoStartResult StartSystemdService(bool testMode, string systemctl)
+    {
+        var unit = NodeLocations.NodeUnit(testMode);
+        var (exit, error) = Run(systemctl, ["--user", "start", "--no-block", "--", unit]);
+        return exit == 0
+            ? new AutoStartResult(AutoStartOutcome.Started, $"systemctl --user start {unit}")
+            : new AutoStartResult(AutoStartOutcome.Failed, $"systemctl --user start {unit} failed: {error.Trim()}");
     }
 
     /// <summary>Runs a short helper with its standard streams redirected (so the node never inherits the client's).</summary>

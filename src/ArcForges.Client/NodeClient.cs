@@ -159,6 +159,8 @@ public sealed class NodeSession : IAsyncDisposable
     // Refuse a replaced local connection; otherwise the node's per-session mutation binding could be silently lost.
     internal IDisposable? PinConnection() => Channel.PinConnection(_helloConnectionGeneration);
 
+    internal int ServerProcessId => Channel.ServerProcessId(_helloConnectionGeneration);
+
     /// <summary>The channel.</summary>
     public NodeChannel Channel { get; }
 

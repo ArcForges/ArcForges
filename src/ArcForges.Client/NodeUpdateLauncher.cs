@@ -1,14 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Diagnostics;
+using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
+using ArcForges.Supervisor;
+using Microsoft.Win32.SafeHandles;
 
 namespace ArcForges.Client;
 
 /// <summary>Starts and checks only the local Node process carrying a selected or staged cohort.</summary>
-public static class NodeUpdateLauncher
+public static partial class NodeUpdateLauncher
 {
+    private const string Systemctl = "/usr/bin/systemctl";
+
     public static string Executable(string installationRoot) =>
         Path.Combine(installationRoot, OperatingSystem.IsWindows() ? "arcforges.exe" : "arcforges");
 
@@ -16,6 +22,7 @@ public static class NodeUpdateLauncher
     public static Process StartCandidate(NodeUpdateInstallation candidate, bool testMode)
     {
         ArgumentNullException.ThrowIfNull(candidate);
+        RequireTrustedManifest(candidate);
         var executable = Executable(candidate.Root);
         var start = new ProcessStartInfo(executable)
         {
@@ -33,6 +40,110 @@ public static class NodeUpdateLauncher
         return Process.Start(start) ?? throw new IOException("node_update_candidate_did_not_start");
     }
 
+    /// <summary>Starts the selected version through the existing platform service owner.</summary>
+    public static AutoStartResult StartManagedService(bool testMode)
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return NodeAutoStart.StartExplicitly(testMode);
+        }
+
+        if (!NodeAutoStart.UserManagerAvailable() || NodeLocations.ForcedAutostart(testMode) == "setsid")
+        {
+            throw new IOException("node_update_systemd_user_manager_required");
+        }
+
+        return NodeAutoStart.StartSystemdService(testMode, Systemctl);
+    }
+
+    /// <summary>Moves an opted-in Windows startup entry only between verified installed cohorts.</summary>
+    public static void RebindWindowsStartup(NodeUpdateInstallation previous, NodeUpdateInstallation selected, bool testMode)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        if (testMode && NodeLocations.EndpointOverride(testMode) is null)
+        {
+            throw new IOException("node_update_windows_startup_test_endpoint_required");
+        }
+
+        var keyPath = testMode ? @"Software\ArcForges\Tests\Update\" + NodeLocations.InstanceKey(testMode) + @"\Run" : AutostartRegistration.RunKey;
+        var selectedSupervisor = Path.Combine(selected.Root, NodeAutoStart.SupervisorFileName);
+        AutostartRegistration.Rebind(selectedSupervisor, current => IsAdmittedStartup(current, previous), keyPath);
+    }
+
+    private static bool IsAdmittedStartup(string registered, NodeUpdateInstallation previous)
+    {
+        if (!Path.IsPathFullyQualified(registered) || Path.GetFileName(registered) != NodeAutoStart.SupervisorFileName
+            || (File.GetAttributes(registered) & (FileAttributes.ReparsePoint | FileAttributes.Directory)) != 0)
+        {
+            return false;
+        }
+
+        var root = Path.GetDirectoryName(registered)!;
+        RequireTrustedManifest(previous with { Root = root });
+        return SameFileBytes(registered, Path.Combine(previous.Root, NodeAutoStart.SupervisorFileName));
+    }
+
+    /// <summary>Requires current native service custody of the exact responsive Node process.</summary>
+    public static async Task RequireManagedProcessAsync(NodeUpdateInstallation cohort, Process node, AutoStartResult? started, bool testMode,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(cohort);
+        ArgumentNullException.ThrowIfNull(node);
+        if (OperatingSystem.IsWindows())
+        {
+            RequireHolder(cohort, node, started?.SupervisorProcessId);
+            return;
+        }
+
+        if (!OperatingSystem.IsLinux() || !NodeAutoStart.UserManagerAvailable())
+        {
+            throw new IOException("node_update_systemd_user_manager_required");
+        }
+
+        var status = new ProcessStartInfo(Systemctl)
+        {
+            UseShellExecute = false,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        foreach (var argument in new[] { "--user", "show", "--property=MainPID", "--value", "--", NodeLocations.NodeUnit(testMode) })
+        {
+            status.ArgumentList.Add(argument);
+        }
+
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(10));
+        using var observer = Process.Start(status) ?? throw new IOException("node_update_systemd_main_pid_unavailable");
+        observer.StandardInput.Close();
+        try
+        {
+            var pid = observer.StandardOutput.ReadToEndAsync(timeout.Token);
+            var error = observer.StandardError.ReadToEndAsync(timeout.Token);
+            await Task.WhenAll(pid, error, observer.WaitForExitAsync(timeout.Token)).ConfigureAwait(false);
+            if (observer.ExitCode != 0 || !int.TryParse(pid.Result.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var main)
+                || main != node.Id || node.HasExited)
+            {
+                throw new IOException("node_update_systemd_main_pid_mismatch");
+            }
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new IOException("node_update_systemd_main_pid_deadline");
+        }
+        finally
+        {
+            if (!observer.HasExited)
+            {
+                observer.Kill();
+            }
+        }
+    }
+
     /// <summary>Checks a real local endpoint and the observed process executable before returning its ready connection.</summary>
     public static async Task<NodeSession> WaitForBoundReadyAsync(NodeUpdateInstallation cohort, bool testMode, int? expectedPid,
         CancellationToken cancellationToken)
@@ -47,6 +158,8 @@ public static class NodeUpdateLauncher
                 throw new IOException("node_update_candidate_not_healthy:" + session.Hello.Node.State);
             }
 
+            await WaitForVersionIntegrityAsync(session, cohort, observed, cancellationToken).ConfigureAwait(false);
+
             return session;
         }
         catch
@@ -56,14 +169,67 @@ public static class NodeUpdateLauncher
         }
     }
 
+    private static async Task WaitForVersionIntegrityAsync(NodeSession session, NodeUpdateInstallation cohort, Process process, CancellationToken cancellationToken)
+    {
+        using var pin = session.PinConnection() ?? throw new IOException("node_update_connection_changed");
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(30));
+        try
+        {
+            while (!process.HasExited)
+            {
+                using var call = session.Channel.Node.GetCapabilitiesAsync(new NodeServiceGetCapabilitiesRequest
+                {
+                    Meta = new RequestMeta { CorrelationId = CommandIds.New() },
+                }, deadline: DateTime.UtcNow.AddSeconds(5), cancellationToken: timeout.Token);
+                var response = await call.ResponseAsync.ConfigureAwait(false);
+                var integrity = response.Value?.Capabilities?.PlatformFacts.FirstOrDefault(fact => fact.Name == "version_integrity")?.Value;
+                if (integrity == "verified")
+                {
+                    RequireTrustedManifest(cohort);
+                    return;
+                }
+
+                if (response.Error is not null || integrity?.StartsWith("mismatch", StringComparison.Ordinal) is true)
+                {
+                    throw new IOException("node_update_version_integrity_refused:" + (integrity ?? response.Error?.Code));
+                }
+
+                await Task.Delay(TimeSpan.FromMilliseconds(250), timeout.Token).ConfigureAwait(false);
+            }
+
+            throw new IOException("node_update_process_exited_before_integrity_check");
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new IOException("node_update_version_integrity_deadline");
+        }
+    }
+
+    private static void RequireTrustedManifest(NodeUpdateInstallation cohort)
+    {
+        var manifest = Path.Combine(cohort.Root, "digests.json");
+        if ((File.GetAttributes(manifest) & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
+        {
+            throw new IOException("node_update_version_manifest_untrusted");
+        }
+
+        using var stream = File.OpenRead(manifest);
+        if (Convert.ToHexStringLower(SHA256.HashData(stream)) != cohort.DigestManifestSha256)
+        {
+            throw new IOException("node_update_version_manifest_changed");
+        }
+    }
+
     /// <summary>Opens the Node descriptor's exact process only if it is the admitted executable.</summary>
     public static Process ReadBoundProcess(NodeSession session, NodeUpdateInstallation cohort, int? expectedPid, bool allowVerifiedCopy)
     {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(cohort);
+        using var pin = session.PinConnection() ?? throw new IOException("node_update_connection_changed");
         var descriptor = EndpointDescriptor.TryRead(NodeLocations.EndpointDescriptorFile(session.Endpoint.DataRoot))
             ?? throw new IOException("node_update_descriptor_missing");
-        if ((expectedPid is int pid && descriptor.ProcessId != pid)
+        if (descriptor.ProcessId != session.ServerProcessId || (expectedPid is int pid && descriptor.ProcessId != pid)
             || descriptor.NodeId != IdText.Format(session.Hello.Node.Node.NodeId)
             || descriptor.Endpoint != session.Endpoint.Endpoint.Address)
         {
@@ -73,12 +239,15 @@ public static class NodeUpdateLauncher
         var process = Process.GetProcessById(descriptor.ProcessId);
         try
         {
+            _ = process.SafeHandle;
             var started = new DateTimeOffset(process.StartTime.ToUniversalTime()).ToUnixTimeMilliseconds();
             var expectedExecutable = Executable(cohort.Root);
             var actual = process.MainModule?.FileName;
             var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-            if (process.HasExited || started != descriptor.ProcessStartUnixMs || actual is null
-                || (!string.Equals(actual, expectedExecutable, comparison) && (!allowVerifiedCopy || !SameFileBytes(actual, expectedExecutable))))
+            if (actual is null || started != descriptor.ProcessStartUnixMs
+                || (!allowVerifiedCopy && !string.Equals(actual, expectedExecutable, comparison))
+                || !SameFileBytes(OperatingSystem.IsLinux() ? $"/proc/{process.Id}/exe" : actual, expectedExecutable)
+                || process.HasExited)
             {
                 throw new IOException("node_update_running_cohort_mismatch");
             }
@@ -97,8 +266,12 @@ public static class NodeUpdateLauncher
     {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(process);
-        using var pin = session.Channel.PinConnection(session.Channel.ConnectionGeneration)
+        using var pin = session.PinConnection()
             ?? throw new IOException("node_update_connection_changed");
+        if (process.Id != session.ServerProcessId || process.HasExited)
+        {
+            throw new IOException("node_update_shutdown_target_changed");
+        }
         var command = CommandIds.New();
         var request = new NodeServiceStopNodeRequest
         {
@@ -124,4 +297,37 @@ public static class NodeUpdateLauncher
         using var expectedFile = File.OpenRead(expected);
         return CryptographicOperations.FixedTimeEquals(SHA256.HashData(actualFile), SHA256.HashData(expectedFile));
     }
+
+    private static void RequireHolder(NodeUpdateInstallation cohort, Process node, int? expectedPid)
+    {
+        if (QueryProcess(node.SafeHandle, 0, out var identity, (uint)(IntPtr.Size * 6), out _) != 0
+            || identity.ProcessId != node.Id || identity.ParentId is <= 0 or > int.MaxValue
+            || (expectedPid is int pid && identity.ParentId != pid))
+        {
+            throw new IOException("node_update_windows_supervisor_identity_mismatch");
+        }
+
+        using var holder = Process.GetProcessById((int)identity.ParentId);
+        var expected = Path.Combine(cohort.Root, NodeAutoStart.SupervisorFileName);
+        if (holder.HasExited || node.HasExited || holder.StartTime > node.StartTime
+            || !string.Equals(holder.MainModule?.FileName, expected, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new IOException("node_update_windows_supervisor_identity_mismatch");
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ProcessBasicInformation
+    {
+        private nint _exitStatus;
+        private nint _peb;
+        private nint _affinity;
+        private nint _priority;
+        public nint ProcessId;
+        public nint ParentId;
+    }
+
+    [LibraryImport("ntdll.dll", EntryPoint = "NtQueryInformationProcess")]
+    private static partial int QueryProcess(SafeProcessHandle process, int informationClass, out ProcessBasicInformation information,
+        uint informationBytes, out uint bytesWritten);
 }

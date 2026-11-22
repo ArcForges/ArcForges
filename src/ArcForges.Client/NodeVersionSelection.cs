@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace ArcForges.Client;
 
 /// <summary>Selects a complete immutable installation. Windows uses a small atomic pointer and Linux uses the service's existing symlink.</summary>
-public static class NodeVersionSelection
+public static partial class NodeVersionSelection
 {
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
@@ -45,7 +46,7 @@ public static class NodeVersionSelection
             var target = new FileInfo(path).LinkTarget;
             if (target is null || !target.StartsWith("versions/", StringComparison.Ordinal))
             {
-                throw new IOException("node_update_selection_invalid");
+                throw new IOException("node_update_selector_requires_verified_versions_layout");
             }
 
             identity = target["versions/".Length..];
@@ -102,11 +103,46 @@ public static class NodeVersionSelection
                 File.CreateSymbolicLink(temporary, "versions/" + archiveSha256);
             }
 
-            File.Move(temporary, PointerPath(appRoot), overwrite: expected is not null);
+            PublishSelection(appRoot, temporary, PointerPath(appRoot), replace: expected is not null);
         }
         finally
         {
             File.Delete(temporary);
+        }
+    }
+
+    private static void PublishSelection(string appRoot, string temporary, string destination, bool replace)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            const uint WriteThrough = 8;
+            const uint ReplaceExisting = 1;
+            if (!MoveFileEx(temporary, destination, WriteThrough | (replace ? ReplaceExisting : 0)))
+            {
+                throw new IOException("node_update_selection_publish_failed:" + Marshal.GetLastPInvokeError());
+            }
+
+            return;
+        }
+
+        const int DirectoryNoFollowCloseOnExec = 0x10000 | 0x20000 | 0x80000;
+        int directory = OpenDirectory(appRoot, DirectoryNoFollowCloseOnExec);
+        if (directory < 0)
+        {
+            throw new IOException("node_update_selection_directory_unavailable:" + Marshal.GetLastPInvokeError());
+        }
+
+        try
+        {
+            File.Move(temporary, destination, overwrite: replace);
+            if (SyncDirectory(directory) != 0)
+            {
+                throw new IOException("node_update_selection_sync_failed:" + Marshal.GetLastPInvokeError());
+            }
+        }
+        finally
+        {
+            _ = CloseDirectory(directory);
         }
     }
 
@@ -153,4 +189,17 @@ public static class NodeVersionSelection
             return null;
         }
     }
+
+    [LibraryImport("kernel32.dll", EntryPoint = "MoveFileExW", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool MoveFileEx(string existingName, string newName, uint flags);
+
+    [LibraryImport("libc", EntryPoint = "open", SetLastError = true, StringMarshalling = StringMarshalling.Utf8)]
+    private static partial int OpenDirectory(string path, int flags);
+
+    [LibraryImport("libc", EntryPoint = "fsync", SetLastError = true)]
+    private static partial int SyncDirectory(int descriptor);
+
+    [LibraryImport("libc", EntryPoint = "close", SetLastError = true)]
+    private static partial int CloseDirectory(int descriptor);
 }

@@ -10,7 +10,7 @@ public sealed record NodeUpdateArtifact(string Archive, string TrustedKey, strin
     string OpenSsl, string? PowerShell);
 
 /// <summary>A fresh cohort extracted by the installed release verifier.</summary>
-public sealed record NodeUpdateInstallation(string Root, string ArchiveSha256, string Commit, string Tree);
+public sealed record NodeUpdateInstallation(string Root, string ArchiveSha256, string Commit, string Tree, string DigestManifestSha256);
 
 /// <summary>Verifies and stages one x64 Node cohort without touching the selected version.</summary>
 public static class NodeUpdateStaging
@@ -31,26 +31,34 @@ public static class NodeUpdateStaging
             ? ExistingFile(artifact.PowerShell ?? throw new ArgumentException("Windows preparation requires trusted PowerShell.", nameof(artifact)))
             : null;
         var root = Absolute(destination);
-        if (File.Exists(root) || Directory.Exists(root))
-        {
-            throw new IOException("node_update_staging_must_be_fresh");
-        }
-
         var rid = System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier;
         if (rid is not ("win-x64" or "linux-x64"))
         {
             throw new PlatformNotSupportedException("node_update_requires_a_signed_x64_cohort");
         }
 
-        var active = AppContext.BaseDirectory;
-        var script = Path.Combine(active, "packaging", "mxc", "verify_install.py");
-        using var verifier = OpenSealedScript(script, "VerifyInstall");
-        using var signature = OpenSealedScript(Path.Combine(active, "packaging", "native", "signed.py"), "Signed");
-        using var mxc = OpenSealedScript(Path.Combine(active, "eng", "mxc", "stage.py"), "MxcStage");
+        var scratch = Directory.CreateTempSubdirectory("arcforges-update-verifier-");
+        try
+        {
+            var script = CaptureSealedScript(scratch.FullName, "packaging/mxc/verify_install.py", "VerifyInstall");
+            _ = CaptureSealedScript(scratch.FullName, "packaging/native/signed.py", "Signed");
+            _ = CaptureSealedScript(scratch.FullName, "eng/mxc/stage.py", "MxcStage");
+            return await InvokeVerifierAsync(artifact, script, scratch.FullName, rid, root, archive, trustedKey, python, openSsl, powerShell, testMode,
+                cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            scratch.Delete(recursive: true);
+        }
+    }
 
+    private static async Task<NodeUpdateInstallation> InvokeVerifierAsync(NodeUpdateArtifact artifact, string script, string privateDirectory,
+        string rid, string root, string archive, string trustedKey, string python, string openSsl, string? powerShell, bool testMode,
+        CancellationToken cancellationToken)
+    {
         var launch = new ProcessStartInfo(python)
         {
-            WorkingDirectory = active,
+            WorkingDirectory = privateDirectory,
             UseShellExecute = false,
             RedirectStandardError = true,
             RedirectStandardInput = true,
@@ -64,7 +72,7 @@ public static class NodeUpdateStaging
 
         string[] arguments = ["-I", "-B", script, "--rid", rid, "--archive", archive, "--trusted-key", trustedKey,
             "--admitted-archive-sha256", artifact.ArchiveSha256, "--commit", artifact.Commit, "--tree", artifact.Tree, "--output", root,
-            "--openssl", openSsl];
+            "--openssl", openSsl, "--durable", "--reuse-verified"];
         foreach (var argument in arguments)
         {
             launch.ArgumentList.Add(argument);
@@ -108,7 +116,10 @@ public static class NodeUpdateStaging
                 throw new IOException("node_update_installer_identity_mismatch");
             }
 
-            return new(root, artifact.ArchiveSha256, artifact.Commit, artifact.Tree);
+            var digestManifest = receipt.GetProperty("digestManifestSha256").GetString()
+                ?? throw new IOException("node_update_digest_manifest_missing");
+            RequireIdentity(digestManifest, 64, "digestManifestSha256");
+            return new(root, artifact.ArchiveSha256, artifact.Commit, artifact.Tree, digestManifest);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -119,29 +130,27 @@ public static class NodeUpdateStaging
             if (!process.HasExited)
             {
                 process.Kill(entireProcessTree: true);
+                _ = process.WaitForExit(TimeSpan.FromSeconds(5));
             }
         }
     }
 
-    private static FileStream OpenSealedScript(string path, string resource)
+    private static string CaptureSealedScript(string directory, string relativePath, string resource)
     {
         using var embedded = typeof(NodeUpdateStaging).Assembly.GetManifestResourceStream("ArcForges.Update." + resource)
             ?? throw new IOException("node_update_verifier_build_identity_missing");
-        var script = File.OpenRead(ExistingFile(path));
-        try
+        using var installed = File.OpenRead(ExistingFile(Path.Combine(AppContext.BaseDirectory, relativePath)));
+        if (!CryptographicOperations.FixedTimeEquals(SHA256.HashData(embedded), SHA256.HashData(installed)))
         {
-            if (!CryptographicOperations.FixedTimeEquals(SHA256.HashData(embedded), SHA256.HashData(script)))
-            {
-                throw new IOException("node_update_verifier_build_identity_mismatch");
-            }
+            throw new IOException("node_update_verifier_build_identity_mismatch");
+        }
 
-            return script;
-        }
-        catch
-        {
-            script.Dispose();
-            throw;
-        }
+        var target = Path.Combine(directory, relativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+        using var captured = new FileStream(target, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+        embedded.Position = 0;
+        embedded.CopyTo(captured);
+        return target;
     }
 
     private static async Task<string> ReadBoundedAsync(TextReader reader, CancellationToken cancellationToken)

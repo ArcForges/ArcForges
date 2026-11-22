@@ -24,6 +24,12 @@ internal sealed record SupervisorLocations(bool TestMode, string NodeExecutable,
     public const string EndpointVariable = "ARCFORGES_ENDPOINT";
     public const string ConfigDirectoryVariable = "ARCFORGES_CONFIG_DIR";
 
+    internal string? ApplicationRoot { get; init; }
+
+    internal string CurrentNodeExecutable() => ApplicationRoot is { } app && NodeVersionSelection.SelectedInstallation(app) is { } selection
+        ? Path.Combine(selection, "arcforges.exe")
+        : NodeExecutable;
+
     /// <summary>The supervisor's single-instance mutex.</summary>
     public string MutexName => @"Local\ArcForges.Supervisor." + InstanceKey;
 
@@ -47,9 +53,13 @@ internal sealed record SupervisorLocations(bool TestMode, string NodeExecutable,
             key += "-" + Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(endpoint)).AsSpan(0, 8));
         }
 
-        var selection = NodeVersionSelection.SelectedInstallation(Path.Combine(testMode ? configDirectory : local, "app"));
+        var app = Path.Combine(testMode ? configDirectory : local, "app");
+        var selection = NodeVersionSelection.SelectedInstallation(app);
         var executable = Path.Combine(selection ?? AppContext.BaseDirectory, "arcforges.exe");
-        return new SupervisorLocations(testMode, executable, Path.TrimEndingDirectorySeparator(Path.GetFullPath(dataRoot)), key);
+        return new SupervisorLocations(testMode, executable, Path.TrimEndingDirectorySeparator(Path.GetFullPath(dataRoot)), key)
+        {
+            ApplicationRoot = app,
+        };
     }
 
     private static string? ReadDataRoot(string configFile)
