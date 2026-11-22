@@ -55,6 +55,39 @@ public sealed class UpdateSelectionTests
         }
     }
 
+    [Fact]
+    public void OperatorMayAdvanceASelectionOnlyWhenTheMissingVersionIsExactlyParked()
+    {
+        var scratch = Directory.CreateTempSubdirectory("arcforges-update-parked-selection-");
+        try
+        {
+            var app = Path.Combine(scratch.FullName, "app");
+            NodeVersionSelection.PrepareDirectories(app);
+            var previous = new string('1', 64);
+            var candidate = new string('2', 64);
+            var previousRoot = CreateCohort(app, previous);
+            var candidateRoot = CreateCohort(app, candidate);
+            NodeVersionSelection.Select(app, expected: null, previous);
+
+            var untracked = Path.Combine(app, "versions", ".untracked");
+            Directory.Move(previousRoot, untracked);
+            Assert.Equal(previous, NodeVersionSelection.ReadIdentity(app));
+            Assert.Throws<IOException>(() => NodeVersionSelection.Select(app, previous, candidate, allowMissingExpected: true));
+
+            var parked = NodeVersionSelection.ParkedDirectory(previousRoot);
+            Directory.Move(untracked, parked);
+            Assert.Throws<IOException>(() => NodeVersionSelection.Read(app));
+            Assert.Throws<IOException>(() => NodeVersionSelection.Select(app, previous, candidate));
+            NodeVersionSelection.Select(app, previous, candidate, allowMissingExpected: true);
+            Assert.Equal(candidateRoot, NodeVersionSelection.SelectedInstallation(app));
+            Assert.Equal(previous, File.ReadAllText(Path.Combine(parked, "fixture")));
+        }
+        finally
+        {
+            scratch.Delete(recursive: true);
+        }
+    }
+
     private static string CreateCohort(string app, string identity)
     {
         var root = NodeVersionSelection.InstallationDirectory(app, identity);
