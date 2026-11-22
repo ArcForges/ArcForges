@@ -192,7 +192,11 @@ internal sealed partial class SandboxManager
         using var updateAdmission = NativeUpdateGate.TryEnterFreshStart(_dataRoot);
         if (updateAdmission is null)
         {
-            return RunFailure(Error(meta, ErrorCategory.State, "busy", "node_update_in_progress"));
+            var refusal = Error(meta, ErrorCategory.State, "busy", "node_update_in_progress");
+            refusal.Details.State.State = "node_update";
+            refusal.Retry.Mode = RetryMode.AfterTime;
+            refusal.Retry.RetryAt = ProtoTime.ToInstant(_clock.GetUtcNow().AddSeconds(2));
+            return RunFailure(refusal);
         }
 
         var row = _store.Read(reader => SandboxRecords.Get(reader, OwnerId, sandboxId));

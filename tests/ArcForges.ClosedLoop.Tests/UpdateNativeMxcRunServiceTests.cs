@@ -128,8 +128,11 @@ public sealed partial class MxcRunServiceTests
         var error = Assert.IsType<ArcError>(refused.Error);
         Assert.Equal(ErrorCategory.State, error.Category);
         Assert.Equal("busy", error.Code);
+        Assert.Equal("node_update", error.Details?.State?.State);
         Assert.Equal("node_update_in_progress", error.Details?.State?.Reason);
         Assert.Equal(EffectCertainty.DidNotHappen, error.Effect);
+        Assert.Equal(RetryMode.AfterTime, error.Retry?.Mode);
+        Assert.NotNull(error.Retry?.RetryAt);
 
         var receipt = await node.GetOperationAsync(new NodeServiceGetOperationRequest
         {
