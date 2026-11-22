@@ -16,7 +16,7 @@ public sealed partial class MxcRunServiceTests
     private const string DeleteAfterLock = "hold-delete-after-lock";
     private const string DeleteBeforeAcceptedReply = "hold-delete-before-accepted-reply";
     private const string DeleteAfterQuarantine = "hold-delete-after-quarantine";
-    private const string DeleteDuringRemoval = "hold-delete-during-removal";
+    internal const string DeleteDuringRemoval = "hold-delete-during-removal";
     private const string DeleteBeforeRemovalProof = "hold-delete-before-removal-proof";
     private const string DeleteBeforeTombstone = "hold-delete-before-tombstone";
     private const string LinuxDeleteGuardUnavailable = "linux_exact_directory_mutation_unavailable";
@@ -400,6 +400,7 @@ public sealed partial class MxcRunServiceTests
             InstalledDeletionDisk observed;
             WorkspaceObjectIdentity originalRoot;
             string[] initialEntries;
+            IReadOnlyDictionary<string, WorkspaceObjectIdentity>? windowsRundownDirectories = null;
             string siblingFile;
             var externalRoot = Directory.CreateDirectory(Path.Combine(fixture.Root, "delete checkpoint external fixture")).FullName;
             var externalFile = Path.Combine(externalRoot, "external-checkpoint.bin");
@@ -424,6 +425,10 @@ public sealed partial class MxcRunServiceTests
                 await File.WriteAllBytesAsync(siblingFile, sentinel, token);
                 using (var root = WorkspacePath.OpenRoot(sandbox.DataLocation)) originalRoot = root.RootIdentity;
                 initialEntries = EnumerateOwnedDeleteEntries(sandbox.DataLocation);
+                if (OperatingSystem.IsWindows() && checkpoint == DeleteDuringRemoval)
+                {
+                    windowsRundownDirectories = CaptureWindowsDeleteRundownDirectories(sandbox.DataLocation, token);
+                }
 
                 var preview = await ReadDeletePlanAsync(sandboxes, sandbox, token);
                 original = new SandboxServiceDeleteRequest
@@ -483,7 +488,7 @@ public sealed partial class MxcRunServiceTests
             var quarantine = InstalledDeleteQuarantinePath(fixture, original.PlanId);
             Assert.True(interrupted.HasExited);
             var interruptedEntries = await RequireInterruptedDeleteTreeAsync(checkpoint, sandbox.DataLocation, quarantine,
-                originalRoot, initialEntries, waitForClosedHandles: true, token);
+                originalRoot, initialEntries, waitForClosedHandles: true, token, windowsRundownDirectories);
             Assert.Equal(sentinel, await File.ReadAllBytesAsync(siblingFile, token));
             Assert.Equal(externalSentinel, await File.ReadAllBytesAsync(externalFile, token));
             fixture.Environment.Remove(ExecutionFaults.Variable);
@@ -819,8 +824,10 @@ public sealed partial class MxcRunServiceTests
         .EnumerateFileSystemEntries(root, "*", SearchOption.AllDirectories)
         .Select(path => Path.GetRelativePath(root, path)).Order(StringComparer.Ordinal).ToArray();
 
-    private static async Task<string[]> RequireInterruptedDeleteTreeAsync(string checkpoint, string original, string quarantine,
-        WorkspaceObjectIdentity originalRoot, string[] initialEntries, bool waitForClosedHandles, CancellationToken token)
+    internal static async Task<string[]> RequireInterruptedDeleteTreeAsync(string checkpoint, string original, string quarantine,
+        WorkspaceObjectIdentity originalRoot, string[] initialEntries, bool waitForClosedHandles, CancellationToken token,
+        IReadOnlyDictionary<string, WorkspaceObjectIdentity>? windowsRundownDirectories = null,
+        Action<string>? beforeWindowsRundownDirectoryOpen = null)
     {
         if (checkpoint is DeleteBeforeRemovalProof or DeleteBeforeTombstone)
         {
@@ -833,24 +840,39 @@ public sealed partial class MxcRunServiceTests
         RequireInstalledDeleteNameAbsent(locked ? quarantine : original);
         var current = locked ? original : quarantine;
         var elapsed = Stopwatch.StartNew();
+        string[]? remaining = null;
         while (true)
         {
             token.ThrowIfCancellationRequested();
+            bool rootOpened = false;
             try
             {
                 using var opened = WorkspacePath.OpenRoot(current);
+                rootOpened = true;
                 Assert.True(originalRoot.SameObject(opened.RootIdentity), $"The native directory identity changed at {checkpoint}.");
+                if (OperatingSystem.IsWindows() && waitForClosedHandles && checkpoint == DeleteDuringRemoval &&
+                    windowsRundownDirectories is not null)
+                {
+                    remaining = EnumerateWindowsDeleteRundownEntries(opened, windowsRundownDirectories, token,
+                        beforeWindowsRundownDirectoryOpen);
+                }
                 break;
             }
-            catch (WorkspacePathException failure) when (waitForClosedHandles && failure.Reason == "native_32")
+            catch (WorkspacePathException failure) when (!rootOpened && waitForClosedHandles && failure.Reason == "native_32")
             {
                 Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(3),
                     $"The directory at {checkpoint} still reports native_32 after the original Node exited.");
-                await Task.Delay(TimeSpan.FromMilliseconds(50), token);
             }
+            catch (WindowsDeleteRundownRetryException retry)
+            {
+                TestContext.Current.TestOutputHelper?.WriteLine($"Owned directory {retry.Message} reported {retry.NativeReason} during post-exit rundown.");
+                Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(3),
+                    $"The owned directory {retry.Message} still reports {retry.NativeReason} at {checkpoint}.");
+            }
+            await Task.Delay(TimeSpan.FromMilliseconds(50), token);
         }
 
-        var remaining = EnumerateOwnedDeleteEntries(current);
+        remaining ??= EnumerateOwnedDeleteEntries(current);
         if (checkpoint == DeleteDuringRemoval)
         {
             Assert.InRange(remaining.Length, 1, initialEntries.Length - 1);
