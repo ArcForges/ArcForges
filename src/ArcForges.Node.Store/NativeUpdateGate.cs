@@ -112,7 +112,7 @@ internal static class NativeUpdateGate
     internal static NativeUpdateState BeginRollback(string dataRoot, Guid operationId) =>
         Advance(dataRoot, operationId, NativeUpdatePhase.RollingBack);
 
-    internal static NativeUpdateState BeginPrecompletionRestore(string dataRoot, Guid operationId) =>
+    internal static NativeUpdateState BeginPreviousOwnerRestore(string dataRoot, Guid operationId) =>
         Advance(dataRoot, operationId, NativeUpdatePhase.RestoringPredecessor);
 
     internal static NativeUpdateState MarkRolledBack(string dataRoot, Guid operationId, NativeUpdateReadiness? proof = null) =>
@@ -143,7 +143,7 @@ internal static class NativeUpdateGate
             (NativeUpdatePhase.Fenced, NativeUpdatePhase.Prepared) => true,
             (NativeUpdatePhase.Prepared or NativeUpdatePhase.CandidateReady, NativeUpdatePhase.CandidateReady) => true,
             (NativeUpdatePhase.CandidateReady, NativeUpdatePhase.Completed) => true,
-            (NativeUpdatePhase.Fenced or NativeUpdatePhase.Prepared or NativeUpdatePhase.CandidateReady,
+            (NativeUpdatePhase.Fenced or NativeUpdatePhase.Prepared or NativeUpdatePhase.CandidateReady or NativeUpdatePhase.RollingBack,
                 NativeUpdatePhase.RestoringPredecessor) when current.Authority is { PreviousSupervisorProtocol: null } => true,
             (_, NativeUpdatePhase.RollingBack) when current.Phase is not (NativeUpdatePhase.RolledBack or NativeUpdatePhase.RestoringPredecessor) => true,
             (_, NativeUpdatePhase.RolledBack) when current.IsFenced => true,

@@ -77,10 +77,10 @@ public sealed class UpdateGateTests
         var authority = new NativeUpdateAuthority(new string('c', 32), new string('d', 32), previous.ArchiveSha256, 20, 20, null);
         _ = NativeUpdateGate.Begin(root.Path, operation, previous, candidate, authority);
 
-        var recovering = NativeUpdateGate.BeginPrecompletionRestore(root.Path, operation);
+        var recovering = NativeUpdateGate.BeginPreviousOwnerRestore(root.Path, operation);
         Assert.Equal(NativeUpdatePhase.RestoringPredecessor, recovering.Phase);
         Assert.Equal(recovering, NativeUpdateGate.Read(root.Path));
-        Assert.Equal(recovering, NativeUpdateGate.BeginPrecompletionRestore(root.Path, operation));
+        Assert.Equal(recovering, NativeUpdateGate.BeginPreviousOwnerRestore(root.Path, operation));
         Assert.Null(NativeUpdateGate.TryEnterFreshStart(root.Path));
         Assert.Throws<StoreIncompatibleException>(() => NativeUpdateGate.MarkRolledBack(root.Path, operation));
         Assert.Throws<StoreIncompatibleException>(() => NativeUpdateGate.BeginRollback(root.Path, operation));
@@ -89,7 +89,7 @@ public sealed class UpdateGateTests
         var recovered = NativeUpdateGate.MarkRolledBack(root.Path, operation, proof);
         Assert.Equal(proof, recovered.RestoredOwner);
         Assert.False(recovered.IsFenced);
-        Assert.Throws<StoreIncompatibleException>(() => NativeUpdateGate.BeginPrecompletionRestore(root.Path, operation));
+        Assert.Throws<StoreIncompatibleException>(() => NativeUpdateGate.BeginPreviousOwnerRestore(root.Path, operation));
     }
 
     [Fact]

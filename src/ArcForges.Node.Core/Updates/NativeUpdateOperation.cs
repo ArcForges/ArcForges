@@ -101,7 +101,8 @@ internal static class NativeUpdateOperation
 
             if (request.Action == NodeUpdateAction.Rollback && state.Phase != NativeUpdatePhase.RolledBack)
             {
-                RequireParticipatingPredecessor(recorded);
+                if (recorded.PreviousSupervisorProtocol is null && recorded.PreviousSelection != state.Previous.ArchiveSha256)
+                    throw Refused("native_update_predecessor_managed_custody_unconfirmed_use_verified_restore");
                 if (state.Phase == NativeUpdatePhase.Completed)
                 {
                     if (NodeVersionSelection.Read(appRoot) != state.Candidate.ArchiveSha256)
@@ -120,8 +121,11 @@ internal static class NativeUpdateOperation
                 VerifyCohort(appRoot, previous, cancellationToken);
                 VerifyCohort(appRoot, candidate, cancellationToken);
                 if (state.Phase == NativeUpdatePhase.RollingBack)
-                    state = await RollbackAsync(state, recorded, previous, candidate, dataRoot, appRoot, request.TestMode, cancellationToken)
-                        .ConfigureAwait(false);
+                    state = recorded.PreviousSupervisorProtocol is null
+                        ? await RestoreLegacyPredecessorAsync(state, recorded, previous, candidate, dataRoot, appRoot,
+                            request.TestMode, cancellationToken).ConfigureAwait(false)
+                        : await RollbackAsync(state, recorded, previous, candidate, dataRoot, appRoot, request.TestMode, cancellationToken)
+                            .ConfigureAwait(false);
                 else
                 {
                     try
@@ -174,6 +178,7 @@ internal static class NativeUpdateOperation
         return state.Phase switch
         {
             NativeUpdatePhase.Fenced or NativeUpdatePhase.Prepared => selected == authority.PreviousSelection,
+            NativeUpdatePhase.RollingBack => selected == state.Candidate.ArchiveSha256,
             NativeUpdatePhase.CandidateReady or NativeUpdatePhase.RestoringPredecessor =>
                 selected == authority.PreviousSelection || selected == state.Candidate.ArchiveSha256,
             _ => false,
@@ -196,12 +201,12 @@ internal static class NativeUpdateOperation
         }
         if (selected == candidate.ArchiveSha256 || state.Phase != NativeUpdatePhase.RestoringPredecessor)
         {
-            // The unfinished update still fences the candidate. Prove the old reader and drain before restoring original selection.
+            // The candidate is fenced. Prove the old reader and drain before restoring original selection.
             using var offline = AcquireOffline(testMode, dataRoot);
             if (NodeVersionSelection.Read(appRoot) != selected)
                 throw Refused("native_update_selection_changed");
             RequirePreviousFloor(dataRoot, authority, online: false, requireDrain: true, verifyAuthority: true);
-            state = NativeUpdateGate.BeginPrecompletionRestore(dataRoot, state.OperationId);
+            state = NativeUpdateGate.BeginPreviousOwnerRestore(dataRoot, state.OperationId);
             if (selected == candidate.ArchiveSha256)
                 NodeVersionSelection.Select(appRoot, selected, previous.ArchiveSha256);
         }
@@ -325,12 +330,6 @@ internal static class NativeUpdateOperation
         report["restoreIncludes"] = "store_database_owner_epoch_and_command_authority";
         report["activationRequires"] = "retire_original_runtime_custody_and_reconcile_private_workspace_data";
         return new(report);
-    }
-
-    private static void RequireParticipatingPredecessor(NativeUpdateAuthority authority)
-    {
-        if (authority.PreviousSupervisorProtocol is null)
-            throw Refused("native_update_predecessor_fence_unavailable_use_verified_restore");
     }
 
     private static JsonObject ObserveRefusal(string dataRoot, string appRoot)
