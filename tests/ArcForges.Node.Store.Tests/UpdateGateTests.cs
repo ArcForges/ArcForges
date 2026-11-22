@@ -21,7 +21,8 @@ public sealed class UpdateGateTests
         using (var fresh = NativeUpdateGate.TryEnterFreshStart(root.Path))
         {
             Assert.NotNull(fresh);
-            Assert.Null(NativeUpdateGate.TryEnterFreshStart(root.Path));
+            Assert.Null(NativeUpdateGate.TryEnterFreshStart(root.Path, out bool contestedFence));
+            Assert.False(contestedFence);
             Assert.ThrowsAny<IOException>(() => NativeUpdateGate.Begin(root.Path, operation, previous, candidate));
             Assert.False(File.Exists(Path.Combine(root.Path, "native-update.json")));
         }
@@ -29,7 +30,8 @@ public sealed class UpdateGateTests
         Assert.Null(NativeUpdateGate.Read(root.Path));
         var fenced = NativeUpdateGate.Begin(root.Path, operation, previous, candidate);
         Assert.Equal(fenced, NativeUpdateGate.Read(root.Path));
-        Assert.Null(NativeUpdateGate.TryEnterFreshStart(root.Path));
+        Assert.Null(NativeUpdateGate.TryEnterFreshStart(root.Path, out bool confirmedFence));
+        Assert.True(confirmedFence);
     }
 
     [Fact]
@@ -110,7 +112,8 @@ public sealed class UpdateGateTests
             Assert.NotNull(fresh);
 
         File.WriteAllText(Path.Combine(root.Path, "native-update.json"), "{\"format\":1,\"phase\":4}");
-        Assert.Null(NativeUpdateGate.TryEnterFreshStart(root.Path));
+        Assert.Null(NativeUpdateGate.TryEnterFreshStart(root.Path, out bool invalidFence));
+        Assert.False(invalidFence);
         Assert.Throws<StoreIncompatibleException>(() => NativeUpdateGate.Begin(root.Path, Guid.NewGuid(), previous, candidate));
     }
 
