@@ -189,6 +189,12 @@ internal sealed partial class SandboxManager
             return ResolveRunMutation(Receipts.Admit(intent), meta, request.OwnerEpoch);
         }
 
+        using var updateAdmission = NativeUpdateGate.TryEnterFreshStart(_dataRoot);
+        if (updateAdmission is null)
+        {
+            return RunFailure(Error(meta, ErrorCategory.State, "busy", "node_update_in_progress"));
+        }
+
         var row = _store.Read(reader => SandboxRecords.Get(reader, OwnerId, sandboxId));
         if (row is null)
         {
