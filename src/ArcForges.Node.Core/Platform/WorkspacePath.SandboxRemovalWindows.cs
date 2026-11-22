@@ -274,11 +274,14 @@ internal sealed partial class WorkspacePath
                     ObjectName = (nint)(&unicode),
                     Attributes = (caseFlags & 1) == 0 ? 0x40u : 0u,
                 };
-                // A fresh directory disposition lease needs metadata and DELETE rights, not enumeration access.
-                uint access = dispositionOnly ? 0x00130080u : SandboxRemovalDeleteAccess | (flushAccess ? 0x40000000u : 0u);
+                // Traversal pins its directory without delete access. Mutation uses a separate exclusive lease.
+                bool traversal = expected.IsDirectory && !flushAccess && !dispositionOnly;
+                uint access = traversal ? 0x00120081u : dispositionOnly ? 0x00130080u
+                    : SandboxRemovalDeleteAccess | (flushAccess ? 0x40000000u : 0u);
+                uint sharing = traversal ? 1u : 0u; // FILE_SHARE_READ only; writing and replacement remain excluded.
                 uint options = 0x00200020u | (expected.IsDirectory ? 1u : 0x40u) | (flushAccess ? 2u : 0u);
                 RequireWindowsSandboxDataStatus(NtCreateFile(out var raw, access, ref attributes, out _, 0,
-                    0, 0, 1, options, 0, 0));
+                    0, sharing, 1, options, 0, 0));
                 var opened = new SafeFileHandle(raw, ownsHandle: true);
                 try
                 {
