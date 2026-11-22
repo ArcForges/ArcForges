@@ -97,6 +97,29 @@ internal static partial class ContractionPaths
     }
 
     [SupportedOSPlatform("linux")]
+    internal static void RequireTrustedLinuxTool(string path)
+    {
+        string full = Normalize(path);
+        using var held = WalkDirectories(Parent(full), allowMissing: false);
+        foreach (var directory in held.Entries)
+            RequireProtectedLinuxObject(directory.Handle, LinuxDirectory, directory.Mount);
+
+        using var tool = OpenLinux(held.Last.Handle, Path.GetFileName(full), LinuxPathOnly | s_linuxNoFollow)!;
+        RequireProtectedLinuxObject(tool, LinuxRegular, held.Last.Mount);
+    }
+
+    private static void RequireProtectedLinuxObject(SafeFileHandle handle, ushort type, ulong mount)
+    {
+        const uint mask = LinuxStatMask | 2; // STATX_MODE
+        const UnixFileMode write = UnixFileMode.GroupWrite | UnixFileMode.OtherWrite;
+        const UnixFileMode execute = UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute;
+        if (Statx(handle.DangerousGetHandle().ToInt32(), "", 0x1100, mask, out var status) != 0 ||
+            (status.Mask & mask) != mask || (status.Mode & 0xF000) != type || status.Owner != 0 ||
+            status.MountId != mount || ((UnixFileMode)status.Mode & write) != 0 || ((UnixFileMode)status.Mode & execute) == 0)
+            throw Refused("update_system_tool_unconfirmed");
+    }
+
+    [SupportedOSPlatform("linux")]
     internal static void RequireExclusiveLock(SafeFileHandle handle)
     {
         const int lockExclusiveNonBlocking = 2 | 4;

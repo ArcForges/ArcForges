@@ -14,6 +14,7 @@ internal static class NodeUpdateSystemdHandoff
 {
     private const string Systemctl = "/usr/bin/systemctl";
     private const string Busctl = "/usr/bin/busctl";
+    private const string Test = "/usr/bin/test";
     private const string Marker = ".native-update-systemd-block";
     private const string DropIn = "90-arcforges-native-update.conf";
     private const string UnitService = "org.freedesktop.systemd1";
@@ -29,14 +30,7 @@ internal static class NodeUpdateSystemdHandoff
         if (existing is not null && !existing.AsSpan().SequenceEqual(OperationBytes(operationId)))
             throw Refused("marker_owner_changed");
 
-        bool loaded = await RequireEffectiveUnitAsync(location, guardRequired: false, ct).ConfigureAwait(false);
-        using var unitFolder = new ContractionPaths.UpdateDirectory(location.UnitFolder);
-        using var dropIns = unitFolder.EnsurePrivateSubdirectory(location.Unit + ".d");
-        var guard = Encoding.UTF8.GetBytes("[Unit]\nConditionPathExists=!" + location.MarkerPath + "\n");
-        InstallExactFile(dropIns, DropIn, guard);
-        if (!loaded)
-            _ = await ManagerAsync(Systemctl, ["daemon-reload"], ct).ConfigureAwait(false);
-        await RequireEffectiveUnitAsync(location, guardRequired: true, ct).ConfigureAwait(false);
+        await EnsureRestartGuardAsync(location, armed: existing is not null, ct).ConfigureAwait(false);
         InstallExactFile(app, Marker, OperationBytes(operationId));
     }
 
@@ -46,7 +40,9 @@ internal static class NodeUpdateSystemdHandoff
         using var app = new ContractionPaths.UpdateDirectory(appRoot);
         if (ReadOwned(app, Marker) is not { } marker || !marker.AsSpan().SequenceEqual(OperationBytes(operationId)))
             throw Refused("marker_owner_unconfirmed");
-        await RequireEffectiveUnitAsync(location, guardRequired: true, ct).ConfigureAwait(false);
+        await EnsureRestartGuardAsync(location, armed: true, ct).ConfigureAwait(false);
+        if (ReadOwned(app, Marker) is not { } current || !current.AsSpan().SequenceEqual(marker))
+            throw Refused("marker_owner_changed");
     }
 
     internal static async Task ReleaseAsync(string appRoot, Guid operationId, bool testMode, CancellationToken ct)
@@ -62,11 +58,25 @@ internal static class NodeUpdateSystemdHandoff
         if (!marker.AsSpan().SequenceEqual(OperationBytes(operationId)))
             throw Refused("marker_owner_changed");
 
-        await RequireEffectiveUnitAsync(location, guardRequired: true, ct).ConfigureAwait(false);
+        await EnsureRestartGuardAsync(location, armed: true, ct).ConfigureAwait(false);
         if (ReadOwned(app, Marker) is not { } current || !current.AsSpan().SequenceEqual(OperationBytes(operationId)))
             throw Refused("marker_owner_changed");
         app.DeleteTemporary(Marker);
         app.SynchronizeDirectory();
+    }
+
+    private static async Task EnsureRestartGuardAsync(Location location, bool armed, CancellationToken ct)
+    {
+        if (await RequireEffectiveUnitAsync(location, guardRequired: false, ct).ConfigureAwait(false))
+            return;
+
+        using var unitFolder = new ContractionPaths.UpdateDirectory(location.UnitFolder);
+        using var dropIns = armed
+            ? new ContractionPaths.UpdateDirectory(Path.GetDirectoryName(location.ExpectedDropIn)!)
+            : unitFolder.EnsurePrivateSubdirectory(location.Unit + ".d");
+        InstallExactFile(dropIns, DropIn, GuardBytes(location), LegacyGuardBytes(location), mustExist: armed);
+        _ = await ManagerAsync(Systemctl, ["daemon-reload"], ct).ConfigureAwait(false);
+        await RequireEffectiveUnitAsync(location, guardRequired: true, ct).ConfigureAwait(false);
     }
 
     private sealed record Location(string Unit, string UnitFolder, string MarkerPath, string BusPath, string[] Command)
@@ -107,10 +117,11 @@ internal static class NodeUpdateSystemdHandoff
     {
         var metadata = (await ManagerAsync(Systemctl, ["show", "--property=Id,FragmentPath,LoadState,NeedDaemonReload", "--", location.Unit], ct)
             .ConfigureAwait(false)).Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        bool reloadNeeded = !metadata.Contains("NeedDaemonReload=no", StringComparer.Ordinal);
         if (!metadata.Contains("Id=" + location.Unit, StringComparer.Ordinal) ||
             !metadata.Contains("FragmentPath=" + location.Fragment, StringComparer.Ordinal) ||
             !metadata.Contains("LoadState=loaded", StringComparer.Ordinal) ||
-            guardRequired && !metadata.Contains("NeedDaemonReload=no", StringComparer.Ordinal))
+            guardRequired && reloadNeeded)
             throw Refused("unit_fragment_unconfirmed");
 
         using var unit = new ContractionPaths.UpdateDirectory(location.UnitFolder);
@@ -124,11 +135,13 @@ internal static class NodeUpdateSystemdHandoff
         var conditions = await PropertyAsync(location, UnitInterface, "Conditions", "a(sbbsi)", ct).ConfigureAwait(false);
         if (guarded ? !HasExactCondition(conditions, location.MarkerPath) : conditions.GetArrayLength() != 0)
             throw Refused("unit_condition_unconfirmed");
+        bool currentGuard = false;
         if (guarded)
         {
             using var folder = new ContractionPaths.UpdateDirectory(Path.GetDirectoryName(location.ExpectedDropIn)!);
-            var expected = Encoding.UTF8.GetBytes("[Unit]\nConditionPathExists=!" + location.MarkerPath + "\n");
-            if (ReadOwned(folder, DropIn) is not { } bytes || !bytes.AsSpan().SequenceEqual(expected))
+            var installedGuard = ReadOwned(folder, DropIn) ?? throw Refused("unit_dropin_bytes_changed");
+            currentGuard = installedGuard.AsSpan().SequenceEqual(GuardBytes(location));
+            if (!currentGuard && (guardRequired || !installedGuard.AsSpan().SequenceEqual(LegacyGuardBytes(location))))
                 throw Refused("unit_dropin_bytes_changed");
         }
 
@@ -138,17 +151,36 @@ internal static class NodeUpdateSystemdHandoff
             !command[0][1].EnumerateArray().Select(value => value.GetString()).SequenceEqual(location.Command) || command[0][2].GetBoolean())
             throw Refused("unit_exec_start_unconfirmed");
 
-        foreach (string hook in new[] { "ExecCondition", "ExecStartPre", "ExecStartPost", "ExecStop", "ExecStopPost", "ExecReload" })
+        // Unit Conditions may be skipped by automatic restart in the activating state.
+        var execCondition = await PropertyAsync(location, ServiceInterface, "ExecConditionEx", "a(sasasttttuii)", ct).ConfigureAwait(false);
+        bool restartGuard = guarded && HasExactExecCondition(execCondition, location.MarkerPath);
+        if (guardRequired ? !restartGuard : !restartGuard && execCondition.GetArrayLength() != 0)
+            throw Refused("unit_exec_condition_unconfirmed");
+
+        var success = await PropertyAsync(location, ServiceInterface, "SuccessExitStatus", "(aiai)", ct).ConfigureAwait(false);
+        if (success.GetArrayLength() != 2 || success[0].ValueKind != JsonValueKind.Array || success[1].ValueKind != JsonValueKind.Array ||
+            success[0].EnumerateArray().Any(value => value.GetInt32() != 75) || success[1].GetArrayLength() != 0)
+            throw Refused("unit_exec_condition_exit_unconfirmed");
+
+        foreach (string hook in new[] { "ExecStartPre", "ExecStartPost", "ExecStop", "ExecStopPost", "ExecReload" })
         {
             if ((await PropertyAsync(location, ServiceInterface, hook, commandType, ct).ConfigureAwait(false)).GetArrayLength() != 0)
                 throw Refused("unit_start_hook_unconfirmed");
         }
-        return guarded;
+        ContractionPaths.RequireTrustedLinuxTool(Test);
+        if (restartGuard && currentGuard && reloadNeeded)
+            throw Refused("unit_fragment_unconfirmed");
+        return restartGuard && currentGuard;
     }
 
     private static bool HasExactCondition(JsonElement conditions, string marker) => conditions.GetArrayLength() == 1 &&
         conditions[0].GetArrayLength() == 5 && conditions[0][0].GetString() == "ConditionPathExists" &&
         !conditions[0][1].GetBoolean() && conditions[0][2].GetBoolean() && conditions[0][3].GetString() == marker;
+
+    private static bool HasExactExecCondition(JsonElement conditions, string marker) => conditions.GetArrayLength() == 1 &&
+        conditions[0].GetArrayLength() == 10 && conditions[0][0].GetString() == Test &&
+        conditions[0][1].EnumerateArray().Select(value => value.GetString()).SequenceEqual(new[] { Test, "!", "-e", marker }) &&
+        conditions[0][2].GetArrayLength() == 1 && conditions[0][2][0].GetString() == "no-env-expand";
 
     private static async Task<JsonElement> PropertyAsync(Location location, string contract, string property, string type, CancellationToken ct)
     {
@@ -229,15 +261,22 @@ internal static class NodeUpdateSystemdHandoff
             throw Refused("guard_file_owner_unconfirmed");
     }
 
-    private static void InstallExactFile(ContractionPaths.UpdateDirectory directory, string name, byte[] contents)
+    private static void InstallExactFile(ContractionPaths.UpdateDirectory directory, string name, byte[] contents,
+        byte[]? previous = null, bool mustExist = false)
     {
-        if (ReadOwned(directory, name) is { } existing)
+        var existing = ReadOwned(directory, name);
+        if (existing is null && mustExist)
+            throw Refused("guard_file_missing");
+        if (existing is not null)
         {
-            if (!existing.AsSpan().SequenceEqual(contents))
+            if (existing.AsSpan().SequenceEqual(contents))
+            {
+                directory.SynchronizeFile(name);
+                directory.SynchronizeDirectory();
+                return;
+            }
+            if (previous is null || !existing.AsSpan().SequenceEqual(previous))
                 throw Refused("guard_file_changed");
-            directory.SynchronizeFile(name);
-            directory.SynchronizeDirectory();
-            return;
         }
 
         string temporary = ".update-" + Guid.NewGuid().ToString("N") + ".partial";
@@ -248,13 +287,23 @@ internal static class NodeUpdateSystemdHandoff
                 file.Write(contents);
                 file.Flush(flushToDisk: true);
             }
-            directory.PublishNew(temporary, name);
+            if (existing is null)
+                directory.PublishNew(temporary, name);
+            else
+                directory.Replace(temporary, name);
         }
         finally
         {
             directory.DeleteTemporary(temporary);
         }
     }
+
+    private static string LegacyGuard(Location location) => "[Unit]\nConditionPathExists=!" + location.MarkerPath + "\n";
+
+    private static byte[] LegacyGuardBytes(Location location) => Encoding.UTF8.GetBytes(LegacyGuard(location));
+
+    private static byte[] GuardBytes(Location location) => Encoding.UTF8.GetBytes(
+        LegacyGuard(location) + "[Service]\nExecCondition=:" + Test + " ! -e \"" + location.MarkerPath + "\"\n");
 
     private static byte[] OperationBytes(Guid operationId)
     {
