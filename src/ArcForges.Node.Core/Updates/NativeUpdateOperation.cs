@@ -224,6 +224,7 @@ internal static class NativeUpdateOperation
                 state = NativeUpdateGate.BeginPreviousOwnerRestore(dataRoot, state.OperationId);
                 await ReleaseSystemdHandoffAsync(appRoot, state.OperationId, testMode, ct).ConfigureAwait(false);
                 var restored = await RequireReadyAsync(existing, state, previous, process, ct).ConfigureAwait(false);
+                NodeUpdateInstallationCustody.FinishRestoredMode(appRoot, previous);
                 return NativeUpdateGate.MarkRolledBack(dataRoot, state.OperationId, restored);
             }
         }
@@ -264,6 +265,7 @@ internal static class NativeUpdateOperation
             throw Refused("native_update_selection_changed");
         RequirePreviousFloor(dataRoot, authority, online: true);
         NodeUpdateLauncher.RebindWindowsStartup(candidate, previous, testMode);
+        NodeUpdateInstallationCustody.FinishRestoredMode(appRoot, previous);
         return NativeUpdateGate.MarkRolledBack(dataRoot, state.OperationId, proof);
     }
 
