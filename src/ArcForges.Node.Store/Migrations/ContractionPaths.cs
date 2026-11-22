@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Globalization;
 using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using Microsoft.Win32.SafeHandles;
 
 namespace ArcForges.Node.Store.Migrations;
@@ -91,6 +94,60 @@ internal static partial class ContractionPaths
     internal static void RequireDirectoryChain(string path)
     {
         using var held = WalkDirectories(Normalize(path), allowMissing: false);
+    }
+
+    internal static void RequireOwnedDirectory(string path)
+    {
+        string full = Normalize(path);
+        using var held = WalkDirectories(full, allowMissing: false);
+        if (OperatingSystem.IsWindows())
+        {
+            RequireWindowsDirectoryOwner(full);
+        }
+        else if (OperatingSystem.IsLinux())
+        {
+            int descriptor = held.Last.Handle.DangerousGetHandle().ToInt32();
+            if (Statx(descriptor, "", 0x1100, LinuxStatMask, out var status) != 0 ||
+                (status.Mask & LinuxStatMask) != LinuxStatMask || status.Owner != GetEffectiveUid() ||
+                ((UnixFileMode)status.Mode & (UnixFileMode.GroupWrite | UnixFileMode.OtherWrite)) != 0)
+                throw Refused("source_directory_owner_unconfirmed");
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void RequireWindowsDirectoryOwner(string path)
+    {
+        using var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+        var security = new DirectoryInfo(path).GetAccessControl(AccessControlSections.Owner | AccessControlSections.Access);
+        if (identity.User is not { } owner || !owner.Equals(security.GetOwner(typeof(SecurityIdentifier))))
+            throw Refused("source_directory_owner_unconfirmed");
+
+        const FileSystemRights write = FileSystemRights.Write | FileSystemRights.Delete | FileSystemRights.DeleteSubdirectoriesAndFiles
+            | FileSystemRights.ChangePermissions | FileSystemRights.TakeOwnership;
+        foreach (FileSystemAccessRule rule in security.GetAccessRules(includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier)))
+        {
+            if (rule.AccessControlType == AccessControlType.Allow && (rule.FileSystemRights & write) != 0 &&
+                rule.IdentityReference is SecurityIdentifier sid && !owner.Equals(sid) &&
+                !sid.IsWellKnown(WellKnownSidType.LocalSystemSid) && !sid.IsWellKnown(WellKnownSidType.BuiltinAdministratorsSid))
+                throw Refused("source_directory_write_authority_unconfirmed");
+        }
+    }
+
+    internal static void ReplaceSiblingFileDurably(string temporary, string destination)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            if (!MoveFile(temporary, destination, 0x1 | 0x8)) // MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH
+                throw Refused("update_marker_publish_unconfirmed");
+            return;
+        }
+
+        string parent = Parent(destination);
+        using var held = WalkDirectories(Normalize(parent), allowMissing: false);
+        using var sync = OpenLinux(held.Last.Handle, ".", s_linuxDirectory | s_linuxNoFollow)!;
+        File.Move(temporary, destination, overwrite: true);
+        if (Sync(sync.DangerousGetHandle().ToInt32()) != 0)
+            throw Refused("update_marker_publish_unconfirmed");
     }
 
     internal static void RequireSeparateRoots(string original, string backup, string staging, bool allowMissingBackup = false)
@@ -371,8 +428,15 @@ internal static partial class ContractionPaths
     [LibraryImport("libc", EntryPoint = "geteuid")]
     private static partial uint GetEffectiveUid();
 
+    [LibraryImport("libc", EntryPoint = "fsync", SetLastError = true)]
+    private static partial int Sync(int descriptor);
+
     [LibraryImport("kernel32.dll", EntryPoint = "CreateFileW", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
     private static partial SafeFileHandle CreateFile(string name, uint access, uint share, nint security, uint disposition, uint flags, nint template);
+
+    [LibraryImport("kernel32.dll", EntryPoint = "MoveFileExW", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool MoveFile(string existing, string destination, uint flags);
 
     [LibraryImport("kernel32.dll")]
     private static partial uint GetFileType(SafeFileHandle file);
