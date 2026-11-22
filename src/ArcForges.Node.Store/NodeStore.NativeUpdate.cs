@@ -12,7 +12,7 @@ internal sealed record NativeUpdateStoreFloor(int Schema, int MinimumReader);
 public sealed partial class NodeStore
 {
     internal static NativeUpdateStoreFloor InspectNativeUpdateFloor(string dataRoot, bool onlineObservation = false, bool requireDrained = false,
-        NativeUpdateCheckpoint? expectedBindings = null, string? ownerEpoch = null)
+        NativeUpdateCheckpoint? expectedBindings = null, string? ownerEpoch = null, NativeUpdateAuthority? previousAuthority = null)
     {
         DurableCommandStore.VerifyRestorePublication(dataRoot);
         SQLitePCL.Batteries_V2.Init();
@@ -24,7 +24,7 @@ public sealed partial class NodeStore
 
         var identity = ContractionPaths.NamedRegularIdentity(database);
         var existing = InspectRuntimeStore(database, StoreMigrations.Released, allowWindowsSharing: onlineObservation, requireStableCopy: onlineObservation, requireDrained: requireDrained,
-            expectedBindings: expectedBindings, updateOwnerEpoch: ownerEpoch);
+            expectedBindings: expectedBindings, updateOwnerEpoch: ownerEpoch, previousAuthority: previousAuthority);
         if (existing is null || identity != ContractionPaths.NamedRegularIdentity(database))
             throw new StoreIncompatibleException("native_update_store_identity_unconfirmed");
         return new(existing.SchemaVersion, existing.MinReaderVersion);
@@ -80,6 +80,16 @@ public sealed partial class NodeStore
             throw new StoreIncompatibleException("native_update_original_run_binding_invalid");
         string binding = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\0', tuple))));
         return new(run.RunId, run.Epoch, run.LaunchSha256, binding, recovery.Generation);
+    }
+
+    private static void VerifyNativeUpdateSourceAuthority(SqliteConnection connection, NativeUpdateAuthority authority)
+    {
+        var reader = new StoreReader(connection, null, TimeProvider.System);
+        if (reader.Scalar("SELECT node_id FROM store_meta WHERE singleton=1;") is not byte[] { Length: 16 } nodeId ||
+            Convert.ToHexStringLower(nodeId) != authority.NodeId ||
+            !Equals(reader.Scalar("SELECT count(*) FROM owner_epoch WHERE owner_epoch=$epoch AND state='ACTIVE';",
+                ("$epoch", Convert.FromHexString(authority.OwnerEpoch))), 1L))
+            throw new DurableStoreMaintenanceException();
     }
 
     private static void VerifyNativeUpdateRunBindings(SqliteConnection connection, NativeUpdateCheckpoint checkpoint, string ownerEpoch)

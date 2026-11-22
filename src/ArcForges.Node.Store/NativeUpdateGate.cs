@@ -72,6 +72,16 @@ internal static class NativeUpdateGate
         return ReadHeld(lease.Directory);
     }
 
+    internal static bool IsUnchangedUnfenced(string dataRoot, NativeUpdateState? expected)
+    {
+        var current = Read(dataRoot);
+        if (current is null || expected is null)
+            return current is null && expected is null;
+        return !current.IsFenced && !expected.IsFenced &&
+            JsonSerializer.SerializeToUtf8Bytes(current, NativeUpdateJsonContext.Default.NativeUpdateState).AsSpan()
+                .SequenceEqual(JsonSerializer.SerializeToUtf8Bytes(expected, NativeUpdateJsonContext.Default.NativeUpdateState));
+    }
+
     internal static NativeUpdateState Begin(string dataRoot, Guid operationId, NativeUpdateCohort previous, NativeUpdateCohort candidate,
         NativeUpdateAuthority? authority = null)
     {

@@ -69,22 +69,20 @@ internal static class NativeUpdateOperation
                 if (proposed.RuntimeSchema != floor.Schema)
                     throw Refused("native_update_store_requires_prepared_offline_migration");
 
-                // A prior binary without this gate can serve until its verified process has completely exited.
-                // Take the offline Node lease before publishing that predecessor's fence.
                 var authority = new NativeUpdateAuthority(owner.NodeId, owner.OwnerEpoch, priorSelection, floor.Schema, floor.MinimumReader,
                     prior?.SupervisorProtocol);
-                if (prior?.SupervisorProtocol != proposed.SupervisorProtocol)
-                    await ConfirmPredecessorDrainAsync(session, cancellationToken).ConfigureAwait(false);
-
                 if (prior is null)
                 {
-                    await NodeUpdateLauncher.StopBoundAsync(session, process, cancellationToken).ConfigureAwait(false);
-                    using var offline = AcquireOffline(request.TestMode, dataRoot);
-                    RequirePreviousFloor(dataRoot, authority, online: false, requireDrain: true);
-                    state = NativeUpdateGate.Begin(dataRoot, Guid.NewGuid(), Cohort(previous), Cohort(candidate), authority);
+                    var legacy = await FenceLegacyPredecessorAsync(session, process, state, authority, previous, candidate, dataRoot,
+                        appRoot, request.TestMode, cancellationToken).ConfigureAwait(false);
+                    if (legacy.Refusal is { } refusal)
+                        return refusal;
+                    state = legacy.State;
                 }
                 else
                 {
+                    if (prior.SupervisorProtocol != proposed.SupervisorProtocol)
+                        await ConfirmPredecessorDrainAsync(session, cancellationToken).ConfigureAwait(false);
                     state = NativeUpdateGate.Begin(dataRoot, Guid.NewGuid(), Cohort(previous), Cohort(candidate), authority);
                 }
             }
@@ -149,6 +147,80 @@ internal static class NativeUpdateOperation
         {
             return new(ObserveRefusal(dataRoot, appRoot), Reason(error));
         }
+    }
+
+    private static async Task<(NativeUpdateState? State, NodeUpdateResponse? Refusal)> FenceLegacyPredecessorAsync(
+        NodeSession session, Process process, NativeUpdateState? before, NativeUpdateAuthority authority,
+        NodeUpdateInstallation previous, NodeUpdateInstallation candidate, string dataRoot, string appRoot, bool testMode,
+        CancellationToken ct)
+    {
+        try
+        {
+            // Ask the authenticated V2 control plane to prove native drain while the original owner can still stop Runs.
+            await ConfirmPredecessorDrainAsync(session, ct).ConfigureAwait(false);
+        }
+        catch (Exception failure) when (IsOperatorFailure(failure))
+        {
+            var refused = Report(before, authority.PreviousSelection);
+            if (!process.HasExited)
+                refused["predecessorProcessId"] = process.Id;
+            return (null, new(refused, Reason(failure), EffectCertainty.DidNotHappen));
+        }
+
+        await NodeUpdateLauncher.StopBoundAsync(session, process, ct).ConfigureAwait(false);
+        using (AcquireOffline(testMode, dataRoot))
+        {
+            RequireUnchangedPredecessor(dataRoot, appRoot, before, authority.PreviousSelection);
+            if (LegacyPredecessorIsDrained(dataRoot, authority))
+                return (NativeUpdateGate.Begin(dataRoot, Guid.NewGuid(), Cohort(previous), Cohort(candidate), authority), null);
+        }
+
+        // The old binary could admit a Start before it exited. Keep that Run drainable under the unchanged original owner.
+        var report = Report(before, authority.PreviousSelection);
+        if (authority.PreviousSelection != previous.ArchiveSha256)
+        {
+            report["predecessorRecovery"] = "start_original_custody_to_drain";
+            return (null, new(report, "native_update_supervisor_drain_required"));
+        }
+
+        VerifyCohort(appRoot, previous, ct);
+        RequireUnchangedPredecessor(dataRoot, appRoot, before, authority.PreviousSelection);
+        await using var existing = await TryConnectAsync(testMode, ct).ConfigureAwait(false);
+        var started = existing is null ? NodeUpdateLauncher.StartManagedService(testMode) : null;
+        if (started is { Outcome: not AutoStartOutcome.Started })
+            throw Refused("native_update_supervisor_drain_required; native_update_predecessor_restart_unconfirmed");
+
+        await using var recovered = await NodeUpdateLauncher.WaitForBoundReadyAsync(previous, testMode, expectedPid: null, ct).ConfigureAwait(false);
+        using var recoveredProcess = NodeUpdateLauncher.ReadBoundProcess(recovered, previous, expectedPid: null, allowVerifiedCopy: false);
+        await NodeUpdateLauncher.RequireManagedProcessAsync(previous, recoveredProcess, started, testMode, ct).ConfigureAwait(false);
+        var live = await ReadAuthorityAsync(recovered, ct).ConfigureAwait(false);
+        if (live.NodeId != authority.NodeId || live.OwnerEpoch != authority.OwnerEpoch)
+            throw Refused("native_update_predecessor_restart_owner_changed");
+        RequireUnchangedPredecessor(dataRoot, appRoot, before, authority.PreviousSelection);
+        report["predecessorRecovery"] = "verified_original_owner_ready_to_drain";
+        report["predecessorProcessId"] = recoveredProcess.Id;
+        return (null, new(report, "native_update_supervisor_drain_required"));
+    }
+
+    private static bool LegacyPredecessorIsDrained(string dataRoot, NativeUpdateAuthority authority)
+    {
+        try
+        {
+            RequirePreviousFloor(dataRoot, authority, online: false, requireDrain: true, verifyAuthority: true);
+            return true;
+        }
+        catch (StoreIncompatibleException failure) when (failure.Message == "native_update_supervisor_drain_required")
+        {
+            // The drain predicate failed before the authority query. Verify identity without requiring a stopped Run.
+            RequirePreviousFloor(dataRoot, authority, online: false, verifyAuthority: true);
+            return false;
+        }
+    }
+
+    private static void RequireUnchangedPredecessor(string dataRoot, string appRoot, NativeUpdateState? expected, string? expectedSelection)
+    {
+        if (!NativeUpdateGate.IsUnchangedUnfenced(dataRoot, expected) || NodeVersionSelection.Read(appRoot) != expectedSelection)
+            throw Refused("native_update_predecessor_custody_changed");
     }
 
     private static NodeUpdateResponse Restore(NativeUpdateState state, NodeUpdateRequest request, string dataRoot, string appRoot)
@@ -300,10 +372,12 @@ internal static class NativeUpdateOperation
         NativeUpdateGate.RequireCompatibleReader(floor.Schema, floor.MinimumReader, checkpoint.CandidateReader);
     }
 
-    private static void RequirePreviousFloor(string dataRoot, NativeUpdateAuthority authority, bool online, bool requireDrain = false)
+    private static void RequirePreviousFloor(string dataRoot, NativeUpdateAuthority authority, bool online, bool requireDrain = false,
+        bool verifyAuthority = false)
     {
         // The authenticated predecessor served this exact floor. A changed floor needs the separate verified restore flow.
-        var floor = NodeStore.InspectNativeUpdateFloor(dataRoot, onlineObservation: online, requireDrained: requireDrain);
+        var floor = NodeStore.InspectNativeUpdateFloor(dataRoot, onlineObservation: online, requireDrained: requireDrain,
+            previousAuthority: verifyAuthority ? authority : null);
         if (floor.Schema != authority.PreviousSchema || floor.MinimumReader != authority.PreviousMinimumReader)
             throw Refused("native_update_rollback_store_incompatible_restore_requires_latest_owner_history");
     }

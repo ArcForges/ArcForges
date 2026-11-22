@@ -25,8 +25,11 @@ public sealed class UpdateGateTests
             Assert.False(File.Exists(Path.Combine(root.Path, "native-update.json")));
         }
 
+        Assert.True(NativeUpdateGate.IsUnchangedUnfenced(root.Path, expected: null));
         var fenced = NativeUpdateGate.Begin(root.Path, operation, previous, candidate);
         Assert.Equal(fenced, NativeUpdateGate.Read(root.Path));
+        Assert.False(NativeUpdateGate.IsUnchangedUnfenced(root.Path, expected: null));
+        Assert.False(NativeUpdateGate.IsUnchangedUnfenced(root.Path, fenced));
         Assert.Null(NativeUpdateGate.TryEnterFreshStart(root.Path));
     }
 
@@ -54,6 +57,8 @@ public sealed class UpdateGateTests
 
         var completed = NativeUpdateGate.Complete(root.Path, operation);
         Assert.Equal(completed, NativeUpdateGate.Read(root.Path));
+        Assert.True(NativeUpdateGate.IsUnchangedUnfenced(root.Path, completed));
+        Assert.False(NativeUpdateGate.IsUnchangedUnfenced(root.Path, completed with { OperationId = Guid.NewGuid() }));
         Assert.Equal(completed, NativeUpdateGate.Complete(root.Path, operation));
         Assert.Throws<StoreIncompatibleException>(() => NativeUpdateGate.MarkRolledBack(root.Path, operation));
         using var fresh = NativeUpdateGate.TryEnterFreshStart(root.Path);
@@ -102,6 +107,11 @@ public sealed class UpdateGateTests
         byte[] original = File.ReadAllBytes(StorePaths.Database(dataRoot));
         var floor = NodeStore.InspectNativeUpdateFloor(dataRoot);
         Assert.Equal(new NativeUpdateStoreFloor(20, 20), floor);
+        Assert.Equal(floor, NodeStore.InspectNativeUpdateFloor(dataRoot, requireDrained: true, previousAuthority: authority));
+        Assert.Throws<DurableStoreMaintenanceException>(() => NodeStore.InspectNativeUpdateFloor(dataRoot,
+            previousAuthority: authority with { OwnerEpoch = new string('c', 32) }));
+        Assert.Throws<DurableStoreMaintenanceException>(() => NodeStore.InspectNativeUpdateFloor(dataRoot,
+            previousAuthority: authority with { NodeId = new string('c', 32) }));
         Assert.Equal(original, File.ReadAllBytes(StorePaths.Database(dataRoot)));
         Assert.Throws<StoreIncompatibleException>(() => NodeStore.CaptureNativeUpdateBackup(
             dataRoot, owner, boot, authority, Guid.NewGuid(), 19, compatibleSupervisors: false, testMode: true));

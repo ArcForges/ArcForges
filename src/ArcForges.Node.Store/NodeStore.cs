@@ -534,7 +534,7 @@ public sealed partial class NodeStore : IDisposable
 
     private static ExistingStore? InspectRuntimeStore(string path, MigrationPlan plan, bool allowWindowsSharing,
         bool requireStableCopy = false, bool requireDrained = false,
-        NativeUpdateCheckpoint? expectedBindings = null, string? updateOwnerEpoch = null)
+        NativeUpdateCheckpoint? expectedBindings = null, string? updateOwnerEpoch = null, NativeUpdateAuthority? previousAuthority = null)
     {
         string journal = path + "-journal";
         if (HasFileEntry(journal))
@@ -546,7 +546,7 @@ public sealed partial class NodeStore : IDisposable
         string wal = path + "-wal";
         bool hasWal = HasFileEntry(wal);
         if (!requireStableCopy && !sharedDatabase && !hasWal && ImmutableStoreUri(path) is { } uri)
-            return Inspect(path, uri, plan, requireV2Runtime: true, requireDrained, expectedBindings, updateOwnerEpoch);
+            return Inspect(path, uri, plan, requireV2Runtime: true, requireDrained, expectedBindings, updateOwnerEpoch, previousAuthority);
 
         bool sharedWal = false;
         using var originalWal = hasWal ? OpenInspectionInput(wal, allowWindowsSharing, out sharedWal) : null;
@@ -566,7 +566,7 @@ public sealed partial class NodeStore : IDisposable
                     CopyInspectionFile(originalWal, copy + "-wal");
             }
 
-            return Inspect(path, copy, plan, requireV2Runtime: true, requireDrained, expectedBindings, updateOwnerEpoch);
+            return Inspect(path, copy, plan, requireV2Runtime: true, requireDrained, expectedBindings, updateOwnerEpoch, previousAuthority);
         }
         finally
         {
@@ -687,7 +687,7 @@ public sealed partial class NodeStore : IDisposable
     }
 
     private static ExistingStore? Inspect(string path, string source, MigrationPlan plan, bool requireV2Runtime, bool requireDrained = false,
-        NativeUpdateCheckpoint? expectedBindings = null, string? updateOwnerEpoch = null)
+        NativeUpdateCheckpoint? expectedBindings = null, string? updateOwnerEpoch = null, NativeUpdateAuthority? previousAuthority = null)
     {
         using var connection = new SqliteConnection(StorePaths.ConnectionString(source, SqliteOpenMode.ReadOnly));
         connection.Open();
@@ -798,6 +798,9 @@ public sealed partial class NodeStore : IDisposable
                 SELECT EXISTS(SELECT 1 FROM run WHERE state NOT IN (5,6) OR ended_utc IS NULL OR coalesce(termination_reason,'')='');
                 """), 1L))
             throw new StoreIncompatibleException("native_update_supervisor_drain_required");
+
+        if (previousAuthority is not null)
+            VerifyNativeUpdateSourceAuthority(connection, previousAuthority);
 
         if (expectedBindings?.RetainedRuns is { Length: > 0 })
             VerifyNativeUpdateRunBindings(connection, expectedBindings, updateOwnerEpoch ?? throw new DurableStoreMaintenanceException());
