@@ -138,7 +138,7 @@ internal static class NodeUpdateSystemdHandoff
             !command[0][1].EnumerateArray().Select(value => value.GetString()).SequenceEqual(location.Command) || command[0][2].GetBoolean())
             throw Refused("unit_exec_start_unconfirmed");
 
-        foreach (string hook in new[] { "ExecCondition", "ExecStartPre", "ExecStartPost" })
+        foreach (string hook in new[] { "ExecCondition", "ExecStartPre", "ExecStartPost", "ExecStop", "ExecStopPost", "ExecReload" })
         {
             if ((await PropertyAsync(location, ServiceInterface, hook, commandType, ct).ConfigureAwait(false)).GetArrayLength() != 0)
                 throw Refused("unit_start_hook_unconfirmed");
