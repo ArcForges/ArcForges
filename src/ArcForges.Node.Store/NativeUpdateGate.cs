@@ -144,7 +144,7 @@ internal static class NativeUpdateGate
             (NativeUpdatePhase.Prepared or NativeUpdatePhase.CandidateReady, NativeUpdatePhase.CandidateReady) => true,
             (NativeUpdatePhase.CandidateReady, NativeUpdatePhase.Completed) => true,
             (NativeUpdatePhase.Fenced or NativeUpdatePhase.Prepared or NativeUpdatePhase.CandidateReady,
-                NativeUpdatePhase.RestoringPredecessor) when current.Authority?.PreviousSupervisorProtocol is null => true,
+                NativeUpdatePhase.RestoringPredecessor) when current.Authority is { PreviousSupervisorProtocol: null } => true,
             (_, NativeUpdatePhase.RollingBack) when current.Phase is not (NativeUpdatePhase.RolledBack or NativeUpdatePhase.RestoringPredecessor) => true,
             (_, NativeUpdatePhase.RolledBack) when current.IsFenced => true,
             _ => false,

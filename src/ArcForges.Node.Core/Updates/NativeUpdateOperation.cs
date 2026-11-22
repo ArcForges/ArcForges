@@ -191,8 +191,8 @@ internal static class NativeUpdateOperation
         if (selected == candidate.ArchiveSha256)
         {
             VerifyCohort(appRoot, candidate, ct);
-            await StopObservedAsync(previous, candidate, testMode, permitCandidate: true, allowPreviousCopy: false, ct,
-                requireDrain: true).ConfigureAwait(false);
+            await StopAfterDrainAsync(previous, candidate, authority, testMode, permitCandidate: true,
+                allowPreviousCopy: false, ct).ConfigureAwait(false);
         }
         if (selected == candidate.ArchiveSha256 || state.Phase != NativeUpdatePhase.RestoringPredecessor)
         {
