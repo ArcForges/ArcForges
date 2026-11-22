@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
@@ -116,7 +117,7 @@ internal sealed partial class WorkspacePath
         try
         {
             pending.Push(new(RootHandle, name, expected,
-                OpenWindowsSandboxRemovalLease(RootHandle, name, expected, owner, flushAccess: false, shareTraversalReads: false)));
+                OpenWindowsSandboxRemovalLease(RootHandle, name, expected, owner, flushAccess: false)));
             while (pending.TryPeek(out var current) && removed < maximumEntries)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -245,7 +246,7 @@ internal sealed partial class WorkspacePath
 
     [SupportedOSPlatform("windows")]
     private static unsafe SafeFileHandle OpenWindowsSandboxRemovalLease(SafeFileHandle parent, string name,
-        WorkspaceObjectIdentity expected, byte[] owner, bool flushAccess, bool dispositionOnly = false, bool shareTraversalReads = true)
+        WorkspaceObjectIdentity expected, byte[] owner, bool flushAccess, bool dispositionOnly = false)
     {
         var before = ReadWindowsSandboxRemovalName(parent, name);
         if (!MatchesWindowsSandboxRemovalIdentity(expected, before))
@@ -278,10 +279,9 @@ internal sealed partial class WorkspacePath
                 bool traversal = expected.IsDirectory && !flushAccess && !dispositionOnly;
                 uint access = traversal ? 0x00120081u : dispositionOnly ? 0x00130080u
                     : SandboxRemovalDeleteAccess | (flushAccess ? 0x40000000u : 0u);
-                uint sharing = traversal && shareTraversalReads ? 1u : 0u; // FILE_SHARE_READ; the selected root stays exclusive.
                 uint options = 0x00200020u | (expected.IsDirectory ? 1u : 0x40u) | (flushAccess ? 2u : 0u);
                 RequireWindowsSandboxDataStatus(NtCreateFile(out var raw, access, ref attributes, out _, 0,
-                    0, sharing, 1, options, 0, 0));
+                    0, 0, 1, options, 0, 0));
                 var opened = new SafeFileHandle(raw, ownsHandle: true);
                 try
                 {
@@ -332,7 +332,9 @@ internal sealed partial class WorkspacePath
         // The kernel accepts an ordinary directory only when empty. Close the marked handle before confirming absence.
         if (expected.IsDirectory)
         {
-            uint flags = 1; // FILE_DISPOSITION_DELETE
+            RequireWindowsSandboxDirectoryWithoutStreams(file);
+            cancellationToken.ThrowIfCancellationRequested();
+            uint flags = 7; // DELETE | POSIX_SEMANTICS | FORCE_IMAGE_SECTION_CHECK
             RequireWindowsSandboxDataStatus(SetRemovalInformation(file, out _, &flags, sizeof(uint), 64)); // FileDispositionInformationEx
         }
         else
@@ -342,6 +344,20 @@ internal sealed partial class WorkspacePath
         }
         applied();
     }
+
+    private static unsafe void RequireWindowsSandboxDirectoryWithoutStreams(SafeFileHandle directory)
+    {
+        byte* buffer = stackalloc byte[1024];
+        // FileStreamInfo reports ERROR_HANDLE_EOF only when the NTFS object has no data streams.
+        if (GetSandboxRemovalStreams(directory, 7, buffer, 1024) || Marshal.GetLastPInvokeError() != 38)
+        {
+            throw new WorkspacePathException("directory_streams_unconfirmed");
+        }
+    }
+
+    [LibraryImport("kernel32.dll", EntryPoint = "GetFileInformationByHandleEx", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static unsafe partial bool GetSandboxRemovalStreams(SafeFileHandle directory, int informationClass, byte* buffer, uint length);
 
     [SupportedOSPlatform("windows")]
     private static byte[] ReadWindowsSandboxRemovalOwner()
