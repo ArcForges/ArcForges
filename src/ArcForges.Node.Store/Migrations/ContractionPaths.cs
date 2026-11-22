@@ -162,8 +162,18 @@ internal static partial class ContractionPaths
             {
                 if (OperatingSystem.IsLinux())
                 {
+                    ulong? previousMount = null;
+                    bool privateTraversal = false;
                     foreach (var entry in _directories.Entries)
-                        VerifyLinuxDirectory(entry.Handle, leaf: !allowSharedStickyParent && entry == _directories.Last);
+                    {
+                        // A held owner-only ancestor blocks other principals from reaching its descendants.
+                        // A new mount can expose a different tree, so prove its ancestry independently.
+                        bool samePrivateMount = privateTraversal && previousMount == entry.Mount;
+                        bool ownerOnlyDirectory = VerifyLinuxDirectory(entry.Handle,
+                            leaf: !allowSharedStickyParent && entry == _directories.Last, samePrivateMount);
+                        privateTraversal = samePrivateMount || ownerOnlyDirectory;
+                        previousMount = entry.Mount;
+                    }
                 }
                 else if (OperatingSystem.IsWindows())
                     RequireWindowsDirectoryOwner(_full);
@@ -351,7 +361,7 @@ internal static partial class ContractionPaths
             }
         }
 
-        private static void VerifyLinuxDirectory(SafeFileHandle directory, bool leaf)
+        private static bool VerifyLinuxDirectory(SafeFileHandle directory, bool leaf, bool privateTraversal)
         {
             int descriptor = directory.DangerousGetHandle().ToInt32();
             const uint ownershipMask = LinuxStatMask | 2; // STATX_MODE
@@ -363,8 +373,11 @@ internal static partial class ContractionPaths
             var mode = (UnixFileMode)status.Mode;
             if ((status.Owner != owner && (leaf || status.Owner != 0)) ||
                 ((mode & (UnixFileMode.GroupWrite | UnixFileMode.OtherWrite)) != 0 &&
-                    (leaf || (mode & UnixFileMode.StickyBit) == 0)))
+                    (leaf || (!privateTraversal && (mode & UnixFileMode.StickyBit) == 0))))
                 throw Refused("update_directory_write_authority_unconfirmed");
+
+            // POSIX ACLs include their effective mask in the group mode bits.
+            return status.Owner == owner && (mode & (UnixFileMode.GroupExecute | UnixFileMode.OtherExecute)) == 0;
         }
     }
 

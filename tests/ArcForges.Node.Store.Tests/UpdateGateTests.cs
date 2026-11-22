@@ -224,7 +224,29 @@ public sealed class UpdateGateTests
             Assert.NotNull(initial);
         if (OperatingSystem.IsLinux())
         {
-            File.SetUnixFileMode(parent.Path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.GroupWrite);
+            const UnixFileMode privateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
+            const UnixFileMode cacheMode = privateMode | UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.GroupExecute
+                | UnixFileMode.OtherRead | UnixFileMode.OtherExecute;
+            string privateHome = Path.Combine(parent.Path, "private-home");
+            string cache = Path.Combine(privateHome, ".cache");
+            string cachedData = Path.Combine(cache, "data");
+            Directory.CreateDirectory(privateHome, privateMode);
+            Directory.CreateDirectory(cache, privateMode);
+            File.SetUnixFileMode(cache, cacheMode);
+            Directory.CreateDirectory(cachedData, privateMode);
+
+            using (var first = NativeUpdateGate.TryEnterFreshStart(cachedData))
+                Assert.NotNull(first);
+            using (var second = NativeUpdateGate.TryEnterFreshStart(cachedData))
+                Assert.NotNull(second);
+
+            string alias = Path.Combine(privateHome, "data-alias");
+            Directory.CreateSymbolicLink(alias, cachedData);
+            Assert.Null(NativeUpdateGate.TryEnterFreshStart(alias));
+            File.SetUnixFileMode(cachedData, cacheMode);
+            Assert.Null(NativeUpdateGate.TryEnterFreshStart(cachedData));
+
+            File.SetUnixFileMode(dataRoot, cacheMode);
         }
         else if (OperatingSystem.IsWindows())
         {
