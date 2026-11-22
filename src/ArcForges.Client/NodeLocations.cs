@@ -69,6 +69,11 @@ public static class NodeLocations
         ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.DoNotVerify), "ArcForges", "data")
         : Path.Combine(Home(), ".local", "share", "arcforges", "data");
 
+    /// <summary>The managed version directory, separate from persistent Node data.</summary>
+    public static string UpdateApplicationRoot(bool testMode) => testMode
+        ? Path.Combine(ConfigDirectory(testMode), "app")
+        : Path.Combine(Path.GetDirectoryName(DefaultDataRoot())!, "app");
+
     /// <summary>
     /// The data root: <c>dataRoot</c> of <c>node.json</c> when it names an absolute path, otherwise the default. A missing or
     /// unreadable file means the default; the node reports a malformed one when it starts.

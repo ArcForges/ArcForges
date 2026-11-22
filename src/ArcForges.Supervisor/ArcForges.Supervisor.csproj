@@ -18,6 +18,7 @@
     <OptimizationPreference>Size</OptimizationPreference>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../ArcForges.Client/NodeVersionSelection.cs" Link="NodeVersionSelection.cs" />
     <InternalsVisibleTo Include="ArcForges.ClosedLoop.Tests" />
   </ItemGroup>
 </Project>

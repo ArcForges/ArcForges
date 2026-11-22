@@ -266,7 +266,7 @@ def verify(root, rid, commit, *, distribution):
     return {"rid": rid, "commit": info["commit"], "files": len(actual), "mxcManifestSha256": files["mxc/mxc-manifest.json"]}
 
 
-def protect_install_root(root):
+def protect_install_root(root, powershell=None):
     if os.name != "nt":
         return
     # Python's Windows mode 0700 grants OWNER RIGHTS. Use the concrete
@@ -282,7 +282,8 @@ $security.AddAccessRule($rule)
 [System.IO.FileSystemAclExtensions]::SetAccessControl([System.IO.DirectoryInfo]::new($env:AFV2_MXC_INSTALL_ROOT), $security)
 """
     env = dict(os.environ, AFV2_MXC_INSTALL_ROOT=str(root))
-    subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-Command", script], env=env, check=True)
+    subprocess.run([str(powershell) if powershell is not None else "pwsh", "-NoProfile", "-NonInteractive", "-Command", script],
+                   env=env, timeout=30, check=True)
 
 
 def installation_temp_parent():
@@ -316,7 +317,7 @@ def check_signed(args):
     parent = output.parent if output is not None else installation_temp_parent()
     with tempfile.TemporaryDirectory(prefix="verified signed MXC 安装 ", dir=parent) as directory:
         staging = Path(directory)
-        protect_install_root(staging)
+        protect_install_root(staging, args.powershell)
         with tempfile.TemporaryFile(dir=staging) as snapshot:
             observed = archive_digest(archive, copy=snapshot, length=manifest["archive"]["length"])
             require(observed == manifest["archive"], "Signed archive length or digest does not match")
@@ -343,7 +344,7 @@ def check_signed(args):
         result.update(archiveSha256=observed["sha256"], authentication="ed25519", tree=producer["tree"],
                       qualification=manifest["qualification"])
         if output is not None:
-            protect_install_root(root)
+            protect_install_root(root, args.powershell)
             expose_installation(root, output)
             result["installRoot"] = str(output)
     return result
@@ -390,9 +391,12 @@ def main():
     parser.add_argument("--allow-candidate", action="store_true", help="allow a signed test candidate")
     parser.add_argument("--admitted-archive-sha256", help="independently admitted archive digest, required for main")
     parser.add_argument("--openssl", type=Path, help="explicit trusted OpenSSL executable")
+    parser.add_argument("--powershell", type=Path, help="explicit trusted PowerShell executable for Windows install protection")
     parser.add_argument("--output", type=Path, help="retain the verified extraction in a fresh trusted directory")
     try:
         args = parser.parse_args()
+        require(args.powershell is None or (os.name == "nt" and args.powershell.is_absolute() and args.trusted_key is not None),
+                "Windows PowerShell selection requires an absolute executable for a signed installation")
         result = check_signed(args) if args.trusted_key is not None else check_unsigned(args)
         print(json.dumps(result), flush=True)
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError, zipfile.BadZipFile, tarfile.TarError) as error:

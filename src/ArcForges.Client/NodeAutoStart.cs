@@ -116,7 +116,17 @@ public static partial class NodeAutoStart
 
     private static unsafe AutoStartResult StartWindows(bool testMode)
     {
-        var supervisor = Path.Combine(Path.GetDirectoryName(CurrentExecutable)!, SupervisorFileName);
+        string supervisor;
+        try
+        {
+            var installation = NodeVersionSelection.SelectedInstallation(NodeLocations.UpdateApplicationRoot(testMode));
+            supervisor = Path.Combine(installation ?? Path.GetDirectoryName(CurrentExecutable)!, SupervisorFileName);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            return new AutoStartResult(AutoStartOutcome.Failed, error.Message);
+        }
+
         if (!File.Exists(supervisor))
         {
             return new AutoStartResult(AutoStartOutcome.Failed, $"{SupervisorFileName} is missing beside {CurrentExecutable}");
@@ -180,8 +190,19 @@ public static partial class NodeAutoStart
             return new AutoStartResult(AutoStartOutcome.Failed, "the systemd user manager is absent and setsid is not on PATH");
         }
 
+        string executable;
+        try
+        {
+            var selected = NodeVersionSelection.SelectedInstallation(NodeLocations.UpdateApplicationRoot(testMode));
+            executable = selected is null ? CurrentExecutable : Path.Combine(selected, "arcforges");
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            return new AutoStartResult(AutoStartOutcome.Failed, error.Message);
+        }
+
         // The node gets /dev/null as its standard streams and a new session, so it holds none of the client's.
-        List<string> arguments = ["-c", "exec \"$0\" -f \"$@\" </dev/null >/dev/null 2>&1", setsid, CurrentExecutable, "node", "run"];
+        List<string> arguments = ["-c", "exec \"$0\" -f \"$@\" </dev/null >/dev/null 2>&1", setsid, executable, "node", "run"];
         if (testMode)
         {
             arguments.Add(NodeLocations.TestModeOption);

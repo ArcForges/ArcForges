@@ -19,6 +19,11 @@ from signed import (ARCHIVE_NAMES, COMMIT, MAX_MANIFEST, NODE_REPO, archive_dige
 
 REPO = Path(__file__).resolve().parents[2]
 POLICY = REPO / "eng/policy/dependency-admissions.json"
+UPDATE_VERIFIER = (
+    "packaging/mxc/verify_install.py",
+    "packaging/native/signed.py",
+    "eng/mxc/stage.py",
+)
 PROJECTS = {
     "host": ("src/ArcForges.Host", "packages.lock.json"),
     "run-supervisor": ("src/ArcForges.RunSupervisor", "run-supervisor.packages.lock.json"),
@@ -266,6 +271,7 @@ def prepared_evidence(args):
         "sbom": {"sha256": digest(args.stage / "sbom.spdx.json"),
                  "generatorSha256": digest(REPO / "packaging/native/sbom.py")},
         "lockfiles": {PROJECTS[role][1]: digest(args.stage / PROJECTS[role][1]) for role in roles(args.rid)},
+        "updateVerifier": {name: digest(REPO / name) for name in UPDATE_VERIFIER},
         "nativeBuild": record,
     }
 
@@ -273,6 +279,12 @@ def prepared_evidence(args):
 def prepare_stage(args):
     from sbom import generate
 
+    # Keep the DIST-01 verifier's fixed import layout inside the authenticated cohort.
+    for name in UPDATE_VERIFIER:
+        destination = args.stage / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with destination.open("xb") as target:
+            target.write((REPO / name).read_bytes())
     generate(args.stage, args.rid, repo=REPO)
     record = prepared_evidence(args)
     info = read_json(args.stage / "build-info.json")
@@ -316,6 +328,8 @@ def sign_archive(args):
                 "The archived evidence differs from the verified staging")
         require(all(digest(root / name) == sha for name, sha in record["lockfiles"].items()),
                 "The archived native locks differ from the admitted staging")
+        require(all(digest(root / name) == sha for name, sha in record["updateVerifier"].items()),
+                "The archived update verifier differs from the trusted source")
         manifest = {"schema": 1, "kind": "node", "rid": args.rid, "archive": archive,
                     "producers": [record["source"]], "qualification": record["qualification"],
                     **{field: digest(root / name) for field, name in evidence_names.items()}}

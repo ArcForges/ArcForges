@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
+using ArcForges.Client;
 
 namespace ArcForges.Supervisor;
 
@@ -13,7 +14,7 @@ namespace ArcForges.Supervisor;
 /// supervisor stays a small executable (15 section 1: at most 4 MB).
 /// </summary>
 /// <param name="TestMode">The test hooks apply and <c>--test-mode</c> is passed to the node.</param>
-/// <param name="NodeExecutable"><c>arcforges.exe</c> beside the supervisor.</param>
+/// <param name="NodeExecutable">The selected <c>arcforges.exe</c>, or its local sibling for a standalone installation.</param>
 /// <param name="DataRoot">The node's data root (the supervisor log goes to <c>logs/supervisor</c>).</param>
 /// <param name="InstanceKey">The user hash, with the endpoint override's hash in test mode.</param>
 [SupportedOSPlatform("windows")]
@@ -37,8 +38,8 @@ internal sealed record SupervisorLocations(bool TestMode, string NodeExecutable,
         var configDirectory = testMode && Environment.GetEnvironmentVariable(ConfigDirectoryVariable) is { Length: > 0 } overridden && Path.IsPathFullyQualified(overridden)
             ? overridden
             : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData, Environment.SpecialFolderOption.DoNotVerify), "ArcForges");
-        var dataRoot = ReadDataRoot(Path.Combine(configDirectory, "node.json"))
-            ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.DoNotVerify), "ArcForges", "data");
+        var local = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.DoNotVerify), "ArcForges");
+        var dataRoot = ReadDataRoot(Path.Combine(configDirectory, "node.json")) ?? Path.Combine(local, "data");
         var sid = WindowsIdentity.GetCurrent().User?.Value ?? throw new InvalidOperationException("The user SID is not readable.");
         var key = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(sid)).AsSpan(0, 16));
         if (testMode && Environment.GetEnvironmentVariable(EndpointVariable) is { Length: > 0 } endpoint)
@@ -46,7 +47,8 @@ internal sealed record SupervisorLocations(bool TestMode, string NodeExecutable,
             key += "-" + Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(endpoint)).AsSpan(0, 8));
         }
 
-        var executable = Path.Combine(AppContext.BaseDirectory, "arcforges.exe");
+        var selection = NodeVersionSelection.SelectedInstallation(Path.Combine(testMode ? configDirectory : local, "app"));
+        var executable = Path.Combine(selection ?? AppContext.BaseDirectory, "arcforges.exe");
         return new SupervisorLocations(testMode, executable, Path.TrimEndingDirectorySeparator(Path.GetFullPath(dataRoot)), key);
     }
 

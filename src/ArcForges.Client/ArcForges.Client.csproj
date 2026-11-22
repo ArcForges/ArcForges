@@ -13,6 +13,9 @@
     <RuntimeIdentifiers>win-x64;win-arm64;linux-x64;linux-arm64</RuntimeIdentifiers>
   </PropertyGroup>
   <ItemGroup>
+    <EmbeddedResource Include="../../packaging/mxc/verify_install.py" LogicalName="ArcForges.Update.VerifyInstall" />
+    <EmbeddedResource Include="../../packaging/native/signed.py" LogicalName="ArcForges.Update.Signed" />
+    <EmbeddedResource Include="../../eng/mxc/stage.py" LogicalName="ArcForges.Update.MxcStage" />
     <PackageReference Include="ArcForges.Contracts.Node" />
     <PackageReference Include="ArcForges.Contracts.Foundation" />
     <PackageReference Include="ArcForges.LocalRpc" />
