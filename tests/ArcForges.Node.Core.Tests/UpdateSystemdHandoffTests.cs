@@ -58,8 +58,8 @@ public sealed class UpdateSystemdHandoffTests
             var operation = Guid.NewGuid();
             if (successStatus != "75")
             {
-                var error = await Assert.ThrowsAsync<IOException>(() =>
-                    NodeUpdateSystemdHandoff.AcquireAsync(app, operation, testMode: true, ct));
+                var acquire = NodeUpdateSystemdHandoff.AcquireAsync(app, operation, testMode: true, ct);
+                var error = await Assert.ThrowsAsync<IOException>(() => acquire);
                 Assert.Equal("native_update_systemd_handoff_unit_exec_condition_exit_unconfirmed", error.Message);
                 Assert.False(File.Exists(marker));
                 Assert.False(Directory.Exists(dropIn));
