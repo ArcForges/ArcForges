@@ -113,7 +113,7 @@ public sealed class UpdateGateTests
         Assert.Empty(checkpoint.RetainedRuns!);
         DurableCommandStore.VerifyNativeUpdateBackup(checkpoint, testMode: true);
         DurableCommandStore.RestoreBackup(checkpoint.BackupRoot, NodeSecretStores.ForTestDataRoot(checkpoint.BackupRoot), dataRoot, secrets,
-            restored.Path, NodeSecretStores.ForTestDataRoot(restored.Path));
+            restored.Path, NodeSecretStores.ForTestDataRoot(restored.Path), verifyNativeOffline: true);
         using (var store = restored.Open(new ManualClock(), StoreMigrations.Released))
         using (var commands = new DurableCommandStore(store, owner, NodeSecretStores.ForTestDataRoot(restored.Path)))
         {

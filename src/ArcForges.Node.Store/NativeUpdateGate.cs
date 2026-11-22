@@ -20,8 +20,9 @@ internal sealed record NativeUpdateCohort(string Commit, string Tree, string Arc
 
 internal sealed record NativeUpdateAuthority(string NodeId, string OwnerEpoch, string? PreviousSelection,
     int PreviousSchema, int PreviousMinimumReader, string? PreviousSupervisorProtocol);
+internal sealed record NativeUpdateRetainedRun(string RunId, string Epoch, string LaunchSha256, string BindingSha256, long RecoveryGeneration);
 internal sealed record NativeUpdateCheckpoint(int StoreSchema, int MinimumReader, int CandidateReader, string BackupManifestSha256,
-    string? BackupRoot = null, string[]? RetainedRuns = null, string? CandidateSupervisorProtocol = null);
+    string? BackupRoot = null, NativeUpdateRetainedRun[]? RetainedRuns = null, string? CandidateSupervisorProtocol = null);
 
 internal sealed record NativeUpdateReadiness(string ArchiveSha256, string NodeEpoch, int ProcessId, long ProcessStartUnixMs);
 internal sealed record NativeUpdateState(int Format, Guid OperationId, NativeUpdatePhase Phase,
@@ -152,7 +153,7 @@ internal static class NativeUpdateGate
 
     private static bool Equivalent(NativeUpdateCheckpoint? current, NativeUpdateCheckpoint? proposed) => proposed is null ||
         current is not null && (current with { RetainedRuns = null }) == (proposed with { RetainedRuns = null })
-        && (current.RetainedRuns ?? []).SequenceEqual(proposed.RetainedRuns ?? [], StringComparer.Ordinal);
+        && (current.RetainedRuns ?? []).SequenceEqual(proposed.RetainedRuns ?? []);
 
     private sealed class Lease(ContractionPaths.UpdateDirectory directory, FileStream file) : IDisposable
     {
@@ -232,7 +233,8 @@ internal static class NativeUpdateGate
         {
             if (!Hex(checkpoint.BackupManifestSha256, 64) || (checkpoint.BackupRoot is not null && !CanonicalPath(checkpoint.BackupRoot))
                 || (state.Authority is not null && checkpoint.BackupRoot is null)
-                || checkpoint.RetainedRuns?.Any(run => !Hex(run, 32)) == true
+                || checkpoint.RetainedRuns?.Any(run => !Hex(run.RunId, 32) || !Hex(run.Epoch, 32) ||
+                    !Hex(run.LaunchSha256, 64) || !Hex(run.BindingSha256, 64) || run.RecoveryGeneration < 0) == true
                 || (state.Authority is not null && checkpoint.CandidateSupervisorProtocol is not { Length: > 0 and <= 128 }))
                 throw Incompatible("native_update_marker_invalid");
             RequireCompatibleReader(checkpoint.StoreSchema, checkpoint.MinimumReader, checkpoint.CandidateReader);
