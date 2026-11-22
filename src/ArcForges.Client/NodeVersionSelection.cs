@@ -8,7 +8,7 @@ namespace ArcForges.Client;
 public static partial class NodeVersionSelection
 {
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
-    private const string WindowsParkedPrefix = ".parked-";
+    private const string ParkedPrefix = ".parked-";
 
     public static string? Read(string appRoot)
     {
@@ -25,15 +25,15 @@ public static partial class NodeVersionSelection
     public static string? ReadIdentity(string appRoot)
     {
         var path = PointerPath(appRoot);
-        var attributes = Attributes(path);
-        if (attributes is null)
-        {
-            return null;
-        }
-
         string identity;
         if (OperatingSystem.IsWindows())
         {
+            var attributes = Attributes(path);
+            if (attributes is null)
+            {
+                return null;
+            }
+
             if ((attributes.Value & (FileAttributes.ReparsePoint | FileAttributes.Directory)) != 0)
             {
                 throw new IOException("node_update_selection_not_regular");
@@ -64,6 +64,11 @@ public static partial class NodeVersionSelection
         else
         {
             var target = new FileInfo(path).LinkTarget;
+            if (target is null && Attributes(path) is null)
+            {
+                return null;
+            }
+
             if (target is null || !target.StartsWith("versions/", StringComparison.Ordinal))
             {
                 throw new IOException("node_update_selector_requires_verified_versions_layout");
@@ -119,9 +124,9 @@ public static partial class NodeVersionSelection
         if (expected is not null)
         {
             var previous = InstallationDirectory(appRoot, expected);
-            if (allowMissingExpected && OperatingSystem.IsWindows() && Attributes(previous) is null)
+            if (allowMissingExpected && Attributes(previous) is null)
             {
-                RequireDirectory(WindowsParkedDirectory(previous), create: false);
+                RequireDirectory(ParkedDirectory(previous), create: false);
             }
             else
             {
@@ -151,8 +156,8 @@ public static partial class NodeVersionSelection
         }
     }
 
-    internal static string WindowsParkedDirectory(string canonical) =>
-        Path.Combine(Path.GetDirectoryName(canonical)!, WindowsParkedPrefix + Path.GetFileName(canonical));
+    internal static string ParkedDirectory(string canonical) =>
+        Path.Combine(Path.GetDirectoryName(canonical)!, ParkedPrefix + Path.GetFileName(canonical));
 
     private static void PublishSelection(string appRoot, string temporary, string destination, bool replace)
     {
@@ -177,7 +182,11 @@ public static partial class NodeVersionSelection
 
         try
         {
-            File.Move(temporary, destination, overwrite: replace);
+            if (RenameAt(directory, Path.GetFileName(temporary), directory, Path.GetFileName(destination), replace ? 0u : 1u) != 0)
+            {
+                throw new IOException("node_update_selection_publish_failed:" + Marshal.GetLastPInvokeError());
+            }
+
             if (SyncDirectory(directory) != 0)
             {
                 throw new IOException("node_update_selection_sync_failed:" + Marshal.GetLastPInvokeError());
@@ -241,7 +250,10 @@ public static partial class NodeVersionSelection
     private static partial int OpenDirectory(string path, int flags);
 
     [LibraryImport("libc", EntryPoint = "fsync", SetLastError = true)]
-    private static partial int SyncDirectory(int descriptor);
+    internal static partial int SyncDirectory(int descriptor);
+
+    [LibraryImport("libc", EntryPoint = "renameat2", SetLastError = true, StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial int RenameAt(int sourceParent, string source, int targetParent, string target, uint flags);
 
     [LibraryImport("libc", EntryPoint = "close", SetLastError = true)]
     private static partial int CloseDirectory(int descriptor);

@@ -101,14 +101,14 @@ public static partial class NodeUpdateLauncher
 
     private static bool IsAdmittedStartup(string registered, NodeUpdateInstallation previous, string appRoot)
     {
-        if (NodeUpdateWindowsHandoff.IsParked(appRoot, previous.ArchiveSha256))
+        if (NodeUpdateInstallationCustody.IsParked(appRoot, previous.ArchiveSha256))
         {
             if (!string.Equals(registered, Path.Combine(previous.Root, NodeAutoStart.SupervisorFileName), StringComparison.OrdinalIgnoreCase))
             {
                 return false;
             }
 
-            return VerifyParkedHolder(NodeUpdateWindowsHandoff.ResolvePrevious(appRoot, previous));
+            return VerifyParkedHolder(NodeUpdateInstallationCustody.ResolvePrevious(appRoot, previous));
         }
 
         if (!Path.IsPathFullyQualified(registered) || !string.Equals(Path.GetFileName(registered), NodeAutoStart.SupervisorFileName, StringComparison.OrdinalIgnoreCase)
