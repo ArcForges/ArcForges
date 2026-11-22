@@ -118,6 +118,10 @@ Linux systemd user unit must use the managed `app/current` selection. The
 Windows managed holder and startup registration resolve to the admitted
 version directory. Portable installations can use the independently
 authenticated offline migration and a fresh managed installation.
+After verifying the old native owner and its complete Run drain, the updater
+keeps the signed installation in a private location where its usual launch
+paths cannot execute it during the switch. A compatible rollback restores
+that same installation.
 
 `arcforges update status --json` reports the selected version and saved update
 checkpoint. An original service can still accept Run requests in

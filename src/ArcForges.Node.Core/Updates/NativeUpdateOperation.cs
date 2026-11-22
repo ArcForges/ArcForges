@@ -242,8 +242,7 @@ internal static class NativeUpdateOperation
             RequirePreviousFloor(dataRoot, authority, online: false,
                 requireDrain: state.Phase != NativeUpdatePhase.PreparingPredecessor, verifyAuthority: true);
             state = NativeUpdateGate.BeginPreviousOwnerRestore(dataRoot, state.OperationId);
-            if (OperatingSystem.IsWindows())
-                NodeUpdateWindowsHandoff.Restore(appRoot, previous, testMode);
+            NodeUpdateInstallationCustody.Restore(appRoot, previous, testMode);
             if (selected == candidate.ArchiveSha256)
                 NodeVersionSelection.Select(appRoot, selected, previous.ArchiveSha256);
         }
@@ -255,8 +254,7 @@ internal static class NativeUpdateOperation
             {
                 using var offline = AcquireOffline(testMode, dataRoot);
                 RequirePreviousFloor(dataRoot, authority, online: false, verifyAuthority: true);
-                if (OperatingSystem.IsWindows())
-                    NodeUpdateWindowsHandoff.Restore(appRoot, previous, testMode);
+                NodeUpdateInstallationCustody.Restore(appRoot, previous, testMode);
             }
         }
 
@@ -285,10 +283,8 @@ internal static class NativeUpdateOperation
             throw Refused("native_update_predecessor_custody_changed");
         RequirePreviousFloor(dataRoot, authority, online: false, requireDrain: true, verifyAuthority: true);
         if (OperatingSystem.IsWindows())
-        {
             NodeUpdateLauncher.RequireCanonicalWindowsStartup(previous, testMode);
-            NodeUpdateWindowsHandoff.Park(appRoot, previous, testMode);
-        }
+        NodeUpdateInstallationCustody.Park(appRoot, previous, testMode);
         await RequireLegacyBarrierAsync(appRoot, state, previous, testMode, ct).ConfigureAwait(false);
         return NativeUpdateGate.MarkPredecessorFenced(dataRoot, state.OperationId);
     }
@@ -296,19 +292,10 @@ internal static class NativeUpdateOperation
     private static async Task RequireLegacyBarrierAsync(string appRoot, NativeUpdateState state, NodeUpdateInstallation previous,
         bool testMode, CancellationToken ct)
     {
-        if (OperatingSystem.IsWindows())
-        {
-            if (!NodeUpdateWindowsHandoff.IsParked(appRoot, previous.ArchiveSha256))
-                throw Refused("native_update_predecessor_startup_barrier_unconfirmed");
-        }
-        else if (OperatingSystem.IsLinux())
-        {
+        if (!NodeUpdateInstallationCustody.IsParked(appRoot, previous.ArchiveSha256))
+            throw Refused("native_update_predecessor_startup_barrier_unconfirmed");
+        if (OperatingSystem.IsLinux())
             await NodeUpdateSystemdHandoff.RequireArmedAsync(appRoot, state.OperationId, testMode, ct).ConfigureAwait(false);
-        }
-        else
-        {
-            throw Refused("native_update_managed_startup_unsupported");
-        }
     }
 
     private static Task ReleaseSystemdHandoffAsync(string appRoot, Guid operationId, bool testMode, CancellationToken ct) =>
@@ -410,7 +397,7 @@ internal static class NativeUpdateOperation
             if (legacy)
                 await RequireLegacyBarrierAsync(appRoot, state, previous, testMode, ct).ConfigureAwait(false);
             NodeVersionSelection.Select(appRoot, selected, candidate.ArchiveSha256,
-                allowMissingExpected: legacy && OperatingSystem.IsWindows());
+                allowMissingExpected: legacy);
         }
         else if (state.Phase != NativeUpdatePhase.CandidateReady)
         {
@@ -646,8 +633,8 @@ internal static class NativeUpdateOperation
 
     private static void VerifyPrevious(string appRoot, NodeUpdateInstallation previous, NativeUpdateAuthority authority, CancellationToken ct)
     {
-        if (OperatingSystem.IsWindows() && authority.PreviousSupervisorProtocol is null)
-            VerifyInstallation(NodeUpdateWindowsHandoff.ResolvePrevious(appRoot, previous), ct);
+        if (authority.PreviousSupervisorProtocol is null)
+            VerifyInstallation(NodeUpdateInstallationCustody.ResolvePrevious(appRoot, previous), ct);
         else
             VerifyCohort(appRoot, previous, ct);
     }
