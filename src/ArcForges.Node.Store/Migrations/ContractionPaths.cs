@@ -175,6 +175,31 @@ internal static partial class ContractionPaths
             }
         }
 
+        [SupportedOSPlatform("linux")]
+        internal UpdateDirectory EnsurePrivateSubdirectory(string name)
+        {
+            var parent = _directories.Last.Handle;
+            int directory = parent.DangerousGetHandle().ToInt32();
+            if (MkdirAt(directory, name, 0x1c0) != 0 && Marshal.GetLastPInvokeError() != 17) // 0700, EEXIST
+                throw Refused("update_subdirectory_create_unconfirmed");
+
+            using var anchored = OpenLinux(parent, name, LinuxPathOnly | s_linuxDirectory | s_linuxNoFollow)!;
+            var nested = new UpdateDirectory(Path.Combine(_full, name));
+            try
+            {
+                if (ReadLinux(anchored, LinuxDirectory).Identity != nested._directories.Last.Identity)
+                    throw Refused("update_subdirectory_identity_changed");
+
+                SynchronizeDirectory();
+                return nested;
+            }
+            catch
+            {
+                nested.Dispose();
+                throw;
+            }
+        }
+
         internal FileStream? TryRead(string name)
         {
             var parent = _directories.Last;
@@ -342,6 +367,9 @@ internal static partial class ContractionPaths
                 throw Refused("update_directory_write_authority_unconfirmed");
         }
     }
+
+    [LibraryImport("libc", EntryPoint = "mkdirat", StringMarshalling = StringMarshalling.Utf8, SetLastError = true)]
+    private static partial int MkdirAt(int directory, string name, uint mode);
 
     [LibraryImport("libc", EntryPoint = "renameat", StringMarshalling = StringMarshalling.Utf8, SetLastError = true)]
     private static partial int RenameAt(int oldDirectory, string oldName, int newDirectory, string newName);
