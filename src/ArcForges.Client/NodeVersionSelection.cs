@@ -52,7 +52,14 @@ public static partial class NodeVersionSelection
                 throw new IOException("node_update_selection_invalid");
             }
 
-            identity = StrictUtf8.GetString(value[..^1]);
+            try
+            {
+                identity = StrictUtf8.GetString(value[..^1]);
+            }
+            catch (DecoderFallbackException error)
+            {
+                throw new IOException("node_update_selection_invalid", error);
+            }
         }
         else
         {
@@ -65,13 +72,16 @@ public static partial class NodeVersionSelection
             identity = target["versions/".Length..];
         }
 
-        _ = InstallationDirectory(appRoot, identity);
+        if (!IsArchiveIdentity(identity))
+        {
+            throw new IOException("node_update_selection_invalid");
+        }
         return identity;
     }
 
     public static string InstallationDirectory(string appRoot, string archiveSha256)
     {
-        if (archiveSha256.Length != 64 || archiveSha256.Any(character => character is not (>= '0' and <= '9' or >= 'a' and <= 'f')))
+        if (!IsArchiveIdentity(archiveSha256))
         {
             throw new ArgumentException("Use a full lowercase archive SHA-256.", nameof(archiveSha256));
         }
@@ -83,6 +93,9 @@ public static partial class NodeVersionSelection
 
         return Path.Combine(appRoot, "versions", archiveSha256);
     }
+
+    private static bool IsArchiveIdentity(string value) => value.Length == 64 &&
+        value.All(character => character is >= '0' and <= '9' or >= 'a' and <= 'f');
 
     public static string? SelectedInstallation(string appRoot) => Read(appRoot) is { } selected ? RequireInstalled(appRoot, selected) : null;
 

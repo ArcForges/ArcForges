@@ -78,6 +78,8 @@ internal static class NativeUpdateOperation
                 {
                     if (priorSelection is null)
                         throw Refused("native_update_predecessor_managed_custody_required");
+                    if (OperatingSystem.IsWindows())
+                        NodeUpdateLauncher.RequireCanonicalWindowsStartup(previous, request.TestMode);
                     try
                     {
                         await ConfirmRunDrainAsync(session, cancellationToken).ConfigureAwait(false);
@@ -283,7 +285,10 @@ internal static class NativeUpdateOperation
             throw Refused("native_update_predecessor_custody_changed");
         RequirePreviousFloor(dataRoot, authority, online: false, requireDrain: true, verifyAuthority: true);
         if (OperatingSystem.IsWindows())
+        {
+            NodeUpdateLauncher.RequireCanonicalWindowsStartup(previous, testMode);
             NodeUpdateWindowsHandoff.Park(appRoot, previous, testMode);
+        }
         await RequireLegacyBarrierAsync(appRoot, state, previous, testMode, ct).ConfigureAwait(false);
         return NativeUpdateGate.MarkPredecessorFenced(dataRoot, state.OperationId);
     }

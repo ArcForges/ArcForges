@@ -9,8 +9,23 @@ public static class NodeUpdateWindowsHandoff
     private const string LockName = ".windows-update-install.lock";
 
     /// <summary>Reports whether the exact verified version has been parked by the offline updater.</summary>
-    public static bool IsParked(string appRoot, string archiveSha256) => OperatingSystem.IsWindows()
-        && NodeVersionSelection.Attributes(NodeVersionSelection.WindowsParkedDirectory(NodeVersionSelection.InstallationDirectory(appRoot, archiveSha256))) is not null;
+    public static bool IsParked(string appRoot, string archiveSha256)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return false;
+        }
+
+        var canonical = NodeVersionSelection.InstallationDirectory(appRoot, archiveSha256);
+        var parked = NodeVersionSelection.WindowsParkedDirectory(canonical);
+        if (NodeVersionSelection.Attributes(canonical) is not null || NodeVersionSelection.Attributes(parked) is null)
+        {
+            return false;
+        }
+
+        NodeVersionSelection.RequireDirectory(parked, create: false);
+        return true;
+    }
 
     /// <summary>Finds the one physical location of a recorded previous installation.</summary>
     public static NodeUpdateInstallation ResolvePrevious(string appRoot, NodeUpdateInstallation previous)
