@@ -44,14 +44,20 @@ internal static class NativeUpdateGate
     private const int MaximumMarkerBytes = 32 * 1024;
 
     /// <summary>Holds the maintenance lease through publication of a first Start receipt. Corrupt or unavailable state refuses fresh Starts.</summary>
-    internal static IDisposable? TryEnterFreshStart(string dataRoot)
+    internal static IDisposable? TryEnterFreshStart(string dataRoot) => TryEnterFreshStart(dataRoot, out _);
+
+    internal static IDisposable? TryEnterFreshStart(string dataRoot, out bool confirmedFence)
     {
+        confirmedFence = false;
         Lease? lease = null;
         try
         {
             lease = Acquire(dataRoot);
             if (ReadHeld(lease.Directory) is { IsFenced: true })
+            {
+                confirmedFence = true;
                 return null;
+            }
 
             var acquired = lease;
             lease = null;
