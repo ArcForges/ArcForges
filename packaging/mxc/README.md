@@ -111,15 +111,21 @@ independently admitted prior cohort, also supply `--previous-archive`,
 `--previous-archive-sha256`, `--previous-commit`, and `--previous-tree` together.
 When its original admission uses a different public key, also supply
 `--previous-trusted-key <previous-public-pem>`.
-The updater verifies the prior archive and retains its installation beside the
-replacement. On Linux the installed systemd user unit must use the managed
-`app/current` selection. An ambiguous or non-managed existing selection requires
-preparing and verifying a managed prior installation before its switch.
+The updater verifies and retains the exact prior installation. Before adopting
+a predecessor that lacks the durable update protocol, establish its managed
+selection and confirm that its existing platform service runs from it. The
+Linux systemd user unit must use the managed `app/current` selection. The
+Windows managed holder and startup registration resolve to the admitted
+version directory. Portable installations can use the independently
+authenticated offline migration and a fresh managed installation.
 
 `arcforges update status --json` reports the selected version and saved update
-checkpoint. Use `arcforges update resume` for an interrupted checkpoint or
-`arcforges update rollback` for a compatible preceding cohort. A reader refusal
-keeps the checkpoint fenced. To prepare a verified offline restore, run
+checkpoint. An original service can still accept Run requests in
+`PreparingPredecessor` until it is stopped and its managed startup is guarded.
+Stop any Run that remains active through the original service, then use
+`arcforges update resume`. Use `arcforges update rollback` to restart the
+authenticated compatible predecessor. Rollback requires a complete Run drain
+and the original compatible reader floor. To prepare a verified offline restore, run
 `arcforges update restore --destination <fresh-absolute-directory>`. The
 receipt identifies the isolated store and authority files that were restored.
 The active Node data directory and its selection remain in place. Private

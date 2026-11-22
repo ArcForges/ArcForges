@@ -14,6 +14,7 @@ internal enum NativeUpdatePhase
     RolledBack,
     RollingBack,
     RestoringPredecessor,
+    PreparingPredecessor,
 }
 
 internal sealed record NativeUpdateCohort(string Commit, string Tree, string ArchiveSha256, string InstallationRoot,
@@ -72,20 +73,11 @@ internal static class NativeUpdateGate
         return ReadHeld(lease.Directory);
     }
 
-    internal static bool IsUnchangedUnfenced(string dataRoot, NativeUpdateState? expected)
-    {
-        var current = Read(dataRoot);
-        if (current is null || expected is null)
-            return current is null && expected is null;
-        return !current.IsFenced && !expected.IsFenced &&
-            JsonSerializer.SerializeToUtf8Bytes(current, NativeUpdateJsonContext.Default.NativeUpdateState).AsSpan()
-                .SequenceEqual(JsonSerializer.SerializeToUtf8Bytes(expected, NativeUpdateJsonContext.Default.NativeUpdateState));
-    }
-
     internal static NativeUpdateState Begin(string dataRoot, Guid operationId, NativeUpdateCohort previous, NativeUpdateCohort candidate,
-        NativeUpdateAuthority? authority = null)
+        NativeUpdateAuthority? authority = null, bool preparePredecessor = false)
     {
-        var next = new NativeUpdateState(Format, operationId, NativeUpdatePhase.Fenced, previous, candidate, null, authority, DateTimeOffset.UtcNow);
+        var phase = preparePredecessor ? NativeUpdatePhase.PreparingPredecessor : NativeUpdatePhase.Fenced;
+        var next = new NativeUpdateState(Format, operationId, phase, previous, candidate, null, authority, DateTimeOffset.UtcNow);
         Validate(next);
         using var lease = Acquire(dataRoot);
         if (ReadHeld(lease.Directory) is { } existing)
@@ -99,6 +91,9 @@ internal static class NativeUpdateGate
         Publish(lease.Directory, next);
         return next;
     }
+
+    internal static NativeUpdateState MarkPredecessorFenced(string dataRoot, Guid operationId) =>
+        Advance(dataRoot, operationId, NativeUpdatePhase.Fenced);
 
     internal static NativeUpdateState Prepare(string dataRoot, Guid operationId, NativeUpdateCheckpoint checkpoint) =>
         Advance(dataRoot, operationId, NativeUpdatePhase.Prepared, checkpoint);
@@ -140,10 +135,12 @@ internal static class NativeUpdateGate
 
         bool allowed = (current.Phase, phase) switch
         {
+            (NativeUpdatePhase.PreparingPredecessor, NativeUpdatePhase.Fenced) => true,
             (NativeUpdatePhase.Fenced, NativeUpdatePhase.Prepared) => true,
             (NativeUpdatePhase.Prepared or NativeUpdatePhase.CandidateReady, NativeUpdatePhase.CandidateReady) => true,
             (NativeUpdatePhase.CandidateReady, NativeUpdatePhase.Completed) => true,
-            (NativeUpdatePhase.Fenced or NativeUpdatePhase.Prepared or NativeUpdatePhase.CandidateReady or NativeUpdatePhase.RollingBack,
+            (NativeUpdatePhase.PreparingPredecessor or NativeUpdatePhase.Fenced or NativeUpdatePhase.Prepared or
+                NativeUpdatePhase.CandidateReady or NativeUpdatePhase.RollingBack,
                 NativeUpdatePhase.RestoringPredecessor) when current.Authority is { PreviousSupervisorProtocol: null } => true,
             (_, NativeUpdatePhase.RollingBack) when current.Phase is not (NativeUpdatePhase.RolledBack or NativeUpdatePhase.RestoringPredecessor) => true,
             (_, NativeUpdatePhase.RolledBack) when current.IsFenced => true,
@@ -237,7 +234,9 @@ internal static class NativeUpdateGate
             string.Equals(state.Previous.InstallationRoot, state.Candidate.InstallationRoot, OperatingSystem.IsWindows()
                 ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal) ||
             (state.Phase is NativeUpdatePhase.Prepared or NativeUpdatePhase.CandidateReady or NativeUpdatePhase.Completed && state.Checkpoint is null) ||
-            (state.Phase == NativeUpdatePhase.Fenced && state.Checkpoint is not null))
+            (state.Phase is NativeUpdatePhase.PreparingPredecessor or NativeUpdatePhase.Fenced && state.Checkpoint is not null) ||
+            (state.Phase == NativeUpdatePhase.PreparingPredecessor &&
+                state.Authority is not { PreviousSupervisorProtocol: null, PreviousSelection: not null }))
             throw Incompatible("native_update_marker_invalid");
 
         if (state.Checkpoint is { } checkpoint)

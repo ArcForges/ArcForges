@@ -41,7 +41,7 @@ internal static class NativeUpdateOperation
         try
         {
             if (request.Action == NodeUpdateAction.Status)
-                return new(Report(NativeUpdateGate.Read(dataRoot), NodeVersionSelection.Read(appRoot)));
+                return new(Report(NativeUpdateGate.Read(dataRoot), NodeVersionSelection.ReadIdentity(appRoot)));
 
             using var operation = NativeUpdateGate.EnterOperator(dataRoot);
             var state = NativeUpdateGate.Read(dataRoot);
@@ -76,11 +76,21 @@ internal static class NativeUpdateOperation
                     prior?.SupervisorProtocol);
                 if (prior is null)
                 {
-                    var legacy = await FenceLegacyPredecessorAsync(session, process, state, authority, previous, candidate, dataRoot,
-                        appRoot, request.TestMode, cancellationToken).ConfigureAwait(false);
-                    if (legacy.Refusal is { } refusal)
-                        return refusal;
-                    state = legacy.State;
+                    if (priorSelection is null)
+                        throw Refused("native_update_predecessor_managed_custody_required");
+                    try
+                    {
+                        await ConfirmRunDrainAsync(session, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (Exception failure) when (IsOperatorFailure(failure))
+                    {
+                        var refusal = Report(state, priorSelection);
+                        if (!process.HasExited)
+                            refusal["predecessorProcessId"] = process.Id;
+                        return new(refusal, Reason(failure), EffectCertainty.DidNotHappen);
+                    }
+                    state = NativeUpdateGate.Begin(dataRoot, Guid.NewGuid(), Cohort(previous), Cohort(candidate), authority,
+                        preparePredecessor: true);
                 }
                 else
                 {
@@ -121,8 +131,11 @@ internal static class NativeUpdateOperation
             {
                 var previous = Installation(state.Previous);
                 var candidate = Installation(state.Candidate);
-                VerifyCohort(appRoot, previous, cancellationToken);
+                VerifyPrevious(appRoot, previous, recorded, cancellationToken);
                 VerifyCohort(appRoot, candidate, cancellationToken);
+                if (state.Phase == NativeUpdatePhase.PreparingPredecessor)
+                    state = await PrepareLegacyHandoffAsync(state, recorded, previous, candidate, dataRoot, appRoot,
+                        request.TestMode, cancellationToken).ConfigureAwait(false);
                 if (state.Phase == NativeUpdatePhase.RollingBack)
                     state = recorded.PreviousSupervisorProtocol is null
                         ? await RestoreLegacyPredecessorAsync(state, recorded, previous, candidate, dataRoot, appRoot,
@@ -177,10 +190,11 @@ internal static class NativeUpdateOperation
     {
         if (authority.PreviousSupervisorProtocol is not null || authority.PreviousSelection != state.Previous.ArchiveSha256)
             return false;
-        var selected = NodeVersionSelection.Read(appRoot);
+        var selected = NodeVersionSelection.ReadIdentity(appRoot);
         return state.Phase switch
         {
-            NativeUpdatePhase.Fenced or NativeUpdatePhase.Prepared => selected == authority.PreviousSelection,
+            NativeUpdatePhase.PreparingPredecessor or NativeUpdatePhase.Fenced or NativeUpdatePhase.Prepared =>
+                selected == authority.PreviousSelection,
             NativeUpdatePhase.RollingBack => selected == state.Candidate.ArchiveSha256,
             NativeUpdatePhase.CandidateReady or NativeUpdatePhase.RestoringPredecessor =>
                 selected == authority.PreviousSelection || selected == state.Candidate.ArchiveSha256,
@@ -194,8 +208,23 @@ internal static class NativeUpdateOperation
         if (!CanRestoreLegacyPredecessor(state, authority, appRoot))
             throw Refused("native_update_legacy_predecessor_unconfirmed");
 
-        VerifyCohort(appRoot, previous, ct);
-        var selected = NodeVersionSelection.Read(appRoot);
+        VerifyPrevious(appRoot, previous, authority, ct);
+        var selected = NodeVersionSelection.ReadIdentity(appRoot);
+        if (state.Phase == NativeUpdatePhase.PreparingPredecessor)
+        {
+            // Until the legacy barrier is fully armed the original owner may still have Runs to drain.
+            await using var existing = await TryConnectAsync(testMode, ct).ConfigureAwait(false);
+            if (existing is not null)
+            {
+                using var process = NodeUpdateLauncher.ReadBoundProcess(existing, previous, expectedPid: null, allowVerifiedCopy: false);
+                await NodeUpdateLauncher.RequireManagedProcessAsync(previous, process, started: null, testMode, ct).ConfigureAwait(false);
+                RequirePreviousFloor(dataRoot, authority, online: true, verifyAuthority: true);
+                state = NativeUpdateGate.BeginPreviousOwnerRestore(dataRoot, state.OperationId);
+                await ReleaseSystemdHandoffAsync(appRoot, state.OperationId, testMode, ct).ConfigureAwait(false);
+                var restored = await RequireReadyAsync(existing, state, previous, process, ct).ConfigureAwait(false);
+                return NativeUpdateGate.MarkRolledBack(dataRoot, state.OperationId, restored);
+            }
+        }
         if (selected == candidate.ArchiveSha256)
         {
             VerifyCohort(appRoot, candidate, ct);
@@ -206,10 +235,13 @@ internal static class NativeUpdateOperation
         {
             // The candidate is fenced. Prove the old reader and drain before restoring original selection.
             using var offline = AcquireOffline(testMode, dataRoot);
-            if (NodeVersionSelection.Read(appRoot) != selected)
+            if (NodeVersionSelection.ReadIdentity(appRoot) != selected)
                 throw Refused("native_update_selection_changed");
-            RequirePreviousFloor(dataRoot, authority, online: false, requireDrain: true, verifyAuthority: true);
+            RequirePreviousFloor(dataRoot, authority, online: false,
+                requireDrain: state.Phase != NativeUpdatePhase.PreparingPredecessor, verifyAuthority: true);
             state = NativeUpdateGate.BeginPreviousOwnerRestore(dataRoot, state.OperationId);
+            if (OperatingSystem.IsWindows())
+                NodeUpdateWindowsHandoff.Restore(appRoot, previous, testMode);
             if (selected == candidate.ArchiveSha256)
                 NodeVersionSelection.Select(appRoot, selected, previous.ArchiveSha256);
         }
@@ -221,9 +253,12 @@ internal static class NativeUpdateOperation
             {
                 using var offline = AcquireOffline(testMode, dataRoot);
                 RequirePreviousFloor(dataRoot, authority, online: false, verifyAuthority: true);
+                if (OperatingSystem.IsWindows())
+                    NodeUpdateWindowsHandoff.Restore(appRoot, previous, testMode);
             }
         }
 
+        await ReleaseSystemdHandoffAsync(appRoot, state.OperationId, testMode, ct).ConfigureAwait(false);
         var proof = await StartAndCheckManagedAsync(previous, state, testMode, ct).ConfigureAwait(false);
         if (NodeVersionSelection.Read(appRoot) != previous.ArchiveSha256)
             throw Refused("native_update_selection_changed");
@@ -232,79 +267,43 @@ internal static class NativeUpdateOperation
         return NativeUpdateGate.MarkRolledBack(dataRoot, state.OperationId, proof);
     }
 
-    private static async Task<(NativeUpdateState? State, NodeUpdateResponse? Refusal)> FenceLegacyPredecessorAsync(
-        NodeSession session, Process process, NativeUpdateState? before, NativeUpdateAuthority authority,
+    private static async Task<NativeUpdateState> PrepareLegacyHandoffAsync(NativeUpdateState state, NativeUpdateAuthority authority,
         NodeUpdateInstallation previous, NodeUpdateInstallation candidate, string dataRoot, string appRoot, bool testMode,
         CancellationToken ct)
     {
-        try
-        {
-            // Ask the authenticated V2 control plane to prove native drain while the original owner can still stop Runs.
-            await ConfirmRunDrainAsync(session, ct).ConfigureAwait(false);
-        }
-        catch (Exception failure) when (IsOperatorFailure(failure))
-        {
-            var refused = Report(before, authority.PreviousSelection);
-            if (!process.HasExited)
-                refused["predecessorProcessId"] = process.Id;
-            return (null, new(refused, Reason(failure), EffectCertainty.DidNotHappen));
-        }
-
-        await NodeUpdateLauncher.StopBoundAsync(session, process, ct).ConfigureAwait(false);
-        using (AcquireOffline(testMode, dataRoot))
-        {
-            RequireUnchangedPredecessor(dataRoot, appRoot, before, authority.PreviousSelection);
-            if (LegacyPredecessorIsDrained(dataRoot, authority))
-                return (NativeUpdateGate.Begin(dataRoot, Guid.NewGuid(), Cohort(previous), Cohort(candidate), authority), null);
-        }
-
-        // The old binary could admit a Start before it exited. Keep that Run drainable under the unchanged original owner.
-        var report = Report(before, authority.PreviousSelection);
-        if (authority.PreviousSelection != previous.ArchiveSha256)
-        {
-            report["predecessorRecovery"] = "start_original_custody_to_drain";
-            return (null, new(report, "native_update_supervisor_drain_required"));
-        }
-
-        VerifyCohort(appRoot, previous, ct);
-        RequireUnchangedPredecessor(dataRoot, appRoot, before, authority.PreviousSelection);
-        await using var existing = await TryConnectAsync(testMode, ct).ConfigureAwait(false);
-        var started = existing is null ? NodeUpdateLauncher.StartManagedService(testMode) : null;
-        if (started is { Outcome: not AutoStartOutcome.Started })
-            throw Refused("native_update_supervisor_drain_required; native_update_predecessor_restart_unconfirmed");
-
-        await using var recovered = await NodeUpdateLauncher.WaitForBoundReadyAsync(previous, testMode, expectedPid: null, ct).ConfigureAwait(false);
-        using var recoveredProcess = NodeUpdateLauncher.ReadBoundProcess(recovered, previous, expectedPid: null, allowVerifiedCopy: false);
-        await NodeUpdateLauncher.RequireManagedProcessAsync(previous, recoveredProcess, started, testMode, ct).ConfigureAwait(false);
-        var live = await ReadAuthorityAsync(recovered, ct).ConfigureAwait(false);
-        if (live.NodeId != authority.NodeId || live.OwnerEpoch != authority.OwnerEpoch)
-            throw Refused("native_update_predecessor_restart_owner_changed");
-        RequireUnchangedPredecessor(dataRoot, appRoot, before, authority.PreviousSelection);
-        report["predecessorRecovery"] = "verified_original_owner_ready_to_drain";
-        report["predecessorProcessId"] = recoveredProcess.Id;
-        return (null, new(report, "native_update_supervisor_drain_required"));
-    }
-
-    private static bool LegacyPredecessorIsDrained(string dataRoot, NativeUpdateAuthority authority)
-    {
-        try
-        {
-            RequirePreviousFloor(dataRoot, authority, online: false, requireDrain: true, verifyAuthority: true);
-            return true;
-        }
-        catch (StoreIncompatibleException failure) when (failure.Message == "native_update_supervisor_drain_required")
-        {
-            // The drain predicate failed before the authority query. Verify identity without requiring a stopped Run.
-            RequirePreviousFloor(dataRoot, authority, online: false, verifyAuthority: true);
-            return false;
-        }
-    }
-
-    private static void RequireUnchangedPredecessor(string dataRoot, string appRoot, NativeUpdateState? expected, string? expectedSelection)
-    {
-        if (!NativeUpdateGate.IsUnchangedUnfenced(dataRoot, expected) || NodeVersionSelection.Read(appRoot) != expectedSelection)
+        if (authority.PreviousSelection != previous.ArchiveSha256 || NodeVersionSelection.ReadIdentity(appRoot) != previous.ArchiveSha256)
             throw Refused("native_update_predecessor_custody_changed");
+        if (OperatingSystem.IsLinux())
+            await NodeUpdateSystemdHandoff.AcquireAsync(appRoot, state.OperationId, testMode, ct).ConfigureAwait(false);
+
+        await StopAfterDrainAsync(previous, candidate, authority, testMode, permitCandidate: false, allowPreviousCopy: false, ct)
+            .ConfigureAwait(false);
+        using var offline = AcquireOffline(testMode, dataRoot);
+        if (NodeVersionSelection.ReadIdentity(appRoot) != previous.ArchiveSha256)
+            throw Refused("native_update_predecessor_custody_changed");
+        RequirePreviousFloor(dataRoot, authority, online: false, requireDrain: true, verifyAuthority: true);
+        if (OperatingSystem.IsWindows())
+            NodeUpdateWindowsHandoff.Park(appRoot, previous, testMode);
+        await RequireLegacyBarrierAsync(appRoot, state, previous, testMode, ct).ConfigureAwait(false);
+        return NativeUpdateGate.MarkPredecessorFenced(dataRoot, state.OperationId);
     }
+
+    private static async Task RequireLegacyBarrierAsync(string appRoot, NativeUpdateState state, NodeUpdateInstallation previous,
+        bool testMode, CancellationToken ct)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            if (!NodeUpdateWindowsHandoff.IsParked(appRoot, previous.ArchiveSha256))
+                throw Refused("native_update_predecessor_startup_barrier_unconfirmed");
+        }
+        else
+        {
+            await NodeUpdateSystemdHandoff.RequireArmedAsync(appRoot, state.OperationId, testMode, ct).ConfigureAwait(false);
+        }
+    }
+
+    private static Task ReleaseSystemdHandoffAsync(string appRoot, Guid operationId, bool testMode, CancellationToken ct) =>
+        OperatingSystem.IsLinux() ? NodeUpdateSystemdHandoff.ReleaseAsync(appRoot, operationId, testMode, ct) : Task.CompletedTask;
 
     private static NodeUpdateResponse Restore(NativeUpdateState state, NodeUpdateRequest request, string dataRoot, string appRoot)
     {
@@ -314,7 +313,7 @@ internal static class NativeUpdateOperation
         if (!Path.IsPathFullyQualified(destinationArgument))
             throw Refused("native_update_restore_destination_absolute_required");
         string destination = Path.TrimEndingDirectorySeparator(Path.GetFullPath(destinationArgument));
-        string? selected = NodeVersionSelection.Read(appRoot);
+        string? selected = NodeVersionSelection.ReadIdentity(appRoot);
         using var offline = AcquireOffline(request.TestMode, dataRoot);
         var floor = NodeStore.InspectNativeUpdateFloor(dataRoot, requireDrained: true);
         if (checkpoint.StoreSchema != floor.Schema || checkpoint.MinimumReader != floor.MinimumReader)
@@ -337,7 +336,7 @@ internal static class NativeUpdateOperation
 
     private static JsonObject ObserveRefusal(string dataRoot, string appRoot)
     {
-        try { return Report(NativeUpdateGate.Read(dataRoot), NodeVersionSelection.Read(appRoot)); }
+        try { return Report(NativeUpdateGate.Read(dataRoot), NodeVersionSelection.ReadIdentity(appRoot)); }
         catch (Exception failure) when (IsOperatorFailure(failure)) { return new() { ["phase"] = "Unconfirmed" }; }
     }
 
@@ -352,6 +351,13 @@ internal static class NativeUpdateOperation
         NodeUpdateInstallation previous, NodeUpdateInstallation candidate, string dataRoot, string appRoot, bool testMode,
         Func<string?> currentOwner, CancellationToken ct)
     {
+        bool legacy = authority.PreviousSupervisorProtocol is null;
+        string? selected = NodeVersionSelection.ReadIdentity(appRoot);
+        if (selected != authority.PreviousSelection && selected != candidate.ArchiveSha256)
+            throw Refused("native_update_selection_changed");
+        if (legacy && selected == authority.PreviousSelection)
+            await RequireLegacyBarrierAsync(appRoot, state, previous, testMode, ct).ConfigureAwait(false);
+
         if (state.Phase == NativeUpdatePhase.Fenced)
         {
             var proposed = await ProbeCompatibilityAsync(candidate, testMode, ct).ConfigureAwait(false)
@@ -369,9 +375,6 @@ internal static class NativeUpdateOperation
         }
 
         DurableCommandStore.VerifyNativeUpdateBackup(state.Checkpoint!, testMode);
-        string? selected = NodeVersionSelection.Read(appRoot);
-        if (selected != authority.PreviousSelection && selected != candidate.ArchiveSha256)
-            throw Refused("native_update_selection_changed");
         if (selected != candidate.ArchiveSha256)
         {
             await StopAfterDrainAsync(previous, candidate, authority, testMode, permitCandidate: true, authority.PreviousSelection is null, ct)
@@ -393,13 +396,20 @@ internal static class NativeUpdateOperation
                 await TerminateOwnedProbeAsync(probe).ConfigureAwait(false);
             }
 
-            NodeVersionSelection.Select(appRoot, selected, candidate.ArchiveSha256);
+            using var offline = AcquireOffline(testMode, dataRoot);
+            RequirePreviousFloor(dataRoot, authority, online: false, requireDrain: true, verifyAuthority: true);
+            if (legacy)
+                await RequireLegacyBarrierAsync(appRoot, state, previous, testMode, ct).ConfigureAwait(false);
+            NodeVersionSelection.Select(appRoot, selected, candidate.ArchiveSha256,
+                allowMissingExpected: legacy && OperatingSystem.IsWindows());
         }
         else if (state.Phase != NativeUpdatePhase.CandidateReady)
         {
             throw Refused("native_update_selection_without_health_checkpoint");
         }
 
+        if (legacy)
+            await ReleaseSystemdHandoffAsync(appRoot, state.OperationId, testMode, ct).ConfigureAwait(false);
         var ready = await StartAndCheckManagedAsync(candidate, state, testMode, ct).ConfigureAwait(false);
         RequireActivationFloor(dataRoot, state.Checkpoint!, authority);
         NodeUpdateLauncher.RebindWindowsStartup(previous, candidate, testMode);
@@ -622,6 +632,19 @@ internal static class NativeUpdateOperation
         var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         if (!cohort.Root.Equals(NodeVersionSelection.InstallationDirectory(appRoot, cohort.ArchiveSha256), comparison))
             throw Refused("native_update_installation_identity_mismatch");
+        VerifyInstallation(cohort, cancellationToken);
+    }
+
+    private static void VerifyPrevious(string appRoot, NodeUpdateInstallation previous, NativeUpdateAuthority authority, CancellationToken ct)
+    {
+        if (OperatingSystem.IsWindows() && authority.PreviousSupervisorProtocol is null)
+            VerifyInstallation(NodeUpdateWindowsHandoff.ResolvePrevious(appRoot, previous), ct);
+        else
+            VerifyCohort(appRoot, previous, ct);
+    }
+
+    private static void VerifyInstallation(NodeUpdateInstallation cohort, CancellationToken cancellationToken)
+    {
         ContractionPaths.RequireOwnedDirectory(cohort.Root);
         using var manifest = ContractionPaths.OpenRegularRead(Path.Combine(cohort.Root, VersionIntegrity.ManifestName));
         if (!Convert.ToHexStringLower(SHA256.HashData(manifest)).Equals(cohort.DigestManifestSha256, StringComparison.Ordinal)
@@ -702,7 +725,7 @@ internal static class NativeUpdateOperation
     {
         ["operationId"] = state?.OperationId.ToString("D"),
         ["phase"] = state?.Phase.ToString() ?? "Idle",
-        ["admissionFenced"] = state?.IsFenced ?? false,
+        ["admissionFenced"] = state is { IsFenced: true, Phase: not (NativeUpdatePhase.PreparingPredecessor or NativeUpdatePhase.RestoringPredecessor) },
         ["restoringManagedPredecessor"] = state?.Phase == NativeUpdatePhase.RestoringPredecessor ? true : null,
         ["previousArchiveSha256"] = state?.Previous.ArchiveSha256,
         ["previousCommit"] = state?.Previous.Commit,

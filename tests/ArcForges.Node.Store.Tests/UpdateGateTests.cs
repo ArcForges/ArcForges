@@ -26,11 +26,9 @@ public sealed class UpdateGateTests
             Assert.False(File.Exists(Path.Combine(root.Path, "native-update.json")));
         }
 
-        Assert.True(NativeUpdateGate.IsUnchangedUnfenced(root.Path, expected: null));
+        Assert.Null(NativeUpdateGate.Read(root.Path));
         var fenced = NativeUpdateGate.Begin(root.Path, operation, previous, candidate);
         Assert.Equal(fenced, NativeUpdateGate.Read(root.Path));
-        Assert.False(NativeUpdateGate.IsUnchangedUnfenced(root.Path, expected: null));
-        Assert.False(NativeUpdateGate.IsUnchangedUnfenced(root.Path, fenced));
         Assert.Null(NativeUpdateGate.TryEnterFreshStart(root.Path));
     }
 
@@ -58,8 +56,6 @@ public sealed class UpdateGateTests
 
         var completed = NativeUpdateGate.Complete(root.Path, operation);
         Assert.Equal(completed, NativeUpdateGate.Read(root.Path));
-        Assert.True(NativeUpdateGate.IsUnchangedUnfenced(root.Path, completed));
-        Assert.False(NativeUpdateGate.IsUnchangedUnfenced(root.Path, completed with { OperationId = Guid.NewGuid() }));
         Assert.Equal(completed, NativeUpdateGate.Complete(root.Path, operation));
         Assert.Throws<StoreIncompatibleException>(() => NativeUpdateGate.MarkRolledBack(root.Path, operation));
         using var fresh = NativeUpdateGate.TryEnterFreshStart(root.Path);
@@ -76,7 +72,11 @@ public sealed class UpdateGateTests
         candidate = candidate with { DigestManifestSha256 = new string('b', 64) };
         Guid operation = Guid.NewGuid();
         var authority = new NativeUpdateAuthority(new string('c', 32), new string('d', 32), previous.ArchiveSha256, 20, 20, null);
-        _ = NativeUpdateGate.Begin(root.Path, operation, previous, candidate, authority);
+        var handoff = NativeUpdateGate.Begin(root.Path, operation, previous, candidate, authority, preparePredecessor: true);
+        Assert.Equal(NativeUpdatePhase.PreparingPredecessor, NativeUpdateGate.Read(root.Path)!.Phase);
+        Assert.Null(NativeUpdateGate.TryEnterFreshStart(root.Path));
+        Assert.Throws<StoreIncompatibleException>(() => NativeUpdateGate.Prepare(root.Path, operation, Checkpoint));
+        Assert.Equal(handoff, NativeUpdateGate.Read(root.Path));
 
         var recovering = NativeUpdateGate.BeginPreviousOwnerRestore(root.Path, operation);
         Assert.Equal(NativeUpdatePhase.RestoringPredecessor, recovering.Phase);
