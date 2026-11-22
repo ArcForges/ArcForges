@@ -88,4 +88,20 @@ internal static class AutostartRegistration
         key.SetValue(ValueName, selected, RegistryValueKind.String);
         key.Flush();
     }
+
+    internal static void RequireAbsentOrExact(string supervisorPath, string keyPath = RunKey)
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(keyPath, writable: false);
+        if (key is null || !key.GetValueNames().Contains(ValueName, StringComparer.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (key.GetValueKind(ValueName) != RegistryValueKind.String
+            || key.GetValue(ValueName, null, RegistryValueOptions.DoNotExpandEnvironmentNames) is not string registered
+            || !string.Equals(registered, Command(supervisorPath), StringComparison.OrdinalIgnoreCase))
+        {
+            throw new IOException("node_update_windows_previous_startup_not_canonical");
+        }
+    }
 }

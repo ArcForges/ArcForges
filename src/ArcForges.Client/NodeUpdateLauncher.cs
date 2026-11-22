@@ -2,6 +2,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
 using System.Security.Cryptography;
 using System.Text.Json;
 using ArcForges.Contracts.Foundation.V1;
@@ -72,15 +73,30 @@ public static partial class NodeUpdateLauncher
             return;
         }
 
+        var selectedSupervisor = Path.Combine(selected.Root, NodeAutoStart.SupervisorFileName);
+        var app = NodeLocations.UpdateApplicationRoot(testMode);
+        AutostartRegistration.Rebind(selectedSupervisor, current => IsAdmittedStartup(current, previous, app), WindowsStartupKey(testMode));
+    }
+
+    /// <summary>Verifies the existing Windows login launch can be stopped by parking its exact installed cohort.</summary>
+    public static void RequireCanonicalWindowsStartup(NodeUpdateInstallation previous, bool testMode)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            var supervisor = Path.Combine(previous.Root, NodeAutoStart.SupervisorFileName);
+            AutostartRegistration.RequireAbsentOrExact(supervisor, WindowsStartupKey(testMode));
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static string WindowsStartupKey(bool testMode)
+    {
         if (testMode && NodeLocations.EndpointOverride(testMode) is null)
         {
             throw new IOException("node_update_windows_startup_test_endpoint_required");
         }
 
-        var keyPath = testMode ? @"Software\ArcForges\Tests\Update\" + NodeLocations.InstanceKey(testMode) + @"\Run" : AutostartRegistration.RunKey;
-        var selectedSupervisor = Path.Combine(selected.Root, NodeAutoStart.SupervisorFileName);
-        var app = NodeLocations.UpdateApplicationRoot(testMode);
-        AutostartRegistration.Rebind(selectedSupervisor, current => IsAdmittedStartup(current, previous, app), keyPath);
+        return testMode ? @"Software\ArcForges\Tests\Update\" + NodeLocations.InstanceKey(testMode) + @"\Run" : AutostartRegistration.RunKey;
     }
 
     private static bool IsAdmittedStartup(string registered, NodeUpdateInstallation previous, string appRoot)
