@@ -295,7 +295,10 @@ internal static class NativeUpdateOperation
         if (!NodeUpdateInstallationCustody.IsParked(appRoot, previous.ArchiveSha256))
             throw Refused("native_update_predecessor_startup_barrier_unconfirmed");
         if (OperatingSystem.IsLinux())
+        {
             await NodeUpdateSystemdHandoff.RequireArmedAsync(appRoot, state.OperationId, testMode, ct).ConfigureAwait(false);
+            NodeUpdatePendingPredecessor.RequireNoPendingPredecessor(appRoot, previous);
+        }
     }
 
     private static Task ReleaseSystemdHandoffAsync(string appRoot, Guid operationId, bool testMode, CancellationToken ct) =>
