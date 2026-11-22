@@ -33,7 +33,8 @@ internal sealed partial class DurableCommandStore
 
     // A complete snapshot is a DB, every referenced epoch key, and an authenticated manifest.
     // A legacy pre-migration DB-only backup is intentionally not a ready V2 restore package.
-    internal void CreateBackup(string backupRoot, NodeSecretStore backupSecrets, NodeContractionScope? preparationScope = null)
+    internal void CreateBackup(string backupRoot, NodeSecretStore backupSecrets, NodeContractionScope? preparationScope = null,
+        bool createPrivateRoot = false)
     {
         lock (_gate)
         {
@@ -61,6 +62,9 @@ internal sealed partial class DurableCommandStore
                 if (preparationScope is not null)
                 {
                     preparationScope.ValidatePreparationRoot(backupRoot);
+                }
+                if (preparationScope is not null || createPrivateRoot)
+                {
                     NodeContractionScope.CreateNewPreparationRoot(backupRoot);
                 }
                 else

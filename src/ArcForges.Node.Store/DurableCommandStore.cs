@@ -152,7 +152,7 @@ internal sealed partial class DurableCommandStore : IDisposable
         }
     }
 
-    internal DurableCommandStore(NodeStore store, string owner, NodeSecretStore secrets, DurableCapacity? capacity = null)
+    internal DurableCommandStore(NodeStore store, string owner, NodeSecretStore secrets, DurableCapacity? capacity = null, bool existingOnly = false)
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(secrets);
@@ -173,13 +173,13 @@ internal sealed partial class DurableCommandStore : IDisposable
         _ownerLock = DurableEpochFence.OpenPrivate(_fencePath + ".lock", FileMode.OpenOrCreate);
         try
         {
-            using var catalogue = DurableEpochFence.OpenCatalogueLock(store.DataRoot);
-            OpenEpoch();
+            using var catalogue = DurableEpochFence.OpenCatalogueLock(store.DataRoot, existingOnly);
+            OpenEpoch(existingOnly);
         }
         catch { _ownerLock.Dispose(); CryptographicOperations.ZeroMemory(_key); throw; }
     }
 
-    private void OpenEpoch()
+    private void OpenEpoch(bool existingOnly)
     {
         var epoch = _store.Read(reader =>
         {
@@ -194,7 +194,7 @@ internal sealed partial class DurableCommandStore : IDisposable
         });
         if (epoch.Item1 is null)
         {
-            if (File.Exists(_fencePath)) throw new DurableStoreMaintenanceException();
+            if (existingOnly || File.Exists(_fencePath)) throw new DurableStoreMaintenanceException();
             byte[] id = RandomNumberGenerator.GetBytes(16);
             string target = NodeDataKeyRing.TargetName(_store.Metadata.NodeId.Span, "v2-owner-" + Convert.ToHexStringLower(id));
             _key = RandomNumberGenerator.GetBytes(32);

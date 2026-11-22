@@ -12,14 +12,19 @@ internal enum NativeUpdatePhase
     CandidateReady,
     Completed,
     RolledBack,
+    RollingBack,
 }
 
-internal sealed record NativeUpdateCohort(string Commit, string Tree, string ArchiveSha256, string InstallationRoot);
+internal sealed record NativeUpdateCohort(string Commit, string Tree, string ArchiveSha256, string InstallationRoot,
+    string? DigestManifestSha256 = null);
 
-internal sealed record NativeUpdateCheckpoint(int StoreSchema, int MinimumReader, int CandidateReader, string BackupManifestSha256);
+internal sealed record NativeUpdateAuthority(string NodeId, string OwnerEpoch, string? PreviousSelection,
+    int PreviousSchema, int PreviousMinimumReader, string? PreviousSupervisorProtocol);
+internal sealed record NativeUpdateCheckpoint(int StoreSchema, int MinimumReader, int CandidateReader, string BackupManifestSha256,
+    string? BackupRoot = null, string[]? RetainedRuns = null);
 
 internal sealed record NativeUpdateState(int Format, Guid OperationId, NativeUpdatePhase Phase,
-    NativeUpdateCohort Previous, NativeUpdateCohort Candidate, NativeUpdateCheckpoint? Checkpoint,
+    NativeUpdateCohort Previous, NativeUpdateCohort Candidate, NativeUpdateCheckpoint? Checkpoint, NativeUpdateAuthority? Authority,
     DateTimeOffset UpdatedAt)
 {
     [JsonIgnore]
@@ -37,11 +42,11 @@ internal static class NativeUpdateGate
     /// <summary>Holds the maintenance lease through publication of a first Start receipt. Corrupt or unavailable state refuses fresh Starts.</summary>
     internal static IDisposable? TryEnterFreshStart(string dataRoot)
     {
-        FileStream? lease = null;
+        Lease? lease = null;
         try
         {
             lease = Acquire(dataRoot);
-            if (ReadHeld(dataRoot) is { IsFenced: true })
+            if (ReadHeld(lease.Directory) is { IsFenced: true })
                 return null;
 
             var acquired = lease;
@@ -61,23 +66,24 @@ internal static class NativeUpdateGate
     internal static NativeUpdateState? Read(string dataRoot)
     {
         using var lease = Acquire(dataRoot);
-        return ReadHeld(dataRoot);
+        return ReadHeld(lease.Directory);
     }
 
-    internal static NativeUpdateState Begin(string dataRoot, Guid operationId, NativeUpdateCohort previous, NativeUpdateCohort candidate)
+    internal static NativeUpdateState Begin(string dataRoot, Guid operationId, NativeUpdateCohort previous, NativeUpdateCohort candidate,
+        NativeUpdateAuthority? authority = null)
     {
-        var next = new NativeUpdateState(Format, operationId, NativeUpdatePhase.Fenced, previous, candidate, null, DateTimeOffset.UtcNow);
+        var next = new NativeUpdateState(Format, operationId, NativeUpdatePhase.Fenced, previous, candidate, null, authority, DateTimeOffset.UtcNow);
         Validate(next);
         using var lease = Acquire(dataRoot);
-        if (ReadHeld(dataRoot) is { } existing)
+        if (ReadHeld(lease.Directory) is { } existing)
         {
-            if (existing.OperationId == operationId && existing.Previous == previous && existing.Candidate == candidate)
+            if (existing.OperationId == operationId && existing.Previous == previous && existing.Candidate == candidate && existing.Authority == authority)
                 return existing;
             if (existing.IsFenced || existing.OperationId == operationId)
                 throw Incompatible("native_update_operation_conflict");
         }
 
-        Publish(dataRoot, next);
+        Publish(lease.Directory, next);
         return next;
     }
 
@@ -90,8 +96,13 @@ internal static class NativeUpdateGate
     internal static NativeUpdateState Complete(string dataRoot, Guid operationId) =>
         Advance(dataRoot, operationId, NativeUpdatePhase.Completed);
 
+    internal static NativeUpdateState BeginRollback(string dataRoot, Guid operationId) =>
+        Advance(dataRoot, operationId, NativeUpdatePhase.RollingBack);
+
     internal static NativeUpdateState MarkRolledBack(string dataRoot, Guid operationId) =>
         Advance(dataRoot, operationId, NativeUpdatePhase.RolledBack);
+
+    internal static IDisposable EnterOperator(string dataRoot) => Acquire(dataRoot, "native-update-operator.lock");
 
     internal static void RequireCompatibleReader(int schema, int minimumReader, int candidateReader)
     {
@@ -103,7 +114,7 @@ internal static class NativeUpdateGate
         NativeUpdateCheckpoint? checkpoint = null)
     {
         using var lease = Acquire(dataRoot);
-        var current = ReadHeld(dataRoot);
+        var current = ReadHeld(lease.Directory);
         if (current is null || current.OperationId != operationId)
             throw Incompatible("native_update_operation_conflict");
 
@@ -115,6 +126,7 @@ internal static class NativeUpdateGate
             (NativeUpdatePhase.Fenced, NativeUpdatePhase.Prepared) => true,
             (NativeUpdatePhase.Prepared, NativeUpdatePhase.CandidateReady) => true,
             (NativeUpdatePhase.CandidateReady, NativeUpdatePhase.Completed) => true,
+            (_, NativeUpdatePhase.RollingBack) when current.Phase != NativeUpdatePhase.RolledBack => true,
             (_, NativeUpdatePhase.RolledBack) when current.IsFenced => true,
             _ => false,
         };
@@ -123,37 +135,40 @@ internal static class NativeUpdateGate
 
         var next = current with { Phase = phase, Checkpoint = checkpoint ?? current.Checkpoint, UpdatedAt = DateTimeOffset.UtcNow };
         Validate(next);
-        Publish(dataRoot, next);
+        Publish(lease.Directory, next);
         return next;
     }
 
-    private static FileStream Acquire(string dataRoot)
+    private sealed class Lease(ContractionPaths.UpdateDirectory directory, FileStream file) : IDisposable
     {
-        ContractionPaths.RequireOwnedDirectory(dataRoot);
-        string path = Path.Combine(dataRoot, LockFile);
-        ContractionPaths.NativeIdentity? expected = Exists(path) ? ContractionPaths.NamedRegularIdentity(path) : null;
-        var lease = DurableEpochFence.OpenPrivate(path, expected is null ? FileMode.CreateNew : FileMode.Open);
+        internal ContractionPaths.UpdateDirectory Directory { get; } = directory;
+
+        public void Dispose()
+        {
+            file.Dispose();
+            Directory.Dispose();
+        }
+    }
+
+    private static Lease Acquire(string dataRoot, string filename = LockFile)
+    {
+        var directory = new ContractionPaths.UpdateDirectory(dataRoot);
         try
         {
-            var identity = ContractionPaths.Identity(lease.SafeFileHandle);
-            if ((expected is not null && identity != expected) || identity != ContractionPaths.NamedRegularIdentity(path))
-                throw Incompatible("native_update_lock_identity_changed");
-            return lease;
+            return new(directory, directory.Lock(filename));
         }
         catch
         {
-            lease.Dispose();
+            directory.Dispose();
             throw;
         }
     }
 
-    private static NativeUpdateState? ReadHeld(string dataRoot)
+    private static NativeUpdateState? ReadHeld(ContractionPaths.UpdateDirectory directory)
     {
-        string marker = Path.Combine(dataRoot, MarkerFile);
-        if (!Exists(marker))
+        using var read = directory.TryRead(MarkerFile);
+        if (read is null)
             return null;
-
-        using var read = ContractionPaths.OpenRegularRead(marker);
         if (read.Length <= 0 || read.Length > MaximumMarkerBytes)
             throw Incompatible("native_update_marker_invalid");
 
@@ -167,38 +182,24 @@ internal static class NativeUpdateGate
         return state;
     }
 
-    private static bool Exists(string path)
+    private static void Publish(ContractionPaths.UpdateDirectory directory, NativeUpdateState state)
     {
-        try
-        {
-            _ = File.GetAttributes(path);
-            return true;
-        }
-        catch (FileNotFoundException)
-        {
-            return false;
-        }
-    }
-
-    private static void Publish(string dataRoot, NativeUpdateState state)
-    {
-        string marker = Path.Combine(dataRoot, MarkerFile);
-        string temporary = Path.Combine(dataRoot, $".{MarkerFile}.{Guid.NewGuid():N}.partial");
+        string temporary = $".{MarkerFile}.{Guid.NewGuid():N}.partial";
         byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(state, NativeUpdateJsonContext.Default.NativeUpdateState);
         if (bytes.Length > MaximumMarkerBytes)
             throw Incompatible("native_update_marker_invalid");
         try
         {
-            using (var write = DurableEpochFence.OpenPrivate(temporary, FileMode.CreateNew))
+            using (var write = directory.Create(temporary))
             {
                 write.Write(bytes);
                 write.Flush(flushToDisk: true);
             }
-            ContractionPaths.ReplaceSiblingFileDurably(temporary, marker);
+            directory.Replace(temporary, MarkerFile);
         }
         finally
         {
-            File.Delete(temporary);
+            directory.DeleteTemporary(temporary);
         }
     }
 
@@ -214,15 +215,29 @@ internal static class NativeUpdateGate
 
         if (state.Checkpoint is { } checkpoint)
         {
-            if (!Hex(checkpoint.BackupManifestSha256, 64))
+            if (!Hex(checkpoint.BackupManifestSha256, 64) || (checkpoint.BackupRoot is not null && !CanonicalPath(checkpoint.BackupRoot))
+                || (state.Authority is not null && checkpoint.BackupRoot is null)
+                || checkpoint.RetainedRuns?.Any(run => !Hex(run, 32)) == true)
                 throw Incompatible("native_update_marker_invalid");
             RequireCompatibleReader(checkpoint.StoreSchema, checkpoint.MinimumReader, checkpoint.CandidateReader);
+        }
+
+        if (state.Authority is { } authority)
+        {
+            if (!Hex(authority.NodeId, 32) || !Hex(authority.OwnerEpoch, 32)
+                || (authority.PreviousSelection is not null && authority.PreviousSelection != state.Previous.ArchiveSha256)
+                || authority.PreviousSupervisorProtocol is { Length: 0 or > 128 }
+                || !Hex(state.Previous.DigestManifestSha256, 64) || !Hex(state.Candidate.DigestManifestSha256, 64))
+                throw Incompatible("native_update_marker_invalid");
+            RequireCompatibleReader(authority.PreviousSchema, authority.PreviousMinimumReader, authority.PreviousSchema);
         }
     }
 
     private static bool ValidCohort(NativeUpdateCohort? cohort) => cohort is not null && Hex(cohort.Commit, 40) && Hex(cohort.Tree, 40)
-        && Hex(cohort.ArchiveSha256, 64) && cohort.InstallationRoot is { Length: > 0 and <= 4096 } path && Path.IsPathFullyQualified(path)
-        && path == Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        && Hex(cohort.ArchiveSha256, 64) && CanonicalPath(cohort.InstallationRoot);
+
+    private static bool CanonicalPath(string value) => value is { Length: > 0 and <= 4096 } && Path.IsPathFullyQualified(value)
+        && value == Path.TrimEndingDirectorySeparator(Path.GetFullPath(value));
 
     private static bool Hex(string? value, int length) => value?.Length == length
         && value.All(character => character is >= '0' and <= '9' or >= 'a' and <= 'f');
