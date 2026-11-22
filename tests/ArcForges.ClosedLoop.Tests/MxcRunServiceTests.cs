@@ -408,7 +408,7 @@ public sealed partial class MxcRunServiceTests
     }
 
     private static async Task<Sandbox> CreateSandboxAsync(SandboxService.SandboxServiceClient sandboxes, Id ownerEpoch,
-        bool explicitLimits = true, ulong? outputRetentionBytes = null)
+        bool explicitLimits = true, ulong? outputRetentionBytes = null, string displayName = "Native Run package fixture")
     {
         bool windows = OperatingSystem.IsWindows();
         var resources = new ResourcePolicy { PressureAction = PressureAction.Throttle };
@@ -434,7 +434,7 @@ public sealed partial class MxcRunServiceTests
         {
             Meta = Mutation(),
             OwnerEpoch = ownerEpoch,
-            DisplayName = "Native Run package fixture",
+            DisplayName = displayName,
             Config = config,
         }, deadline: Deadline, cancellationToken: Ct);
         var sandbox = Value(reply.Value, reply.Error).Sandbox;
