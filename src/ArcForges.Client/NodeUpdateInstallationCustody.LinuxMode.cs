@@ -20,6 +20,43 @@ public static partial class NodeUpdateInstallationCustody
         public ushort ParkedPermissions => (ushort)(OriginalPermissions & ~(ExecuteBits | WriteBits));
     }
 
+    /// <summary>Finishes the receipt after the resumed updater authenticates the live restored predecessor.</summary>
+    public static void FinishRestoredMode(string appRoot, NodeUpdateInstallation previous)
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var canonical = RequireCanonical(appRoot, previous);
+        using var exclusion = AcquireLinux(Path.GetDirectoryName(canonical)!, existingOnly: true);
+        int parent = Descriptor(exclusion.LinuxRoot!);
+        if (ReadLinuxMode(parent, previous.ArchiveSha256) is not { } receipt)
+        {
+            return;
+        }
+
+        using var directory = OpenLinux(parent, Path.GetFileName(canonical), LinuxDirectory);
+        using var executable = OpenLinuxExecutable(directory);
+        var anchored = previous with { Root = FormattableString.Invariant($"/proc/self/fd/{Descriptor(directory)}") };
+        VerifyLinuxExecutable(anchored, executable);
+        var state = LinuxExecutableState(executable.SafeFileHandle);
+        RequireRecordedMode(receipt, state);
+        if (ExecutablePermissions(state) != receipt.OriginalPermissions)
+        {
+            throw new IOException("node_update_linux_restored_executable_mode_unconfirmed");
+        }
+
+        // The live predecessor has its original mode; this only flushes the inode and retires the recorded intent.
+        if (NodeVersionSelection.SyncDirectory(Descriptor(executable.SafeFileHandle)) != 0)
+        {
+            throw new IOException("node_update_linux_restored_executable_sync_failed:" + Marshal.GetLastPInvokeError());
+        }
+
+        SyncLinuxModeDirectory(parent);
+        RemoveLinuxMode(parent, previous.ArchiveSha256);
+    }
+
     private static FileStream OpenLinuxExecutable(SafeFileHandle directory)
     {
         var handle = OpenLinux(Descriptor(directory), "arcforges", ReadOnlyPrivate);
