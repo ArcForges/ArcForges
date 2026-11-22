@@ -853,8 +853,8 @@ public sealed partial class MxcRunServiceTests
                 if (OperatingSystem.IsWindows() && waitForClosedHandles && checkpoint == DeleteDuringRemoval &&
                     windowsRundownDirectories is not null)
                 {
-                    remaining = EnumerateWindowsDeleteRundownEntries(opened, windowsRundownDirectories, token,
-                        beforeWindowsRundownDirectoryOpen);
+                    remaining = EnumerateWindowsDeleteRundownEntries(opened, windowsRundownDirectories,
+                        beforeWindowsRundownDirectoryOpen, token);
                 }
                 break;
             }

@@ -28,8 +28,8 @@ public sealed partial class MxcRunServiceTests
     }
 
     private static string[] EnumerateWindowsDeleteRundownEntries(WorkspacePath root,
-        IReadOnlyDictionary<string, WorkspaceObjectIdentity> originalDirectories, CancellationToken token,
-        Action<string>? beforeDirectoryOpen)
+        IReadOnlyDictionary<string, WorkspaceObjectIdentity> originalDirectories, Action<string>? beforeDirectoryOpen,
+        CancellationToken token)
     {
         var directories = new Stack<string>();
         var entries = new List<string>();
