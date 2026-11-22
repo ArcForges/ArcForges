@@ -63,6 +63,9 @@ internal static class NativeUpdateOperation
                 await using var session = await NodeClient.WaitForReadyAsync(new NodeConnectOptions
                     { TestMode = request.TestMode, AutoStart = false, ReadinessTimeout = RpcDeadline }, cancellationToken).ConfigureAwait(false);
                 using var process = NodeUpdateLauncher.ReadBoundProcess(session, previous, expectedPid: null, allowVerifiedCopy: priorSelection is null);
+                if (priorSelection is not null)
+                    await NodeUpdateLauncher.RequireManagedProcessAsync(previous, process, started: null, request.TestMode, cancellationToken)
+                        .ConfigureAwait(false);
                 var owner = await ReadAuthorityAsync(session, cancellationToken).ConfigureAwait(false);
                 var floor = NodeStore.InspectNativeUpdateFloor(dataRoot, onlineObservation: true);
                 NativeUpdateGate.RequireCompatibleReader(floor.Schema, floor.MinimumReader, proposed.SchemaReader);
