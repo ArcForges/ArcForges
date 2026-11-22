@@ -142,7 +142,7 @@ internal sealed partial class WorkspacePath
                         pending.Pop().Dispose();
                         cancellationToken.ThrowIfCancellationRequested();
                         using (var removal = OpenWindowsSandboxRemovalLease(current.Parent, current.Name,
-                            current.Identity, owner, flushAccess: false))
+                            current.Identity, owner, flushAccess: false, dispositionOnly: true))
                         {
                             SetWindowsSandboxRemovalDisposition(current.Parent, current.Name,
                                 current.Identity, owner, removal, applied, cancellationToken);
@@ -245,7 +245,7 @@ internal sealed partial class WorkspacePath
 
     [SupportedOSPlatform("windows")]
     private static unsafe SafeFileHandle OpenWindowsSandboxRemovalLease(SafeFileHandle parent, string name,
-        WorkspaceObjectIdentity expected, byte[] owner, bool flushAccess)
+        WorkspaceObjectIdentity expected, byte[] owner, bool flushAccess, bool dispositionOnly = false)
     {
         var before = ReadWindowsSandboxRemovalName(parent, name);
         if (!MatchesWindowsSandboxRemovalIdentity(expected, before))
@@ -274,7 +274,8 @@ internal sealed partial class WorkspacePath
                     ObjectName = (nint)(&unicode),
                     Attributes = (caseFlags & 1) == 0 ? 0x40u : 0u,
                 };
-                uint access = SandboxRemovalDeleteAccess | (flushAccess ? 0x40000000u : 0u);
+                // A fresh directory disposition lease needs metadata and DELETE rights, not enumeration access.
+                uint access = dispositionOnly ? 0x00130080u : SandboxRemovalDeleteAccess | (flushAccess ? 0x40000000u : 0u);
                 uint options = 0x00200020u | (expected.IsDirectory ? 1u : 0x40u) | (flushAccess ? 2u : 0u);
                 RequireWindowsSandboxDataStatus(NtCreateFile(out var raw, access, ref attributes, out _, 0,
                     0, 0, 1, options, 0, 0));
