@@ -116,7 +116,7 @@ internal sealed partial class WorkspacePath
         try
         {
             pending.Push(new(RootHandle, name, expected,
-                OpenWindowsSandboxRemovalLease(RootHandle, name, expected, owner, flushAccess: false)));
+                OpenWindowsSandboxRemovalLease(RootHandle, name, expected, owner, flushAccess: false, shareTraversalReads: false)));
             while (pending.TryPeek(out var current) && removed < maximumEntries)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -245,7 +245,7 @@ internal sealed partial class WorkspacePath
 
     [SupportedOSPlatform("windows")]
     private static unsafe SafeFileHandle OpenWindowsSandboxRemovalLease(SafeFileHandle parent, string name,
-        WorkspaceObjectIdentity expected, byte[] owner, bool flushAccess, bool dispositionOnly = false)
+        WorkspaceObjectIdentity expected, byte[] owner, bool flushAccess, bool dispositionOnly = false, bool shareTraversalReads = true)
     {
         var before = ReadWindowsSandboxRemovalName(parent, name);
         if (!MatchesWindowsSandboxRemovalIdentity(expected, before))
@@ -278,7 +278,7 @@ internal sealed partial class WorkspacePath
                 bool traversal = expected.IsDirectory && !flushAccess && !dispositionOnly;
                 uint access = traversal ? 0x00120081u : dispositionOnly ? 0x00130080u
                     : SandboxRemovalDeleteAccess | (flushAccess ? 0x40000000u : 0u);
-                uint sharing = traversal ? 1u : 0u; // FILE_SHARE_READ only; writing and replacement remain excluded.
+                uint sharing = traversal && shareTraversalReads ? 1u : 0u; // FILE_SHARE_READ; the selected root stays exclusive.
                 uint options = 0x00200020u | (expected.IsDirectory ? 1u : 0x40u) | (flushAccess ? 2u : 0u);
                 RequireWindowsSandboxDataStatus(NtCreateFile(out var raw, access, ref attributes, out _, 0,
                     0, sharing, 1, options, 0, 0));
