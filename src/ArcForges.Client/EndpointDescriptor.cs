@@ -84,7 +84,7 @@ public sealed class EndpointDescriptor
             }
 
             var started = new DateTimeOffset(process.StartTime.ToUniversalTime()).ToUnixTimeMilliseconds();
-            return Math.Abs(started - ProcessStartUnixMs) <= 1000;
+            return HasPlausibleStartTime(started, ProcessStartUnixMs);
         }
         catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception
             or NotSupportedException)
@@ -92,6 +92,9 @@ public sealed class EndpointDescriptor
             return false;
         }
     }
+
+    internal static bool HasPlausibleStartTime(long observedUnixMs, long descriptorUnixMs) =>
+        descriptorUnixMs >= observedUnixMs - 1000 && descriptorUnixMs <= observedUnixMs + 1000;
 
     /// <summary>The start time of the current process, in the descriptor's unit.</summary>
     public static long CurrentProcessStartUnixMs()

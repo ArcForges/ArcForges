@@ -311,16 +311,22 @@ public static partial class NodeUpdateLauncher
         try
         {
             _ = process.SafeHandle;
-            var started = new DateTimeOffset(process.StartTime.ToUniversalTime()).ToUnixTimeMilliseconds();
             var expectedExecutable = Executable(cohort.Root);
-            var actual = process.MainModule?.FileName;
-            var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-            if (actual is null || started != descriptor.ProcessStartUnixMs
-                || (!allowVerifiedCopy && !string.Equals(actual, expectedExecutable, comparison))
-                || !SameFileBytes(OperatingSystem.IsLinux() ? $"/proc/{process.Id}/exe" : actual, expectedExecutable)
-                || process.HasExited)
+            if (OperatingSystem.IsLinux())
             {
-                throw new IOException("node_update_running_cohort_mismatch");
+                RequireLinuxBoundExecutable(process, descriptor.ProcessStartUnixMs, expectedExecutable, allowVerifiedCopy);
+            }
+            else
+            {
+                var started = new DateTimeOffset(process.StartTime.ToUniversalTime()).ToUnixTimeMilliseconds();
+                var actual = process.MainModule?.FileName;
+                var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+                if (actual is null || started != descriptor.ProcessStartUnixMs
+                    || (!allowVerifiedCopy && !string.Equals(actual, expectedExecutable, comparison))
+                    || !SameFileBytes(actual, expectedExecutable) || process.HasExited)
+                {
+                    throw new IOException("node_update_running_cohort_mismatch");
+                }
             }
 
             return process;
@@ -329,6 +335,28 @@ public static partial class NodeUpdateLauncher
         {
             process.Dispose();
             throw;
+        }
+    }
+
+    internal static void RequireLinuxBoundExecutable(Process process, long descriptorStartUnixMs, string expectedExecutable, bool allowVerifiedCopy)
+    {
+        int pid = process.Id; // The pinned socket already reported this native peer PID.
+        long kernelStarted = ClientProcess.ReadLinuxStartTicks(pid);
+        var started = new DateTimeOffset(process.StartTime.ToUniversalTime()).ToUnixTimeMilliseconds();
+        // .NET estimates wall-clock boot time separately in each process. Kernel start ticks bind the actual birth.
+        if (!EndpointDescriptor.HasPlausibleStartTime(started, descriptorStartUnixMs))
+        {
+            throw new IOException("node_update_running_cohort_mismatch");
+        }
+
+        string kernelExecutable = FormattableString.Invariant($"/proc/{pid}/exe");
+        var actual = new FileInfo(kernelExecutable).LinkTarget;
+        if (actual is null || (!allowVerifiedCopy && !string.Equals(actual, expectedExecutable, StringComparison.Ordinal))
+            || !SameFileBytes(kernelExecutable, expectedExecutable)
+            || !string.Equals(new FileInfo(kernelExecutable).LinkTarget, actual, StringComparison.Ordinal)
+            || ClientProcess.ReadLinuxStartTicks(pid) != kernelStarted || process.HasExited)
+        {
+            throw new IOException("node_update_running_cohort_mismatch");
         }
     }
 

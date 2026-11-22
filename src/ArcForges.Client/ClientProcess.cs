@@ -89,11 +89,10 @@ public static class ClientProcess
             DateTimeOffset start;
             if (OperatingSystem.IsLinux())
             {
-                var stat = File.ReadAllText($"/proc/{pid.ToString(CultureInfo.InvariantCulture)}/stat");
-                var fields = stat[(stat.LastIndexOf(')', StringComparison.Ordinal) + 2)..].Split(' ');
+                long kernelStarted = ReadLinuxStartTicks(pid);
                 var boot = File.ReadLines("/proc/stat").First(line => line.StartsWith("btime ", StringComparison.Ordinal));
                 start = DateTimeOffset.FromUnixTimeMilliseconds((long.Parse(boot.AsSpan(6), NumberStyles.None, CultureInfo.InvariantCulture) * 1000)
-                    + (long.Parse(fields[19], NumberStyles.None, CultureInfo.InvariantCulture) * 1000 / 100));
+                    + (kernelStarted * 1000 / 100));
             }
             else
             {
@@ -108,6 +107,25 @@ public static class ClientProcess
         {
             return null;
         }
+    }
+
+    // Field 22 is kernel start time (user clock ticks). The /proc comm field may contain spaces and parentheses.
+    internal static long ReadLinuxStartTicks(int pid)
+    {
+        var stat = File.ReadAllText($"/proc/{pid.ToString(CultureInfo.InvariantCulture)}/stat");
+        int commEnd = stat.LastIndexOf(')', StringComparison.Ordinal);
+        if (commEnd < 0 || commEnd + 2 >= stat.Length)
+        {
+            throw new IOException("node_process_kernel_start_unavailable");
+        }
+
+        var fields = stat[(commEnd + 2)..].Split(' ');
+        if (fields.Length <= 19 || !long.TryParse(fields[19], NumberStyles.None, CultureInfo.InvariantCulture, out long start))
+        {
+            throw new IOException("node_process_kernel_start_unavailable");
+        }
+
+        return start;
     }
 
     /// <summary>The client hello of this process.</summary>
