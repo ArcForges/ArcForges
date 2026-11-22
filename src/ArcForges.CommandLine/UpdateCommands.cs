@@ -89,9 +89,17 @@ internal static class UpdateCommands
 
     private static Option<string> Required(string name, string description) => new(name) { Required = true, Description = description };
 
-    private static int Print(Cli cli, NodeUpdateResponse response) => response.Refusal is { } error
-        ? Refuse(cli, error)
-        : V2Cli.Print(cli, response.Report);
+    private static int Print(Cli cli, NodeUpdateResponse response)
+    {
+        if (response.Refusal is not { } reason)
+        {
+            return V2Cli.Print(cli, response.Report);
+        }
+
+        var error = V2Cli.Error(ErrorCategory.State, "node_update_refused", reason);
+        error.Effect = response.RefusalEffect;
+        return V2Cli.Fail(cli, error, observations: response.Report);
+    }
 
     private static int Refuse(Cli cli, string reason) => V2Cli.Fail(cli, V2Cli.Error(ErrorCategory.State, "node_update_refused", reason));
 }

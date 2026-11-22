@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 using System.Text.Json.Nodes;
+using ArcForges.Contracts.Foundation.V1;
 
 namespace ArcForges.Client;
 
@@ -11,4 +12,4 @@ public sealed record NodeUpdateRequest(NodeUpdateAction Action, bool TestMode, N
     NodeUpdateInstallation? Previous = null);
 
 /// <summary>An exact update outcome or refusal.</summary>
-public sealed record NodeUpdateResponse(JsonObject Report, string? Refusal = null);
+public sealed record NodeUpdateResponse(JsonObject Report, string? Refusal = null, EffectCertainty RefusalEffect = EffectCertainty.Unknown);
