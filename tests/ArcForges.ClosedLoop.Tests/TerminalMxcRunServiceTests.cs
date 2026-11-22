@@ -22,7 +22,8 @@ public sealed partial class MxcRunServiceTests
         TestContext.Current.CancellationToken.ThrowIfCancellationRequested();
         await using var installed = await InstalledTerminal.StartAsync();
         var marker = Path.Combine(installed.Working, "tui.log");
-        var tui = await installed.RunAsync(TerminalMode.Interactive, "terminal", "tui", marker);
+        var quitGate = Path.Combine(installed.Working, "tui-quit-release");
+        var tui = await installed.RunAsync(TerminalMode.Interactive, "terminal", "tui", marker, quitGate);
         Assert.Equal(TerminalMode.Interactive, tui.TerminalMode);
         await WaitMarkerAsync(marker, "ready 24 80");
         var writer = await AcquireWriterAsync(installed.Runs, tui);
@@ -42,7 +43,30 @@ public sealed partial class MxcRunServiceTests
         await WaitMarkerAsync(marker, "unicode");
         await AcceptInputAsync(installed.Runs, Input(tui, writer, 2, [3]), 1);
         await WaitMarkerAsync(marker, "raw-etx");
-        await AcceptInputAsync(installed.Runs, Input(tui, writer, 3, "q"u8.ToArray()), 1);
+        // Quit can end the live owner before its transient write acknowledgment is collected.
+        // Verify the live write and payload consumption before allowing the natural exit.
+        var quit = Input(tui, writer, 3, "q"u8.ToArray());
+        var acknowledgment = await WriteAsync(installed.Runs, quit);
+        if (acknowledgment.Error is { } failure)
+        {
+            TestContext.Current.TestOutputHelper?.WriteLine(
+                $"Run {Hex(tui.RunId)} quit acknowledgment: {failure.Code}, effect {failure.Effect}, reason {failure.Details?.State?.Reason}.");
+        }
+
+        var accepted = Value(acknowledgment.Value, acknowledgment.Error);
+        Assert.True(accepted.HasAcceptedBytes);
+        Assert.Equal(1u, accepted.AcceptedBytes);
+        await WaitMarkerAsync(marker, "quit-wait");
+        Assert.DoesNotContain("restored", ReadLines(marker));
+        Assert.Equal(RunState.Running, (await InspectAsync(installed.Runs, tui.RunId, Ct)).State);
+        var binding = ReadSupervisor(installed.Fixture.DataRoot, tui);
+        var owner = Assert.IsType<ProcessIdentity>(ProcessIdentity.Capture(binding.Pid));
+        var creation = OperatingSystem.IsWindows()
+            ? new DateTime(owner.StartKey, DateTimeKind.Utc).ToFileTimeUtc()
+            : owner.StartKey;
+        Assert.Equal(binding.Creation, creation.ToString(CultureInfo.InvariantCulture));
+
+        await File.WriteAllTextAsync(quitGate, "release", Ct);
         await WaitMarkerAsync(marker, "restored");
         await AssertTerminalExitAsync(installed, tui);
         var output = await WatchAsync(installed.Runs, tui, StreamKind.Terminal);
@@ -52,6 +76,11 @@ public sealed partial class MxcRunServiceTests
         Assert.Contains("\u001b[?1049l", canvas);
         Assert.Contains("CORE03 星", canvas);
         Assert.Contains("CORE03 redraw 星 35x107", canvas);
+        await TestNode.WaitAsync(() => !owner.IsRunning(), NativeBound, "the original terminal owner to exit naturally");
+        var replay = await WriteAsync(installed.Runs, quit);
+        Assert.Null(replay.Value);
+        RequireUncertain(replay.Error);
+        await AssertNoTerminalReceiptsAsync(installed, [quit.Meta.CommandId]);
 
         var signalMarker = Path.Combine(installed.Working, "interrupt.log");
         string[] signal = ["terminal", "signal", signalMarker];
