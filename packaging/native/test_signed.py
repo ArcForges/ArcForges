@@ -213,6 +213,39 @@ class SignedDistributionTests(unittest.TestCase):
             self.archive.write_bytes(b"a replacement at the original path")
             self.assertEqual(expected, snapshot.getvalue())
 
+    def test_durable_update_staging_does_not_replace_existing_installation(self):
+        staged = self.root / "staged"
+        staged.mkdir()
+        (staged / "witness").write_bytes(b"prior")
+        verify_install.sync_installation(staged)
+        verify_install.expose_installation(staged, self.output, durable=True)
+        self.assertFalse(staged.exists())
+
+        staged.mkdir()
+        (staged / "witness").write_bytes(b"other")
+        with self.assertRaises(OSError):
+            verify_install.expose_installation(staged, self.output, durable=True)
+        self.assertEqual(b"prior", (self.output / "witness").read_bytes())
+        self.assertEqual(b"other", (staged / "witness").read_bytes())
+
+    def test_update_retry_reuses_only_an_exact_unchanged_tree(self):
+        fresh = self.root / "fresh"
+        for root in (fresh, self.output):
+            (root / "nested").mkdir(parents=True)
+            (root / "nested" / "witness").write_bytes(b"correct")
+        verify_install.require_matching_installation(fresh, self.output)
+
+        witness = self.output / "nested" / "witness"
+        witness.write_bytes(b"changed")
+        with self.assertRaisesRegex(ValueError, "differs from the authenticated extraction"):
+            verify_install.require_matching_installation(fresh, self.output)
+        self.assertEqual(b"changed", witness.read_bytes())
+
+        witness.write_bytes(b"correct")
+        (self.output / "not-authenticated").touch()
+        with self.assertRaisesRegex(ValueError, "unexpected files"):
+            verify_install.require_matching_installation(fresh, self.output)
+
     def test_main_requires_canonical_origin_and_actual_ancestry(self):
         def git(*args):
             return subprocess.run(["git", "-C", str(self.root), *args], capture_output=True,

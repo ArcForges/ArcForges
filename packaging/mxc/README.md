@@ -90,3 +90,31 @@ archive members, and it checks the binaries and pinned MXC components
 before making the new installation directory available. The parent directory
 must already exist and be trusted by the operator. This command prepares
 an installed directory for a fresh launch.
+
+## Update an installed Node
+
+Run the `update` command from an independently authenticated installed cohort
+that includes the updater. Obtain the replacement archive and its detached
+signature, the Ed25519 public key, and the exact archive, commit, and tree
+identities through the release admission process. The updater uses the fixed
+installer bundled with that installed cohort. Provide absolute paths to trusted
+Python and OpenSSL executables, plus PowerShell on Windows. These tools are used
+for archive preparation. Ordinary Node startup and Run supervision use the
+native executables.
+
+```text
+arcforges update apply --archive <archive> --trusted-key <public-pem> --archive-sha256 <approved-sha256> --commit <commit> --tree <tree> --python <python-executable> --openssl <openssl-executable>
+```
+
+On Windows append `--powershell <powershell-executable>`. When adopting an
+independently admitted prior cohort, also supply `--previous-archive`,
+`--previous-archive-sha256`, `--previous-commit`, and `--previous-tree` together.
+The updater verifies the prior archive and retains its installation beside the
+replacement. On Linux the installed systemd user unit must use the managed
+`app/current` selection. An ambiguous or non-managed existing selection requires
+preparing and verifying a managed prior installation before its switch.
+
+`arcforges update status --json` reports the selected version and saved update
+checkpoint. Use `arcforges update resume` for an interrupted checkpoint or
+`arcforges update rollback` for a compatible preceding cohort. A reader refusal
+keeps the checkpoint fenced for the documented isolated restore procedure.

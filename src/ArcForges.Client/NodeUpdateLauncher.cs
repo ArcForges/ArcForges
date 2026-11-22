@@ -18,6 +18,13 @@ public static partial class NodeUpdateLauncher
     public static string Executable(string installationRoot) =>
         Path.Combine(installationRoot, OperatingSystem.IsWindows() ? "arcforges.exe" : "arcforges");
 
+    /// <summary>Keeps the native peer and the original Hello bound through subsequent update checks.</summary>
+    public static IDisposable PinBoundSession(NodeSession session)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        return session.PinConnection() ?? throw new IOException("node_update_connection_changed");
+    }
+
     /// <summary>Starts a fenced candidate without changing systemd or the Windows service launcher.</summary>
     public static Process StartCandidate(NodeUpdateInstallation candidate, bool testMode)
     {
@@ -171,7 +178,7 @@ public static partial class NodeUpdateLauncher
 
     private static async Task WaitForVersionIntegrityAsync(NodeSession session, NodeUpdateInstallation cohort, Process process, CancellationToken cancellationToken)
     {
-        using var pin = session.PinConnection() ?? throw new IOException("node_update_connection_changed");
+        using var pin = PinBoundSession(session);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(30));
         try
@@ -226,7 +233,7 @@ public static partial class NodeUpdateLauncher
     {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(cohort);
-        using var pin = session.PinConnection() ?? throw new IOException("node_update_connection_changed");
+        using var pin = PinBoundSession(session);
         var descriptor = EndpointDescriptor.TryRead(NodeLocations.EndpointDescriptorFile(session.Endpoint.DataRoot))
             ?? throw new IOException("node_update_descriptor_missing");
         if (descriptor.ProcessId != session.ServerProcessId || (expectedPid is int pid && descriptor.ProcessId != pid)
@@ -266,8 +273,7 @@ public static partial class NodeUpdateLauncher
     {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(process);
-        using var pin = session.PinConnection()
-            ?? throw new IOException("node_update_connection_changed");
+        using var pin = PinBoundSession(session);
         if (process.Id != session.ServerProcessId || process.HasExited)
         {
             throw new IOException("node_update_shutdown_target_changed");
