@@ -154,7 +154,7 @@ internal static partial class ContractionPaths
         private readonly DirectoryChain _directories;
         private readonly string _full;
 
-        internal UpdateDirectory(string path)
+        internal UpdateDirectory(string path, bool allowSharedStickyParent = false)
         {
             _full = Normalize(path);
             _directories = WalkDirectories(_full, allowMissing: false);
@@ -163,7 +163,7 @@ internal static partial class ContractionPaths
                 if (OperatingSystem.IsLinux())
                 {
                     foreach (var entry in _directories.Entries)
-                        VerifyLinuxDirectory(entry.Handle, leaf: entry == _directories.Last);
+                        VerifyLinuxDirectory(entry.Handle, leaf: !allowSharedStickyParent && entry == _directories.Last);
                 }
                 else if (OperatingSystem.IsWindows())
                     RequireWindowsDirectoryOwner(_full);
@@ -241,20 +241,58 @@ internal static partial class ContractionPaths
                 parent, FileAccess.Write);
         }
 
-        internal void Replace(string temporary, string destination)
+        internal void Replace(string temporary, string destination) => Publish(temporary, destination, replace: true);
+
+        internal void PublishNew(string temporary, string destination) => Publish(temporary, destination, replace: false);
+
+        private void Publish(string temporary, string destination, bool replace)
         {
             if (OperatingSystem.IsWindows())
             {
-                if (!MoveFile(Path.Combine(_full, temporary), Path.Combine(_full, destination), 0x1 | 0x8))
+                const uint writeThrough = 0x8;
+                const uint replaceExisting = 0x1;
+                if (!MoveFile(Path.Combine(_full, temporary), Path.Combine(_full, destination),
+                    writeThrough | (replace ? replaceExisting : 0)))
                     throw Refused("update_marker_publish_unconfirmed");
                 return;
             }
 
-            var parent = _directories.Last.Handle;
-            int fd = parent.DangerousGetHandle().ToInt32();
-            using var sync = OpenLinux(parent, ".", s_linuxDirectory | s_linuxNoFollow)!;
-            if (RenameAt(fd, temporary, fd, destination) != 0 || Sync(sync.DangerousGetHandle().ToInt32()) != 0)
+            int descriptor = _directories.Last.Handle.DangerousGetHandle().ToInt32();
+            const uint noReplace = 1;
+            int result = replace ? RenameAt(descriptor, temporary, descriptor, destination)
+                : RenameAt2(descriptor, temporary, descriptor, destination, noReplace);
+            if (result != 0)
                 throw Refused("update_marker_publish_unconfirmed");
+            SynchronizeDirectory();
+        }
+
+        internal void SynchronizeDirectory()
+        {
+            if (!OperatingSystem.IsLinux())
+                return;
+
+            using var sync = OpenLinux(_directories.Last.Handle, ".", s_linuxDirectory | s_linuxNoFollow)!;
+            if (Sync(sync.DangerousGetHandle().ToInt32()) != 0)
+                throw Refused("update_directory_sync_unconfirmed");
+        }
+
+        internal void SynchronizeFile(string name)
+        {
+            var parent = _directories.Last;
+            if (OperatingSystem.IsWindows())
+            {
+                using var file = OpenWindows(Path.Combine(_full, name), 0x40000000 | WindowsReadAttributes, FileShare.Read)!;
+                _ = ReadNamedRegular(file, parent);
+                if (!FlushFileBuffers(file))
+                    throw Refused("update_file_sync_unconfirmed");
+            }
+            else
+            {
+                using var file = OpenLinux(parent.Handle, name, LinuxNonBlocking | s_linuxNoFollow)!;
+                _ = ReadNamedRegular(file, parent);
+                if (Sync(file.DangerousGetHandle().ToInt32()) != 0)
+                    throw Refused("update_file_sync_unconfirmed");
+            }
         }
 
         internal void DeleteTemporary(string temporary)
@@ -307,6 +345,9 @@ internal static partial class ContractionPaths
 
     [LibraryImport("libc", EntryPoint = "renameat", StringMarshalling = StringMarshalling.Utf8, SetLastError = true)]
     private static partial int RenameAt(int oldDirectory, string oldName, int newDirectory, string newName);
+
+    [LibraryImport("libc", EntryPoint = "renameat2", StringMarshalling = StringMarshalling.Utf8, SetLastError = true)]
+    private static partial int RenameAt2(int oldDirectory, string oldName, int newDirectory, string newName, uint flags);
 
     [LibraryImport("libc", EntryPoint = "unlinkat", StringMarshalling = StringMarshalling.Utf8, SetLastError = true)]
     private static partial int UnlinkAt(int directory, string name, int flags);
@@ -600,6 +641,10 @@ internal static partial class ContractionPaths
     [LibraryImport("kernel32.dll", EntryPoint = "MoveFileExW", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool MoveFile(string existing, string destination, uint flags);
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool FlushFileBuffers(SafeFileHandle file);
 
     [LibraryImport("kernel32.dll")]
     private static partial uint GetFileType(SafeFileHandle file);

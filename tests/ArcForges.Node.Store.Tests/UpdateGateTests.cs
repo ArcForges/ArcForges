@@ -2,6 +2,7 @@
 using System.Security.AccessControl;
 using System.Security.Principal;
 using ArcForges.Node.Store.Migrations;
+using ArcForges.Tests;
 
 namespace ArcForges.Node.Store.Tests;
 
@@ -149,8 +150,21 @@ public sealed class UpdateGateTests
         Assert.NotNull(checkpoint.BackupRoot);
         Assert.True(checkpoint.DrainConfirmed);
         DurableCommandStore.VerifyNativeUpdateBackup(checkpoint, testMode: true);
-        DurableCommandStore.RestoreBackup(checkpoint.BackupRoot, NodeSecretStores.ForTestDataRoot(checkpoint.BackupRoot), dataRoot, secrets,
+        byte[] beforeRestore = File.ReadAllBytes(StorePaths.Database(dataRoot));
+        var backupSecrets = NodeSecretStores.ForTestDataRoot(checkpoint.BackupRoot);
+        string interrupted = Path.Combine(parent.Path, "interrupted");
+        var unavailable = new IsolatedSecretStore { Unavailable = true };
+        Assert.Throws<DurableStoreMaintenanceException>(() => DurableCommandStore.RestoreBackup(
+            checkpoint.BackupRoot, backupSecrets, dataRoot, secrets, interrupted, unavailable.Selection, verifyNativeOffline: true));
+        Assert.False(File.Exists(StorePaths.Database(interrupted)));
+        Assert.True(File.Exists(StorePaths.Database(interrupted) + ".restore.partial"));
+        Assert.Throws<DurableStoreMaintenanceException>(() => DurableCommandStore.VerifyRestorePublication(interrupted));
+        Assert.Equal(beforeRestore, File.ReadAllBytes(StorePaths.Database(dataRoot)));
+
+        DurableCommandStore.RestoreBackup(checkpoint.BackupRoot, backupSecrets, dataRoot, secrets,
             restored.Path, NodeSecretStores.ForTestDataRoot(restored.Path), verifyNativeOffline: true);
+        DurableCommandStore.VerifyRestorePublication(restored.Path);
+        Assert.Empty(Directory.EnumerateFiles(Path.GetDirectoryName(restored.Database)!, "node.db.restore.partial*"));
         using (var store = restored.Open(new ManualClock(), StoreMigrations.Released))
         using (var commands = new DurableCommandStore(store, owner, NodeSecretStores.ForTestDataRoot(restored.Path)))
         {
