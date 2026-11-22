@@ -92,6 +92,14 @@ internal static class NativeUpdateOperation
             if (request.Action == NodeUpdateAction.Restore)
                 return Restore(state, request, dataRoot, appRoot);
 
+            if (state.Phase == NativeUpdatePhase.RestoringPredecessor ||
+                request.Action == NodeUpdateAction.Rollback && CanRestoreLegacyPredecessor(state, recorded, appRoot))
+            {
+                var restored = await RestoreLegacyPredecessorAsync(state, recorded, Installation(state.Previous),
+                    Installation(state.Candidate), dataRoot, appRoot, request.TestMode, cancellationToken).ConfigureAwait(false);
+                return new(Report(restored, NodeVersionSelection.Read(appRoot)));
+            }
+
             if (request.Action == NodeUpdateAction.Rollback && state.Phase != NativeUpdatePhase.RolledBack)
             {
                 RequireParticipatingPredecessor(recorded);
@@ -119,18 +127,22 @@ internal static class NativeUpdateOperation
                     catch (Exception activation) when (IsOperatorFailure(activation))
                     {
                         var current = NativeUpdateGate.Read(dataRoot);
-                        if (current?.OperationId != state.OperationId || current.Checkpoint is null || !current.IsFenced ||
-                            recorded.PreviousSupervisorProtocol is null)
+                        if (current?.OperationId != state.OperationId || !current.IsFenced)
+                            throw;
+                        bool restoreLegacy = CanRestoreLegacyPredecessor(current, recorded, appRoot);
+                        if (!restoreLegacy && (current.Checkpoint is null || recorded.PreviousSupervisorProtocol is null))
                             throw;
 
                         using var recover = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                         recover.CancelAfter(TimeSpan.FromSeconds(90));
                         try
                         {
-                            current = NativeUpdateGate.BeginRollback(dataRoot, state.OperationId);
-                            var rollback = await RollbackAsync(current, recorded, previous, candidate, dataRoot, appRoot, request.TestMode, recover.Token)
-                                .ConfigureAwait(false);
-                            return new(Report(rollback, previous.ArchiveSha256), Reason(activation));
+                            var rollback = restoreLegacy
+                                ? await RestoreLegacyPredecessorAsync(current, recorded, previous, candidate, dataRoot, appRoot,
+                                    request.TestMode, recover.Token).ConfigureAwait(false)
+                                : await RollbackAsync(NativeUpdateGate.BeginRollback(dataRoot, state.OperationId), recorded,
+                                    previous, candidate, dataRoot, appRoot, request.TestMode, recover.Token).ConfigureAwait(false);
+                            return new(Report(rollback, NodeVersionSelection.Read(appRoot)), Reason(activation));
                         }
                         catch (Exception failure) when (IsOperatorFailure(failure) ||
                             failure is OperationCanceledException && !cancellationToken.IsCancellationRequested)
@@ -147,6 +159,64 @@ internal static class NativeUpdateOperation
         {
             return new(ObserveRefusal(dataRoot, appRoot), Reason(error));
         }
+    }
+
+    private static bool CanRestoreLegacyPredecessor(NativeUpdateState state, NativeUpdateAuthority authority, string appRoot)
+    {
+        if (authority.PreviousSupervisorProtocol is not null || authority.PreviousSelection != state.Previous.ArchiveSha256)
+            return false;
+        var selected = NodeVersionSelection.Read(appRoot);
+        return state.Phase switch
+        {
+            NativeUpdatePhase.Fenced or NativeUpdatePhase.Prepared => selected == authority.PreviousSelection,
+            NativeUpdatePhase.CandidateReady or NativeUpdatePhase.RestoringPredecessor =>
+                selected == authority.PreviousSelection || selected == state.Candidate.ArchiveSha256,
+            _ => false,
+        };
+    }
+
+    private static async Task<NativeUpdateState> RestoreLegacyPredecessorAsync(NativeUpdateState state, NativeUpdateAuthority authority,
+        NodeUpdateInstallation previous, NodeUpdateInstallation candidate, string dataRoot, string appRoot, bool testMode, CancellationToken ct)
+    {
+        if (!CanRestoreLegacyPredecessor(state, authority, appRoot))
+            throw Refused("native_update_legacy_predecessor_unconfirmed");
+
+        VerifyCohort(appRoot, previous, ct);
+        var selected = NodeVersionSelection.Read(appRoot);
+        if (selected == candidate.ArchiveSha256)
+        {
+            VerifyCohort(appRoot, candidate, ct);
+            await StopObservedAsync(previous, candidate, testMode, permitCandidate: true, allowPreviousCopy: false, ct,
+                requireDrain: true).ConfigureAwait(false);
+        }
+        if (selected == candidate.ArchiveSha256 || state.Phase != NativeUpdatePhase.RestoringPredecessor)
+        {
+            // The unfinished update still fences the candidate. Prove the old reader and drain before restoring original selection.
+            using var offline = AcquireOffline(testMode, dataRoot);
+            if (NodeVersionSelection.Read(appRoot) != selected)
+                throw Refused("native_update_selection_changed");
+            RequirePreviousFloor(dataRoot, authority, online: false, requireDrain: true, verifyAuthority: true);
+            state = NativeUpdateGate.BeginPrecompletionRestore(dataRoot, state.OperationId);
+            if (selected == candidate.ArchiveSha256)
+                NodeVersionSelection.Select(appRoot, selected, previous.ArchiveSha256);
+        }
+        else
+        {
+            // The prior owner may already be running after interruption. A stopped owner must still pass the offline check.
+            await using var existing = await TryConnectAsync(testMode, ct).ConfigureAwait(false);
+            if (existing is null)
+            {
+                using var offline = AcquireOffline(testMode, dataRoot);
+                RequirePreviousFloor(dataRoot, authority, online: false, verifyAuthority: true);
+            }
+        }
+
+        var proof = await StartAndCheckManagedAsync(previous, state, testMode, ct).ConfigureAwait(false);
+        if (NodeVersionSelection.Read(appRoot) != previous.ArchiveSha256)
+            throw Refused("native_update_selection_changed");
+        RequirePreviousFloor(dataRoot, authority, online: true);
+        NodeUpdateLauncher.RebindWindowsStartup(candidate, previous, testMode);
+        return NativeUpdateGate.MarkRolledBack(dataRoot, state.OperationId, proof);
     }
 
     private static async Task<(NativeUpdateState? State, NodeUpdateResponse? Refusal)> FenceLegacyPredecessorAsync(
@@ -619,6 +689,7 @@ internal static class NativeUpdateOperation
         ["operationId"] = state?.OperationId.ToString("D"),
         ["phase"] = state?.Phase.ToString() ?? "Idle",
         ["admissionFenced"] = state?.IsFenced ?? false,
+        ["restoringManagedPredecessor"] = state?.Phase == NativeUpdatePhase.RestoringPredecessor ? true : null,
         ["previousArchiveSha256"] = state?.Previous.ArchiveSha256,
         ["previousCommit"] = state?.Previous.Commit,
         ["previousTree"] = state?.Previous.Tree,

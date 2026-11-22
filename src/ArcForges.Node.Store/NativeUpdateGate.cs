@@ -13,6 +13,7 @@ internal enum NativeUpdatePhase
     Completed,
     RolledBack,
     RollingBack,
+    RestoringPredecessor,
 }
 
 internal sealed record NativeUpdateCohort(string Commit, string Tree, string ArchiveSha256, string InstallationRoot,
@@ -112,6 +113,9 @@ internal static class NativeUpdateGate
     internal static NativeUpdateState BeginRollback(string dataRoot, Guid operationId) =>
         Advance(dataRoot, operationId, NativeUpdatePhase.RollingBack);
 
+    internal static NativeUpdateState BeginPrecompletionRestore(string dataRoot, Guid operationId) =>
+        Advance(dataRoot, operationId, NativeUpdatePhase.RestoringPredecessor);
+
     internal static NativeUpdateState MarkRolledBack(string dataRoot, Guid operationId, NativeUpdateReadiness? proof = null) =>
         Advance(dataRoot, operationId, NativeUpdatePhase.RolledBack, readiness: proof);
 
@@ -140,7 +144,9 @@ internal static class NativeUpdateGate
             (NativeUpdatePhase.Fenced, NativeUpdatePhase.Prepared) => true,
             (NativeUpdatePhase.Prepared or NativeUpdatePhase.CandidateReady, NativeUpdatePhase.CandidateReady) => true,
             (NativeUpdatePhase.CandidateReady, NativeUpdatePhase.Completed) => true,
-            (_, NativeUpdatePhase.RollingBack) when current.Phase != NativeUpdatePhase.RolledBack => true,
+            (NativeUpdatePhase.Fenced or NativeUpdatePhase.Prepared or NativeUpdatePhase.CandidateReady,
+                NativeUpdatePhase.RestoringPredecessor) when current.Authority?.PreviousSupervisorProtocol is null => true,
+            (_, NativeUpdatePhase.RollingBack) when current.Phase is not (NativeUpdatePhase.RolledBack or NativeUpdatePhase.RestoringPredecessor) => true,
             (_, NativeUpdatePhase.RolledBack) when current.IsFenced => true,
             _ => false,
         };
