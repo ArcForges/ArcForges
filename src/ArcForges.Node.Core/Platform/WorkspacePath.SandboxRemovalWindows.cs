@@ -320,8 +320,16 @@ internal sealed partial class WorkspacePath
 
         cancellationToken.ThrowIfCancellationRequested();
         // The kernel accepts an ordinary directory only when empty. Close the marked handle before confirming absence.
-        byte delete = 1;
-        RequireWindowsSandboxDataStatus(SetRemovalInformation(file, out _, &delete, sizeof(byte), 13));
+        if (expected.IsDirectory)
+        {
+            uint flags = 1; // FILE_DISPOSITION_DELETE
+            RequireWindowsSandboxDataStatus(SetRemovalInformation(file, out _, &flags, sizeof(uint), 64)); // FileDispositionInformationEx
+        }
+        else
+        {
+            byte delete = 1;
+            RequireWindowsSandboxDataStatus(SetRemovalInformation(file, out _, &delete, sizeof(byte), 13));
+        }
         applied();
     }
 
