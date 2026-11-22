@@ -24,6 +24,22 @@ public static partial class NodeUpdateInstallationCustody
         }
 
         NodeVersionSelection.RequireDirectory(parked, create: false);
+        if (OperatingSystem.IsLinux())
+        {
+            using var exclusion = AcquireLinux(Path.GetDirectoryName(parked)!, existingOnly: true);
+            int parent = Descriptor(exclusion.LinuxRoot!);
+            using var directory = OpenLinux(parent, Path.GetFileName(parked), LinuxDirectory);
+            using var executable = OpenLinuxExecutable(directory);
+            var state = LinuxExecutableState(executable.SafeFileHandle);
+            var receipt = ReadLinuxMode(parent, archiveSha256)
+                ?? throw new IOException("node_update_linux_parked_mode_evidence_missing");
+            RequireRecordedMode(receipt, state);
+            if (ExecutablePermissions(state) != receipt.ParkedPermissions)
+            {
+                throw new IOException("node_update_linux_parked_executable_mode_unconfirmed");
+            }
+        }
+
         return true;
     }
 
@@ -61,7 +77,8 @@ public static partial class NodeUpdateInstallationCustody
         var lease = Acquire(parent);
         try
         {
-            if (NodeVersionSelection.Attributes(NodeVersionSelection.ParkedDirectory(destination)) is not null)
+            if (NodeVersionSelection.Attributes(NodeVersionSelection.ParkedDirectory(destination)) is not null
+                || OperatingSystem.IsLinux() && ReadLinuxMode(Descriptor(lease.LinuxRoot!), Path.GetFileName(destination)) is not null)
             {
                 throw new IOException("node_update_previous_installation_parked_use_resume_or_rollback");
             }
@@ -88,7 +105,7 @@ public static partial class NodeUpdateInstallationCustody
         var source = ResolvePrevious(appRoot, previous);
         if (OperatingSystem.IsLinux())
         {
-            MoveLinux(exclusion, source, target);
+            MoveLinux(exclusion, source, target, park);
             return;
         }
 
@@ -136,7 +153,7 @@ public static partial class NodeUpdateInstallationCustody
         }
     }
 
-    private static void MoveLinux(InstallationLease exclusion, NodeUpdateInstallation source, string target)
+    private static void MoveLinux(InstallationLease exclusion, NodeUpdateInstallation source, string target, bool park)
     {
         int parent = Descriptor(exclusion.LinuxRoot!);
         var sourceLeaf = Path.GetFileName(source.Root);
@@ -148,17 +165,44 @@ public static partial class NodeUpdateInstallationCustody
         }
 
         var anchored = source with { Root = FormattableString.Invariant($"/proc/self/fd/{Descriptor(held)}") };
-        NodeUpdateLauncher.RequireTrustedManifest(anchored);
-        RequireExecutable(NodeUpdateLauncher.Executable(anchored.Root));
+        using var image = OpenLinuxExecutable(held);
+        VerifyLinuxExecutable(anchored, image);
+        var imageState = LinuxExecutableState(image.SafeFileHandle);
+        var receipt = ReadLinuxMode(parent, source.ArchiveSha256);
+        var sourceParked = sourceLeaf != source.ArchiveSha256;
+        if (receipt is null)
+        {
+            if (sourceParked || !HasOriginalLinuxMode(ExecutablePermissions(imageState)))
+            {
+                throw new IOException("node_update_linux_parked_mode_evidence_missing");
+            }
+
+            if (!park)
+            {
+                return;
+            }
+
+            receipt = new LinuxExecutableMode(imageState.Inode, imageState.DeviceMajor, imageState.DeviceMinor, ExecutablePermissions(imageState));
+            WriteLinuxMode(parent, source.ArchiveSha256, receipt.Value);
+        }
+
+        RequireRecordedMode(receipt.Value, imageState);
+        if (park)
+        {
+            SetLinuxMode(image.SafeFileHandle, receipt.Value.ParkedPermissions);
+        }
+
         if (!string.Equals(source.Root, target, StringComparison.Ordinal)
             && NodeVersionSelection.RenameAt(parent, sourceLeaf, parent, Path.GetFileName(target), 1) != 0)
         {
             throw new IOException("node_update_linux_previous_installation_move_refused:" + Marshal.GetLastPInvokeError());
         }
 
-        if (NodeVersionSelection.SyncDirectory(parent) != 0)
+        SyncLinuxModeDirectory(parent);
+        if (!park)
         {
-            throw new IOException("node_update_linux_previous_installation_sync_failed:" + Marshal.GetLastPInvokeError());
+            SetLinuxMode(image.SafeFileHandle, receipt.Value.OriginalPermissions);
+            RemoveLinuxMode(parent, source.ArchiveSha256);
         }
     }
 
@@ -196,12 +240,13 @@ public static partial class NodeUpdateInstallationCustody
         return new InstallationLease(new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None));
     }
 
-    private static InstallationLease AcquireLinux(string parent)
+    private static InstallationLease AcquireLinux(string parent, bool existingOnly = false)
     {
         var directory = OpenLinuxDirectory(parent);
         try
         {
-            var gate = OpenLinux(Descriptor(directory), LockName, LinuxRegularLock, 0x180);
+            const int Create = 0x40;
+            var gate = OpenLinux(Descriptor(directory), LockName, existingOnly ? LinuxRegularLock & ~Create : LinuxRegularLock, 0x180);
             try
             {
                 var state = LinuxState(gate, UnixRegular);
@@ -277,7 +322,7 @@ public static partial class NodeUpdateInstallationCustody
 
     private static Statx LinuxState(SafeFileHandle handle, ushort type)
     {
-        const uint IdentityFields = 0x0f;
+        const uint IdentityFields = 0x010f;
         if (GetState(Descriptor(handle), "", 0x1000, IdentityFields, out var state) != 0
             || (state.Mask & IdentityFields) != IdentityFields || (state.Mode & 0xf000) != type)
         {
@@ -328,6 +373,9 @@ public static partial class NodeUpdateInstallationCustody
         [FieldOffset(16)] public uint Links;
         [FieldOffset(20)] public uint Owner;
         [FieldOffset(28)] public ushort Mode;
+        [FieldOffset(32)] public ulong Inode;
+        [FieldOffset(136)] public uint DeviceMajor;
+        [FieldOffset(140)] public uint DeviceMinor;
     }
 
     [LibraryImport("libc", EntryPoint = "openat", SetLastError = true, StringMarshalling = StringMarshalling.Utf8)]

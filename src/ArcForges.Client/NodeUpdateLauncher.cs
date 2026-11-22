@@ -266,7 +266,7 @@ public static partial class NodeUpdateLauncher
         using var stream = OpenTrustedManifest(cohort);
     }
 
-    private static FileStream OpenTrustedManifest(NodeUpdateInstallation cohort)
+    internal static FileStream OpenTrustedManifest(NodeUpdateInstallation cohort)
     {
         var manifest = Path.Combine(cohort.Root, "digests.json");
         if ((File.GetAttributes(manifest) & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)

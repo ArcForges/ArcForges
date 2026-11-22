@@ -157,7 +157,9 @@ public static partial class NodeVersionSelection
     }
 
     internal static string ParkedDirectory(string canonical) =>
-        Path.Combine(Path.GetDirectoryName(canonical)!, ParkedPrefix + Path.GetFileName(canonical));
+        Path.Combine(Path.GetDirectoryName(canonical)!, ParkedName(Path.GetFileName(canonical)));
+
+    internal static string ParkedName(string archiveSha256) => ParkedPrefix + archiveSha256;
 
     private static void PublishSelection(string appRoot, string temporary, string destination, bool replace)
     {
