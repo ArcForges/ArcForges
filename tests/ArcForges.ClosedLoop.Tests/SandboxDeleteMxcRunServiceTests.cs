@@ -243,7 +243,8 @@ public sealed partial class MxcRunServiceTests
         SandboxService.SandboxServiceClient sandboxes, Id epoch, CancellationToken token)
     {
         // The Node creates the actual quarantine through the qualified deletion path. The test never provisions it directly.
-        var seed = await CreateSandboxAsync(sandboxes, epoch);
+        // The retained deletion tombstone keeps the seed name reserved.
+        var seed = await CreateSandboxAsync(sandboxes, epoch, displayName: "Native delete quarantine seed");
         var plan = await ReadDeletePlanAsync(sandboxes, seed, token);
         var request = new SandboxServiceDeleteRequest
         {
