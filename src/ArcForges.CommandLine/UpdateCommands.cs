@@ -38,9 +38,10 @@ internal static class UpdateCommands
         var previousDigest = new Option<string?>("--previous-archive-sha256") { Description = "Independently admitted prior archive SHA-256" };
         var previousCommit = new Option<string?>("--previous-commit") { Description = "Expected prior producer commit" };
         var previousTree = new Option<string?>("--previous-tree") { Description = "Expected prior producer tree" };
+        var previousKey = new Option<string?>("--previous-trusted-key") { Description = "Separately trusted prior Ed25519 public key when it differs from --trusted-key" };
         var command = new Command("apply", "Verify a complete signed replacement, fence admissions and check readiness before selection")
         {
-            archive, digest, commit, tree, key, python, openssl, powershell, previousArchive, previousDigest, previousCommit, previousTree,
+            archive, digest, commit, tree, key, python, openssl, powershell, previousArchive, previousDigest, previousCommit, previousTree, previousKey,
         };
         V2Cli.Set(command, factory, async (cli, result, ct) =>
         {
@@ -49,6 +50,12 @@ internal static class UpdateCommands
             if (Array.Exists(prior, value => value is not null) && Array.Exists(prior, value => value is null))
             {
                 throw new UsageException("Supply all four --previous-* options to verify a prior installation.");
+            }
+
+            var priorTrust = result.GetValue(previousKey);
+            if (priorTrust is not null && prior[0] is null)
+            {
+                throw new UsageException("--previous-trusted-key requires the four prior archive identity options.");
             }
 
             var trustedKey = result.GetRequiredValue(key);
@@ -62,7 +69,7 @@ internal static class UpdateCommands
                 NodeVersionSelection.PrepareDirectories(app);
                 var candidate = await StageAsync(replacement).ConfigureAwait(false);
                 var previous = prior[0] is { } path
-                    ? await StageAsync(new NodeUpdateArtifact(path, trustedKey, prior[1]!, prior[2]!, prior[3]!, pythonPath, opensslPath, powershellPath)).ConfigureAwait(false)
+                    ? await StageAsync(new NodeUpdateArtifact(path, priorTrust ?? trustedKey, prior[1]!, prior[2]!, prior[3]!, pythonPath, opensslPath, powershellPath)).ConfigureAwait(false)
                     : null;
                 return Print(cli, await runner(new NodeUpdateRequest(NodeUpdateAction.Apply, cli.TestMode, candidate, previous), ct).ConfigureAwait(false));
             }

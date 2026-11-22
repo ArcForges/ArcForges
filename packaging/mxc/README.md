@@ -109,6 +109,8 @@ arcforges update apply --archive <archive> --trusted-key <public-pem> --archive-
 On Windows append `--powershell <powershell-executable>`. When adopting an
 independently admitted prior cohort, also supply `--previous-archive`,
 `--previous-archive-sha256`, `--previous-commit`, and `--previous-tree` together.
+When its original admission uses a different public key, also supply
+`--previous-trusted-key <previous-public-pem>`.
 The updater verifies the prior archive and retains its installation beside the
 replacement. On Linux the installed systemd user unit must use the managed
 `app/current` selection. An ambiguous or non-managed existing selection requires
