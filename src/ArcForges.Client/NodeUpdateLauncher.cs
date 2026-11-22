@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Text.Json;
 using ArcForges.Contracts.Foundation.V1;
 using ArcForges.Contracts.Node.V1;
 using ArcForges.Supervisor;
@@ -78,12 +79,23 @@ public static partial class NodeUpdateLauncher
 
         var keyPath = testMode ? @"Software\ArcForges\Tests\Update\" + NodeLocations.InstanceKey(testMode) + @"\Run" : AutostartRegistration.RunKey;
         var selectedSupervisor = Path.Combine(selected.Root, NodeAutoStart.SupervisorFileName);
-        AutostartRegistration.Rebind(selectedSupervisor, current => IsAdmittedStartup(current, previous), keyPath);
+        var app = NodeLocations.UpdateApplicationRoot(testMode);
+        AutostartRegistration.Rebind(selectedSupervisor, current => IsAdmittedStartup(current, previous, app), keyPath);
     }
 
-    private static bool IsAdmittedStartup(string registered, NodeUpdateInstallation previous)
+    private static bool IsAdmittedStartup(string registered, NodeUpdateInstallation previous, string appRoot)
     {
-        if (!Path.IsPathFullyQualified(registered) || Path.GetFileName(registered) != NodeAutoStart.SupervisorFileName
+        if (NodeUpdateWindowsHandoff.IsParked(appRoot, previous.ArchiveSha256))
+        {
+            if (!string.Equals(registered, Path.Combine(previous.Root, NodeAutoStart.SupervisorFileName), StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            return VerifyParkedHolder(NodeUpdateWindowsHandoff.ResolvePrevious(appRoot, previous));
+        }
+
+        if (!Path.IsPathFullyQualified(registered) || !string.Equals(Path.GetFileName(registered), NodeAutoStart.SupervisorFileName, StringComparison.OrdinalIgnoreCase)
             || (File.GetAttributes(registered) & (FileAttributes.ReparsePoint | FileAttributes.Directory)) != 0)
         {
             return false;
@@ -92,6 +104,26 @@ public static partial class NodeUpdateLauncher
         var root = Path.GetDirectoryName(registered)!;
         RequireTrustedManifest(previous with { Root = root });
         return SameFileBytes(registered, Path.Combine(previous.Root, NodeAutoStart.SupervisorFileName));
+    }
+
+    private static bool VerifyParkedHolder(NodeUpdateInstallation parked)
+    {
+        using var stream = OpenTrustedManifest(parked);
+        using var manifest = JsonDocument.Parse(stream);
+        if (!manifest.RootElement.TryGetProperty("files", out var files)
+            || !files.TryGetProperty(NodeAutoStart.SupervisorFileName, out var expected))
+        {
+            return false;
+        }
+
+        var path = Path.Combine(parked.Root, NodeAutoStart.SupervisorFileName);
+        if ((File.GetAttributes(path) & (FileAttributes.ReparsePoint | FileAttributes.Directory)) != 0)
+        {
+            return false;
+        }
+
+        using var holder = File.OpenRead(path);
+        return Convert.ToHexStringLower(SHA256.HashData(holder)) == expected.GetString();
     }
 
     /// <summary>Requires current native service custody of the exact responsive Node process.</summary>
@@ -213,7 +245,12 @@ public static partial class NodeUpdateLauncher
         }
     }
 
-    private static void RequireTrustedManifest(NodeUpdateInstallation cohort)
+    internal static void RequireTrustedManifest(NodeUpdateInstallation cohort)
+    {
+        using var stream = OpenTrustedManifest(cohort);
+    }
+
+    private static FileStream OpenTrustedManifest(NodeUpdateInstallation cohort)
     {
         var manifest = Path.Combine(cohort.Root, "digests.json");
         if ((File.GetAttributes(manifest) & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
@@ -221,10 +258,21 @@ public static partial class NodeUpdateLauncher
             throw new IOException("node_update_version_manifest_untrusted");
         }
 
-        using var stream = File.OpenRead(manifest);
-        if (Convert.ToHexStringLower(SHA256.HashData(stream)) != cohort.DigestManifestSha256)
+        var stream = File.OpenRead(manifest);
+        try
         {
-            throw new IOException("node_update_version_manifest_changed");
+            if (stream.Length > 4 * 1024 * 1024 || Convert.ToHexStringLower(SHA256.HashData(stream)) != cohort.DigestManifestSha256)
+            {
+                throw new IOException("node_update_version_manifest_changed");
+            }
+
+            stream.Position = 0;
+            return stream;
+        }
+        catch
+        {
+            stream.Dispose();
+            throw;
         }
     }
 

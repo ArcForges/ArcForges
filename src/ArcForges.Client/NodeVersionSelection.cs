@@ -8,8 +8,21 @@ namespace ArcForges.Client;
 public static partial class NodeVersionSelection
 {
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
+    private const string WindowsParkedPrefix = ".parked-";
 
     public static string? Read(string appRoot)
+    {
+        var identity = ReadIdentity(appRoot);
+        if (identity is not null)
+        {
+            _ = RequireInstalled(appRoot, identity);
+        }
+
+        return identity;
+    }
+
+    /// <summary>Reads the validated pointer while an offline updater checks physical installation custody separately.</summary>
+    public static string? ReadIdentity(string appRoot)
     {
         var path = PointerPath(appRoot);
         var attributes = Attributes(path);
@@ -52,7 +65,7 @@ public static partial class NodeVersionSelection
             identity = target["versions/".Length..];
         }
 
-        _ = RequireInstalled(appRoot, identity);
+        _ = InstallationDirectory(appRoot, identity);
         return identity;
     }
 
@@ -81,12 +94,26 @@ public static partial class NodeVersionSelection
     }
 
     // The update gate serializes writers. An exact previous selection still detects manual or interrupted changes.
-    public static void Select(string appRoot, string? expected, string archiveSha256)
+    public static void Select(string appRoot, string? expected, string archiveSha256, bool allowMissingExpected = false)
     {
         _ = RequireInstalled(appRoot, archiveSha256);
-        if (Read(appRoot) != expected)
+        var current = ReadIdentity(appRoot);
+        if (current != expected)
         {
             throw new IOException("node_update_selection_changed");
+        }
+
+        if (expected is not null)
+        {
+            var previous = InstallationDirectory(appRoot, expected);
+            if (allowMissingExpected && OperatingSystem.IsWindows() && Attributes(previous) is null)
+            {
+                RequireDirectory(WindowsParkedDirectory(previous), create: false);
+            }
+            else
+            {
+                _ = RequireInstalled(appRoot, expected);
+            }
         }
 
         var temporary = Path.Combine(appRoot, ".current-" + Guid.NewGuid().ToString("N"));
@@ -110,6 +137,9 @@ public static partial class NodeVersionSelection
             File.Delete(temporary);
         }
     }
+
+    internal static string WindowsParkedDirectory(string canonical) =>
+        Path.Combine(Path.GetDirectoryName(canonical)!, WindowsParkedPrefix + Path.GetFileName(canonical));
 
     private static void PublishSelection(string appRoot, string temporary, string destination, bool replace)
     {
@@ -155,7 +185,7 @@ public static partial class NodeVersionSelection
         return root;
     }
 
-    private static void RequireDirectory(string path, bool create)
+    internal static void RequireDirectory(string path, bool create)
     {
         if (create && Attributes(path) is null)
         {
@@ -178,7 +208,7 @@ public static partial class NodeVersionSelection
 
     private static string PointerPath(string appRoot) => Path.Combine(appRoot, OperatingSystem.IsWindows() ? "current.version" : "current");
 
-    private static FileAttributes? Attributes(string path)
+    internal static FileAttributes? Attributes(string path)
     {
         try
         {
@@ -192,7 +222,7 @@ public static partial class NodeVersionSelection
 
     [LibraryImport("kernel32.dll", EntryPoint = "MoveFileExW", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
     [return: MarshalAs(UnmanagedType.Bool)]
-    private static partial bool MoveFileEx(string existingName, string newName, uint flags);
+    internal static partial bool MoveFileEx(string existingName, string newName, uint flags);
 
     [LibraryImport("libc", EntryPoint = "open", SetLastError = true, StringMarshalling = StringMarshalling.Utf8)]
     private static partial int OpenDirectory(string path, int flags);

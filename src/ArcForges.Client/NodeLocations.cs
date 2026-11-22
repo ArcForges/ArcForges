@@ -133,6 +133,9 @@ public static class NodeLocations
     /// <summary>The Windows single-instance mutex <c>Local\ArcForges.Node.&lt;key&gt;</c> (02 section 2 step 2).</summary>
     public static string NodeMutexName(string instanceKey) => @"Local\ArcForges.Node." + instanceKey;
 
+    /// <summary>The incumbent Windows holder's per-user mutex.</summary>
+    public static string WindowsSupervisorMutexName(string instanceKey) => @"Local\ArcForges.Supervisor." + instanceKey;
+
     /// <summary>The Windows readiness event <c>Local\ArcForges.Node.&lt;key&gt;.Ready</c> (02 section 2 step 9).</summary>
     public static string NodeReadyEventName(string instanceKey) => @"Local\ArcForges.Node." + instanceKey + ".Ready";
 

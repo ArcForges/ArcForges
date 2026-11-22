@@ -31,6 +31,7 @@ public static class NodeUpdateStaging
             ? ExistingFile(artifact.PowerShell ?? throw new ArgumentException("Windows preparation requires trusted PowerShell.", nameof(artifact)))
             : null;
         var root = Absolute(destination);
+        using var installationLease = NodeUpdateWindowsHandoff.EnterStaging(root);
         var rid = System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier;
         if (rid is not ("win-x64" or "linux-x64"))
         {
