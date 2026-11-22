@@ -21,11 +21,13 @@ internal sealed record NativeUpdateCohort(string Commit, string Tree, string Arc
 internal sealed record NativeUpdateAuthority(string NodeId, string OwnerEpoch, string? PreviousSelection,
     int PreviousSchema, int PreviousMinimumReader, string? PreviousSupervisorProtocol);
 internal sealed record NativeUpdateCheckpoint(int StoreSchema, int MinimumReader, int CandidateReader, string BackupManifestSha256,
-    string? BackupRoot = null, string[]? RetainedRuns = null);
+    string? BackupRoot = null, string[]? RetainedRuns = null, string? CandidateSupervisorProtocol = null);
 
+internal sealed record NativeUpdateReadiness(string ArchiveSha256, string NodeEpoch, int ProcessId, long ProcessStartUnixMs);
 internal sealed record NativeUpdateState(int Format, Guid OperationId, NativeUpdatePhase Phase,
     NativeUpdateCohort Previous, NativeUpdateCohort Candidate, NativeUpdateCheckpoint? Checkpoint, NativeUpdateAuthority? Authority,
-    DateTimeOffset UpdatedAt)
+    DateTimeOffset UpdatedAt, NativeUpdateReadiness? CandidateProbe = null, NativeUpdateReadiness? ActivatedOwner = null,
+    NativeUpdateReadiness? RestoredOwner = null)
 {
     [JsonIgnore]
     public bool IsFenced => Phase is not (NativeUpdatePhase.Completed or NativeUpdatePhase.RolledBack);
@@ -90,17 +92,17 @@ internal static class NativeUpdateGate
     internal static NativeUpdateState Prepare(string dataRoot, Guid operationId, NativeUpdateCheckpoint checkpoint) =>
         Advance(dataRoot, operationId, NativeUpdatePhase.Prepared, checkpoint);
 
-    internal static NativeUpdateState MarkReady(string dataRoot, Guid operationId) =>
-        Advance(dataRoot, operationId, NativeUpdatePhase.CandidateReady);
+    internal static NativeUpdateState MarkReady(string dataRoot, Guid operationId, NativeUpdateReadiness? proof = null) =>
+        Advance(dataRoot, operationId, NativeUpdatePhase.CandidateReady, readiness: proof);
 
-    internal static NativeUpdateState Complete(string dataRoot, Guid operationId) =>
-        Advance(dataRoot, operationId, NativeUpdatePhase.Completed);
+    internal static NativeUpdateState Complete(string dataRoot, Guid operationId, NativeUpdateReadiness? proof = null) =>
+        Advance(dataRoot, operationId, NativeUpdatePhase.Completed, readiness: proof);
 
     internal static NativeUpdateState BeginRollback(string dataRoot, Guid operationId) =>
         Advance(dataRoot, operationId, NativeUpdatePhase.RollingBack);
 
-    internal static NativeUpdateState MarkRolledBack(string dataRoot, Guid operationId) =>
-        Advance(dataRoot, operationId, NativeUpdatePhase.RolledBack);
+    internal static NativeUpdateState MarkRolledBack(string dataRoot, Guid operationId, NativeUpdateReadiness? proof = null) =>
+        Advance(dataRoot, operationId, NativeUpdatePhase.RolledBack, readiness: proof);
 
     internal static IDisposable EnterOperator(string dataRoot) => Acquire(dataRoot, "native-update-operator.lock");
 
@@ -111,20 +113,21 @@ internal static class NativeUpdateGate
     }
 
     private static NativeUpdateState Advance(string dataRoot, Guid operationId, NativeUpdatePhase phase,
-        NativeUpdateCheckpoint? checkpoint = null)
+        NativeUpdateCheckpoint? checkpoint = null, NativeUpdateReadiness? readiness = null)
     {
         using var lease = Acquire(dataRoot);
         var current = ReadHeld(lease.Directory);
         if (current is null || current.OperationId != operationId)
             throw Incompatible("native_update_operation_conflict");
 
-        if (current.Phase == phase && (checkpoint is null || current.Checkpoint == checkpoint))
+        if (current.Phase == phase && Equivalent(current.Checkpoint, checkpoint)
+            && (readiness is null || phase != NativeUpdatePhase.CandidateReady || current.CandidateProbe == readiness))
             return current;
 
         bool allowed = (current.Phase, phase) switch
         {
             (NativeUpdatePhase.Fenced, NativeUpdatePhase.Prepared) => true,
-            (NativeUpdatePhase.Prepared, NativeUpdatePhase.CandidateReady) => true,
+            (NativeUpdatePhase.Prepared or NativeUpdatePhase.CandidateReady, NativeUpdatePhase.CandidateReady) => true,
             (NativeUpdatePhase.CandidateReady, NativeUpdatePhase.Completed) => true,
             (_, NativeUpdatePhase.RollingBack) when current.Phase != NativeUpdatePhase.RolledBack => true,
             (_, NativeUpdatePhase.RolledBack) when current.IsFenced => true,
@@ -133,11 +136,23 @@ internal static class NativeUpdateGate
         if (!allowed)
             throw Incompatible("native_update_phase_conflict");
 
-        var next = current with { Phase = phase, Checkpoint = checkpoint ?? current.Checkpoint, UpdatedAt = DateTimeOffset.UtcNow };
+        var next = current with
+        {
+            Phase = phase,
+            Checkpoint = checkpoint ?? current.Checkpoint,
+            UpdatedAt = DateTimeOffset.UtcNow,
+            CandidateProbe = phase == NativeUpdatePhase.CandidateReady ? readiness : current.CandidateProbe,
+            ActivatedOwner = phase == NativeUpdatePhase.Completed ? readiness : current.ActivatedOwner,
+            RestoredOwner = phase == NativeUpdatePhase.RolledBack ? readiness : current.RestoredOwner,
+        };
         Validate(next);
         Publish(lease.Directory, next);
         return next;
     }
+
+    private static bool Equivalent(NativeUpdateCheckpoint? current, NativeUpdateCheckpoint? proposed) => proposed is null ||
+        current is not null && (current with { RetainedRuns = null }) == (proposed with { RetainedRuns = null })
+        && (current.RetainedRuns ?? []).SequenceEqual(proposed.RetainedRuns ?? [], StringComparer.Ordinal);
 
     private sealed class Lease(ContractionPaths.UpdateDirectory directory, FileStream file) : IDisposable
     {
@@ -217,7 +232,8 @@ internal static class NativeUpdateGate
         {
             if (!Hex(checkpoint.BackupManifestSha256, 64) || (checkpoint.BackupRoot is not null && !CanonicalPath(checkpoint.BackupRoot))
                 || (state.Authority is not null && checkpoint.BackupRoot is null)
-                || checkpoint.RetainedRuns?.Any(run => !Hex(run, 32)) == true)
+                || checkpoint.RetainedRuns?.Any(run => !Hex(run, 32)) == true
+                || (state.Authority is not null && checkpoint.CandidateSupervisorProtocol is not { Length: > 0 and <= 128 }))
                 throw Incompatible("native_update_marker_invalid");
             RequireCompatibleReader(checkpoint.StoreSchema, checkpoint.MinimumReader, checkpoint.CandidateReader);
         }
@@ -230,8 +246,17 @@ internal static class NativeUpdateGate
                 || !Hex(state.Previous.DigestManifestSha256, 64) || !Hex(state.Candidate.DigestManifestSha256, 64))
                 throw Incompatible("native_update_marker_invalid");
             RequireCompatibleReader(authority.PreviousSchema, authority.PreviousMinimumReader, authority.PreviousSchema);
+            if ((state.Phase is NativeUpdatePhase.CandidateReady or NativeUpdatePhase.Completed &&
+                    !ValidReadiness(state.CandidateProbe, state.Candidate)) ||
+                (state.Phase == NativeUpdatePhase.Completed && !ValidReadiness(state.ActivatedOwner, state.Candidate)) ||
+                (state.Phase == NativeUpdatePhase.RolledBack && !ValidReadiness(state.RestoredOwner, state.Previous)))
+                throw Incompatible("native_update_readiness_unconfirmed");
         }
     }
+
+    private static bool ValidReadiness(NativeUpdateReadiness? proof, NativeUpdateCohort cohort) => proof is not null &&
+        proof.ArchiveSha256 == cohort.ArchiveSha256 && proof.NodeEpoch is { Length: > 0 and <= 128 } &&
+        proof.ProcessId > 0 && proof.ProcessStartUnixMs > 0;
 
     private static bool ValidCohort(NativeUpdateCohort? cohort) => cohort is not null && Hex(cohort.Commit, 40) && Hex(cohort.Tree, 40)
         && Hex(cohort.ArchiveSha256, 64) && CanonicalPath(cohort.InstallationRoot);

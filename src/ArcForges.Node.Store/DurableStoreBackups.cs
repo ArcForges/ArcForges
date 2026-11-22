@@ -101,6 +101,52 @@ internal sealed partial class DurableCommandStore
         }
     }
 
+    internal static void VerifyNativeUpdateBackup(NativeUpdateCheckpoint checkpoint, bool testMode)
+    {
+        string root = checkpoint.BackupRoot ?? throw new DurableStoreMaintenanceException();
+        ContractionPaths.RequireOwnedDirectory(root);
+        using var manifestFile = ContractionPaths.OpenRegularRead(Path.Combine(root, "v2-backup.manifest"));
+        if (manifestFile.Length is < 33 or > 1048576)
+            throw new DurableStoreMaintenanceException();
+
+        byte[] signed = new byte[checked((int)manifestFile.Length)];
+        manifestFile.ReadExactly(signed);
+        if (Convert.ToHexStringLower(SHA256.HashData(signed)) != checkpoint.BackupManifestSha256)
+            throw new DurableStoreMaintenanceException();
+
+        var body = signed.AsSpan(0, signed.Length - 32);
+        var manifest = JsonSerializer.Deserialize(body, DurableBackupJsonContext.Default.DurableBackupManifest)
+            ?? throw new DurableStoreMaintenanceException();
+        if (manifest.Schema != checkpoint.StoreSchema || manifest.Epochs is not { Length: > 0 } ||
+            string.IsNullOrEmpty(manifest.SigningKeyReference))
+            throw new DurableStoreMaintenanceException();
+
+        using var database = ContractionPaths.OpenRegularRead(StorePaths.Database(root));
+        if (Convert.ToHexStringLower(SHA256.HashData(database)) != manifest.DatabaseSha256)
+            throw new DurableStoreMaintenanceException();
+
+        var secrets = NodeSecretStores.ForNode(root, testMode);
+        byte[] signingKey = ReadProtectedKey(secrets, manifest.SigningKeyReference);
+        try
+        {
+            if (!CryptographicOperations.FixedTimeEquals(HMACSHA256.HashData(signingKey, body), signed.AsSpan(body.Length)))
+                throw new DurableStoreMaintenanceException();
+        }
+        finally { CryptographicOperations.ZeroMemory(signingKey); }
+
+        VerifyFenceCatalogue(root, manifest.Epochs);
+        foreach (var entry in manifest.Epochs)
+        {
+            byte[] key = ReadProtectedKey(secrets, entry.KeyReference);
+            try
+            {
+                if (!Matches(entry, DurableEpochFence.Read(DurableEpochFence.PathFor(root, entry.Owner), key)))
+                    throw new DurableStoreMaintenanceException();
+            }
+            finally { CryptographicOperations.ZeroMemory(key); }
+        }
+    }
+
     // The latest authority is retained independently of the backup being restored. Without
     // that outside evidence (or after any missing admission/effect observation), remain offline.
     internal static void RestoreBackup(string backupRoot, NodeSecretStore backupSecrets, string latestAuthorityRoot,

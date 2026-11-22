@@ -532,7 +532,8 @@ public sealed partial class NodeStore : IDisposable
         }
     }
 
-    private static ExistingStore? InspectRuntimeStore(string path, MigrationPlan plan, bool allowWindowsSharing)
+    private static ExistingStore? InspectRuntimeStore(string path, MigrationPlan plan, bool allowWindowsSharing,
+        bool requireStableCopy = false, bool requireDrained = false)
     {
         string journal = path + "-journal";
         if (HasFileEntry(journal))
@@ -543,8 +544,8 @@ public sealed partial class NodeStore : IDisposable
         using var original = OpenInspectionInput(path, allowWindowsSharing, out bool sharedDatabase);
         string wal = path + "-wal";
         bool hasWal = HasFileEntry(wal);
-        if (!sharedDatabase && !hasWal && ImmutableStoreUri(path) is { } uri)
-            return Inspect(path, uri, plan, requireV2Runtime: true);
+        if (!requireStableCopy && !sharedDatabase && !hasWal && ImmutableStoreUri(path) is { } uri)
+            return Inspect(path, uri, plan, requireV2Runtime: true, requireDrained);
 
         bool sharedWal = false;
         using var originalWal = hasWal ? OpenInspectionInput(wal, allowWindowsSharing, out sharedWal) : null;
@@ -553,7 +554,7 @@ public sealed partial class NodeStore : IDisposable
         try
         {
             string copy = Path.Combine(work, Path.GetFileName(path));
-            if (sharedDatabase || sharedWal)
+            if (requireStableCopy || sharedDatabase || sharedWal)
             {
                 CopySharedInspectionPair(path, original, originalWal, copy);
             }
@@ -564,7 +565,7 @@ public sealed partial class NodeStore : IDisposable
                     CopyInspectionFile(originalWal, copy + "-wal");
             }
 
-            return Inspect(path, copy, plan, requireV2Runtime: true);
+            return Inspect(path, copy, plan, requireV2Runtime: true, requireDrained);
         }
         finally
         {
@@ -684,7 +685,7 @@ public sealed partial class NodeStore : IDisposable
         source.CopyTo(output);
     }
 
-    private static ExistingStore? Inspect(string path, string source, MigrationPlan plan, bool requireV2Runtime)
+    private static ExistingStore? Inspect(string path, string source, MigrationPlan plan, bool requireV2Runtime, bool requireDrained = false)
     {
         using var connection = new SqliteConnection(StorePaths.ConnectionString(source, SqliteOpenMode.ReadOnly));
         connection.Open();
@@ -789,6 +790,12 @@ public sealed partial class NodeStore : IDisposable
             if (tables != 3 || planColumns != 12 || itemColumns != 17 || ownerColumns != 3 || index != 1)
                 throw new StoreIncompatibleException("The node store has an unrecognized removal-plan draft layout; it was not changed.");
         }
+
+        if (requireDrained && version == StoreMigrations.ContractedSchemaVersion &&
+            Equals(Scalar(connection, """
+                SELECT EXISTS(SELECT 1 FROM run WHERE state NOT IN (5,6) OR ended_utc IS NULL OR coalesce(termination_reason,'')='');
+                """), 1L))
+            throw new StoreIncompatibleException("native_update_supervisor_drain_required");
 
         return new ExistingStore(version, minimum);
     }

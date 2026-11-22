@@ -8,9 +8,10 @@ internal sealed record NativeUpdateStoreFloor(int Schema, int MinimumReader);
 
 public sealed partial class NodeStore
 {
-    internal static NativeUpdateStoreFloor InspectNativeUpdateFloor(string dataRoot, bool onlineObservation = false)
+    internal static NativeUpdateStoreFloor InspectNativeUpdateFloor(string dataRoot, bool onlineObservation = false, bool requireDrained = false)
     {
         DurableCommandStore.VerifyRestorePublication(dataRoot);
+        SQLitePCL.Batteries_V2.Init();
         ContractionPaths.RequireOwnedDirectory(dataRoot);
         string database = StorePaths.Database(dataRoot);
         ContractionPaths.RequireOwnedDirectory(Path.GetDirectoryName(database)!);
@@ -18,7 +19,7 @@ public sealed partial class NodeStore
             throw new StoreIncompatibleException("native_update_existing_store_required");
 
         var identity = ContractionPaths.NamedRegularIdentity(database);
-        var existing = InspectRuntimeStore(database, StoreMigrations.Released, allowWindowsSharing: onlineObservation);
+        var existing = InspectRuntimeStore(database, StoreMigrations.Released, allowWindowsSharing: onlineObservation, requireStableCopy: onlineObservation, requireDrained: requireDrained);
         if (existing is null || identity != ContractionPaths.NamedRegularIdentity(database))
             throw new StoreIncompatibleException("native_update_store_identity_unconfirmed");
         return new(existing.SchemaVersion, existing.MinReaderVersion);
@@ -27,9 +28,10 @@ public sealed partial class NodeStore
     // Restore uses the separate authenticated MIG-02 flow, which checks the latest epoch and effect history.
     // The binaries' update selector never publishes an older snapshot over the live store.
     internal static NativeUpdateCheckpoint CaptureNativeUpdateBackup(string dataRoot, string owner, string bootIdentity,
-        NativeUpdateAuthority authority, Guid operationId, int candidateReader, bool compatibleSupervisors, bool testMode)
+        NativeUpdateAuthority authority, Guid operationId, int candidateReader, bool compatibleSupervisors, bool testMode,
+        string? candidateSupervisorProtocol = null)
     {
-        var floor = InspectNativeUpdateFloor(dataRoot);
+        var floor = InspectNativeUpdateFloor(dataRoot, requireDrained: !compatibleSupervisors);
         NativeUpdateGate.RequireCompatibleReader(floor.Schema, floor.MinimumReader, candidateReader);
         if (floor.Schema != authority.PreviousSchema || floor.MinimumReader != authority.PreviousMinimumReader ||
             floor.Schema != StoreMigrations.SupportedSchemaVersion)
@@ -47,21 +49,12 @@ public sealed partial class NodeStore
             throw new DurableStoreMaintenanceException();
 
         var retainedRuns = store.Read(reader => RunRecords.ListNonterminal(reader, owner)).Select(run => run.RunId).ToArray();
-        if (!compatibleSupervisors && retainedRuns.Length != 0)
-            throw new StoreIncompatibleException("native_update_supervisor_drain_required");
         if (retainedRuns.Length > 512)
             throw new StoreIncompatibleException("native_update_supervisor_checkpoint_capacity");
 
         var backupSecrets = NodeSecretStores.ForNode(backupRoot, testMode);
         commands.CreateBackup(backupRoot, backupSecrets, createPrivateRoot: true);
-        return new(floor.Schema, floor.MinimumReader, candidateReader, HashUpdateBackupManifest(backupRoot), backupRoot, retainedRuns);
-    }
-
-    internal static void VerifyNativeUpdateBackup(NativeUpdateCheckpoint checkpoint)
-    {
-        if (checkpoint.BackupRoot is null ||
-            !HashUpdateBackupManifest(checkpoint.BackupRoot).Equals(checkpoint.BackupManifestSha256, StringComparison.Ordinal))
-            throw new StoreIncompatibleException("native_update_backup_unconfirmed");
+        return new(floor.Schema, floor.MinimumReader, candidateReader, HashUpdateBackupManifest(backupRoot), backupRoot, retainedRuns, candidateSupervisorProtocol);
     }
 
     private static string HashUpdateBackupManifest(string root)

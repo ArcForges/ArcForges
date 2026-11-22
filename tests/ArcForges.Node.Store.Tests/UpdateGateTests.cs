@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+using System.Security.AccessControl;
+using System.Security.Principal;
+using ArcForges.Node.Store.Migrations;
+
 namespace ArcForges.Node.Store.Tests;
 
 public sealed class UpdateGateTests
@@ -75,6 +79,78 @@ public sealed class UpdateGateTests
         File.WriteAllText(Path.Combine(root.Path, "native-update.json"), "{\"format\":1,\"phase\":4}");
         Assert.Null(NativeUpdateGate.TryEnterFreshStart(root.Path));
         Assert.Throws<StoreIncompatibleException>(() => NativeUpdateGate.Begin(root.Path, Guid.NewGuid(), previous, candidate));
+    }
+
+    [Fact]
+    public void OfflineSnapshotRetainsTheAuthenticatedOwnerEpochAndDetectsChangedBackupBytes()
+    {
+        using var parent = new TemporaryDataRoot();
+        using var restored = new TemporaryDataRoot();
+        string dataRoot = Path.Combine(parent.Path, "live");
+        const string owner = "update-fixture-owner";
+        const string boot = "stable-fixture-boot";
+        var options = new NodeStoreOptions { DataRoot = dataRoot, BootIdentity = boot };
+        var secrets = NodeSecretStores.ForTestDataRoot(dataRoot);
+        NativeUpdateAuthority authority;
+        using (var store = NodeStore.OpenForV2Runtime(options))
+        using (var commands = new DurableCommandStore(store, owner, secrets))
+        {
+            authority = new(Convert.ToHexStringLower(store.Metadata.NodeId.Span), Convert.ToHexStringLower(commands.OwnerEpoch.Span),
+                null, store.Metadata.SchemaVersion, store.Metadata.MinReaderVersion, null);
+        }
+
+        byte[] original = File.ReadAllBytes(StorePaths.Database(dataRoot));
+        var floor = NodeStore.InspectNativeUpdateFloor(dataRoot);
+        Assert.Equal(new NativeUpdateStoreFloor(20, 20), floor);
+        Assert.Equal(original, File.ReadAllBytes(StorePaths.Database(dataRoot)));
+        Assert.Throws<StoreIncompatibleException>(() => NodeStore.CaptureNativeUpdateBackup(
+            dataRoot, owner, boot, authority, Guid.NewGuid(), 19, compatibleSupervisors: false, testMode: true));
+        Assert.Equal(original, File.ReadAllBytes(StorePaths.Database(dataRoot)));
+
+        var checkpoint = NodeStore.CaptureNativeUpdateBackup(
+            dataRoot, owner, boot, authority, Guid.NewGuid(), 20, compatibleSupervisors: false, testMode: true);
+        Assert.NotNull(checkpoint.BackupRoot);
+        Assert.Empty(checkpoint.RetainedRuns!);
+        DurableCommandStore.VerifyNativeUpdateBackup(checkpoint, testMode: true);
+        DurableCommandStore.RestoreBackup(checkpoint.BackupRoot, NodeSecretStores.ForTestDataRoot(checkpoint.BackupRoot), dataRoot, secrets,
+            restored.Path, NodeSecretStores.ForTestDataRoot(restored.Path));
+        using (var store = restored.Open(new ManualClock(), StoreMigrations.Released))
+        using (var commands = new DurableCommandStore(store, owner, NodeSecretStores.ForTestDataRoot(restored.Path)))
+        {
+            Assert.Equal(authority.NodeId, Convert.ToHexStringLower(store.Metadata.NodeId.Span));
+            Assert.Equal(authority.OwnerEpoch, Convert.ToHexStringLower(commands.OwnerEpoch.Span));
+        }
+
+        File.AppendAllText(StorePaths.Database(checkpoint.BackupRoot), "invalid fixture bytes");
+        Assert.Throws<DurableStoreMaintenanceException>(() => DurableCommandStore.VerifyNativeUpdateBackup(checkpoint, testMode: true));
+    }
+
+    [Fact]
+    public void PublishedGateRejectsStorePathWithoutVerifiedCustody()
+    {
+        using var parent = new TemporaryDataRoot();
+        string dataRoot = Path.Combine(parent.Path, "live");
+        StorePaths.CreatePrivateDirectory(dataRoot);
+        using (var initial = NativeUpdateGate.TryEnterFreshStart(dataRoot))
+            Assert.NotNull(initial);
+        if (OperatingSystem.IsLinux())
+        {
+            File.SetUnixFileMode(parent.Path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.GroupWrite);
+        }
+        else if (OperatingSystem.IsWindows())
+        {
+            var leaf = new DirectoryInfo(dataRoot);
+            var original = leaf.GetAccessControl();
+            var overbroad = leaf.GetAccessControl();
+            overbroad.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null),
+                FileSystemRights.Write, AccessControlType.Allow));
+            leaf.SetAccessControl(overbroad);
+            try { Assert.Null(NativeUpdateGate.TryEnterFreshStart(dataRoot)); }
+            finally { leaf.SetAccessControl(original); }
+            return;
+        }
+
+        Assert.Null(NativeUpdateGate.TryEnterFreshStart(dataRoot));
     }
 
     private static (NativeUpdateCohort Previous, NativeUpdateCohort Candidate) Cohorts(TemporaryDataRoot root) =>
