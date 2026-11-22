@@ -281,7 +281,7 @@ internal sealed partial class WorkspacePath
                     : SandboxRemovalDeleteAccess | (flushAccess ? 0x40000000u : 0u);
                 uint options = 0x00200020u | (expected.IsDirectory ? 1u : 0x40u) | (flushAccess ? 2u : 0u);
                 RequireWindowsSandboxDataStatus(NtCreateFile(out var raw, access, ref attributes, out _, 0,
-                    0, 0, 1, options, 0, 0));
+                    0, traversal ? 1u : 0u, 1, options, 0, 0));
                 var opened = new SafeFileHandle(raw, ownsHandle: true);
                 try
                 {
