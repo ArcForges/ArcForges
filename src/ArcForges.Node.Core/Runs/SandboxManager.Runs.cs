@@ -189,6 +189,17 @@ internal sealed partial class SandboxManager
             return ResolveRunMutation(Receipts.Admit(intent), meta, request.OwnerEpoch);
         }
 
+        using var updateAdmission = NativeUpdateGate.TryEnterFreshStart(_dataRoot, out bool confirmedFence);
+        if (updateAdmission is null)
+        {
+            var reason = confirmedFence ? "node_update_in_progress" : "node_update_state_unconfirmed";
+            var refusal = Error(meta, ErrorCategory.State, "busy", reason);
+            refusal.Details.State.State = "node_update";
+            refusal.Retry.Mode = RetryMode.AfterTime;
+            refusal.Retry.RetryAt = ProtoTime.ToInstant(_clock.GetUtcNow().AddSeconds(2));
+            return RunFailure(refusal);
+        }
+
         var row = _store.Read(reader => SandboxRecords.Get(reader, OwnerId, sandboxId));
         if (row is null)
         {

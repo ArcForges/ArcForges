@@ -12,6 +12,7 @@ using ArcForges.Node.Core.Execution;
 using ArcForges.Node.Core.Platform;
 using ArcForges.Node.Core.Sandboxes;
 using ArcForges.Node.Core.Security;
+using ArcForges.Node.Core.Updates;
 using ArcForges.Node.Platform;
 using ArcForges.Node.Platform.Linux.Mxc;
 using ArcForges.Node.Platform.Windows.Mxc;
@@ -135,6 +136,10 @@ public static class NodeHost
 
     /// <summary>How long after READY the version directory check starts (AD-0007 section 8: off the startup path).</summary>
     private static readonly TimeSpan VersionCheckDelay = TimeSpan.FromSeconds(5);
+
+    /// <summary>Applies or resumes a verified local native Node cohort transition.</summary>
+    public static Task<NodeUpdateResponse> UpdateAsync(NodeUpdateRequest request, CancellationToken cancellationToken) =>
+        NativeUpdateOperation.RunAsync(request, SandboxLocalOwner.Current, cancellationToken);
 
     /// <summary>Runs the node until it is stopped; returns the process exit code.</summary>
     public static async Task<int> RunAsync(NodeHostOptions options, CancellationToken cancellationToken)

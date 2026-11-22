@@ -15,7 +15,7 @@ internal static class Program
         // exact opt-in is set (16-testing-strategy section 1, item 2; 02 section 4). Production processes are unaffected.
         var options = args.TakeWhile(argument => argument != "--");
         NodeSecretStores.ApplyTestModeTripwire(options.Contains(NodeLocations.TestModeOption, StringComparer.Ordinal));
-        return CliApplication.RunAsync(args, RunNodeAsync);
+        return CliApplication.RunAsync(args, RunNodeAsync, updateRunner: NodeHost.UpdateAsync);
     }
 
     private static Task<int> RunNodeAsync(NodeRunRequest request, CancellationToken cancellationToken) =>

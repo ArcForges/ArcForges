@@ -21,14 +21,15 @@ public delegate Task<int> NodeRunner(NodeRunRequest request, CancellationToken c
 public static class CliApplication
 {
     /// <summary>Parses and runs one command line; returns the exit code.</summary>
-    public static async Task<int> RunAsync(string[] args, NodeRunner nodeRunner, TextWriter? output = null, TextWriter? error = null)
+    public static async Task<int> RunAsync(string[] args, NodeRunner nodeRunner, TextWriter? output = null, TextWriter? error = null,
+        NodeUpdateRunner? updateRunner = null)
     {
         ArgumentNullException.ThrowIfNull(args);
         ArgumentNullException.ThrowIfNull(nodeRunner);
         output ??= Console.Out;
         error ??= Console.Error;
         var globals = new GlobalOptions();
-        var root = Build(globals, nodeRunner, output, error);
+        var root = Build(globals, nodeRunner, output, error, updateRunner);
         var result = root.Parse(args);
         if (result.Errors.Count > 0 && result.Action is ParseErrorAction)
         {
@@ -64,7 +65,8 @@ public static class CliApplication
     }
 
     /// <summary>Builds the command tree (also used by the completion tests).</summary>
-    internal static RootCommand Build(GlobalOptions globals, NodeRunner nodeRunner, TextWriter output, TextWriter error)
+    internal static RootCommand Build(GlobalOptions globals, NodeRunner nodeRunner, TextWriter output, TextWriter error,
+        NodeUpdateRunner? updateRunner = null)
     {
         var root = new RootCommand("Manage local Sandboxes and Runs.");
         globals.AddTo(root);
@@ -87,6 +89,11 @@ public static class CliApplication
         root.Subcommands.Add(CenterCommands.Build(factory));
         root.Subcommands.Add(AccountCommands.Account(factory));
         root.Subcommands.Add(StatusCommands.Version(factory));
+        if (updateRunner is not null)
+        {
+            root.Subcommands.Add(UpdateCommands.Build(factory, updateRunner));
+        }
+
         root.Subcommands.Add(CompletionCommand.Build(output));
         root.SetAction(result =>
         {
@@ -103,7 +110,7 @@ public static class CliApplication
         (command.Name is "status" or "connect" or "flow" or "cancel" or "disconnect" or "signout" &&
             command.Parents.OfType<Command>().Any(parent => parent.Name == "center"));
 
-    private static bool IsLocalV2Group(Command command) => command.Name is "sandbox" or "run" or "resources" or "grant" or "operation" or "doctor";
+    private static bool IsLocalV2Group(Command command) => command.Name is "sandbox" or "run" or "resources" or "grant" or "operation" or "doctor" or "update";
 }
 
 /// <summary>The global options (experience/cli.md section 1); they may appear before or after the command.</summary>

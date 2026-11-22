@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
 using ArcForges.LocalRpc;
+using Microsoft.Win32.SafeHandles;
 
 namespace ArcForges.Client;
 
@@ -65,18 +66,21 @@ public static partial class NodeConnector
     public static readonly TimeSpan BusyWait = TimeSpan.FromSeconds(2);
 
     /// <summary>Opens a stream to <paramref name="endpoint"/>; throws <see cref="EndpointConnectException"/> with the reason on failure.</summary>
-    public static ValueTask<Stream> OpenAsync(LocalRpcEndpoint endpoint, CancellationToken cancellationToken)
+    public static ValueTask<Stream> OpenAsync(LocalRpcEndpoint endpoint, CancellationToken cancellationToken) =>
+        OpenAsync(endpoint, null, cancellationToken);
+
+    internal static ValueTask<Stream> OpenAsync(LocalRpcEndpoint endpoint, Action<int>? observeProcess, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(endpoint);
         return endpoint.Transport switch
         {
-            LocalRpcTransport.NamedPipe => OpenPipeAsync(endpoint.Address, cancellationToken),
-            LocalRpcTransport.UnixDomainSocket => OpenSocketAsync(endpoint.Address, cancellationToken),
+            LocalRpcTransport.NamedPipe => OpenPipeAsync(endpoint.Address, observeProcess, cancellationToken),
+            LocalRpcTransport.UnixDomainSocket => OpenSocketAsync(endpoint.Address, observeProcess, cancellationToken),
             _ => throw new ArgumentException("The node endpoint is a named pipe or a Unix socket.", nameof(endpoint)),
         };
     }
 
-    private static async ValueTask<Stream> OpenPipeAsync(string name, CancellationToken cancellationToken)
+    private static async ValueTask<Stream> OpenPipeAsync(string name, Action<int>? observeProcess, CancellationToken cancellationToken)
     {
         if (!OperatingSystem.IsWindows())
         {
@@ -108,6 +112,11 @@ public static partial class NodeConnector
             if (!IsOwnedByCurrentUser(pipe, out var owner))
             {
                 throw new UnauthorizedAccessException($"The pipe owner is {owner}, not this user.");
+            }
+
+            if (observeProcess is not null && GetNamedPipeServerProcessId(pipe.SafePipeHandle, out uint pid) && pid is > 0 and <= int.MaxValue)
+            {
+                observeProcess((int)pid);
             }
 
             return pipe;
@@ -147,7 +156,7 @@ public static partial class NodeConnector
     internal static bool OwnerIsUser(SecurityIdentifier? owner, SecurityIdentifier? user) =>
         owner is not null && user is not null && owner == user;
 
-    private static async ValueTask<Stream> OpenSocketAsync(string path, CancellationToken cancellationToken)
+    private static async ValueTask<Stream> OpenSocketAsync(string path, Action<int>? observeProcess, CancellationToken cancellationToken)
     {
         if (OperatingSystem.IsWindows())
         {
@@ -196,6 +205,15 @@ public static partial class NodeConnector
         try
         {
             await socket.ConnectAsync(new UnixDomainSocketEndPoint(path), cancellationToken).ConfigureAwait(false);
+            if (OperatingSystem.IsLinux() && observeProcess is not null)
+            {
+                uint length = 12;
+                if (GetPeerCredentials(socket.SafeHandle, 1, 17, out var peer, ref length) == 0 && length == 12 && peer.ProcessId > 0)
+                {
+                    observeProcess(peer.ProcessId);
+                }
+            }
+
             return new NetworkStream(socket, ownsSocket: true);
         }
         catch (SocketException exception)
@@ -221,4 +239,19 @@ public static partial class NodeConnector
     [LibraryImport("kernel32.dll", EntryPoint = "WaitNamedPipeW", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool WaitNamedPipeW(string name, uint timeoutMilliseconds);
+
+    [LibraryImport("kernel32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool GetNamedPipeServerProcessId(SafePipeHandle pipe, out uint processId);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct PeerCredentials
+    {
+        public int ProcessId;
+        private uint _userId;
+        private uint _groupId;
+    }
+
+    [LibraryImport("libc", EntryPoint = "getsockopt")]
+    private static partial int GetPeerCredentials(SafeSocketHandle socket, int level, int option, out PeerCredentials credentials, ref uint length);
 }

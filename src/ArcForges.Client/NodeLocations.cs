@@ -69,6 +69,11 @@ public static class NodeLocations
         ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.DoNotVerify), "ArcForges", "data")
         : Path.Combine(Home(), ".local", "share", "arcforges", "data");
 
+    /// <summary>The managed version directory, separate from persistent Node data.</summary>
+    public static string UpdateApplicationRoot(bool testMode) => testMode
+        ? Path.Combine(ConfigDirectory(testMode), "app")
+        : Path.Combine(Path.GetDirectoryName(DefaultDataRoot())!, "app");
+
     /// <summary>
     /// The data root: <c>dataRoot</c> of <c>node.json</c> when it names an absolute path, otherwise the default. A missing or
     /// unreadable file means the default; the node reports a malformed one when it starts.
@@ -127,6 +132,9 @@ public static class NodeLocations
 
     /// <summary>The Windows single-instance mutex <c>Local\ArcForges.Node.&lt;key&gt;</c> (02 section 2 step 2).</summary>
     public static string NodeMutexName(string instanceKey) => @"Local\ArcForges.Node." + instanceKey;
+
+    /// <summary>The incumbent Windows holder's per-user mutex.</summary>
+    public static string WindowsSupervisorMutexName(string instanceKey) => @"Local\ArcForges.Supervisor." + instanceKey;
 
     /// <summary>The Windows readiness event <c>Local\ArcForges.Node.&lt;key&gt;.Ready</c> (02 section 2 step 9).</summary>
     public static string NodeReadyEventName(string instanceKey) => @"Local\ArcForges.Node." + instanceKey + ".Ready";

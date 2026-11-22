@@ -57,4 +57,51 @@ internal static class AutostartRegistration
         key.DeleteValue(valueName, throwOnMissingValue: false);
         return true;
     }
+
+    /// <summary>Preserves opt-out and changes only the exact previously verified direct startup command.</summary>
+    internal static void Rebind(string supervisorPath, Func<string, bool> isPrior, string keyPath = RunKey)
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(keyPath, writable: true);
+        if (key is null || !key.GetValueNames().Contains(ValueName, StringComparer.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var selected = Command(supervisorPath);
+        if (key.GetValueKind(ValueName) != RegistryValueKind.String
+            || key.GetValue(ValueName, null, RegistryValueOptions.DoNotExpandEnvironmentNames) is not string current)
+        {
+            throw new IOException("node_update_windows_startup_conflict");
+        }
+
+        if (string.Equals(current, selected, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (current.Length < 3 || current[0] != '"' || current[^1] != '"' || !isPrior(current[1..^1])
+            || !string.Equals(key.GetValue(ValueName, null, RegistryValueOptions.DoNotExpandEnvironmentNames) as string, current, StringComparison.Ordinal))
+        {
+            throw new IOException("node_update_windows_startup_conflict");
+        }
+
+        key.SetValue(ValueName, selected, RegistryValueKind.String);
+        key.Flush();
+    }
+
+    internal static void RequireAbsentOrExact(string supervisorPath, string keyPath = RunKey)
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(keyPath, writable: false);
+        if (key is null || !key.GetValueNames().Contains(ValueName, StringComparer.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (key.GetValueKind(ValueName) != RegistryValueKind.String
+            || key.GetValue(ValueName, null, RegistryValueOptions.DoNotExpandEnvironmentNames) is not string registered
+            || !string.Equals(registered, Command(supervisorPath), StringComparison.OrdinalIgnoreCase))
+        {
+            throw new IOException("node_update_windows_previous_startup_not_canonical");
+        }
+    }
 }

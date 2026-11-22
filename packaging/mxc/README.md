@@ -90,3 +90,47 @@ archive members, and it checks the binaries and pinned MXC components
 before making the new installation directory available. The parent directory
 must already exist and be trusted by the operator. This command prepares
 an installed directory for a fresh launch.
+
+## Update an installed Node
+
+Run the `update` command from an independently authenticated installed cohort
+that includes the updater. Obtain the replacement archive and its detached
+signature, the Ed25519 public key, and the exact archive, commit, and tree
+identities through the release admission process. The updater uses the fixed
+installer bundled with that installed cohort. Provide absolute paths to trusted
+Python and OpenSSL executables, plus PowerShell on Windows. These tools are used
+for archive preparation. Ordinary Node startup and Run supervision use the
+native executables.
+
+```text
+arcforges update apply --archive <archive> --trusted-key <public-pem> --archive-sha256 <approved-sha256> --commit <commit> --tree <tree> --python <python-executable> --openssl <openssl-executable>
+```
+
+On Windows append `--powershell <powershell-executable>`. When adopting an
+independently admitted prior cohort, also supply `--previous-archive`,
+`--previous-archive-sha256`, `--previous-commit`, and `--previous-tree` together.
+When its original admission uses a different public key, also supply
+`--previous-trusted-key <previous-public-pem>`.
+The updater verifies and retains the exact prior installation. Before adopting
+a predecessor that lacks the durable update protocol, establish its managed
+selection and confirm that its existing platform service runs from it. The
+Linux systemd user unit must use the managed `app/current` selection. The
+Windows managed holder and startup registration resolve to the admitted
+version directory. Portable installations can use the independently
+authenticated offline migration and a fresh managed installation.
+After verifying the old native owner and its complete Run drain, the updater
+keeps the signed installation in a private location where its usual launch
+paths cannot execute it during the switch. A compatible rollback restores
+that same installation.
+
+`arcforges update status --json` reports the selected version and saved update
+checkpoint. An original service can still accept Run requests in
+`PreparingPredecessor` until it is stopped and its managed startup is guarded.
+Stop any Run that remains active through the original service, then use
+`arcforges update resume`. Use `arcforges update rollback` to restart the
+authenticated compatible predecessor. Rollback requires a complete Run drain
+and the original compatible reader floor. To prepare a verified offline restore, run
+`arcforges update restore --destination <fresh-absolute-directory>`. The
+receipt identifies the isolated store and authority files that were restored.
+The active Node data directory and its selection remain in place. Private
+Sandbox contents stored outside the backup require a separately verified copy.

@@ -81,6 +81,20 @@ internal sealed class NodeSupervisor
         var crashes = new Queue<DateTimeOffset>();
         while (true)
         {
+            try
+            {
+                if (!_locations.OwnsSelection())
+                {
+                    _log.Write("supervisor.selection_changed");
+                    return 0;
+                }
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                _log.Write("supervisor.selection_refused", ("reason", error.Message));
+                return 1;
+            }
+
             var exit = RunNodeOnce();
             switch (exit)
             {

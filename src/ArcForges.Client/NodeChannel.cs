@@ -17,6 +17,7 @@ public sealed class NodeChannel : IAsyncDisposable
     private readonly Lock _connectionGate = new();
     private int _connectionGeneration;
     private int _connectionPins;
+    private int _serverProcessId;
     private int _connected;
     private EndpointConnectException? _lastFailure;
 
@@ -67,6 +68,14 @@ public sealed class NodeChannel : IAsyncDisposable
     // A mutation retry must stay on the hello-checked connection whose node-side session retains its center binding.
     internal int ConnectionGeneration => Volatile.Read(ref _connectionGeneration);
 
+    internal int ServerProcessId(int expectedGeneration)
+    {
+        lock (_connectionGate)
+        {
+            return expectedGeneration == _connectionGeneration ? _serverProcessId : 0;
+        }
+    }
+
     internal IDisposable? PinConnection(int expectedGeneration)
     {
         lock (_connectionGate)
@@ -111,7 +120,8 @@ public sealed class NodeChannel : IAsyncDisposable
                 }
             }
 
-            var stream = await NodeConnector.OpenAsync(Endpoint, cancellationToken).ConfigureAwait(false);
+            int serverProcessId = 0;
+            var stream = await NodeConnector.OpenAsync(Endpoint, pid => serverProcessId = pid, cancellationToken).ConfigureAwait(false);
             lock (_connectionGate)
             {
                 // A pin may have been acquired while the OS connection was opening.
@@ -123,6 +133,7 @@ public sealed class NodeChannel : IAsyncDisposable
 
                 Volatile.Write(ref _lastFailure, null);
                 Volatile.Write(ref _connected, 1);
+                _serverProcessId = serverProcessId;
                 Volatile.Write(ref _connectionGeneration, _connectionGeneration + 1);
                 return stream;
             }
