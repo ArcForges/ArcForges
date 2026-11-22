@@ -64,12 +64,9 @@ internal static class NodeUpdatePendingPredecessor
 
             string[]? arguments = null;
             if (name != "arcforges")
-            {
                 arguments = ReadArguments(Path.Combine(process, "cmdline"));
-                if (!IsPredecessorLauncher("/usr/bin/" + name, shell, arguments, canonical, parked, managedPath))
-                    return;
-            }
 
+            // The launcher can exec between the comm and argv reads. Inspect the resulting kernel image even if argv changed shape.
             string? image = new FileInfo(Path.Combine(process, "exe")).LinkTarget;
             if (image is null)
             {
@@ -84,6 +81,9 @@ internal static class NodeUpdatePendingPredecessor
                 throw Refused("previous_image_still_loaded");
             if (arguments is not null && IsPredecessorLauncher(image, shell, arguments, canonical, parked, managedPath))
                 throw Refused("previous_launcher_still_pending");
+            if (arguments is { Length: 0 } && (IsSetsid(image) || IsSystemBinary(image, shell) || IsSystemBinary(image, "sh")) &&
+                IsLiveOwner(status, user))
+                throw Refused("launcher_observation_unconfirmed");
         }
         catch (FileNotFoundException)
         {
@@ -111,13 +111,15 @@ internal static class NodeUpdatePendingPredecessor
 
     private static bool IsSystemBinary(string path, string name) => path == "/usr/bin/" + name || path == "/bin/" + name;
 
-    private static string[] ReadArguments(string path)
+    private static string[]? ReadArguments(string path)
     {
         using var file = File.OpenRead(path);
         byte[] bytes = new byte[MaxArgumentsBytes + 1];
         int length = file.ReadAtLeast(bytes, bytes.Length, throwOnEndOfStream: false);
-        if (length == 0 || length > MaxArgumentsBytes)
-            return []; // The exact built-in launcher has fewer than eight bounded arguments.
+        if (length == 0)
+            return [];
+        if (length > MaxArgumentsBytes)
+            return null; // Too long to be the bounded built-in launcher.
         if (bytes[length - 1] != 0)
             throw Refused("launcher_arguments_unconfirmed");
         return Encoding.UTF8.GetString(bytes, 0, length - 1).Split('\0');
