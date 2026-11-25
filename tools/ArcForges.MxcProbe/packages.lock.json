@@ -16,9 +16,9 @@
       },
       "Microsoft.Mxc.Sdk": {
         "type": "Direct",
-        "requested": "[1.0.1, )",
-        "resolved": "1.0.1",
-        "contentHash": "+UjsTZiLDtxKRLWJgYphaQ4C8mG9tLNASaHJvskpIzy96kDY06PuQLyJad8l9JIjylbnEmAvuw5nUrDBeAoAXQ=="
+        "requested": "[1.1.0, )",
+        "resolved": "1.1.0",
+        "contentHash": "LNzeMdT2ezIYhTLFlGndmS1vhGNg6AZOXWaJcBu3u/m7VuaSzLIcLLXVlO8CZK+hUAahijdl5ww52o60ZqAamQ=="
       },
       "Microsoft.NET.ILLink.Tasks": {
         "type": "Direct",
@@ -39,9 +39,9 @@
       },
       "Microsoft.Mxc.Sdk": {
         "type": "Direct",
-        "requested": "[1.0.1, )",
-        "resolved": "1.0.1",
-        "contentHash": "+UjsTZiLDtxKRLWJgYphaQ4C8mG9tLNASaHJvskpIzy96kDY06PuQLyJad8l9JIjylbnEmAvuw5nUrDBeAoAXQ=="
+        "requested": "[1.1.0, )",
+        "resolved": "1.1.0",
+        "contentHash": "LNzeMdT2ezIYhTLFlGndmS1vhGNg6AZOXWaJcBu3u/m7VuaSzLIcLLXVlO8CZK+hUAahijdl5ww52o60ZqAamQ=="
       },
       "runtime.linux-x64.Microsoft.DotNet.ILCompiler": {
         "type": "Transitive",
@@ -61,9 +61,9 @@
       },
       "Microsoft.Mxc.Sdk": {
         "type": "Direct",
-        "requested": "[1.0.1, )",
-        "resolved": "1.0.1",
-        "contentHash": "+UjsTZiLDtxKRLWJgYphaQ4C8mG9tLNASaHJvskpIzy96kDY06PuQLyJad8l9JIjylbnEmAvuw5nUrDBeAoAXQ=="
+        "requested": "[1.1.0, )",
+        "resolved": "1.1.0",
+        "contentHash": "LNzeMdT2ezIYhTLFlGndmS1vhGNg6AZOXWaJcBu3u/m7VuaSzLIcLLXVlO8CZK+hUAahijdl5ww52o60ZqAamQ=="
       },
       "runtime.win-x64.Microsoft.DotNet.ILCompiler": {
         "type": "Transitive",
